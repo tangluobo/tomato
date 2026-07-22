@@ -21,6 +21,13 @@ public class TomatoController {
     private double startHeight = 0;
     private double startX = 0;
     private double startY = 0;
+    private double startWindowX = 0;
+    private double startWindowY = 0;
+    
+    private boolean resizingLeft = false;
+    private boolean resizingRight = false;
+    private boolean resizingTop = false;
+    private boolean resizingBottom = false;
     
     private static final int EDGE_THRESHOLD = 10;
 
@@ -47,6 +54,7 @@ public class TomatoController {
         rootPane.setOnMouseDragged(this::onMouseDragged);
         rootPane.setOnMouseMoved(this::onMouseMoved);
         rootPane.setOnMouseExited(this::onMouseExited);
+        rootPane.setOnMouseReleased(this::onMouseReleased);
     }
 
     private void onMouseMoved(MouseEvent event) {
@@ -87,16 +95,18 @@ public class TomatoController {
         double width = stage.getWidth();
         double height = stage.getHeight();
 
-        boolean nearLeft = sceneX <= EDGE_THRESHOLD;
-        boolean nearRight = sceneX >= width - EDGE_THRESHOLD;
-        boolean nearTop = sceneY <= EDGE_THRESHOLD;
-        boolean nearBottom = sceneY >= height - EDGE_THRESHOLD;
+        resizingLeft = sceneX <= EDGE_THRESHOLD;
+        resizingRight = sceneX >= width - EDGE_THRESHOLD;
+        resizingTop = sceneY <= EDGE_THRESHOLD;
+        resizingBottom = sceneY >= height - EDGE_THRESHOLD;
 
-        if (nearLeft || nearRight || nearTop || nearBottom) {
+        if (resizingLeft || resizingRight || resizingTop || resizingBottom) {
             startWidth = width;
             startHeight = height;
             startX = event.getScreenX();
             startY = event.getScreenY();
+            startWindowX = stage.getX();
+            startWindowY = stage.getY();
         } else {
             xOffset = event.getSceneX();
             yOffset = event.getSceneY();
@@ -105,46 +115,44 @@ public class TomatoController {
 
     private void onMouseDragged(MouseEvent event) {
         Stage stage = (Stage) rootPane.getScene().getWindow();
-        double sceneX = event.getSceneX();
-        double sceneY = event.getSceneY();
-        double width = stage.getWidth();
-        double height = stage.getHeight();
 
-        boolean nearLeft = sceneX <= EDGE_THRESHOLD;
-        boolean nearRight = sceneX >= width - EDGE_THRESHOLD;
-        boolean nearTop = sceneY <= EDGE_THRESHOLD;
-        boolean nearBottom = sceneY >= height - EDGE_THRESHOLD;
-
-        if (nearLeft || nearRight || nearTop || nearBottom) {
+        if (resizingLeft || resizingRight || resizingTop || resizingBottom) {
             double deltaX = event.getScreenX() - startX;
             double deltaY = event.getScreenY() - startY;
 
             double newWidth = startWidth;
             double newHeight = startHeight;
-            double newX = stage.getX();
-            double newY = stage.getY();
+            double newX = startWindowX;
+            double newY = startWindowY;
 
-            if (nearRight) {
+            if (resizingRight) {
                 newWidth = startWidth + deltaX;
-            } else if (nearLeft) {
+            } else if (resizingLeft) {
                 newWidth = startWidth - deltaX;
-                newX = startX + deltaX;
+                newX = startWindowX + deltaX;
             }
 
-            if (nearBottom) {
+            if (resizingBottom) {
                 newHeight = startHeight + deltaY;
-            } else if (nearTop) {
+            } else if (resizingTop) {
                 newHeight = startHeight - deltaY;
-                newY = startY + deltaY;
+                newY = startWindowY + deltaY;
             }
 
             if (newWidth >= 400) stage.setWidth(newWidth);
             if (newHeight >= 300) stage.setHeight(newHeight);
-            if (nearLeft) stage.setX(newX);
-            if (nearTop) stage.setY(newY);
+            if (resizingLeft) stage.setX(newX);
+            if (resizingTop) stage.setY(newY);
         } else {
             stage.setX(event.getScreenX() - xOffset);
             stage.setY(event.getScreenY() - yOffset);
         }
+    }
+
+    private void onMouseReleased(MouseEvent event) {
+        resizingLeft = false;
+        resizingRight = false;
+        resizingTop = false;
+        resizingBottom = false;
     }
 }
