@@ -9,8 +9,6 @@
 <?import javafx.scene.control.TreeView?>
 <?import javafx.scene.control.ScrollPane?>
 <?import javafx.scene.control.TextField?>
-<?import javafx.scene.layout.Priority?>
-<?import javafx.scene.text.Text?>
 <?import javafx.scene.layout.Region?>
 
 <HBox fx:id="rootPane" spacing="0.0" xmlns:fx="http://javafx.com/fxml"
@@ -21,22 +19,25 @@
         <Insets bottom="20.0" left="10.0" right="10.0" top="20.0"/>
       </padding>
       <children>
-        <Button onAction="#onConnectClick" 
-                style="-fx-background-color: transparent; -fx-pref-width: 40px; -fx-pref-height: 40px; -fx-background-radius: 8px;">
+        <Button onAction="#onModuleClick" 
+                style="-fx-background-color: transparent; -fx-pref-width: 40px; -fx-pref-height: 40px; -fx-background-radius: 8px;"
+                userData="connect">
           <graphic>
             <SVGPath content="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" 
                      fill="WHITE" stroke="WHITE" strokeWidth="1.5"/>
           </graphic>
         </Button>
-        <Button 
-                style="-fx-background-color: transparent; -fx-pref-width: 40px; -fx-pref-height: 40px; -fx-background-radius: 8px;">
+        <Button onAction="#onModuleClick" 
+                style="-fx-background-color: transparent; -fx-pref-width: 40px; -fx-pref-height: 40px; -fx-background-radius: 8px;"
+                userData="tools">
           <graphic>
             <SVGPath content="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.37-.3-.59-.22l-2.49 1c-.52-.39-1.08-.7-1.66-.94l-.38-2.65c-.03-.24-.24-.42-.48-.42h-4c-.24 0-.45.18-.48.42l-.38 2.65c-.58.24-1.14.55-1.66.94l-2.49-1c-.22-.08-.47 0-.59.22l-2 3.46c-.12.22-.07.49.12.64l2.11 1.65c-.04.32-.07.64-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.37.3.59.22l2.49-1c.52.39 1.08.7 1.66.94l.38 2.65c.03.24.24.42.48.42h4c.24 0 .45-.18.48-.42l.38-2.65c.58-.24 1.14-.55 1.66-.94l2.49 1c.22.08.47 0 .59-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zm-7.43 2.52c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z" 
                      fill="WHITE" stroke="WHITE" strokeWidth="1.5"/>
           </graphic>
         </Button>
-        <Button 
-                style="-fx-background-color: transparent; -fx-pref-width: 40px; -fx-pref-height: 40px; -fx-background-radius: 8px;">
+        <Button onAction="#onModuleClick" 
+                style="-fx-background-color: transparent; -fx-pref-width: 40px; -fx-pref-height: 40px; -fx-background-radius: 8px;"
+                userData="settings">
           <graphic>
             <SVGPath content="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" 
                      fill="WHITE" stroke="WHITE" strokeWidth="1.5"/>
@@ -45,14 +46,7 @@
       </children>
     </VBox>
     
-    <VBox prefWidth="240.0" style="-fx-background-color: #ffffff;" HBox.hgrow="NEVER">
-      <children>
-        <TextField fx:id="searchField" promptText="搜索" 
-                   style="-fx-background-color: #f0f0f0; -fx-border-radius: 6px; -fx-background-radius: 6px; -fx-padding: 6 10; -fx-font-size: 13px; -fx-border-color: transparent;"
-                   prefWidth="240"/>
-        <TreeView fx:id="treeView" style="-fx-background-color: transparent;" HBox.hgrow="ALWAYS"/>
-      </children>
-    </VBox>
+    <VBox fx:id="sidebarPane" prefWidth="240.0" style="-fx-background-color: #ffffff;" HBox.hgrow="NEVER"/>
     
     <VBox style="-fx-background-color: #f7f7f7;" HBox.hgrow="ALWAYS">
       <children>
@@ -61,7 +55,7 @@
             <Insets bottom="10.0" left="15.0" right="15.0" top="10.0"/>
           </padding>
           <children>
-            <Label fx:id="chatTitle" text="选择一个会话"/>
+            <Label fx:id="chatTitle" text="选择一个模块"/>
             <Region HBox.hgrow="ALWAYS"/>
             <Button text="..." style="-fx-background-color: transparent; -fx-text-fill: #333;"/>
           </children>
@@ -79,21 +73,6 @@
             </VBox>
           </content>
         </ScrollPane>
-        
-        <HBox style="-fx-background-color: #ffffff; -fx-border-color: #e5e5e5; -fx-border-width: 1 0 0 0;" spacing="10">
-          <padding>
-            <Insets bottom="10.0" left="15.0" right="15.0" top="10.0"/>
-          </padding>
-          <children>
-            <Button text="表情" style="-fx-background-color: transparent; -fx-text-fill: #333;"/>
-            <Button text="文件" style="-fx-background-color: transparent; -fx-text-fill: #333;"/>
-            <TextField fx:id="messageField" promptText="输入消息..." 
-                       style="-fx-background-color: #f0f0f0; -fx-border-radius: 6px; -fx-background-radius: 6px; -fx-padding: 6 10;"
-                       HBox.hgrow="ALWAYS"/>
-            <Button text="发送" onAction="#onSendMessage" 
-                    style="-fx-background-color: #07c160; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px;"/>
-          </children>
-        </HBox>
       </children>
     </VBox>
   </children>
