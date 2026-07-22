@@ -1,0 +1,54 @@
+# demo
+
+#### 介绍
+直接使用GraalVM打包的JavaFX项目的演示项目
+
+#### 软件架构
+        本项目是一个JavaFX演示项目，主要用于演示如何使用GraalVM打包成本地镜像文件。
+        本演示项目只考虑windows系统使用MSVC时的情况。打包的结果是一个单独exe文件。
+        本项目与以往的使用GluonFX的插件不同，直接使用GraalVM，因为使用GluonFX打包JavaFX25和GraalVM25时会报错，17不报错。
+        与GluonFX的插件不同，本项目打包可以使用cmd，不用打开vs的cmd窗口。
+
+        本项目的代码只是idea创建JavaFX时的默认代码。
+        本项目的打包思路为：
+            1.打包成不含依赖的jar包
+            2.利用maven-assembly-plugin插件将第一步的jar包与依赖的jar包打包成含有当前代码编译结果与所有依赖的jar包
+            3.使用exec-maven-plugin插件收集项目整体需要的资源与反射信息，故而打包时运行JavaFX项目的UI界面，需要手动点击所有功能以便插件收集信息。
+              收集到的信息被放在target/native/agent-output/main/reachability-metadata.json,可以将此文件保存下来放在src/main/resources/META-INF/native-image/reachability-metadata.json，
+              以减少下次编译时收集资源与反射信息的时间，不用点击全部功能。两个文件会自动合并，不用担心冲突。
+            4.使用native-maven-plugin插件，其利用GraalVM的native-image将第二步的结果结合第三步的结果编译成exe文件。本地镜像打包相关配置在该插件的configuration标签内配置。
+        打包命令为mvn clean -Pnative package。
+
+        我本地测试，用这个办法打包结果大小为44.9MB，比使用GluonFX（JavaFX17和GraalVM17）的打包的六十多兆要小，内存占用也要更小，可能是因为GraalVM的进步吧。
+        收集资源与反射信息时会抛出异常，实测不影响打包。
+        用这个方法打包出来的jar是未命名模块，不知道为什么，没有解决（Unsupported JavaFX configuration: classes were loaded from 'unnamed module @2fefd6c2'）。
+
+
+#### 安装教程
+
+1.  xxxx
+2.  xxxx
+3.  xxxx
+
+#### 使用说明
+
+1.  xxxx
+2.  xxxx
+3.  xxxx
+
+#### 参与贡献
+
+1.  Fork 本仓库
+2.  新建 Feat_xxx 分支
+3.  提交代码
+4.  新建 Pull Request
+
+
+#### 特技
+
+1.  使用 Readme\_XXX.md 来支持不同的语言，例如 Readme\_en.md, Readme\_zh.md
+2.  Gitee 官方博客 [blog.gitee.com](https://blog.gitee.com)
+3.  你可以 [https://gitee.com/explore](https://gitee.com/explore) 这个地址来了解 Gitee 上的优秀开源项目
+4.  [GVP](https://gitee.com/gvp) 全称是 Gitee 最有价值开源项目，是综合评定出的优秀开源项目
+5.  Gitee 官方提供的使用手册 [https://gitee.com/help](https://gitee.com/help)
+6.  Gitee 封面人物是一档用来展示 Gitee 会员风采的栏目 [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)

@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.tangluobo</groupId>
+    <artifactId>tomato</artifactId>
+    <version>0.0.1</version>
+    <name>tomato</name>
+
+    <properties>
+        <maven.compiler.source>25</maven.compiler.source>
+        <maven.compiler.target>25</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <native.maven.plugin.version>0.11.3</native.maven.plugin.version>
+        <mainClass>com.tangluobo.tomato.Launcher</mainClass>
+        <javafx.version>25.0.1</javafx.version>
+    </properties>
+
+    <description>
+        本项目是一个JavaFX演示项目，主要用于演示如何使用GraalVM打包成本地镜像文件。
+        本演示项目只考虑windows系统使用MSVC时的情况。打包的结果是一个单独exe文件。
+        本项目与以往的使用GluonFX的插件不同，直接使用GraalVM，因为使用GluonFX打包JavaFX25和GraalVM25时会报错，17不报错。
+        与GluonFX的插件不同，本项目打包可以使用cmd，不用打开vs的cmd窗口。
+
+        本项目的代码只是idea创建JavaFX时的默认代码。
+        本项目的打包思路为：
+            1.打包成不含依赖的jar包
+            2.利用maven-assembly-plugin插件将第一步的jar包与依赖的jar包打包成含有当前代码编译结果与所有依赖的jar包
+            3.使用exec-maven-plugin插件收集项目整体需要的资源与反射信息，故而打包时运行JavaFX项目的UI界面，需要手动点击所有功能以便插件收集信息。
+              收集到的信息被放在target/native/agent-output/main/reachability-metadata.json,可以将此文件保存下来放在src/main/resources/META-INF/native-image/reachability-metadata.json，
+              以减少下次编译时收集资源与反射信息的时间，不用点击全部功能。两个文件会自动合并，不用担心冲突。
+            4.使用native-maven-plugin插件，其利用GraalVM的native-image将第二步的结果结合第三步的结果编译成exe文件。本地镜像打包相关配置在该插件的configuration标签内配置。
+        打包命令为mvn clean -Pnative package。
+
+        我本地测试，用这个办法打包结果大小为44.9MB，比使用GluonFX（JavaFX17和GraalVM17）的打包的六十多兆要小，内存占用也要更小，可能是因为GraalVM的进步吧。
+        收集资源与反射信息时会抛出异常，实测不影响打包。
+        用这个方法打包出来的jar是未命名模块，不知道为什么，没有解决（Unsupported JavaFX configuration: classes were loaded from 'unnamed module @2fefd6c2'）。
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-controls</artifactId>
+            <version>${javafx.version}</version>
+        </dependency>
+            <dependency>
+              <groupId>org.openjfx</groupId>
+              <artifactId>javafx-fxml</artifactId>
+              <version>${javafx.version}</version>
+            </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <source>${maven.compiler.source}</source>
+                    <target>${maven.compiler.target}</target>
+                    <fork>true</fork>
+                </configuration>
+            </plugin>
+<!--            <plugin>-->
+<!--                <groupId>org.apache.maven.plugins</groupId>-->
+<!--                <artifactId>maven-jar-plugin</artifactId>-->
+<!--                <version>3.3.0</version>-->
+<!--                <configuration>-->
+<!--                    <archive>-->
+<!--                        <manifest>-->
+<!--                            <mainClass>${mainClass}</mainClass>-->
+<!--                            <addClasspath>true</addClasspath>-->
+<!--                        </manifest>-->
+<!--                    </archive>-->
+<!--                </configuration>-->
+<!--            </plugin>-->
+<!--            <plugin>-->
+<!--                <groupId>org.openjfx</groupId>-->
+<!--                <artifactId>javafx-maven-plugin</artifactId>-->
+<!--                <version>0.0.8</version>-->
+<!--                <executions>-->
+<!--                    <execution>-->
+<!--                        &lt;!&ndash; Default configuration for running with: mvn clean javafx:run &ndash;&gt;-->
+<!--                        <id>default-cli</id>-->
+<!--                        <configuration>-->
+<!--                            <mainClass>${mainClass}</mainClass>-->
+<!--                            <launcher>app</launcher>-->
+<!--                            <jlinkZipName>app</jlinkZipName>-->
+<!--                            <jlinkImageName>app</jlinkImageName>-->
+<!--                            <noManPages>true</noManPages>-->
+<!--                            <stripDebug>true</stripDebug>-->
+<!--                            <noHeaderFiles>true</noHeaderFiles>-->
+<!--                        </configuration>-->
+<!--                    </execution>-->
+<!--                </executions>-->
+<!--            </plugin>-->
+
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.7.0</version>
+                <configuration>
+                    <descriptorRefs>
+                        <descriptorRef>jar-with-dependencies</descriptorRef>
+                    </descriptorRefs>
+                    <archive>
+                        <manifest>
+                            <mainClass>${mainClass}</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>assemble-all</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.1.1</version>
+                <executions>
+                    <execution>
+                        <id>java-agent</id>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <phase>test</phase>
+                        <configuration>
+                            <executable>java</executable>
+                            <workingDirectory>${project.build.directory}</workingDirectory>
+                            <arguments>
+                                <argument>-classpath</argument>
+                                <classpath/>
+                                <argument>${mainClass}</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>native</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.graalvm.buildtools</groupId>
+                        <artifactId>native-maven-plugin</artifactId>
+                        <version>${native.maven.plugin.version}</version>
+                        <extensions>true</extensions>
+                        <executions>
+                            <execution>
+                                <id>build-native</id>
+                                <goals>
+                                    <goal>compile-no-fork</goal>
+                                </goals>
+                                <phase>package</phase>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <imageName>tomato</imageName>
+                            <agent>
+                                <enabled>true</enabled>
+                            </agent>
+                            <buildArgs>
+
+                                <buildArg>--enable-native-access=ALL-UNNAMED</buildArg> <!-- 未添加此参数会有警告，提示添加此参数，添加后就不会有警告 -->
+                                <buildArg>--no-fallback</buildArg>
+<!--                                <buildArg>-H:+AddAllCharsets</buildArg>--> <!-- 包含所有字符编码，会增大打包结果的大小，我本地测试会增大十几MB -->
+                                <buildArg>-H:Optimize="2"</buildArg> <!-- 用于指定编译优化级别，2是默认  控制代码优化：b - 针对最快构建时间进行优化，s - 针对大小进行优化，0 - 无优化，1 - 基本优化，2 - 高级优化，3 - 所有优化以实现最佳性能。 -->
+<!--                                <buildArg>-H:-CheckToolchain</buildArg>-->
+
+                                <!-- 下面两个参数用于在windows系统上用MSVC编译时，是的编译结果双击时不弹出cmd窗口 -->
+                                <!-- -H:NativeLinkerOption=/SUBSYSTEM:WINDOWS 告诉链接器生成「GUI 子系统」EXE，禁用 CMD 窗口-->
+                                <!-- -H:NativeLinkerOption=/ENTRY:mainCRTStartup 告诉链接器入口点是 mainCRTStartup（适配 Java 的 main 函数）-->
+                                <!-- 如果编译使用MinGW，可以使用-H:CCompilerOption=-mwindows或者-H:NativeLinkerOption=-mwindows，未试过，不清楚效果 -->
+                                <!-- 其他操作系统未试过 -->
+                                <buildArg>-H:NativeLinkerOption=/SUBSYSTEM:WINDOWS</buildArg>
+                                <buildArg>-H:NativeLinkerOption=/ENTRY:mainCRTStartup</buildArg>
+
+
+<!--                               可以用这个参数看到更多辅助信息 native-image - -expert-options 两个-之间没有空格   -->
+                            </buildArgs>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>
