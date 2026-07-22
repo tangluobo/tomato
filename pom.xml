@@ -179,7 +179,7 @@
                                 <buildArg>--enable-native-access=ALL-UNNAMED</buildArg> <!-- 未添加此参数会有警告，提示添加此参数，添加后就不会有警告 -->
                                 <buildArg>--no-fallback</buildArg>
 <!--                                <buildArg>-H:+AddAllCharsets</buildArg>--> <!-- 包含所有字符编码，会增大打包结果的大小，我本地测试会增大十几MB -->
-                                <buildArg>-H:Optimize="2"</buildArg> <!-- 用于指定编译优化级别，2是默认  控制代码优化：b - 针对最快构建时间进行优化，s - 针对大小进行优化，0 - 无优化，1 - 基本优化，2 - 高级优化，3 - 所有优化以实现最佳性能。 -->
+<!--                                <buildArg>-H:Optimize="2"</buildArg> &lt;!&ndash; 用于指定编译优化级别，2是默认  控制代码优化：b - 针对最快构建时间进行优化，s - 针对大小进行优化，0 - 无优化，1 - 基本优化，2 - 高级优化，3 - 所有优化以实现最佳性能。 &ndash;&gt;-->
 <!--                                <buildArg>-H:-CheckToolchain</buildArg>-->
 
                                 <!-- 下面两个参数用于在windows系统上用MSVC编译时，是的编译结果双击时不弹出cmd窗口 -->
@@ -187,8 +187,8 @@
                                 <!-- -H:NativeLinkerOption=/ENTRY:mainCRTStartup 告诉链接器入口点是 mainCRTStartup（适配 Java 的 main 函数）-->
                                 <!-- 如果编译使用MinGW，可以使用-H:CCompilerOption=-mwindows或者-H:NativeLinkerOption=-mwindows，未试过，不清楚效果 -->
                                 <!-- 其他操作系统未试过 -->
-                                <buildArg>-H:NativeLinkerOption=/SUBSYSTEM:WINDOWS</buildArg>
-                                <buildArg>-H:NativeLinkerOption=/ENTRY:mainCRTStartup</buildArg>
+<!--                                <buildArg>-H:NativeLinkerOption=/SUBSYSTEM:WINDOWS</buildArg>-->
+<!--                                <buildArg>-H:NativeLinkerOption=/ENTRY:mainCRTStartup</buildArg>-->
 
 
 <!--                               可以用这个参数看到更多辅助信息 native-image - -expert-options 两个-之间没有空格   -->
