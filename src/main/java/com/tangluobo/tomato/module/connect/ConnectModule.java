@@ -7,6 +7,8 @@ import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.VBox;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Region;
 import javafx.scene.Node;
 import javafx.geometry.Insets;
 import javafx.stage.Stage;
@@ -35,10 +37,19 @@ public class ConnectModule implements Module {
     public void loadSidebar(VBox sidebarContainer) {
         folderIcon = getSystemFolderIcon();
 
+        HBox headerBar = new HBox();
+        headerBar.setStyle("-fx-background-color: #ffffff; -fx-border-color: #D9D9D7; -fx-border-width: 0 0 1 0;");
+        headerBar.setPrefHeight(52);
+        headerBar.setMinHeight(52);
+        headerBar.setMaxHeight(52);
+        headerBar.setPadding(new Insets(10, 15, 10, 15));
+
         TextField searchField = new TextField();
         searchField.setPromptText("搜索");
         searchField.setStyle("-fx-background-color: #f0f0f0; -fx-border-radius: 6px; -fx-background-radius: 6px; -fx-padding: 6 10; -fx-font-size: 13px; -fx-border-color: transparent;");
-        VBox.setMargin(searchField, new Insets(10, 10, 10, 10));
+        searchField.prefWidthProperty().bind(headerBar.widthProperty());
+
+        headerBar.getChildren().add(searchField);
 
         treeView = new TreeView<>();
         treeView.setStyle("-fx-background-color: transparent;");
@@ -53,7 +64,7 @@ public class ConnectModule implements Module {
 
         setupContextMenu();
 
-        sidebarContainer.getChildren().addAll(searchField, treeView);
+        sidebarContainer.getChildren().addAll(headerBar, treeView);
         treeView.prefHeightProperty().bind(sidebarContainer.heightProperty().subtract(50));
     }
 

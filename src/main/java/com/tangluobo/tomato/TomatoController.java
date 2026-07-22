@@ -142,6 +142,9 @@ public class TomatoController {
         rootPane.setOnMouseExited(this::onMouseExited);
         rootPane.setOnMouseReleased(this::onMouseReleased);
 
+        divider2.setViewOrder(-1);
+        divider2.setMouseTransparent(false);
+
         setupDivider(divider2);
 
         loadModule(new ConnectModule());
