@@ -113,11 +113,7 @@ public class ConnectModule implements Module {
     }
 
     private TreeItem<String> createTreeItem(ConnectionConfig config) {
-        String displayName = config.getName();
-        if (config.getType() != null) {
-            displayName = config.getType().getDisplayName() + ": " + config.getName();
-        }
-        TreeItem<String> item = new TreeItem<>(displayName);
+        TreeItem<String> item = new TreeItem<>(config.getName());
         item.setGraphic(getIconForConfig(config));
         itemConfigMap.put(item, config);
         return item;
@@ -172,11 +168,19 @@ public class ConnectModule implements Module {
             MenuItem addConnection = new MenuItem("新建连接");
             addConnection.setOnAction(e -> handleAddConnection(selectedItem));
 
+            MenuItem editItem = new MenuItem("编辑");
+            editItem.setOnAction(e -> handleEdit(selectedItem));
+
             MenuItem deleteItem = new MenuItem("删除");
             deleteItem.setOnAction(e -> handleDelete(selectedItem));
 
             if (selectedItem != root) {
-                contextMenu.getItems().addAll(addFolder, addConnection, new SeparatorMenuItem(), deleteItem);
+                ConnectionConfig selectedConfig = itemConfigMap.get(selectedItem);
+                if (selectedConfig != null && selectedConfig.getType() != null) {
+                    contextMenu.getItems().addAll(addFolder, addConnection, new SeparatorMenuItem(), editItem, deleteItem);
+                } else {
+                    contextMenu.getItems().addAll(addFolder, addConnection, new SeparatorMenuItem(), deleteItem);
+                }
             } else {
                 contextMenu.getItems().addAll(addFolder, addConnection);
             }
@@ -190,7 +194,7 @@ public class ConnectModule implements Module {
                 if (selectedItem != null) {
                     ConnectionConfig config = itemConfigMap.get(selectedItem);
                     if (config != null && config.getType() != null) {
-                        handleConnect(config);
+                        handleEdit(selectedItem);
                     }
                 }
             }
@@ -253,6 +257,27 @@ public class ConnectModule implements Module {
         }
     }
 
+    private void handleEdit(TreeItem<String> item) {
+        ConnectionConfig existingConfig = itemConfigMap.get(item);
+        if (existingConfig == null || existingConfig.getType() == null) return;
+
+        Stage stage = getStage();
+        if (stage == null) return;
+
+        ConnectionConfigDialog dialog = new ConnectionConfigDialog(stage, existingConfig.getType(), existingConfig);
+        ConnectionConfig updatedConfig = dialog.showAndWait();
+        if (updatedConfig != null) {
+            connections.removeIf(c -> c.getId().equals(existingConfig.getId()));
+            connections.add(updatedConfig);
+            ConfigManager.saveConnections(connections);
+
+            itemConfigMap.remove(item);
+            itemConfigMap.put(item, updatedConfig);
+
+            item.setValue(updatedConfig.getName());
+        }
+    }
+
     private void handleDelete(TreeItem<String> item) {
         ConnectionConfig config = itemConfigMap.get(item);
         if (config != null) {
@@ -273,17 +298,6 @@ public class ConnectModule implements Module {
             }
             return false;
         });
-    }
-
-    private void handleConnect(ConnectionConfig config) {
-        Stage stage = getStage();
-        if (stage == null) return;
-
-        Alert alert = new Alert(Alert.AlertType.INFORMATION);
-        alert.setTitle("连接信息");
-        alert.setHeaderText("连接类型：" + config.getType().getDisplayName());
-        alert.setContentText("名称：" + config.getName() + "\n主机：" + config.getHost() + "\n端口：" + config.getPort() + "\n用户名：" + config.getUsername());
-        alert.showAndWait();
     }
 
     private Stage getStage() {
