@@ -20,12 +20,12 @@ module tomato {
     opens com.tangluobo.tomato.utils to com.google.gson, javafx.fxml;
     exports com.tangluobo.tomato.ssh;
     opens com.tangluobo.tomato.ssh to javafx.fxml;
-    exports com.tangluobo.tomato.zmodem;
-    exports com.tangluobo.tomato.zmodem.xfer.util;
-    exports com.tangluobo.tomato.zmodem.xfer.zm.util;
-    exports com.tangluobo.tomato.zmodem.xfer.zm.packet;
-    exports com.tangluobo.tomato.zmodem.xfer.zm.proto;
-    exports com.tangluobo.tomato.zmodem.xfer.io;
-    exports com.tangluobo.tomato.zmodem.zm.io;
-    exports com.tangluobo.tomato.zmodem.util;
+    exports com.tangluobo.tomato.ssh.zmodem;
+    exports com.tangluobo.tomato.ssh.zmodem.xfer.util;
+    exports com.tangluobo.tomato.ssh.zmodem.xfer.zm.util;
+    exports com.tangluobo.tomato.ssh.zmodem.xfer.zm.packet;
+    exports com.tangluobo.tomato.ssh.zmodem.xfer.zm.proto;
+    exports com.tangluobo.tomato.ssh.zmodem.xfer.io;
+    exports com.tangluobo.tomato.ssh.zmodem.zm.io;
+    exports com.tangluobo.tomato.ssh.zmodem.util;
 }

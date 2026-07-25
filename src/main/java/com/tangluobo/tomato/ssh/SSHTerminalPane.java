@@ -1,9 +1,9 @@
 package com.tangluobo.tomato.ssh;
 
-import com.tangluobo.tomato.zmodem.ZModem;
-import com.tangluobo.tomato.zmodem.util.CustomFile;
-import com.tangluobo.tomato.zmodem.util.FileAdapter;
-import com.tangluobo.tomato.zmodem.xfer.zm.util.ZModemCharacter;
+import com.tangluobo.tomato.ssh.zmodem.ZModem;
+import com.tangluobo.tomato.ssh.zmodem.util.CustomFile;
+import com.tangluobo.tomato.ssh.zmodem.util.FileAdapter;
+import com.tangluobo.tomato.ssh.zmodem.xfer.zm.util.ZModemCharacter;
 import javafx.application.Platform;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
@@ -28,9 +28,6 @@ import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
 import java.io.*;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
