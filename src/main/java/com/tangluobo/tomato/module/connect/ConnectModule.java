@@ -3,6 +3,7 @@ package com.tangluobo.tomato.module.connect;
 import com.tangluobo.tomato.module.Module;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
 import javafx.application.Platform;
+import javafx.collections.ObservableList;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
@@ -85,6 +86,7 @@ public class ConnectModule implements Module {
         root.setExpanded(true);
         treeView.setRoot(root);
         treeView.setShowRoot(false);
+        treeView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
 
         itemConfigMap = new HashMap<>();
         dbNodeDataMap = new HashMap<>();
@@ -334,6 +336,10 @@ public class ConnectModule implements Module {
                         MenuItem refreshItem = new MenuItem("刷新");
                         refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
                         contextMenu.getItems().add(refreshItem);
+                    } else if (dbData.getType() == DatabaseNodeData.NodeType.TABLE || dbData.getType() == DatabaseNodeData.NodeType.VIEW) {
+                        MenuItem deleteItem = new MenuItem("删除");
+                        deleteItem.setOnAction(e -> handleDeleteDbNodes());
+                        contextMenu.getItems().add(deleteItem);
                     }
                 } else {
                 ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
@@ -877,6 +883,133 @@ public class ConnectModule implements Module {
                 loadViewsForFolder(item, config, data.getDatabaseName());
             }
             default -> {}
+        }
+    }
+
+    /**
+     * 删除选中的表/视图节点（支持多选批量操作）
+     */
+    private void handleDeleteDbNodes() {
+        // 收集所有选中的 TABLE/VIEW 节点
+        ObservableList<TreeItem<String>> selectedItems = treeView.getSelectionModel().getSelectedItems();
+        List<TreeItem<String>> tableItems = new ArrayList<>();
+        List<TreeItem<String>> viewItems = new ArrayList<>();
+
+        for (TreeItem<String> item : selectedItems) {
+            DatabaseNodeData data = dbNodeDataMap.get(item);
+            if (data != null) {
+                if (data.getType() == DatabaseNodeData.NodeType.TABLE) {
+                    tableItems.add(item);
+                } else if (data.getType() == DatabaseNodeData.NodeType.VIEW) {
+                    viewItems.add(item);
+                }
+            }
+        }
+
+        if (tableItems.isEmpty() && viewItems.isEmpty()) return;
+
+        // 构建确认提示
+        StringBuilder msg = new StringBuilder("确定要删除以下对象吗？此操作不可恢复！\n\n");
+        if (!tableItems.isEmpty()) {
+            msg.append("表：\n");
+            for (TreeItem<String> item : tableItems) {
+                msg.append("  - ").append(item.getValue()).append("\n");
+            }
+        }
+        if (!viewItems.isEmpty()) {
+            msg.append("视图：\n");
+            for (TreeItem<String> item : viewItems) {
+                msg.append("  - ").append(item.getValue()).append("\n");
+            }
+        }
+
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("确认删除");
+        confirm.setHeaderText(null);
+        confirm.setContentText(msg.toString());
+
+        // 设置按钮文本更醒目
+        ButtonType deleteBtn = new ButtonType("确认删除");
+        confirm.getButtonTypes().setAll(deleteBtn, ButtonType.CANCEL);
+
+        Optional<ButtonType> result = confirm.showAndWait();
+        if (result.isEmpty() || result.get() != deleteBtn) return;
+
+        // 按连接配置+数据库分组处理
+        // 表删除
+        if (!tableItems.isEmpty()) {
+            Map<String, List<TreeItem<String>>> groupedTables = new HashMap<>();
+            for (TreeItem<String> item : tableItems) {
+                DatabaseNodeData data = dbNodeDataMap.get(item);
+                String key = data.getConnectionConfig().getId() + "|" + data.getDatabaseName();
+                groupedTables.computeIfAbsent(key, k -> new ArrayList<>()).add(item);
+            }
+            for (Map.Entry<String, List<TreeItem<String>>> entry : groupedTables.entrySet()) {
+                String[] parts = entry.getKey().split("\\|");
+                String configId = parts[0];
+                String dbName = parts[1];
+                List<String> tableNames = entry.getValue().stream()
+                    .map(TreeItem::getValue).toList();
+                ConnectionConfig cfg = connections.stream()
+                    .filter(c -> c.getId().equals(configId)).findFirst().orElse(null);
+                if (cfg == null) continue;
+
+                try {
+                    DatabaseService.dropTables(cfg, dbName, tableNames);
+                    Platform.runLater(() -> {
+                        for (TreeItem<String> item : entry.getValue()) {
+                            dbNodeDataMap.remove(item);
+                            item.getParent().getChildren().remove(item);
+                        }
+                    });
+                } catch (Exception e) {
+                    Platform.runLater(() -> {
+                        Alert err = new Alert(Alert.AlertType.ERROR);
+                        err.setTitle("删除失败");
+                        err.setHeaderText(null);
+                        err.setContentText(e.getMessage());
+                        err.showAndWait();
+                    });
+                }
+            }
+        }
+
+        // 视图删除
+        if (!viewItems.isEmpty()) {
+            Map<String, List<TreeItem<String>>> groupedViews = new HashMap<>();
+            for (TreeItem<String> item : viewItems) {
+                DatabaseNodeData data = dbNodeDataMap.get(item);
+                String key = data.getConnectionConfig().getId() + "|" + data.getDatabaseName();
+                groupedViews.computeIfAbsent(key, k -> new ArrayList<>()).add(item);
+            }
+            for (Map.Entry<String, List<TreeItem<String>>> entry : groupedViews.entrySet()) {
+                String[] parts = entry.getKey().split("\\|");
+                String configId = parts[0];
+                String dbName = parts[1];
+                List<String> viewNames = entry.getValue().stream()
+                    .map(TreeItem::getValue).toList();
+                ConnectionConfig cfg = connections.stream()
+                    .filter(c -> c.getId().equals(configId)).findFirst().orElse(null);
+                if (cfg == null) continue;
+
+                try {
+                    DatabaseService.dropViews(cfg, dbName, viewNames);
+                    Platform.runLater(() -> {
+                        for (TreeItem<String> item : entry.getValue()) {
+                            dbNodeDataMap.remove(item);
+                            item.getParent().getChildren().remove(item);
+                        }
+                    });
+                } catch (Exception e) {
+                    Platform.runLater(() -> {
+                        Alert err = new Alert(Alert.AlertType.ERROR);
+                        err.setTitle("删除失败");
+                        err.setHeaderText(null);
+                        err.setContentText(e.getMessage());
+                        err.showAndWait();
+                    });
+                }
+            }
         }
     }
 

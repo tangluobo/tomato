@@ -291,6 +291,76 @@ public class DatabaseService {
     }
 
     /**
+     * 删除多个表
+     * @return 成功删除的表名列表
+     */
+    public static List<String> dropTables(ConnectionConfig config, String databaseName, List<String> tableNames) throws Exception {
+        Connection conn = getConnection(config, databaseName);
+        List<String> dropped = new ArrayList<>();
+        List<String> errors = new ArrayList<>();
+        for (String tableName : tableNames) {
+            String sql = buildDropTableSql(config, databaseName, tableName);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.executeUpdate(sql);
+                dropped.add(tableName);
+            } catch (Exception e) {
+                errors.add(tableName + ": " + e.getMessage());
+            }
+        }
+        if (!errors.isEmpty()) {
+            throw new RuntimeException("部分表删除失败:\n" + String.join("\n", errors));
+        }
+        return dropped;
+    }
+
+    /**
+     * 删除多个视图
+     * @return 成功删除的视图名列表
+     */
+    public static List<String> dropViews(ConnectionConfig config, String databaseName, List<String> viewNames) throws Exception {
+        Connection conn = getConnection(config, databaseName);
+        List<String> dropped = new ArrayList<>();
+        List<String> errors = new ArrayList<>();
+        for (String viewName : viewNames) {
+            String sql = buildDropViewSql(config, databaseName, viewName);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.executeUpdate(sql);
+                dropped.add(viewName);
+            } catch (Exception e) {
+                errors.add(viewName + ": " + e.getMessage());
+            }
+        }
+        if (!errors.isEmpty()) {
+            throw new RuntimeException("部分视图删除失败:\n" + String.join("\n", errors));
+        }
+        return dropped;
+    }
+
+    /**
+     * 构建删除表SQL
+     */
+    private static String buildDropTableSql(ConnectionConfig config, String databaseName, String tableName) {
+        return switch (config.getType()) {
+            case MYSQL -> "DROP TABLE `" + databaseName + "`.`" + tableName + "`";
+            case POSTGRESQL -> "DROP TABLE \"" + databaseName + "\".\"" + tableName + "\"";
+            case ORACLE -> "DROP TABLE \"" + databaseName + "\".\"" + tableName + "\"";
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        };
+    }
+
+    /**
+     * 构建删除视图SQL
+     */
+    private static String buildDropViewSql(ConnectionConfig config, String databaseName, String viewName) {
+        return switch (config.getType()) {
+            case MYSQL -> "DROP VIEW `" + databaseName + "`.`" + viewName + "`";
+            case POSTGRESQL -> "DROP VIEW \"" + databaseName + "\".\"" + viewName + "\"";
+            case ORACLE -> "DROP VIEW \"" + databaseName + "\".\"" + viewName + "\"";
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        };
+    }
+
+    /**
      * 关闭指定连接配置的JDBC连接和SSH隧道
      */
     public static void closeConnection(String configId) {
