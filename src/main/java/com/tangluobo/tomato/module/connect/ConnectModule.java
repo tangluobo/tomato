@@ -500,6 +500,14 @@ public class ConnectModule implements Module {
         Tab tab = new Tab(config.getName());
         tab.setContent(terminalPane);
         tab.setUserData(config.getId());
+
+        // 标签右键菜单：复制会话
+        ContextMenu tabContextMenu = new ContextMenu();
+        MenuItem copySessionItem = new MenuItem("复制会话");
+        copySessionItem.setOnAction(e -> handleConnect(config));
+        tabContextMenu.getItems().add(copySessionItem);
+        tab.setContextMenu(tabContextMenu);
+
         // 标签关闭时断开连接
         tab.setOnClosed(e -> {
             terminalPane.disconnect();
@@ -717,6 +725,8 @@ public class ConnectModule implements Module {
         // 终端标签页
         terminalTabPane = new TabPane();
         terminalTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.ALL_TABS);
+        terminalTabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+        terminalTabPane.setFocusTraversable(false);
         VBox.setVgrow(terminalTabPane, javafx.scene.layout.Priority.ALWAYS);
         terminalTabPane.setVisible(false);
         terminalTabPane.setManaged(false);
