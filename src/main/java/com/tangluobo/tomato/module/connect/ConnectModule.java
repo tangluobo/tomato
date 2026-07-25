@@ -329,9 +329,12 @@ public class ConnectModule implements Module {
                 // 检查是否为数据库动态节点
                 DatabaseNodeData dbData = dbNodeDataMap.get(targetItem);
                 if (dbData != null) {
-                    MenuItem refreshItem = new MenuItem("刷新");
-                    refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
-                    contextMenu.getItems().add(refreshItem);
+                    // 只有数据库、表文件夹、视图文件夹节点显示刷新菜单，具体表和视图不需要
+                    if (dbData.getType() != DatabaseNodeData.NodeType.TABLE && dbData.getType() != DatabaseNodeData.NodeType.VIEW) {
+                        MenuItem refreshItem = new MenuItem("刷新");
+                        refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
+                        contextMenu.getItems().add(refreshItem);
+                    }
                 } else {
                 ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
                 if (targetConfig != null && targetConfig.getType() != null) {
@@ -752,7 +755,7 @@ public class ConnectModule implements Module {
                         dbNodeDataMap.put(tableItem, new DatabaseNodeData(DatabaseNodeData.NodeType.TABLE, tableName, config, dbName));
                         folderItem.getChildren().add(tableItem);
                     }
-                    folderItem.setExpanded(true);
+                    folderItem.setExpanded(false);
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> {
@@ -782,7 +785,7 @@ public class ConnectModule implements Module {
                         dbNodeDataMap.put(viewItem, new DatabaseNodeData(DatabaseNodeData.NodeType.VIEW, viewName, config, dbName));
                         folderItem.getChildren().add(viewItem);
                     }
-                    folderItem.setExpanded(true);
+                    folderItem.setExpanded(false);
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> {
