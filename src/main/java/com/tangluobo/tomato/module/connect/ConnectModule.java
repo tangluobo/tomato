@@ -35,6 +35,7 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 public class ConnectModule implements Module {
     private TreeView<String> treeView;
@@ -728,10 +729,58 @@ public class ConnectModule implements Module {
 
     private void handleDelete(TreeItem<String> item) {
         ConnectionConfig config = itemConfigMap.get(item);
-        if (config != null) {
-            removeConfigAndChildren(config.getId());
-            ConfigManager.saveConnections(connections);
-            loadTree();
+        if (config == null) return;
+
+        boolean isFolder = config.getType() == null;
+        boolean hasChildren = !item.getChildren().isEmpty();
+
+        if (isFolder && hasChildren) {
+            // 目录且有子节点：让用户选择保留子节点还是一起删除
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+            alert.setTitle("删除目录");
+            alert.setHeaderText("确定要删除目录 \"" + config.getName() + "\" 吗？");
+            alert.setContentText("该目录下包含子节点，请选择操作：");
+
+            ButtonType keepChildrenBtn = new ButtonType("保留子节点");
+            ButtonType deleteAllBtn = new ButtonType("连同子节点一起删除");
+            ButtonType cancelBtn = ButtonType.CANCEL;
+
+            alert.getButtonTypes().setAll(keepChildrenBtn, deleteAllBtn, cancelBtn);
+
+            Optional<ButtonType> result = alert.showAndWait();
+            if (result.isPresent()) {
+                if (result.get() == keepChildrenBtn) {
+                    // 只删除目录，子节点移到上级
+                    String parentId = config.getParentId();
+                    // 将子节点的parentId设为被删目录的parentId
+                    for (TreeItem<String> child : item.getChildren()) {
+                        ConnectionConfig childConfig = itemConfigMap.get(child);
+                        if (childConfig != null) {
+                            childConfig.setParentId(parentId);
+                        }
+                    }
+                    connections.removeIf(c -> c.getId().equals(config.getId()));
+                    ConfigManager.saveConnections(connections);
+                    loadTree();
+                } else if (result.get() == deleteAllBtn) {
+                    removeConfigAndChildren(config.getId());
+                    ConfigManager.saveConnections(connections);
+                    loadTree();
+                }
+                // CANCEL: 不做任何操作
+            }
+        } else {
+            // 连接节点或空目录：简单确认
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+            alert.setTitle("删除确认");
+            alert.setHeaderText("确定要删除 \"" + config.getName() + "\" 吗？");
+
+            Optional<ButtonType> result = alert.showAndWait();
+            if (result.isPresent() && result.get() == ButtonType.OK) {
+                removeConfigAndChildren(config.getId());
+                ConfigManager.saveConnections(connections);
+                loadTree();
+            }
         }
     }
 
