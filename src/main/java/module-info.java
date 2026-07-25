@@ -5,6 +5,9 @@ module tomato {
     requires com.google.gson;
     requires java.desktop;
     requires com.jcraft.jsch;
+    requires java.sql;
+    requires mysql.connector.j;
+    requires org.postgresql.jdbc;
 
     opens com.tangluobo.tomato to javafx.fxml;
     exports com.tangluobo.tomato;

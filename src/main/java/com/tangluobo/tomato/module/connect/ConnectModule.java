@@ -43,7 +43,13 @@ public class ConnectModule implements Module {
     private TreeItem<String> root;
     private List<ConnectionConfig> connections;
     private Map<TreeItem<String>, ConnectionConfig> itemConfigMap;
+    private Map<TreeItem<String>, DatabaseNodeData> dbNodeDataMap;
     private Image folderIcon;
+    private Image dbIcon;
+    private Image tableIcon;
+    private Image viewIcon;
+    private Image tableFolderIcon;
+    private Image viewFolderIcon;
     private TextField searchField;
 
     @Override
@@ -54,6 +60,7 @@ public class ConnectModule implements Module {
     @Override
     public void loadSidebar(VBox sidebarContainer) {
         folderIcon = getSystemFolderIcon();
+        loadDbIcons();
 
         HBox headerBar = new HBox();
         headerBar.setStyle("-fx-background-color: #ffffff; -fx-border-color: #D9D9D7; -fx-border-width: 0 0 1 0;");
@@ -80,6 +87,7 @@ public class ConnectModule implements Module {
         treeView.setShowRoot(false);
 
         itemConfigMap = new HashMap<>();
+        dbNodeDataMap = new HashMap<>();
         connections = ConfigManager.loadConnections();
         loadTree();
 
@@ -117,9 +125,33 @@ public class ConnectModule implements Module {
         }
     }
 
+    private void loadDbIcons() {
+        try { dbIcon = new Image(getClass().getResourceAsStream("/images/connect/database.png")); } catch (Exception e) { dbIcon = null; }
+        try { tableIcon = new Image(getClass().getResourceAsStream("/images/connect/table.png")); } catch (Exception e) { tableIcon = null; }
+        try { viewIcon = new Image(getClass().getResourceAsStream("/images/connect/view.png")); } catch (Exception e) { viewIcon = null; }
+        try { tableFolderIcon = new Image(getClass().getResourceAsStream("/images/connect/table_folder.png")); } catch (Exception e) { tableFolderIcon = null; }
+        try { viewFolderIcon = new Image(getClass().getResourceAsStream("/images/connect/view_folder.png")); } catch (Exception e) { viewFolderIcon = null; }
+    }
+
+    private ImageView getDbNodeIcon(DatabaseNodeData data) {
+        ImageView iv = new ImageView();
+        iv.setFitWidth(16);
+        iv.setFitHeight(16);
+        Image icon = switch (data.getType()) {
+            case DATABASE -> dbIcon;
+            case TABLES_FOLDER -> tableFolderIcon;
+            case VIEWS_FOLDER -> viewFolderIcon;
+            case TABLE -> tableIcon;
+            case VIEW -> viewIcon;
+        };
+        if (icon != null) iv.setImage(icon);
+        return iv;
+    }
+
     private void loadTree() {
         root.getChildren().clear();
         itemConfigMap.clear();
+        dbNodeDataMap.clear();
         for (ConnectionConfig config : connections) {
             if (config.getParentId() == null || config.getParentId().isEmpty()) {
                 TreeItem<String> item = createTreeItem(config);
@@ -294,6 +326,13 @@ public class ConnectModule implements Module {
                 addConnection.setOnAction(e -> handleAddConnection(root));
                 contextMenu.getItems().addAll(addFolder, addConnection);
             } else {
+                // 检查是否为数据库动态节点
+                DatabaseNodeData dbData = dbNodeDataMap.get(targetItem);
+                if (dbData != null) {
+                    MenuItem refreshItem = new MenuItem("刷新");
+                    refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
+                    contextMenu.getItems().add(refreshItem);
+                } else {
                 ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
                 if (targetConfig != null && targetConfig.getType() != null) {
                     // 具体连接节点：只能连接、编辑、删除，不能创建子节点
@@ -314,6 +353,7 @@ public class ConnectModule implements Module {
                     deleteItem.setOnAction(e -> handleDelete(targetItem));
                     contextMenu.getItems().addAll(addFolder, addConnection, new SeparatorMenuItem(), deleteItem);
                 }
+                }
             }
 
             contextMenu.show(treeView, event.getScreenX(), event.getScreenY());
@@ -325,9 +365,23 @@ public class ConnectModule implements Module {
             if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 2) {
                 TreeItem<String> selectedItem = treeView.getSelectionModel().getSelectedItem();
                 if (selectedItem != null) {
+                    // 检查是否为数据库动态节点
+                    DatabaseNodeData dbData = dbNodeDataMap.get(selectedItem);
+                    if (dbData != null) {
+                        handleDbNodeDoubleClick(selectedItem, dbData);
+                        return;
+                    }
+                    // 检查是否为连接配置节点
                     ConnectionConfig config = itemConfigMap.get(selectedItem);
                     if (config != null && config.getType() != null) {
-                        handleConnect(config);
+                        boolean isDatabase = config.getType() == ConnectType.MYSQL
+                            || config.getType() == ConnectType.POSTGRESQL
+                            || config.getType() == ConnectType.ORACLE;
+                        if (isDatabase) {
+                            handleDbHostDoubleClick(selectedItem, config);
+                        } else {
+                            handleConnect(config);
+                        }
                     }
                 }
             }
@@ -560,6 +614,236 @@ public class ConnectModule implements Module {
     }
 
     /**
+     * 双击数据库主机节点：连接数据库并加载数据库列表
+     */
+    private void handleDbHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
+        // 如果已连接且已展开，则折叠
+        if (!hostItem.getChildren().isEmpty()) {
+            hostItem.setExpanded(!hostItem.isExpanded());
+            return;
+        }
+
+        // 如果需要密码但未保存，弹出密码输入框
+        if (config.getPassword() == null) {
+            Dialog<String> pwdDialog = new Dialog<>();
+            pwdDialog.setTitle("输入密码");
+            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
+            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+            GridPane grid = new GridPane();
+            grid.setHgap(10);
+            grid.setVgap(10);
+            grid.setPadding(new Insets(20, 10, 10, 10));
+            PasswordField pf = new PasswordField();
+            pf.setPrefWidth(250);
+            grid.add(new Label("密码："), 0, 0);
+            grid.add(pf, 1, 0);
+            pwdDialog.getDialogPane().setContent(grid);
+            pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
+            final String[] passwordHolder = new String[1];
+            pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
+            if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
+            config.setPassword(passwordHolder[0]);
+        }
+
+        // 异步连接并加载数据库列表
+        new Thread(() -> {
+            try {
+                List<String> databases = DatabaseService.getDatabases(config);
+                Platform.runLater(() -> {
+                    // 更新主机节点图标为已连接状态
+                    updateHostIcon(hostItem, config, true);
+
+                    hostItem.getChildren().clear();
+                    for (String dbName : databases) {
+                        TreeItem<String> dbItem = new TreeItem<>(dbName);
+                        dbItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.DATABASE, dbName, config, dbName)));
+                        dbNodeDataMap.put(dbItem, new DatabaseNodeData(DatabaseNodeData.NodeType.DATABASE, dbName, config, dbName));
+                        hostItem.getChildren().add(dbItem);
+                    }
+                    hostItem.setExpanded(true);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("连接失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法连接到 " + config.getName() + ": " + e.getMessage());
+                    alert.showAndWait();
+                });
+                e.printStackTrace();
+            }
+        }, "DB-LoadDatabases").start();
+    }
+
+    /**
+     * 双击数据库动态节点：根据节点类型加载子节点
+     */
+    private void handleDbNodeDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
+        switch (data.getType()) {
+            case DATABASE -> handleDatabaseDoubleClick(item, data);
+            case TABLES_FOLDER -> handleTablesFolderDoubleClick(item, data);
+            case VIEWS_FOLDER -> handleViewsFolderDoubleClick(item, data);
+            default -> {} // TABLE, VIEW 不做处理
+        }
+    }
+
+    /**
+     * 双击数据库节点：加载"表"和"视图"文件夹节点
+     */
+    private void handleDatabaseDoubleClick(TreeItem<String> dbItem, DatabaseNodeData data) {
+        if (!dbItem.getChildren().isEmpty()) {
+            dbItem.setExpanded(!dbItem.isExpanded());
+            return;
+        }
+
+        ConnectionConfig config = data.getConnectionConfig();
+
+        // 添加"表"和"视图"文件夹节点
+        TreeItem<String> tablesFolder = new TreeItem<>("表");
+        tablesFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.TABLES_FOLDER, "表", config, data.getDatabaseName())));
+        dbNodeDataMap.put(tablesFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.TABLES_FOLDER, "表", config, data.getDatabaseName()));
+
+        TreeItem<String> viewsFolder = new TreeItem<>("视图");
+        viewsFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.VIEWS_FOLDER, "视图", config, data.getDatabaseName())));
+        dbNodeDataMap.put(viewsFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.VIEWS_FOLDER, "视图", config, data.getDatabaseName()));
+
+        dbItem.getChildren().addAll(tablesFolder, viewsFolder);
+        dbItem.setExpanded(true);
+
+        // 自动加载表和视图
+        loadTablesForFolder(tablesFolder, config, data.getDatabaseName());
+        loadViewsForFolder(viewsFolder, config, data.getDatabaseName());
+    }
+
+    /**
+     * 双击"表"文件夹节点：加载表列表
+     */
+    private void handleTablesFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
+        if (!folderItem.getChildren().isEmpty()) {
+            folderItem.setExpanded(!folderItem.isExpanded());
+            return;
+        }
+        loadTablesForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName());
+    }
+
+    /**
+     * 双击"视图"文件夹节点：加载视图列表
+     */
+    private void handleViewsFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
+        if (!folderItem.getChildren().isEmpty()) {
+            folderItem.setExpanded(!folderItem.isExpanded());
+            return;
+        }
+        loadViewsForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName());
+    }
+
+    /**
+     * 异步加载表列表到指定文件夹节点
+     */
+    private void loadTablesForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName) {
+        new Thread(() -> {
+            try {
+                List<String> tables = DatabaseService.getTables(config, dbName);
+                Platform.runLater(() -> {
+                    folderItem.getChildren().clear();
+                    for (String tableName : tables) {
+                        TreeItem<String> tableItem = new TreeItem<>(tableName);
+                        tableItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.TABLE, tableName, config, dbName)));
+                        dbNodeDataMap.put(tableItem, new DatabaseNodeData(DatabaseNodeData.NodeType.TABLE, tableName, config, dbName));
+                        folderItem.getChildren().add(tableItem);
+                    }
+                    folderItem.setExpanded(true);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("加载失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法加载表列表: " + e.getMessage());
+                    alert.showAndWait();
+                });
+                e.printStackTrace();
+            }
+        }, "DB-LoadTables").start();
+    }
+
+    /**
+     * 异步加载视图列表到指定文件夹节点
+     */
+    private void loadViewsForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName) {
+        new Thread(() -> {
+            try {
+                List<String> views = DatabaseService.getViews(config, dbName);
+                Platform.runLater(() -> {
+                    folderItem.getChildren().clear();
+                    for (String viewName : views) {
+                        TreeItem<String> viewItem = new TreeItem<>(viewName);
+                        viewItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.VIEW, viewName, config, dbName)));
+                        dbNodeDataMap.put(viewItem, new DatabaseNodeData(DatabaseNodeData.NodeType.VIEW, viewName, config, dbName));
+                        folderItem.getChildren().add(viewItem);
+                    }
+                    folderItem.setExpanded(true);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("加载失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法加载视图列表: " + e.getMessage());
+                    alert.showAndWait();
+                });
+                e.printStackTrace();
+            }
+        }, "DB-LoadViews").start();
+    }
+
+    /**
+     * 更新主机节点图标（连接/断开状态）
+     */
+    private void updateHostIcon(TreeItem<String> hostItem, ConnectionConfig config, boolean connected) {
+        ImageView imageView = new ImageView();
+        imageView.setFitWidth(16);
+        imageView.setFitHeight(16);
+        try {
+            String iconPath = config.getType().getIconPath();
+            Image icon = new Image(getClass().getResourceAsStream(iconPath));
+            if (icon != null) {
+                imageView.setImage(icon);
+                // 已连接状态加绿色透明遮罩效果
+                if (connected) {
+                    imageView.setStyle("-fx-effect: dropshadow(gaussian, #4CAF50, 2, 0.5, 0, 0);");
+                }
+            }
+        } catch (Exception e) {
+            // fallback
+        }
+        hostItem.setGraphic(imageView);
+    }
+
+    /**
+     * 刷新数据库动态节点
+     */
+    private void handleRefreshDbNode(TreeItem<String> item, DatabaseNodeData data) {
+        ConnectionConfig config = data.getConnectionConfig();
+        switch (data.getType()) {
+            case DATABASE -> {
+                item.getChildren().clear();
+                // 重新加载表和视图文件夹
+                handleDatabaseDoubleClick(item, data);
+            }
+            case TABLES_FOLDER -> {
+                item.getChildren().clear();
+                loadTablesForFolder(item, config, data.getDatabaseName());
+            }
+            case VIEWS_FOLDER -> {
+                item.getChildren().clear();
+                loadViewsForFolder(item, config, data.getDatabaseName());
+            }
+            default -> {}
+        }
+    }
+
+    /**
      * 处理连接，以标签方式打开终端
      */
     private void handleConnect(ConnectionConfig config) {
@@ -579,13 +863,17 @@ public class ConnectModule implements Module {
             }
         }
 
-        // 数据库类型连接：先建立SSH通道（如果启用），再连接数据库
+        // 数据库类型连接：通过树节点加载数据库列表
         boolean isDatabase = config.getType() == ConnectType.MYSQL
             || config.getType() == ConnectType.POSTGRESQL
             || config.getType() == ConnectType.ORACLE;
 
         if (isDatabase) {
-            handleDatabaseConnect(config);
+            // 找到对应的主机树节点并触发展开
+            TreeItem<String> hostItem = findItemById(root, config.getId());
+            if (hostItem != null) {
+                handleDbHostDoubleClick(hostItem, config);
+            }
             return;
         }
 

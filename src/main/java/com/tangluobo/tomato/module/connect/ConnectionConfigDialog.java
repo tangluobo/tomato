@@ -46,8 +46,6 @@ public class ConnectionConfigDialog {
     private TextField usernameField;
     private PasswordField passwordField;
     private CheckBox savePasswordCheckBox;
-    private TextField databaseField;
-    private Label dbLabel;
     private TextField descriptionField;
 
     // SSH通道字段
@@ -310,14 +308,6 @@ public class ConnectionConfigDialog {
         savePasswordCheckBox.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
         pwdBox.getChildren().addAll(passwordField, savePasswordCheckBox);
         grid.add(pwdBox, 1, row++);
-
-        // 数据库
-        dbLabel = new Label("数据库：");
-        grid.add(dbLabel, 0, row);
-        databaseField = new TextField();
-        databaseField.setPromptText("数据库名称");
-        databaseField.setPrefWidth(280);
-        grid.add(databaseField, 1, row++);
 
         grid.add(new Label("备注："), 0, row);
         descriptionField = new TextField();
@@ -762,13 +752,6 @@ public class ConnectionConfigDialog {
         simpleConfigContent.setManaged(!isDatabase && !isSSH);
 
         if (isDatabase) {
-            // 数据库字段可见性
-            boolean needDb = selectedType == ConnectType.MYSQL || selectedType == ConnectType.POSTGRESQL;
-            databaseField.setVisible(needDb);
-            databaseField.setManaged(needDb);
-            dbLabel.setVisible(needDb);
-            dbLabel.setManaged(needDb);
-
             // 设置默认端口
             if (portField.getText().isEmpty()) {
                 portField.setText(String.valueOf(getDefaultPort(selectedType)));
@@ -810,9 +793,6 @@ public class ConnectionConfigDialog {
             }
             savePasswordCheckBox.setSelected(existingConfig.isSavePassword());
 
-            if (existingConfig.getDatabase() != null) {
-                databaseField.setText(existingConfig.getDatabase());
-            }
             descriptionField.setText(existingConfig.getDescription());
 
             // SSH通道配置
@@ -911,7 +891,6 @@ public class ConnectionConfigDialog {
             } else {
                 config.setPassword(null);
             }
-            config.setDatabase(databaseField.getText().trim());
             config.setDescription(descriptionField.getText().trim());
 
             // SSH通道配置
