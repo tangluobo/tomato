@@ -52,8 +52,15 @@ public class TerminalEmulator {
     // ANSI解析状态
     private ParseState parseState = ParseState.NORMAL;
     private StringBuilder escapeSeq = new StringBuilder();
+    private StringBuilder oscSeq = new StringBuilder();
     // 响应回调（发送数据回SSH服务器）
     private ResponseHandler responseHandler;
+
+    // 工作目录变化回调
+    public interface CwdChangeListener {
+        void onCwdChanged(String path);
+    }
+    private CwdChangeListener cwdChangeListener;
     // 调试输出
     private java.util.function.Consumer<String> debugWriter;
     // 当前属性
@@ -144,6 +151,10 @@ public class TerminalEmulator {
 
     public void setDebugWriter(java.util.function.Consumer<String> writer) {
         this.debugWriter = writer;
+    }
+
+    public void setCwdChangeListener(CwdChangeListener listener) {
+        this.cwdChangeListener = listener;
     }
 
     private void sendResponse(String data) {
@@ -356,6 +367,7 @@ public class TerminalEmulator {
         } else if (ch == ']') {
             parseState = ParseState.OSC;
             escapeSeq.setLength(0);
+            oscSeq.setLength(0);
         } else if (ch == '7') {
             savedCursorX = cursorX;
             savedCursorY = cursorY;
@@ -402,12 +414,45 @@ public class TerminalEmulator {
     }
 
     private void processOscChar(char ch) {
-        if (ch == 0x1b) {
-            parseState = ParseState.ESC;
-        } else if (ch == 7) { // BEL结束OSC
+        if (ch == 7) { // BEL结束OSC
+            processOscSequence(oscSeq.toString());
             parseState = ParseState.NORMAL;
-        } else if (ch == '\033') {
+        } else if (ch == 0x1b || ch == '\033') {
+            // ST = ESC \ 结束OSC
+            if (oscSeq.length() > 0 && oscSeq.charAt(oscSeq.length() - 1) == '\\') {
+                processOscSequence(oscSeq.substring(0, oscSeq.length() - 1));
+            }
             parseState = ParseState.ESC;
+        } else {
+            oscSeq.append(ch);
+        }
+    }
+
+    private void processOscSequence(String seq) {
+        // OSC 7: 设置工作目录  \e]7;file://HOST/PATH\a
+        if (seq.startsWith("7;")) {
+            String url = seq.substring(2);
+            if (url.startsWith("file://")) {
+                // 解析 file://HOST/PATH
+                String pathPart = url.substring(7);
+                int slashIdx = pathPart.indexOf('/');
+                if (slashIdx >= 0) {
+                    String path = pathPart.substring(slashIdx);
+                    if (cwdChangeListener != null) {
+                        cwdChangeListener.onCwdChanged(path);
+                    }
+                } else {
+                    // file://PATH (无HOST)
+                    if (cwdChangeListener != null) {
+                        cwdChangeListener.onCwdChanged("/" + pathPart);
+                    }
+                }
+            } else if (!url.isEmpty()) {
+                // 纯路径
+                if (cwdChangeListener != null) {
+                    cwdChangeListener.onCwdChanged(url);
+                }
+            }
         }
     }
 

@@ -68,6 +68,13 @@ public class SSHSession {
         return outputStream;
     }
 
+    /**
+     * 获取JSch Session对象（用于SFTP等子通道）
+     */
+    public Session getJschSession() {
+        return session;
+    }
+
     public boolean isConnected() {
         return connected && channel != null && channel.isConnected();
     }

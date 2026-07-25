@@ -5,10 +5,13 @@ import com.tangluobo.tomato.zmodem.util.CustomFile;
 import com.tangluobo.tomato.zmodem.util.FileAdapter;
 import com.tangluobo.tomato.zmodem.xfer.zm.util.ZModemCharacter;
 import javafx.application.Platform;
+import javafx.scene.control.Button;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.input.Clipboard;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
@@ -31,7 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * SSH终端组件，使用VT100终端模拟器，支持ZModem协议（rz/sz文件传输）
- * 继承BorderPane，中间放终端，底部放状态栏
+ * 继承BorderPane，中间放终端，底部放状态栏，右侧可展开SFTP文件浏览器
  */
 public class SSHTerminalPane extends BorderPane {
 
@@ -68,6 +71,15 @@ public class SSHTerminalPane extends BorderPane {
     private final Label statusLabel;
     private final Label encodingLabel;
     private final Circle statusDot;
+    private final Button folderBtn;
+
+    // 终端容器
+    private final Pane terminalPane;
+
+    // SFTP文件浏览器
+    private SFTPFileBrowser fileBrowser;
+    private SFTPClient sftpClient;
+    private boolean fileBrowserVisible = false;
 
     // 连接信息
     private String host;
@@ -98,10 +110,24 @@ public class SSHTerminalPane extends BorderPane {
         encodingLabel = new Label("UTF-8");
         encodingLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
 
-        statusBar.getChildren().addAll(statusDot, statusLabel, spacer, encodingLabel);
+        // 文件夹图标按钮
+        folderBtn = new Button();
+        folderBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
+        try {
+            Image folderImg = new Image(getClass().getResourceAsStream("/images/connect/folder.png"));
+            ImageView folderIcon = new ImageView(folderImg);
+            folderIcon.setFitWidth(14);
+            folderIcon.setFitHeight(14);
+            folderBtn.setGraphic(folderIcon);
+        } catch (Exception e) {
+            folderBtn.setText("📁");
+        }
+        folderBtn.setOnAction(e -> toggleFileBrowser());
+
+        statusBar.getChildren().addAll(statusDot, statusLabel, spacer, encodingLabel, folderBtn);
 
         // 终端区域用Pane包裹，保留原来的layoutChildren逻辑
-        Pane terminalPane = new Pane() {
+        terminalPane = new Pane() {
             @Override
             protected void layoutChildren() {
                 super.layoutChildren();
@@ -143,6 +169,13 @@ public class SSHTerminalPane extends BorderPane {
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
+            }
+        });
+
+        // 设置OSC7目录变化回调，通知文件浏览器跟随
+        emulator.setCwdChangeListener(path -> {
+            if (fileBrowser != null) {
+                fileBrowser.onTerminalCwdChanged(path);
             }
         });
 
@@ -213,6 +246,31 @@ public class SSHTerminalPane extends BorderPane {
                 contextMenu.hide();
             }
         });
+    }
+
+    /**
+     * 切换文件浏览器显示
+     */
+    private void toggleFileBrowser() {
+        if (fileBrowserVisible) {
+            // 关闭文件浏览器
+            if (fileBrowser != null) {
+                getChildren().remove(fileBrowser);
+            }
+            fileBrowserVisible = false;
+            folderBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
+        } else {
+            // 打开文件浏览器
+            if (sshSession == null || !sshSession.isConnected()) return;
+            if (fileBrowser == null) {
+                sftpClient = new SFTPClient();
+                fileBrowser = new SFTPFileBrowser(sshSession, sftpClient);
+            }
+            setRight(fileBrowser);
+            fileBrowser.initConnection();
+            fileBrowserVisible = true;
+            folderBtn.setStyle("-fx-background-color: #e0e0e0; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand; -fx-border-radius: 3;");
+        }
     }
 
     /**
@@ -303,10 +361,20 @@ public class SSHTerminalPane extends BorderPane {
         if (readThread != null) {
             readThread.interrupt();
         }
+        if (sftpClient != null) {
+            sftpClient.disconnect();
+        }
         if (sshSession != null) {
             sshSession.disconnect();
             sshSession = null;
         }
+        // 关闭文件浏览器
+        if (fileBrowser != null) {
+            getChildren().remove(fileBrowser);
+        }
+        fileBrowserVisible = false;
+        fileBrowser = null;
+        sftpClient = null;
         updateStatusBar("已断开");
     }
 
@@ -321,6 +389,9 @@ public class SSHTerminalPane extends BorderPane {
         new Thread(() -> {
             try {
                 // 清理旧会话
+                if (sftpClient != null) {
+                    sftpClient.disconnect();
+                }
                 if (sshSession != null) {
                     sshSession.disconnect();
                     sshSession = null;
@@ -338,6 +409,16 @@ public class SSHTerminalPane extends BorderPane {
                 sshSession.resize(emulator.getCols(), emulator.getRows(),
                         (int) terminalView.getCharWidth() * emulator.getCols(),
                         (int) terminalView.getCharHeight() * emulator.getRows());
+
+                // 如果文件浏览器打开，重新初始化SFTP
+                if (fileBrowserVisible && fileBrowser != null) {
+                    sftpClient = new SFTPClient();
+                    fileBrowser = new SFTPFileBrowser(sshSession, sftpClient);
+                    Platform.runLater(() -> {
+                        setRight(fileBrowser);
+                        fileBrowser.initConnection();
+                    });
+                }
 
                 Platform.runLater(() -> {
                     emulator.process(("\r\n[重新连接成功]\r\n").getBytes());
