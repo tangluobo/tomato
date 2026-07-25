@@ -152,6 +152,42 @@ public class SFTPFileBrowser extends BorderPane {
     }
 
     /**
+     * 创建导航按钮图标
+     */
+    private ImageView createNavIcon(String type, String bgColor, String fgColor) {
+        int size = 18;
+        Canvas canvas = new Canvas(size, size);
+        GraphicsContext gc = canvas.getGraphicsContext2D();
+
+        if ("/".equals(type)) {
+            // 根目录图标：带横线的房子形状
+            gc.setFill(Color.valueOf(bgColor));
+            // 房子三角屋顶
+            gc.fillPolygon(new double[]{9, 2, 16}, new double[]{2, 9, 9}, 3);
+            // 房子主体
+            gc.fillRect(4, 9, 10, 7);
+            // 门（留白）
+            gc.setFill(Color.valueOf(fgColor));
+            gc.fillRect(7, 11, 4, 5);
+        } else {
+            // 上级目录图标：带箭头的文件夹
+            gc.setFill(Color.valueOf(bgColor));
+            gc.fillRoundRect(1, 5, 14, 9, 2, 2);
+            gc.fillRoundRect(1, 2, 6, 4, 2, 2);
+            // 上箭头
+            gc.setFill(Color.valueOf(fgColor));
+            gc.fillPolygon(new double[]{8, 11.5, 14}, new double[]{3, 0, 3}, 3);
+            gc.fillRect(10.5, 3, 1.5, 5);
+        }
+
+        Image img = canvas.snapshot(null, null);
+        ImageView iv = new ImageView(img);
+        iv.setFitWidth(16);
+        iv.setFitHeight(16);
+        return iv;
+    }
+
+    /**
      * 根据文件名获取对应图标（优先系统图标，后备生成图标）
      */
     private Image getFileIcon(String fileName) {
@@ -187,12 +223,36 @@ public class SFTPFileBrowser extends BorderPane {
 
         topBar.getChildren().addAll(followTerminalCheck, spacer, refreshBtn, uploadBtn);
 
-        // 路径输入框
+        // 路径栏：根目录按钮 + 上级目录按钮 + 路径输入框
+        HBox pathBar = new HBox(2);
+        pathBar.setStyle("-fx-alignment: center-left; -fx-padding: 2 4;");
+
+        Button rootBtn = new Button();
+        rootBtn.setGraphic(createNavIcon("/", "#78909C", "#546E7A"));
+        rootBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2; -fx-border-color: transparent; -fx-cursor: hand; -fx-border-radius: 3;");
+        rootBtn.setTooltip(new Tooltip("根目录"));
+        rootBtn.setOnAction(e -> navigateTo("/"));
+
+        Button parentBtn = new Button();
+        parentBtn.setGraphic(createNavIcon("↑", "#78909C", "#546E7A"));
+        parentBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2; -fx-border-color: transparent; -fx-cursor: hand; -fx-border-radius: 3;");
+        parentBtn.setTooltip(new Tooltip("上级目录"));
+        parentBtn.setOnAction(e -> {
+            if (currentPath != null && !currentPath.equals("/")) {
+                int lastSlash = currentPath.lastIndexOf('/');
+                String parent = lastSlash <= 0 ? "/" : currentPath.substring(0, lastSlash);
+                navigateTo(parent);
+            }
+        });
+
         pathField = new TextField("/");
         pathField.setStyle("-fx-font-size: 11px; -fx-padding: 3 6; -fx-background-color: #fff; -fx-border-color: #ddd; -fx-border-radius: 3;");
+        HBox.setHgrow(pathField, Priority.ALWAYS);
         pathField.setOnAction(e -> navigateTo(pathField.getText().trim()));
 
-        VBox topBox = new VBox(topBar, pathField);
+        pathBar.getChildren().addAll(rootBtn, parentBtn, pathField);
+
+        VBox topBox = new VBox(topBar, pathBar);
         topBox.setStyle("-fx-border-color: #e0e0e0; -fx-border-width: 0 0 1 0;");
 
         // 文件列表
