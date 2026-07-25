@@ -13,10 +13,19 @@ import javafx.scene.input.MouseEvent;
 import javafx.scene.input.TransferMode;
 import javafx.scene.layout.VBox;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.Region;
 import javafx.scene.Node;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.LineTo;
+import javafx.scene.shape.MoveTo;
+import javafx.scene.shape.Path;
+import javafx.scene.shape.StrokeLineCap;
+import javafx.scene.shape.StrokeLineJoin;
 import javafx.geometry.Insets;
+import javafx.geometry.Pos;
 import javafx.stage.Stage;
+import javafx.beans.value.ChangeListener;
 import javafx.embed.swing.SwingFXUtils;
 
 import javax.swing.filechooser.FileSystemView;
@@ -165,8 +174,16 @@ public class ConnectModule implements Module {
 
     private VBox contentArea;
 
+    private ContextMenu contextMenu;
+
     private void setupContextMenu() {
+        contextMenu = new ContextMenu();
+
         treeView.setOnContextMenuRequested(event -> {
+            // 先隐藏旧菜单
+            contextMenu.hide();
+            contextMenu.getItems().clear();
+
             // 判断右键是否点击在某个节点上，还是空白区域
             Node node = event.getPickResult().getIntersectedNode();
             TreeItem<String> clickedItem = null;
@@ -180,8 +197,6 @@ public class ConnectModule implements Module {
 
             // 只有明确点击在节点上时才作为选中项，否则为null（代表根级）
             final TreeItem<String> targetItem = clickedItem;
-
-            ContextMenu contextMenu = new ContextMenu();
 
             if (targetItem == null) {
                 // 空白区域右键：以root为父级，可创建根下的目录和连接
@@ -216,6 +231,8 @@ public class ConnectModule implements Module {
             contextMenu.show(treeView, event.getScreenX(), event.getScreenY());
         });
 
+        treeView.setOnMousePressed(event -> contextMenu.hide());
+
         treeView.setOnMouseClicked(event -> {
             if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 2) {
                 TreeItem<String> selectedItem = treeView.getSelectionModel().getSelectedItem();
@@ -234,8 +251,41 @@ public class ConnectModule implements Module {
     private void setupDragAndDrop() {
         treeView.setCellFactory(tv -> {
             TreeCell<String> cell = new TreeCell<>() {
+                private final Path arrowPath;
+                private final StackPane disclosurePane;
+                private TreeItem<String> currentTreeItem;
+                private ChangeListener<Boolean> expandedListener;
+
+                {
+                    // 创建自定义展开/折叠箭头
+                    arrowPath = new Path(
+                        new MoveTo(2, 0),
+                        new LineTo(7, 5),
+                        new LineTo(2, 10)
+                    );
+                    arrowPath.setStroke(Color.valueOf("#888888"));
+                    arrowPath.setStrokeWidth(1.8);
+                    arrowPath.setFill(null);
+                    arrowPath.setStrokeLineCap(StrokeLineCap.ROUND);
+                    arrowPath.setStrokeLineJoin(StrokeLineJoin.ROUND);
+
+                    disclosurePane = new StackPane(arrowPath);
+                    disclosurePane.setAlignment(Pos.CENTER);
+                    disclosurePane.setPrefSize(16, 35);
+                    disclosurePane.setMinSize(16, 35);
+
+                    setDisclosureNode(disclosurePane);
+                }
+
                 @Override
                 protected void updateItem(String item, boolean empty) {
+                    // 清理旧监听
+                    if (currentTreeItem != null && expandedListener != null) {
+                        currentTreeItem.expandedProperty().removeListener(expandedListener);
+                        expandedListener = null;
+                    }
+                    currentTreeItem = null;
+
                     super.updateItem(item, empty);
                     if (empty || item == null) {
                         setText(null);
@@ -245,6 +295,12 @@ public class ConnectModule implements Module {
                         TreeItem<String> treeItem = getTreeItem();
                         if (treeItem != null) {
                             setGraphic(treeItem.getGraphic());
+                            // 更新箭头方向
+                            arrowPath.setRotate(treeItem.isExpanded() ? 90 : 0);
+                            currentTreeItem = treeItem;
+                            expandedListener = (obs, wasExpanded, isExpanded) ->
+                                arrowPath.setRotate(isExpanded ? 90 : 0);
+                            treeItem.expandedProperty().addListener(expandedListener);
                         }
                     }
                 }

@@ -4,7 +4,7 @@
     -fx-text-fill: black;
 }
 
-.tree-cell:hover {
+.tree-cell:filled:hover {
     -fx-background-color: #DDF2DB;
     -fx-text-fill: black;
 }
