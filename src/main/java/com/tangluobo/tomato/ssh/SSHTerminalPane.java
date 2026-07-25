@@ -17,6 +17,7 @@ import javafx.scene.control.SplitPane;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.Clipboard;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
@@ -303,7 +304,8 @@ public class SSHTerminalPane extends BorderPane {
             }
         });
         // Canvas会拦截鼠标事件，需要在terminalView上也监听
-        terminalView.setOnMousePressed(e -> {
+        // 使用addEventHandler而非setOnMousePressed，避免覆盖TerminalView中的选择逻辑
+        terminalView.addEventHandler(MouseEvent.MOUSE_PRESSED, e -> {
             if (contextMenu.isShowing()) {
                 contextMenu.hide();
             }
