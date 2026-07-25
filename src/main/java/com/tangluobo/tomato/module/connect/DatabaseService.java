@@ -1,10 +1,7 @@
 package com.tangluobo.tomato.module.connect;
 
 import java.sql.*;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -358,6 +355,74 @@ public class DatabaseService {
             case ORACLE -> "DROP VIEW \"" + databaseName + "\".\"" + viewName + "\"";
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
+    }
+
+    /**
+     * 创建数据库
+     */
+    public static void createDatabase(ConnectionConfig config, String databaseName, String charset, String collation) throws Exception {
+        String sql = buildCreateDatabaseSql(config, databaseName, charset, collation);
+        Connection conn = getConnection(config);
+        try (Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(sql);
+        }
+    }
+
+    /**
+     * 获取服务器支持的字符集及对应排序规则
+     */
+    public static Map<String, List<String>> getCharsets(ConnectionConfig config) throws Exception {
+        Connection conn = getConnection(config);
+        Map<String, List<String>> result = new LinkedHashMap<>();
+
+        if (config.getType() == ConnectType.MYSQL) {
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery("SELECT CHARACTER_SET_NAME, COLLATION_NAME FROM information_schema.COLLATIONS ORDER BY CHARACTER_SET_NAME, COLLATION_NAME")) {
+                while (rs.next()) {
+                    String charsetName = rs.getString("CHARACTER_SET_NAME");
+                    String collationName = rs.getString("COLLATION_NAME");
+                    result.computeIfAbsent(charsetName, k -> new ArrayList<>()).add(collationName);
+                }
+            }
+        } else if (config.getType() == ConnectType.POSTGRESQL) {
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery("SELECT DISTINCT encodingname, collation_name FROM pg_collation c JOIN pg_encodings e ON c.collencoding = e.encoding ORDER BY encodingname, collation_name")) {
+                while (rs.next()) {
+                    String charsetName = rs.getString("encodingname");
+                    String collationName = rs.getString("collation_name");
+                    result.computeIfAbsent(charsetName, k -> new ArrayList<>()).add(collationName);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * 构建创建数据库SQL
+     */
+    private static String buildCreateDatabaseSql(ConnectionConfig config, String databaseName, String charset, String collation) {
+        StringBuilder sql = new StringBuilder();
+        if (config.getType() == ConnectType.MYSQL) {
+            sql.append("CREATE DATABASE `").append(databaseName).append("`");
+            if (charset != null && !charset.isEmpty()) {
+                sql.append(" CHARACTER SET ").append(charset);
+            }
+            if (collation != null && !collation.isEmpty()) {
+                sql.append(" COLLATE ").append(collation);
+            }
+        } else if (config.getType() == ConnectType.POSTGRESQL) {
+            sql.append("CREATE DATABASE \"").append(databaseName).append("\"");
+            if (charset != null && !charset.isEmpty()) {
+                sql.append(" ENCODING '").append(charset).append("'");
+            }
+            if (collation != null && !collation.isEmpty()) {
+                sql.append(" LC_COLLATE '").append(collation).append("'");
+            }
+        } else if (config.getType() == ConnectType.ORACLE) {
+            sql.append("CREATE USER \"").append(databaseName).append("\" IDENTIFIED BY \"").append(databaseName).append("\"");
+        }
+        return sql.toString();
     }
 
     /**

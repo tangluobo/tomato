@@ -344,7 +344,20 @@ public class ConnectModule implements Module {
                 } else {
                 ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
                 if (targetConfig != null && targetConfig.getType() != null) {
-                    // 具体连接节点：只能连接、编辑、删除，不能创建子节点
+                    boolean isDatabase = targetConfig.getType() == ConnectType.MYSQL
+                        || targetConfig.getType() == ConnectType.POSTGRESQL
+                        || targetConfig.getType() == ConnectType.ORACLE;
+                    // 数据库类型连接节点：新建数据库、刷新
+                    if (isDatabase) {
+                        MenuItem createDbItem = new MenuItem("新建数据库");
+                        createDbItem.setOnAction(e -> handleCreateDatabase(targetItem, targetConfig));
+                        contextMenu.getItems().add(createDbItem);
+                        if (!targetItem.getChildren().isEmpty()) {
+                            MenuItem refreshItem = new MenuItem("刷新");
+                            refreshItem.setOnAction(e -> handleRefreshDbHost(targetItem, targetConfig));
+                            contextMenu.getItems().add(refreshItem);
+                        }
+                    }
                     MenuItem connectItem = new MenuItem("连接");
                     connectItem.setOnAction(e -> handleConnect(targetConfig));
                     MenuItem editItem = new MenuItem("编辑");
@@ -861,6 +874,112 @@ public class ConnectModule implements Module {
             // fallback
         }
         hostItem.setGraphic(imageView);
+    }
+
+    /**
+     * 新建数据库
+     */
+    private void handleCreateDatabase(TreeItem<String> hostItem, ConnectionConfig config) {
+        // 需要密码才能操作
+        if (config.getPassword() == null) {
+            Dialog<String> pwdDialog = new Dialog<>();
+            pwdDialog.setTitle("输入密码");
+            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
+            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+            GridPane grid = new GridPane();
+            grid.setHgap(10);
+            grid.setVgap(10);
+            grid.setPadding(new Insets(20, 10, 10, 10));
+            PasswordField pf = new PasswordField();
+            pf.setPrefWidth(250);
+            grid.add(new Label("密码："), 0, 0);
+            grid.add(pf, 1, 0);
+            pwdDialog.getDialogPane().setContent(grid);
+            pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
+            final String[] passwordHolder = new String[1];
+            pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
+            if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
+            config.setPassword(passwordHolder[0]);
+        }
+
+        Stage stage = getStage();
+        if (stage == null) return;
+
+        CreateDatabaseDialog dialog = new CreateDatabaseDialog(stage, config);
+        dialog.showAndWait();
+
+        if (!dialog.isConfirmed()) return;
+
+        String dbName = dialog.getDatabaseName();
+        String charset = dialog.getCharset();
+        String collation = dialog.getCollation();
+
+        new Thread(() -> {
+            try {
+                DatabaseService.createDatabase(config, dbName, charset, collation);
+                Platform.runLater(() -> {
+                    // 刷新数据库列表
+                    if (!hostItem.getChildren().isEmpty()) {
+                        handleRefreshDbHost(hostItem, config);
+                    }
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("创建失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("创建数据库失败: " + e.getMessage());
+                    alert.showAndWait();
+                });
+            }
+        }, "DB-CreateDatabase").start();
+    }
+
+    /**
+     * 刷新数据库主机节点下的数据库列表
+     */
+    private void handleRefreshDbHost(TreeItem<String> hostItem, ConnectionConfig config) {
+        if (config.getPassword() == null) {
+            handleDbHostDoubleClick(hostItem, config);
+            return;
+        }
+        new Thread(() -> {
+            try {
+                List<String> databases = DatabaseService.getDatabases(config);
+                Platform.runLater(() -> {
+                    // 清除旧的子节点对应的dbNodeDataMap
+                    for (TreeItem<String> child : hostItem.getChildren()) {
+                        removeDbNodeDataRecursive(child);
+                    }
+                    hostItem.getChildren().clear();
+                    for (String dbName : databases) {
+                        TreeItem<String> dbItem = new TreeItem<>(dbName);
+                        dbItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.DATABASE, dbName, config, dbName)));
+                        dbNodeDataMap.put(dbItem, new DatabaseNodeData(DatabaseNodeData.NodeType.DATABASE, dbName, config, dbName));
+                        hostItem.getChildren().add(dbItem);
+                    }
+                    hostItem.setExpanded(true);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("刷新失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法刷新数据库列表: " + e.getMessage());
+                    alert.showAndWait();
+                });
+            }
+        }, "DB-RefreshDatabases").start();
+    }
+
+    /**
+     * 递归清除TreeItem及其子节点在dbNodeDataMap中的映射
+     */
+    private void removeDbNodeDataRecursive(TreeItem<String> item) {
+        dbNodeDataMap.remove(item);
+        for (TreeItem<String> child : item.getChildren()) {
+            removeDbNodeDataRecursive(child);
+        }
     }
 
     /**
