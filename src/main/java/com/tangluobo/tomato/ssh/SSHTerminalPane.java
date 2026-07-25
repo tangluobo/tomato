@@ -6,11 +6,17 @@ import com.tangluobo.tomato.zmodem.util.FileAdapter;
 import com.tangluobo.tomato.zmodem.xfer.zm.util.ZModemCharacter;
 import javafx.application.Platform;
 import javafx.scene.control.ContextMenu;
+import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.input.Clipboard;
-import javafx.scene.input.ClipboardContent;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.Circle;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
@@ -25,9 +31,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * SSH终端组件，使用VT100终端模拟器，支持ZModem协议（rz/sz文件传输）
- * 继承Pane，在layoutChildren中直接控制Canvas大小
+ * 继承BorderPane，中间放终端，底部放状态栏
  */
-public class SSHTerminalPane extends Pane {
+public class SSHTerminalPane extends BorderPane {
 
     // ZModem协议前缀: ** ZDLE
     private static final char[] ZMODEM_PREFIX = new char[]{
@@ -58,14 +64,67 @@ public class SSHTerminalPane extends Pane {
     private static final long RENDER_INTERVAL = 33; // ~30fps
     private boolean renderPending = false;
 
+    // 状态栏
+    private final Label statusLabel;
+    private final Label encodingLabel;
+    private final Circle statusDot;
+
+    // 连接信息
+    private String host;
+    private int port;
+    private String username;
+    private String password;
+
+    // 连接丢失标志（非用户主动断开）
+    private volatile boolean connectionLost = false;
+
     public SSHTerminalPane() {
         emulator = new TerminalEmulator();
         terminalView = new TerminalView(emulator);
 
-        getChildren().add(terminalView);
+        // 状态栏
+        HBox statusBar = new HBox();
+        statusBar.setStyle("-fx-background-color: #FFFFFB; -fx-padding: 2 10; -fx-alignment: center-left; -fx-border-color: #e0e0e0; -fx-border-width: 1 0 0 0;");
+
+        statusDot = new Circle(4, Color.RED);
+        HBox.setMargin(statusDot, new javafx.geometry.Insets(0, 6, 0, 0));
+
+        statusLabel = new Label("未连接");
+        statusLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
+
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        encodingLabel = new Label("UTF-8");
+        encodingLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
+
+        statusBar.getChildren().addAll(statusDot, statusLabel, spacer, encodingLabel);
+
+        // 终端区域用Pane包裹，保留原来的layoutChildren逻辑
+        Pane terminalPane = new Pane() {
+            @Override
+            protected void layoutChildren() {
+                super.layoutChildren();
+                double w = getWidth();
+                double h = getHeight();
+                if (w > 0 && h > 0) {
+                    terminalView.relocate(0, 0);
+                    terminalView.resize(w, h);
+                }
+            }
+        };
+        terminalPane.getChildren().add(terminalView);
+        terminalPane.setStyle("-fx-background-color: #1e1e1e;");
+        terminalPane.setMaxWidth(Double.MAX_VALUE);
+        terminalPane.setMaxHeight(Double.MAX_VALUE);
+        terminalPane.setPrefWidth(800);
+        terminalPane.setPrefHeight(600);
+
+        setCenter(terminalPane);
+        setBottom(statusBar);
         setStyle("-fx-background-color: #1e1e1e;");
 
-        // 关键：Pane默认maxWidth/maxHeight=USE_COMPUTED_SIZE=prefSize=0
+        // 关键：默认maxWidth/maxHeight=USE_COMPUTED_SIZE=prefSize=0
         // 必须设为MAX_VALUE，否则任何布局容器都不会给它分配空间
         setMaxWidth(Double.MAX_VALUE);
         setMaxHeight(Double.MAX_VALUE);
@@ -96,6 +155,13 @@ public class SSHTerminalPane extends Pane {
 
         // 设置键盘输入回调
         terminalView.setKeyInputHandler(data -> {
+            // 连接丢失时，按回车重新连接
+            if (connectionLost) {
+                if (data.length == 1 && (data[0] == '\r' || data[0] == '\n')) {
+                    reconnect();
+                }
+                return;
+            }
             if (sshSession == null || !sshSession.isConnected()) return;
             if (inZModemMode) {
                 // ZModem传输中，Ctrl+C取消
@@ -150,26 +216,20 @@ public class SSHTerminalPane extends Pane {
     }
 
     /**
-     * 重写布局方法，让Canvas填满整个Pane
-     */
-    @Override
-    protected void layoutChildren() {
-        super.layoutChildren();
-        double w = getWidth();
-        double h = getHeight();
-        if (w > 0 && h > 0) {
-            terminalView.relocate(0, 0);
-            terminalView.resize(w, h);
-        }
-    }
-
-    /**
      * 连接SSH
      */
     public void connect(String host, int port, String username, String password) throws Exception {
+        this.host = host;
+        this.port = port;
+        this.username = username;
+        this.password = password;
+        this.connectionLost = false;
+
         sshSession = new SSHSession(host, port, username, password);
         sshSession.connect();
         running.set(true);
+
+        updateStatusBar("已连接");
 
         // 启用调试日志（写入/tmp/terminal_debug.log）
         try {
@@ -188,6 +248,21 @@ public class SSHTerminalPane extends Pane {
         startReadThread();
         // requestFocus必须在FX线程执行
         Platform.runLater(() -> terminalView.requestFocus());
+    }
+
+    /**
+     * 更新状态栏
+     */
+    private void updateStatusBar(String state) {
+        Platform.runLater(() -> {
+            boolean connected = state.equals("已连接") || state.startsWith("ZModem");
+            statusDot.setFill(connected ? Color.valueOf("#4CAF50") : Color.RED);
+            if (host != null) {
+                statusLabel.setText(username + "@" + host + ":" + port + "  |  " + state);
+            } else {
+                statusLabel.setText(state);
+            }
+        });
     }
 
     /**
@@ -216,10 +291,11 @@ public class SSHTerminalPane extends Pane {
     }
 
     /**
-     * 断开连接
+     * 断开连接（用户主动关闭标签时调用）
      */
     public void disconnect() {
         running.set(false);
+        connectionLost = false;
         terminalView.stopBlink();
         if (zmodem != null) {
             try { zmodem.cancel(); } catch (IOException ignored) {}
@@ -231,10 +307,55 @@ public class SSHTerminalPane extends Pane {
             sshSession.disconnect();
             sshSession = null;
         }
-        // 通知断开回调
-        if (onDisconnect != null) {
-            Platform.runLater(onDisconnect);
-        }
+        updateStatusBar("已断开");
+    }
+
+    /**
+     * 重新连接
+     */
+    private void reconnect() {
+        if (host == null || password == null) return;
+        connectionLost = false;
+        updateStatusBar("重新连接中...");
+
+        new Thread(() -> {
+            try {
+                // 清理旧会话
+                if (sshSession != null) {
+                    sshSession.disconnect();
+                    sshSession = null;
+                }
+                if (readThread != null) {
+                    readThread.interrupt();
+                    readThread = null;
+                }
+
+                sshSession = new SSHSession(host, port, username, password);
+                sshSession.connect();
+                running.set(true);
+
+                // 通知SSH服务器终端大小
+                sshSession.resize(emulator.getCols(), emulator.getRows(),
+                        (int) terminalView.getCharWidth() * emulator.getCols(),
+                        (int) terminalView.getCharHeight() * emulator.getRows());
+
+                Platform.runLater(() -> {
+                    emulator.process(("\r\n[重新连接成功]\r\n").getBytes());
+                    scheduleRender();
+                    updateStatusBar("已连接");
+                    terminalView.requestFocus();
+                });
+
+                startReadThread();
+            } catch (Exception e) {
+                connectionLost = true;
+                Platform.runLater(() -> {
+                    emulator.process(("\r\n[重新连接失败: " + e.getMessage() + "]\r\n").getBytes());
+                    scheduleRender();
+                    updateStatusBar("重连失败 - 按回车重试");
+                });
+            }
+        }, "SSH-Reconnect").start();
     }
 
     public void setOnDisconnect(Runnable callback) {
@@ -304,14 +425,12 @@ public class SSHTerminalPane extends Pane {
             }
             running.set(false);
 
-            // 显示断开信息
+            // 连接丢失，显示提示并等待用户按回车重连
+            connectionLost = true;
             Platform.runLater(() -> {
-                emulator.process(("\r\n[连接已关闭]\r\n").getBytes());
+                emulator.process(("\r\n[连接已断开 - 按回车重新连接]\r\n").getBytes());
                 scheduleRender();
-                // 通知断开回调
-                if (onDisconnect != null) {
-                    onDisconnect.run();
-                }
+                updateStatusBar("已断开 - 按回车重连");
             });
         }, "SSH-Read-Thread");
         readThread.setDaemon(true);
@@ -346,6 +465,7 @@ public class SSHTerminalPane extends Pane {
      */
     private void handleRzUpload(ZModemInputStream zmodemIn, OutputStream outputStream) {
         inZModemMode = true;
+        updateStatusBar("ZModem 上传中...");
         Platform.runLater(() -> {
             emulator.process(("\r\n[ZModem] 检测到rz上传请求，请选择要上传的文件...\r\n").getBytes());
             scheduleRender();
@@ -389,6 +509,7 @@ public class SSHTerminalPane extends Pane {
         } finally {
             inZModemMode = false;
             zmodem = null;
+            updateStatusBar("已连接");
         }
     }
 
@@ -397,6 +518,7 @@ public class SSHTerminalPane extends Pane {
      */
     private void handleSzDownload(ZModemInputStream zmodemIn, OutputStream outputStream) {
         inZModemMode = true;
+        updateStatusBar("ZModem 下载中...");
         Platform.runLater(() -> {
             emulator.process(("\r\n[ZModem] 检测到sz下载请求，请选择保存目录...\r\n").getBytes());
             scheduleRender();
@@ -435,6 +557,7 @@ public class SSHTerminalPane extends Pane {
         } finally {
             inZModemMode = false;
             zmodem = null;
+            updateStatusBar("已连接");
         }
     }
 

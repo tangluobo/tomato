@@ -604,11 +604,6 @@ public class ConnectModule implements Module {
         terminalTabPane.getSelectionModel().select(tab);
         showTerminalView();
 
-        // 断开连接时关闭标签
-        terminalPane.setOnDisconnect(() -> {
-            Platform.runLater(() -> terminalTabPane.getTabs().remove(tab));
-        });
-
         doConnect(terminalPane, config);
     }
 
