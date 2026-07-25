@@ -579,6 +579,16 @@ public class ConnectModule implements Module {
             }
         }
 
+        // 数据库类型连接：先建立SSH通道（如果启用），再连接数据库
+        boolean isDatabase = config.getType() == ConnectType.MYSQL
+            || config.getType() == ConnectType.POSTGRESQL
+            || config.getType() == ConnectType.ORACLE;
+
+        if (isDatabase) {
+            handleDatabaseConnect(config);
+            return;
+        }
+
         SSHTerminalPane terminalPane = new SSHTerminalPane();
 
         // 应用scrollback配置（会话配置优先，否则使用全局配置）
@@ -634,6 +644,180 @@ public class ConnectModule implements Module {
         showTerminalView();
 
         doConnect(terminalPane, config);
+    }
+
+    /**
+     * 处理数据库类型连接（MySQL/PostgreSQL/Oracle）
+     * 如果启用了SSH通道，先建立SSH隧道，再通过隧道连接数据库
+     */
+    private void handleDatabaseConnect(ConnectionConfig config) {
+        SSHTerminalPane terminalPane = new SSHTerminalPane();
+
+        Tab tab = new Tab(config.getName());
+        tab.setContent(terminalPane);
+        tab.setUserData(config.getId());
+
+        // 标签关闭时断开连接
+        tab.setOnClosed(e -> {
+            terminalPane.disconnect();
+            if (terminalTabPane.getTabs().isEmpty()) {
+                showWelcomeView();
+            }
+        });
+
+        terminalTabPane.getTabs().add(tab);
+        terminalTabPane.getSelectionModel().select(tab);
+        showTerminalView();
+
+        // 启用SSH通道时，先建立隧道
+        if (config.isUseSshTunnel()) {
+            doDatabaseConnectWithTunnel(terminalPane, config);
+        } else {
+            // 直连数据库（通过SSH终端连接到数据库服务器）
+            doDatabaseConnectDirect(terminalPane, config);
+        }
+    }
+
+    /**
+     * 通过SSH通道连接数据库
+     */
+    private void doDatabaseConnectWithTunnel(SSHTerminalPane terminalPane, ConnectionConfig config) {
+        // 检查SSH通道密码
+        String tunnelPassword = config.getSshTunnelPassword();
+        if (config.isSshTunnelUsePassword() && tunnelPassword == null) {
+            // 弹出输入SSH通道密码对话框
+            Dialog<String> pwdDialog = new Dialog<>();
+            pwdDialog.setTitle("输入SSH通道密码");
+            pwdDialog.setHeaderText(config.getName() + " - SSH通道 (" + config.getSshTunnelUsername() + "@" + config.getSshTunnelHost() + ")");
+            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+            GridPane grid = new GridPane();
+            grid.setHgap(10);
+            grid.setVgap(10);
+            grid.setPadding(new Insets(20, 10, 10, 10));
+            PasswordField pf = new PasswordField();
+            pf.setPrefWidth(250);
+            grid.add(new Label("SSH密码："), 0, 0);
+            grid.add(pf, 1, 0);
+            pwdDialog.getDialogPane().setContent(grid);
+
+            pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
+
+            final String[] passwordHolder = new String[1];
+            pwdDialog.showAndWait().ifPresentOrElse(pwd -> {
+                passwordHolder[0] = pwd;
+            }, () -> {});
+
+            if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
+            tunnelPassword = passwordHolder[0];
+            config.setSshTunnelPassword(tunnelPassword);
+        }
+
+        final String finalTunnelPassword = tunnelPassword;
+        new Thread(() -> {
+            try {
+                // 建立SSH通道
+                SshTunnel tunnel = SshTunnel.fromConfig(config);
+                int localPort = tunnel.connect();
+
+                Platform.runLater(() -> {
+                    terminalPane.getEmulator().process(
+                        (String.format("\r\n[SSH通道] 已通过 %s:%d 建立到 %s:%d 的隧道\r\n",
+                            config.getSshTunnelHost(), config.getSshTunnelPort(),
+                            config.getHost(), config.getPort())).getBytes());
+                    terminalPane.getEmulator().process(
+                        (String.format("[SSH通道] 本地转发端口: 127.0.0.1:%d\r\n", localPort)).getBytes());
+                    terminalPane.getEmulator().process(
+                        (String.format("[数据库] %s://%s:***@127.0.0.1:%d/%s\r\n",
+                            config.getType().getCode().toLowerCase(),
+                            config.getUsername(), localPort,
+                            config.getDatabase() != null ? config.getDatabase() : "")).getBytes());
+                    terminalPane.getEmulator().process("\r\n[提示] SSH通道已就绪，可通过本地转发端口连接数据库\r\n".getBytes());
+                    terminalPane.getTerminalView().render();
+                });
+
+                // 关联tunnel到tab，关闭时自动断开
+                Tab currentTab = terminalTabPane.getTabs().stream()
+                    .filter(t -> config.getId().equals(t.getUserData()))
+                    .findFirst().orElse(null);
+                if (currentTab != null) {
+                    SshTunnel oldTunnel = (SshTunnel) currentTab.getProperties().get("sshTunnel");
+                    if (oldTunnel != null) oldTunnel.disconnect();
+                    currentTab.getProperties().put("sshTunnel", tunnel);
+                    final SshTunnel finalTunnel = tunnel;
+                    currentTab.setOnClosed(e -> {
+                        finalTunnel.disconnect();
+                        terminalPane.disconnect();
+                        if (terminalTabPane.getTabs().isEmpty()) {
+                            showWelcomeView();
+                        }
+                    });
+                }
+
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("SSH通道连接失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("SSH通道建立失败: " + e.getMessage());
+                    alert.showAndWait();
+                    terminalPane.disconnect();
+                });
+                e.printStackTrace();
+            }
+        }, "SSH-Tunnel-Connect").start();
+    }
+
+    /**
+     * 直连数据库（不通过SSH通道，使用SSH终端连接到数据库服务器）
+     */
+    private void doDatabaseConnectDirect(SSHTerminalPane terminalPane, ConnectionConfig config) {
+        // 数据库直连：需要密码时弹出输入
+        if (config.getPassword() == null) {
+            Dialog<String> pwdDialog = new Dialog<>();
+            pwdDialog.setTitle("输入密码");
+            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
+            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+            GridPane grid = new GridPane();
+            grid.setHgap(10);
+            grid.setVgap(10);
+            grid.setPadding(new Insets(20, 10, 10, 10));
+            PasswordField pf = new PasswordField();
+            pf.setPrefWidth(250);
+            grid.add(new Label("密码："), 0, 0);
+            grid.add(pf, 1, 0);
+            pwdDialog.getDialogPane().setContent(grid);
+
+            pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
+
+            pwdDialog.showAndWait().ifPresentOrElse(pwd -> {
+                if (!pwd.isEmpty()) {
+                    doDatabaseConnectWithPassword(terminalPane, config, pwd);
+                }
+            }, () -> {});
+        } else {
+            doDatabaseConnectWithPassword(terminalPane, config, config.getPassword());
+        }
+    }
+
+    private void doDatabaseConnectWithPassword(SSHTerminalPane terminalPane, ConnectionConfig config, String password) {
+        new Thread(() -> {
+            try {
+                // 通过SSH终端连接到数据库服务器
+                terminalPane.connect(config.getHost(), config.getPort(), config.getUsername(), password, (List<String>) null);
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("连接失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("数据库连接失败: " + e.getMessage());
+                    alert.showAndWait();
+                    terminalPane.disconnect();
+                });
+                e.printStackTrace();
+            }
+        }, "DB-Connect").start();
     }
 
     private void showTerminalView() {

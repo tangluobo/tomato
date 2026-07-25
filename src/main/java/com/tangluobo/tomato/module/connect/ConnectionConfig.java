@@ -20,6 +20,17 @@ public class ConnectionConfig {
     private String description;
     private Integer scrollbackLines;
 
+    // SSH通道配置
+    private boolean useSshTunnel = false;
+    private String sshTunnelHost;
+    private int sshTunnelPort = 22;
+    private String sshTunnelUsername;
+    private boolean sshTunnelUsePassword = true;
+    private String sshTunnelPassword;
+    private boolean sshTunnelSavePassword = true;
+    private boolean sshTunnelUseKey = false;
+    private List<String> sshTunnelPrivateKeyPaths = new ArrayList<>();
+
     public ConnectionConfig() {
     }
 
@@ -74,4 +85,31 @@ public class ConnectionConfig {
 
     public Integer getScrollbackLines() { return scrollbackLines; }
     public void setScrollbackLines(Integer scrollbackLines) { this.scrollbackLines = scrollbackLines; }
+
+    public boolean isUseSshTunnel() { return useSshTunnel; }
+    public void setUseSshTunnel(boolean useSshTunnel) { this.useSshTunnel = useSshTunnel; }
+
+    public String getSshTunnelHost() { return sshTunnelHost; }
+    public void setSshTunnelHost(String sshTunnelHost) { this.sshTunnelHost = sshTunnelHost; }
+
+    public int getSshTunnelPort() { return sshTunnelPort; }
+    public void setSshTunnelPort(int sshTunnelPort) { this.sshTunnelPort = sshTunnelPort; }
+
+    public String getSshTunnelUsername() { return sshTunnelUsername; }
+    public void setSshTunnelUsername(String sshTunnelUsername) { this.sshTunnelUsername = sshTunnelUsername; }
+
+    public boolean isSshTunnelUsePassword() { return sshTunnelUsePassword; }
+    public void setSshTunnelUsePassword(boolean sshTunnelUsePassword) { this.sshTunnelUsePassword = sshTunnelUsePassword; }
+
+    public String getSshTunnelPassword() { return sshTunnelPassword; }
+    public void setSshTunnelPassword(String sshTunnelPassword) { this.sshTunnelPassword = sshTunnelPassword; }
+
+    public boolean isSshTunnelSavePassword() { return sshTunnelSavePassword; }
+    public void setSshTunnelSavePassword(boolean sshTunnelSavePassword) { this.sshTunnelSavePassword = sshTunnelSavePassword; }
+
+    public boolean isSshTunnelUseKey() { return sshTunnelUseKey; }
+    public void setSshTunnelUseKey(boolean sshTunnelUseKey) { this.sshTunnelUseKey = sshTunnelUseKey; }
+
+    public List<String> getSshTunnelPrivateKeyPaths() { return sshTunnelPrivateKeyPaths; }
+    public void setSshTunnelPrivateKeyPaths(List<String> sshTunnelPrivateKeyPaths) { this.sshTunnelPrivateKeyPaths = sshTunnelPrivateKeyPaths != null ? sshTunnelPrivateKeyPaths : new ArrayList<>(); }
 }

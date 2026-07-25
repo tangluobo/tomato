@@ -867,6 +867,20 @@ public class SSHTerminalPane extends BorderPane {
     }
 
     /**
+     * 获取终端模拟器
+     */
+    public TerminalEmulator getEmulator() {
+        return emulator;
+    }
+
+    /**
+     * 获取终端视图
+     */
+    public TerminalView getTerminalView() {
+        return terminalView;
+    }
+
+    /**
      * 导出终端缓冲区内容（调试用）
      */
     public String dumpBuffer() {
