@@ -32,6 +32,7 @@ import javax.swing.filechooser.FileSystemView;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -41,6 +42,7 @@ public class ConnectModule implements Module {
     private List<ConnectionConfig> connections;
     private Map<TreeItem<String>, ConnectionConfig> itemConfigMap;
     private Image folderIcon;
+    private TextField searchField;
 
     @Override
     public String getName() {
@@ -62,6 +64,7 @@ public class ConnectModule implements Module {
         searchField.setPromptText("搜索");
         searchField.setStyle("-fx-background-color: #f0f0f0; -fx-border-radius: 6px; -fx-background-radius: 6px; -fx-padding: 6 10; -fx-font-size: 13px; -fx-border-color: transparent;");
         searchField.prefWidthProperty().bind(headerBar.widthProperty());
+        this.searchField = searchField;
 
         headerBar.getChildren().add(searchField);
 
@@ -80,6 +83,9 @@ public class ConnectModule implements Module {
 
         setupContextMenu();
         setupDragAndDrop();
+
+        // 搜索过滤
+        searchField.textProperty().addListener((obs, oldVal, newVal) -> filterTree(newVal));
 
         sidebarContainer.getChildren().addAll(headerBar, treeView);
         treeView.prefHeightProperty().bind(sidebarContainer.heightProperty().subtract(50));
@@ -126,6 +132,82 @@ public class ConnectModule implements Module {
                     parent.getChildren().add(item);
                 }
             }
+        }
+    }
+
+    /**
+     * 根据搜索关键词过滤树：匹配节点 + 其父节点 + 其所有子节点
+     */
+    private void filterTree(String keyword) {
+        if (keyword == null || keyword.trim().isEmpty()) {
+            // 无搜索词，重建完整树
+            loadTree();
+            return;
+        }
+        String kw = keyword.trim().toLowerCase();
+
+        root.getChildren().clear();
+        itemConfigMap.clear();
+
+        for (ConnectionConfig config : connections) {
+            if (config.getParentId() == null || config.getParentId().isEmpty()) {
+                TreeItem<String> item = createTreeItem(config);
+                root.getChildren().add(item);
+            }
+        }
+        for (ConnectionConfig config : connections) {
+            if (config.getParentId() != null && !config.getParentId().isEmpty()) {
+                TreeItem<String> parent = findItemById(root, config.getParentId());
+                if (parent != null) {
+                    TreeItem<String> item = createTreeItem(config);
+                    parent.getChildren().add(item);
+                }
+            }
+        }
+
+        // 过滤：移除不匹配且无匹配后代的节点
+        filterTreeItem(root, kw);
+
+        // 展开所有可见的节点
+        expandAll(root);
+    }
+
+    /**
+     * 递归过滤树节点，返回该节点或其后代是否匹配
+     */
+    private boolean filterTreeItem(TreeItem<String> item, String keyword) {
+        boolean selfMatch = item.getValue() != null && item.getValue().toLowerCase().contains(keyword);
+
+        // 如果自身匹配，递归保留所有子节点（但仍需过滤孙级以高亮匹配）
+        if (selfMatch) {
+            for (TreeItem<String> child : item.getChildren()) {
+                filterTreeItem(child, keyword);
+            }
+            return true;
+        }
+
+        // 自身不匹配，检查子节点
+        boolean childMatch = false;
+        List<TreeItem<String>> toRemove = new ArrayList<>();
+        for (TreeItem<String> child : item.getChildren()) {
+            boolean match = filterTreeItem(child, keyword);
+            if (match) {
+                childMatch = true;
+            } else {
+                toRemove.add(child);
+            }
+        }
+        item.getChildren().removeAll(toRemove);
+        return childMatch;
+    }
+
+    /**
+     * 展开所有节点
+     */
+    private void expandAll(TreeItem<String> item) {
+        item.setExpanded(true);
+        for (TreeItem<String> child : item.getChildren()) {
+            expandAll(child);
         }
     }
 
