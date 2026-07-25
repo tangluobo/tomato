@@ -5,8 +5,9 @@ import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
-import javafx.scene.control.ListView;
-import javafx.scene.input.MouseEvent;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
+import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.stage.Modality;
@@ -14,7 +15,6 @@ import javafx.stage.Stage;
 
 public class ConnectTypeDialog {
     private Stage dialogStage;
-    private ListView<String> typeList;
     private ConnectType selectedType;
     private boolean confirmed = false;
 
@@ -27,27 +27,64 @@ public class ConnectTypeDialog {
 
         VBox root = new VBox(15);
         root.setPadding(new Insets(20));
-        root.setMinWidth(300);
+        root.setMinWidth(420);
 
         Label title = new Label("选择连接类型");
         title.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
 
-        typeList = new ListView<>();
-        typeList.setPrefHeight(200);
-        for (ConnectType type : ConnectType.values()) {
-            typeList.getItems().add(type.getDisplayName());
-        }
+        // 方块网格布局
+        FlowPane tilePane = new FlowPane();
+        tilePane.setHgap(10);
+        tilePane.setVgap(10);
+        tilePane.setPadding(new Insets(5, 0, 5, 0));
+        tilePane.setAlignment(Pos.CENTER);
 
-        typeList.setOnMouseClicked((MouseEvent event) -> {
-            if (event.getClickCount() == 2) {
-                int index = typeList.getSelectionModel().getSelectedIndex();
-                if (index >= 0) {
-                    selectedType = ConnectType.values()[index];
-                    confirmed = true;
-                    dialogStage.close();
-                }
-            }
-        });
+        for (ConnectType type : ConnectType.values()) {
+            VBox tile = new VBox(8);
+            tile.setAlignment(Pos.CENTER);
+            tile.setPadding(new Insets(14, 18, 14, 18));
+            tile.setPrefWidth(120);
+            tile.setPrefHeight(90);
+            tile.setStyle("-fx-background-color: #f5f5f5; -fx-background-radius: 8; -fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-cursor: hand;");
+
+            // 图标
+            ImageView icon = new ImageView();
+            icon.setFitWidth(32);
+            icon.setFitHeight(32);
+            try {
+                Image img = new Image(getClass().getResourceAsStream(type.getIconPath()));
+                icon.setImage(img);
+            } catch (Exception ignored) {}
+
+            // 名称
+            Label nameLabel = new Label(type.getDisplayName());
+            nameLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-font-weight: bold;");
+
+            tile.getChildren().addAll(icon, nameLabel);
+
+            // 悬停效果
+            tile.setOnMouseEntered(e ->
+                tile.setStyle("-fx-background-color: #e8f5e9; -fx-background-radius: 8; -fx-border-color: #07c160; -fx-border-radius: 8; -fx-cursor: hand; -fx-border-width: 2;")
+            );
+            tile.setOnMouseExited(e ->
+                tile.setStyle("-fx-background-color: #f5f5f5; -fx-background-radius: 8; -fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-cursor: hand;")
+            );
+            tile.setOnMousePressed(e ->
+                tile.setStyle("-fx-background-color: #c8e6c9; -fx-background-radius: 8; -fx-border-color: #07c160; -fx-border-radius: 8; -fx-cursor: hand; -fx-border-width: 2;")
+            );
+            tile.setOnMouseReleased(e ->
+                tile.setStyle("-fx-background-color: #e8f5e9; -fx-background-radius: 8; -fx-border-color: #07c160; -fx-border-radius: 8; -fx-cursor: hand; -fx-border-width: 2;")
+            );
+
+            // 点击选择
+            tile.setOnMouseClicked(e -> {
+                selectedType = type;
+                confirmed = true;
+                dialogStage.close();
+            });
+
+            tilePane.getChildren().add(tile);
+        }
 
         HBox buttons = new HBox(10);
         buttons.setAlignment(Pos.CENTER_RIGHT);
@@ -56,19 +93,8 @@ public class ConnectTypeDialog {
         cancelBtn.setStyle("-fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-width: 80px;");
         cancelBtn.setOnAction(e -> dialogStage.close());
 
-        Button okBtn = new Button("确定");
-        okBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-width: 80px;");
-        okBtn.setOnAction(e -> {
-            int index = typeList.getSelectionModel().getSelectedIndex();
-            if (index >= 0) {
-                selectedType = ConnectType.values()[index];
-                confirmed = true;
-                dialogStage.close();
-            }
-        });
-
-        buttons.getChildren().addAll(cancelBtn, okBtn);
-        root.getChildren().addAll(title, typeList, buttons);
+        buttons.getChildren().add(cancelBtn);
+        root.getChildren().addAll(title, tilePane, buttons);
 
         Scene scene = new Scene(root);
         dialogStage.setScene(scene);

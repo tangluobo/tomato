@@ -93,6 +93,7 @@ public class SSHTerminalPane extends BorderPane {
     private int port;
     private String username;
     private String password;
+    private List<String> privateKeyPaths;
 
     // 连接丢失标志（非用户主动断开）
     private volatile boolean connectionLost = false;
@@ -349,13 +350,22 @@ public class SSHTerminalPane extends BorderPane {
      * 连接SSH
      */
     public void connect(String host, int port, String username, String password) throws Exception {
+        connect(host, port, username, password, (List<String>) null);
+    }
+
+    public void connect(String host, int port, String username, String password, String privateKeyPath) throws Exception {
+        connect(host, port, username, password, privateKeyPath != null ? List.of(privateKeyPath) : null);
+    }
+
+    public void connect(String host, int port, String username, String password, List<String> privateKeyPaths) throws Exception {
         this.host = host;
         this.port = port;
         this.username = username;
         this.password = password;
+        this.privateKeyPaths = privateKeyPaths;
         this.connectionLost = false;
 
-        sshSession = new SSHSession(host, port, username, password);
+        sshSession = new SSHSession(host, port, username, password, privateKeyPaths);
         sshSession.connect();
         running.set(true);
 
@@ -510,7 +520,7 @@ public class SSHTerminalPane extends BorderPane {
                     readThread = null;
                 }
 
-                sshSession = new SSHSession(host, port, username, password);
+                sshSession = new SSHSession(host, port, username, password, privateKeyPaths);
                 sshSession.connect();
                 running.set(true);
 

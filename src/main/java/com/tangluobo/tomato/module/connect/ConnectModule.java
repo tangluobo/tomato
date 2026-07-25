@@ -11,6 +11,7 @@ import javafx.scene.input.Dragboard;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.input.TransferMode;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
@@ -656,9 +657,44 @@ public class ConnectModule implements Module {
     }
 
     private void doConnect(SSHTerminalPane terminalPane, ConnectionConfig config) {
+        // 需要密码认证但密码未保存时，弹出输入密码对话框
+        if (config.isUsePassword() && config.getPassword() == null) {
+            Dialog<String> pwdDialog = new Dialog<>();
+            pwdDialog.setTitle("输入密码");
+            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
+            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+            GridPane grid = new GridPane();
+            grid.setHgap(10);
+            grid.setVgap(10);
+            grid.setPadding(new Insets(20, 10, 10, 10));
+            PasswordField pf = new PasswordField();
+            pf.setPrefWidth(250);
+            grid.add(new Label("密码："), 0, 0);
+            grid.add(pf, 1, 0);
+            pwdDialog.getDialogPane().setContent(grid);
+
+            pwdDialog.setResultConverter(dialogButton -> {
+                if (dialogButton == ButtonType.OK) {
+                    return pf.getText();
+                }
+                return null;
+            });
+
+            pwdDialog.showAndWait().ifPresentOrElse(pwd -> {
+                if (pwd.isEmpty()) return;
+                connectWithAuth(terminalPane, config, pwd);
+            }, () -> {});
+        } else {
+            connectWithAuth(terminalPane, config, config.getPassword());
+        }
+    }
+
+    private void connectWithAuth(SSHTerminalPane terminalPane, ConnectionConfig config, String password) {
+        List<String> keyPaths = config.isUseKey() ? config.getPrivateKeyPaths() : null;
         new Thread(() -> {
             try {
-                terminalPane.connect(config.getHost(), config.getPort(), config.getUsername(), config.getPassword());
+                terminalPane.connect(config.getHost(), config.getPort(), config.getUsername(), password, keyPaths);
             } catch (Exception e) {
                 Platform.runLater(() -> {
                     Alert alert = new Alert(Alert.AlertType.ERROR);
@@ -708,11 +744,7 @@ public class ConnectModule implements Module {
         Stage stage = getStage();
         if (stage == null) return;
 
-        ConnectTypeDialog typeDialog = new ConnectTypeDialog(stage);
-        ConnectType type = typeDialog.showAndWait();
-        if (type == null) return;
-
-        ConnectionConfigDialog configDialog = new ConnectionConfigDialog(stage, type);
+        ConnectionConfigDialog configDialog = new ConnectionConfigDialog(stage);
         ConnectionConfig config = configDialog.showAndWait();
         if (config != null) {
             config.setId(ConfigManager.generateId());
@@ -736,7 +768,7 @@ public class ConnectModule implements Module {
         Stage stage = getStage();
         if (stage == null) return;
 
-        ConnectionConfigDialog dialog = new ConnectionConfigDialog(stage, existingConfig.getType(), existingConfig);
+        ConnectionConfigDialog dialog = new ConnectionConfigDialog(stage, existingConfig);
         ConnectionConfig updatedConfig = dialog.showAndWait();
         if (updatedConfig != null) {
             connections.removeIf(c -> c.getId().equals(existingConfig.getId()));

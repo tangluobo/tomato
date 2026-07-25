@@ -1,5 +1,8 @@
 package com.tangluobo.tomato.module.connect;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class ConnectionConfig {
     private String id;
     private String name;
@@ -8,10 +11,14 @@ public class ConnectionConfig {
     private String host;
     private int port;
     private String username;
+    private boolean usePassword = true;
     private String password;
+    private boolean savePassword = true;
+    private boolean useKey = false;
+    private List<String> privateKeyPaths = new ArrayList<>();
     private String database;
     private String description;
-    private Integer scrollbackLines; // null=使用全局配置
+    private Integer scrollbackLines;
 
     public ConnectionConfig() {
     }
@@ -23,91 +30,48 @@ public class ConnectionConfig {
         this.type = type;
     }
 
-    public String getId() {
-        return id;
-    }
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
 
-    public void setId(String id) {
-        this.id = id;
-    }
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
 
-    public String getName() {
-        return name;
-    }
+    public String getParentId() { return parentId; }
+    public void setParentId(String parentId) { this.parentId = parentId; }
 
-    public void setName(String name) {
-        this.name = name;
-    }
+    public ConnectType getType() { return type; }
+    public void setType(ConnectType type) { this.type = type; }
 
-    public String getParentId() {
-        return parentId;
-    }
+    public String getHost() { return host; }
+    public void setHost(String host) { this.host = host; }
 
-    public void setParentId(String parentId) {
-        this.parentId = parentId;
-    }
+    public int getPort() { return port; }
+    public void setPort(int port) { this.port = port; }
 
-    public ConnectType getType() {
-        return type;
-    }
+    public String getUsername() { return username; }
+    public void setUsername(String username) { this.username = username; }
 
-    public void setType(ConnectType type) {
-        this.type = type;
-    }
+    public boolean isUsePassword() { return usePassword; }
+    public void setUsePassword(boolean usePassword) { this.usePassword = usePassword; }
 
-    public String getHost() {
-        return host;
-    }
+    public String getPassword() { return password; }
+    public void setPassword(String password) { this.password = password; }
 
-    public void setHost(String host) {
-        this.host = host;
-    }
+    public boolean isSavePassword() { return savePassword; }
+    public void setSavePassword(boolean savePassword) { this.savePassword = savePassword; }
 
-    public int getPort() {
-        return port;
-    }
+    public boolean isUseKey() { return useKey; }
+    public void setUseKey(boolean useKey) { this.useKey = useKey; }
 
-    public void setPort(int port) {
-        this.port = port;
-    }
+    public List<String> getPrivateKeyPaths() { return privateKeyPaths; }
+    public void setPrivateKeyPaths(List<String> privateKeyPaths) { this.privateKeyPaths = privateKeyPaths != null ? privateKeyPaths : new ArrayList<>(); }
 
-    public String getUsername() {
-        return username;
-    }
+    public String getDatabase() { return database; }
+    public void setDatabase(String database) { this.database = database; }
 
-    public void setUsername(String username) {
-        this.username = username;
-    }
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
 
-    public String getPassword() {
-        return password;
-    }
-
-    public void setPassword(String password) {
-        this.password = password;
-    }
-
-    public String getDatabase() {
-        return database;
-    }
-
-    public void setDatabase(String database) {
-        this.database = database;
-    }
-
-    public String getDescription() {
-        return description;
-    }
-
-    public void setDescription(String description) {
-        this.description = description;
-    }
-
-    public Integer getScrollbackLines() {
-        return scrollbackLines;
-    }
-
-    public void setScrollbackLines(Integer scrollbackLines) {
-        this.scrollbackLines = scrollbackLines;
-    }
+    public Integer getScrollbackLines() { return scrollbackLines; }
+    public void setScrollbackLines(Integer scrollbackLines) { this.scrollbackLines = scrollbackLines; }
 }
