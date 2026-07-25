@@ -1,6 +1,8 @@
 package com.tangluobo.tomato.module.connect;
 
 import com.tangluobo.tomato.module.Module;
+import com.tangluobo.tomato.ssh.SSHTerminalPane;
+import javafx.application.Platform;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
@@ -155,6 +157,8 @@ public class ConnectModule implements Module {
         return null;
     }
 
+    private VBox contentArea;
+
     private void setupContextMenu() {
         treeView.setOnContextMenuRequested(event -> {
             TreeItem<String> tempItem = treeView.getSelectionModel().getSelectedItem();
@@ -177,7 +181,9 @@ public class ConnectModule implements Module {
             if (selectedItem != root) {
                 ConnectionConfig selectedConfig = itemConfigMap.get(selectedItem);
                 if (selectedConfig != null && selectedConfig.getType() != null) {
-                    contextMenu.getItems().addAll(addFolder, addConnection, new SeparatorMenuItem(), editItem, deleteItem);
+                    MenuItem connectItem = new MenuItem("连接");
+                    connectItem.setOnAction(e -> handleConnect(selectedConfig));
+                    contextMenu.getItems().addAll(connectItem, addFolder, addConnection, new SeparatorMenuItem(), editItem, deleteItem);
                 } else {
                     contextMenu.getItems().addAll(addFolder, addConnection, new SeparatorMenuItem(), deleteItem);
                 }
@@ -194,11 +200,53 @@ public class ConnectModule implements Module {
                 if (selectedItem != null) {
                     ConnectionConfig config = itemConfigMap.get(selectedItem);
                     if (config != null && config.getType() != null) {
-                        handleEdit(selectedItem);
+                        handleConnect(config);
                     }
                 }
             }
         });
+    }
+
+    /**
+     * 处理SSH连接，打开终端（支持rz上传）
+     */
+    private void handleConnect(ConnectionConfig config) {
+        if (config.getType() == ConnectType.SSH) {
+            if (contentArea == null) return;
+            contentArea.getChildren().clear();
+
+            SSHTerminalPane terminalPane = new SSHTerminalPane();
+            contentArea.getChildren().add(terminalPane);
+            terminalPane.prefWidthProperty().bind(contentArea.widthProperty());
+            terminalPane.prefHeightProperty().bind(contentArea.heightProperty());
+
+            // 异步连接
+            new Thread(() -> {
+                try {
+                    terminalPane.connect(config.getHost(), config.getPort(), config.getUsername(), config.getPassword());
+                } catch (Exception e) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("连接失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("SSH连接失败: " + e.getMessage());
+                        alert.showAndWait();
+                    });
+                    e.printStackTrace();
+                }
+            }, "SSH-Connect").start();
+        } else {
+            // 非SSH连接，走编辑流程
+            Stage stage = getStage();
+            if (stage == null) return;
+            ConnectionConfigDialog dialog = new ConnectionConfigDialog(stage, config.getType(), config);
+            ConnectionConfig updatedConfig = dialog.showAndWait();
+            if (updatedConfig != null) {
+                connections.removeIf(c -> c.getId().equals(config.getId()));
+                connections.add(updatedConfig);
+                ConfigManager.saveConnections(connections);
+            }
+        }
     }
 
     private void handleAddFolder(TreeItem<String> parent) {
@@ -313,6 +361,7 @@ public class ConnectModule implements Module {
 
     @Override
     public void loadContent(VBox contentArea) {
+        this.contentArea = contentArea;
         contentArea.getChildren().clear();
 
         Label title = new Label("连接管理");
