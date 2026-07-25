@@ -124,6 +124,7 @@ public class SSHTerminalPane extends Pane {
      */
     public void disconnect() {
         running.set(false);
+        terminalView.stopBlink();
         if (zmodem != null) {
             try { zmodem.cancel(); } catch (IOException ignored) {}
         }

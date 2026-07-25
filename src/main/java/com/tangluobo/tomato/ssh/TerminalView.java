@@ -1,9 +1,13 @@
 package com.tangluobo.tomato.ssh;
 
+import javafx.animation.Animation;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.paint.Color;
+import javafx.util.Duration;
 
 /**
  * 终端视图组件，使用Canvas渲染TerminalEmulator的字符缓冲区
@@ -39,6 +43,10 @@ public class TerminalView extends Canvas {
     // resize回调（通知SSH服务器终端大小变化）
     private ResizeHandler resizeHandler;
 
+    // 光标闪烁
+    private boolean cursorBlinkOn = true;
+    private final Timeline cursorBlinkTimer;
+
     public interface KeyInputHandler {
         void handleInput(byte[] data);
     }
@@ -61,6 +69,14 @@ public class TerminalView extends Canvas {
 
         // 鼠标点击聚焦
         setOnMouseClicked(e -> requestFocus());
+
+        // 光标闪烁定时器，每500ms切换一次
+        cursorBlinkTimer = new Timeline(new KeyFrame(Duration.millis(500), e -> {
+            cursorBlinkOn = !cursorBlinkOn;
+            render();
+        }));
+        cursorBlinkTimer.setCycleCount(Animation.INDEFINITE);
+        cursorBlinkTimer.play();
 
         // Canvas大小变化时重新计算行列数
         widthProperty().addListener((obs, oldVal, newVal) -> {
@@ -133,8 +149,13 @@ public class TerminalView extends Canvas {
     private void handleKeyPressed(KeyEvent event) {
         if (keyInputHandler == null) return;
 
+        // 键盘输入时重置光标闪烁（立即显示光标）
+        resetCursorBlink();
+
         byte[] data = null;
-        if (event.getCode() == javafx.scene.input.KeyCode.ENTER) {
+        if (event.getCode() == javafx.scene.input.KeyCode.ESCAPE) {
+            data = "\033".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.ENTER) {
             data = "\r".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.BACK_SPACE) {
             data = "\b".getBytes();
@@ -188,6 +209,9 @@ public class TerminalView extends Canvas {
 
     private void handleKeyTyped(KeyEvent event) {
         if (keyInputHandler == null) return;
+
+        // 键盘输入时重置光标闪烁
+        resetCursorBlink();
 
         String ch = event.getCharacter();
         if (ch != null && !ch.isEmpty()) {
@@ -246,8 +270,8 @@ public class TerminalView extends Canvas {
             }
         }
 
-        // 渲染光标
-        if (emulator.isCursorVisible()) {
+        // 渲染光标（闪烁）
+        if (emulator.isCursorVisible() && cursorBlinkOn) {
             double cx = x0 + emulator.getCursorX() * charWidth;
             double cy = y0 + emulator.getCursorY() * charHeight;
             gc.setFill(Color.WHITE);
@@ -281,5 +305,21 @@ public class TerminalView extends Canvas {
 
     public double getCharHeight() {
         return charHeight;
+    }
+
+    /**
+     * 重置光标闪烁，立即显示光标
+     */
+    private void resetCursorBlink() {
+        cursorBlinkOn = true;
+        cursorBlinkTimer.stop();
+        cursorBlinkTimer.play();
+    }
+
+    /**
+     * 停止光标闪烁（断开连接时调用）
+     */
+    public void stopBlink() {
+        cursorBlinkTimer.stop();
     }
 }
