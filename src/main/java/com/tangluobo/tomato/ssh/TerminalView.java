@@ -7,6 +7,7 @@ import javafx.scene.paint.Color;
 
 /**
  * 终端视图组件，使用Canvas渲染TerminalEmulator的字符缓冲区
+ * Canvas宽高由SSHTerminalPane通过绑定控制
  */
 public class TerminalView extends Canvas {
 
@@ -35,8 +36,15 @@ public class TerminalView extends Canvas {
     // 键盘输入回调
     private KeyInputHandler keyInputHandler;
 
+    // resize回调（通知SSH服务器终端大小变化）
+    private ResizeHandler resizeHandler;
+
     public interface KeyInputHandler {
         void handleInput(byte[] data);
+    }
+
+    public interface ResizeHandler {
+        void onResize(int cols, int rows, int width, int height);
     }
 
     public TerminalView(TerminalEmulator emulator) {
@@ -46,12 +54,6 @@ public class TerminalView extends Canvas {
         // 初始化字体度量
         updateFontMetrics();
 
-        // 设置初始大小
-        double width = emulator.getCols() * charWidth + 4;
-        double height = emulator.getRows() * charHeight + 4;
-        setWidth(width);
-        setHeight(height);
-
         // 键盘事件
         setFocusTraversable(true);
         setOnKeyPressed(this::handleKeyPressed);
@@ -60,27 +62,61 @@ public class TerminalView extends Canvas {
         // 鼠标点击聚焦
         setOnMouseClicked(e -> requestFocus());
 
-        // 宽度变化时重新计算列数
+        // Canvas大小变化时重新计算行列数
         widthProperty().addListener((obs, oldVal, newVal) -> {
-            int newCols = (int) ((newVal.doubleValue() - 4) / charWidth);
-            if (newCols > 0 && newCols != emulator.getCols()) {
+            int newCols = (int) (newVal.doubleValue() / charWidth);
+            if (newCols > 1 && newCols != emulator.getCols()) {
                 emulator.resize(newCols, emulator.getRows());
                 render();
+                notifyResize();
             }
         });
         heightProperty().addListener((obs, oldVal, newVal) -> {
-            int newRows = (int) ((newVal.doubleValue() - 4) / charHeight);
-            if (newRows > 0 && newRows != emulator.getRows()) {
+            int newRows = (int) (newVal.doubleValue() / charHeight);
+            if (newRows > 1 && newRows != emulator.getRows()) {
                 emulator.resize(emulator.getCols(), newRows);
                 render();
+                notifyResize();
             }
         });
+    }
 
-        render();
+    /**
+     * 关键：让Canvas可被父容器调整大小
+     */
+    @Override
+    public boolean isResizable() {
+        return true;
+    }
+
+    /**
+     * 父容器调整Canvas大小时调用
+     */
+    @Override
+    public void resize(double width, double height) {
+        if (width > 0 && height > 0) {
+            setWidth(width);
+            setHeight(height);
+        }
+    }
+
+    private void notifyResize() {
+        if (resizeHandler != null) {
+            resizeHandler.onResize(
+                    emulator.getCols(),
+                    emulator.getRows(),
+                    (int) (emulator.getCols() * charWidth),
+                    (int) (emulator.getRows() * charHeight)
+            );
+        }
     }
 
     public void setKeyInputHandler(KeyInputHandler handler) {
         this.keyInputHandler = handler;
+    }
+
+    public void setResizeHandler(ResizeHandler handler) {
+        this.resizeHandler = handler;
     }
 
     private void updateFontMetrics() {
@@ -156,7 +192,6 @@ public class TerminalView extends Canvas {
         String ch = event.getCharacter();
         if (ch != null && !ch.isEmpty()) {
             char c = ch.charAt(0);
-            // 只发送可打印字符（不包括控制字符，已由keyPressed处理）
             if (c >= 0x20 && c != 0x7F) {
                 keyInputHandler.handleInput(ch.getBytes());
                 event.consume();
@@ -184,21 +219,17 @@ public class TerminalView extends Canvas {
         for (int y = 0; y < rows; y++) {
             double py = y0 + y * charHeight;
 
-            // 逐字符渲染（为性能优化，合并相同属性的连续字符）
             int runStart = 0;
             int runAttr = emulator.getAttr(0, y);
 
             for (int x = 0; x <= cols; x++) {
                 int attr = (x < cols) ? emulator.getAttr(x, y) : -1;
                 if (attr != runAttr || x == cols) {
-                    // 渲染从runStart到x的连续字符
                     if (x > runStart) {
-                        // 渲染背景
                         Color bg = getAttrBg(runAttr);
                         gc.setFill(bg);
                         gc.fillRect(x0 + runStart * charWidth, py, (x - runStart) * charWidth, charHeight);
 
-                        // 渲染前景文本
                         Color fg = getAttrFg(runAttr);
                         gc.setFill(fg);
 
@@ -221,7 +252,6 @@ public class TerminalView extends Canvas {
             double cy = y0 + emulator.getCursorY() * charHeight;
             gc.setFill(Color.WHITE);
             gc.fillRect(cx, cy, charWidth, charHeight);
-            // 反色显示光标位置的字符
             gc.setFill(Color.BLACK);
             char c = emulator.getChar(emulator.getCursorX(), emulator.getCursorY());
             gc.fillText(String.valueOf(c == '\0' ? ' ' : c), cx, cy + fontAscent);

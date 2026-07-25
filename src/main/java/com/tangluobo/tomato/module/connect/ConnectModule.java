@@ -213,28 +213,57 @@ public class ConnectModule implements Module {
     private void handleConnect(ConnectionConfig config) {
         if (config.getType() == ConnectType.SSH) {
             if (contentArea == null) return;
-            contentArea.getChildren().clear();
+
+            // 布局链: contentArea(VBox) → ScrollPane → contentPane(VBox) → contentHBox(HBox)
+            // 必须将终端放到HBox中，因为HBox的fillHeight=true会直接拉伸子节点
+            // 而VBox不会给prefHeight=0的子节点分配空间
+            javafx.scene.Parent scrollParent = contentArea.getParent();
+            javafx.scene.layout.HBox contentHBox = null;
+            javafx.scene.layout.VBox contentPane = null;
+            javafx.scene.control.ScrollPane scrollPane = null;
+
+            if (scrollParent instanceof javafx.scene.control.ScrollPane sp) {
+                scrollPane = sp;
+                javafx.scene.Parent cp = sp.getParent();
+                if (cp instanceof javafx.scene.layout.VBox vBox) {
+                    contentPane = vBox;
+                    if (vBox.getParent() instanceof javafx.scene.layout.HBox hBox) {
+                        contentHBox = hBox;
+                    }
+                }
+            }
+
+            if (contentHBox == null) {
+                // 找不到contentHBox，回退
+                contentArea.getChildren().clear();
+                SSHTerminalPane terminalPane = new SSHTerminalPane();
+                VBox.setVgrow(terminalPane, javafx.scene.layout.Priority.ALWAYS);
+                contentArea.getChildren().add(terminalPane);
+                doConnect(terminalPane, config);
+                return;
+            }
+
+            javafx.scene.layout.HBox finalContentHBox = contentHBox;
+            javafx.scene.layout.VBox finalContentPane = contentPane;
+            javafx.scene.control.ScrollPane finalScrollPane = scrollPane;
+
+            // 隐藏contentPane（包含ScrollPane），在HBox中直接放终端
+            finalContentPane.setVisible(false);
+            finalContentPane.setManaged(false);
 
             SSHTerminalPane terminalPane = new SSHTerminalPane();
-            contentArea.getChildren().add(terminalPane);
-            terminalPane.prefWidthProperty().bind(contentArea.widthProperty());
-            terminalPane.prefHeightProperty().bind(contentArea.heightProperty());
+            HBox.setHgrow(terminalPane, javafx.scene.layout.Priority.ALWAYS);
 
-            // 异步连接
-            new Thread(() -> {
-                try {
-                    terminalPane.connect(config.getHost(), config.getPort(), config.getUsername(), config.getPassword());
-                } catch (Exception e) {
-                    Platform.runLater(() -> {
-                        Alert alert = new Alert(Alert.AlertType.ERROR);
-                        alert.setTitle("连接失败");
-                        alert.setHeaderText(null);
-                        alert.setContentText("SSH连接失败: " + e.getMessage());
-                        alert.showAndWait();
-                    });
-                    e.printStackTrace();
-                }
-            }, "SSH-Connect").start();
+            finalContentHBox.getChildren().add(terminalPane);
+
+            // 断开连接时恢复
+            terminalPane.setOnDisconnect(() -> {
+                finalContentHBox.getChildren().remove(terminalPane);
+                finalContentPane.setVisible(true);
+                finalContentPane.setManaged(true);
+            });
+
+            doConnect(terminalPane, config);
         } else {
             // 非SSH连接，走编辑流程
             Stage stage = getStage();
@@ -247,6 +276,24 @@ public class ConnectModule implements Module {
                 ConfigManager.saveConnections(connections);
             }
         }
+    }
+
+    private void doConnect(SSHTerminalPane terminalPane, ConnectionConfig config) {
+        new Thread(() -> {
+            try {
+                terminalPane.connect(config.getHost(), config.getPort(), config.getUsername(), config.getPassword());
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("连接失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("SSH连接失败: " + e.getMessage());
+                    alert.showAndWait();
+                    terminalPane.disconnect();
+                });
+                e.printStackTrace();
+            }
+        }, "SSH-Connect").start();
     }
 
     private void handleAddFolder(TreeItem<String> parent) {

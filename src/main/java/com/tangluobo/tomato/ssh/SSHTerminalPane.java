@@ -5,7 +5,7 @@ import com.tangluobo.tomato.zmodem.util.CustomFile;
 import com.tangluobo.tomato.zmodem.util.FileAdapter;
 import com.tangluobo.tomato.zmodem.xfer.zm.util.ZModemCharacter;
 import javafx.application.Platform;
-import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.Pane;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
@@ -17,8 +17,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * SSH终端组件，使用VT100终端模拟器，支持ZModem协议（rz/sz文件传输）
+ * 继承Pane，在layoutChildren中直接控制Canvas大小
  */
-public class SSHTerminalPane extends BorderPane {
+public class SSHTerminalPane extends Pane {
 
     // ZModem协议前缀: ** ZDLE
     private static final char[] ZMODEM_PREFIX = new char[]{
@@ -35,6 +36,9 @@ public class SSHTerminalPane extends BorderPane {
     private volatile ZModem zmodem;
     private volatile boolean inZModemMode = false;
 
+    // 断开连接回调
+    private Runnable onDisconnect;
+
     // 渲染节流
     private long lastRenderTime = 0;
     private static final long RENDER_INTERVAL = 33; // ~30fps
@@ -44,8 +48,22 @@ public class SSHTerminalPane extends BorderPane {
         emulator = new TerminalEmulator();
         terminalView = new TerminalView(emulator);
 
-        setCenter(terminalView);
+        getChildren().add(terminalView);
         setStyle("-fx-background-color: #1e1e1e;");
+
+        // 关键：Pane默认maxWidth/maxHeight=USE_COMPUTED_SIZE=prefSize=0
+        // 必须设为MAX_VALUE，否则任何布局容器都不会给它分配空间
+        setMaxWidth(Double.MAX_VALUE);
+        setMaxHeight(Double.MAX_VALUE);
+        setPrefWidth(800);
+        setPrefHeight(600);
+
+        // 终端大小变化时通知SSH服务器
+        terminalView.setResizeHandler((cols, rows, width, height) -> {
+            if (sshSession != null && sshSession.isConnected()) {
+                sshSession.resize(cols, rows, width, height);
+            }
+        });
 
         // 设置键盘输入回调
         terminalView.setKeyInputHandler(data -> {
@@ -67,6 +85,20 @@ public class SSHTerminalPane extends BorderPane {
                 e.printStackTrace();
             }
         });
+    }
+
+    /**
+     * 重写布局方法，让Canvas填满整个Pane
+     */
+    @Override
+    protected void layoutChildren() {
+        super.layoutChildren();
+        double w = getWidth();
+        double h = getHeight();
+        if (w > 0 && h > 0) {
+            terminalView.relocate(0, 0);
+            terminalView.resize(w, h);
+        }
     }
 
     /**
@@ -102,6 +134,14 @@ public class SSHTerminalPane extends BorderPane {
             sshSession.disconnect();
             sshSession = null;
         }
+        // 通知断开回调
+        if (onDisconnect != null) {
+            Platform.runLater(onDisconnect);
+        }
+    }
+
+    public void setOnDisconnect(Runnable callback) {
+        this.onDisconnect = callback;
     }
 
     public boolean isConnected() {
@@ -171,6 +211,10 @@ public class SSHTerminalPane extends BorderPane {
             Platform.runLater(() -> {
                 emulator.process(("\r\n[连接已关闭]\r\n").getBytes());
                 scheduleRender();
+                // 通知断开回调
+                if (onDisconnect != null) {
+                    onDisconnect.run();
+                }
             });
         }, "SSH-Read-Thread");
         readThread.setDaemon(true);
