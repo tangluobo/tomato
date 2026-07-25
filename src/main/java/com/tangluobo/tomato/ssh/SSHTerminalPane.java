@@ -140,6 +140,13 @@ public class SSHTerminalPane extends Pane {
             contextMenu.show(this, e.getScreenX(), e.getScreenY());
             e.consume();
         });
+
+        // 点击其他位置时隐藏右键菜单
+        setOnMousePressed(e -> {
+            if (contextMenu.isShowing()) {
+                contextMenu.hide();
+            }
+        });
     }
 
     /**
