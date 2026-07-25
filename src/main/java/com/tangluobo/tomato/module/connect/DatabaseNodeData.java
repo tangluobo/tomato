@@ -16,16 +16,20 @@ public class DatabaseNodeData {
     private final String name;
     private final ConnectionConfig connectionConfig;
     private final String databaseName;
+    private boolean opened;
 
     public DatabaseNodeData(NodeType type, String name, ConnectionConfig connectionConfig, String databaseName) {
         this.type = type;
         this.name = name;
         this.connectionConfig = connectionConfig;
         this.databaseName = databaseName;
+        this.opened = false;
     }
 
     public NodeType getType() { return type; }
     public String getName() { return name; }
     public ConnectionConfig getConnectionConfig() { return connectionConfig; }
     public String getDatabaseName() { return databaseName; }
+    public boolean isOpened() { return opened; }
+    public void setOpened(boolean opened) { this.opened = opened; }
 }

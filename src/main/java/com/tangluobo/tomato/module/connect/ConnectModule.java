@@ -47,6 +47,7 @@ public class ConnectModule implements Module {
     private Map<TreeItem<String>, DatabaseNodeData> dbNodeDataMap;
     private Image folderIcon;
     private Image dbIcon;
+    private Image dbIconGray;
     private Image tableIcon;
     private Image viewIcon;
     private Image tableFolderIcon;
@@ -129,6 +130,26 @@ public class ConnectModule implements Module {
 
     private void loadDbIcons() {
         try { dbIcon = new Image(getClass().getResourceAsStream("/images/connect/database.png")); } catch (Exception e) { dbIcon = null; }
+        // 创建灰色数据库图标（关闭状态）
+        if (dbIcon != null) {
+            int w = (int) dbIcon.getWidth();
+            int h = (int) dbIcon.getHeight();
+            javafx.scene.image.WritableImage grayImg = new javafx.scene.image.WritableImage(w, h);
+            javafx.scene.image.PixelReader reader = dbIcon.getPixelReader();
+            javafx.scene.image.PixelWriter writer = grayImg.getPixelWriter();
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    javafx.scene.paint.Color c = reader.getColor(x, y);
+                    if (c.getOpacity() > 0) {
+                        double gray = c.getRed() * 0.3 + c.getGreen() * 0.59 + c.getBlue() * 0.11;
+                        writer.setColor(x, y, new javafx.scene.paint.Color(gray, gray, gray, c.getOpacity()));
+                    } else {
+                        writer.setColor(x, y, javafx.scene.paint.Color.TRANSPARENT);
+                    }
+                }
+            }
+            dbIconGray = grayImg;
+        }
         try { tableIcon = new Image(getClass().getResourceAsStream("/images/connect/table.png")); } catch (Exception e) { tableIcon = null; }
         try { viewIcon = new Image(getClass().getResourceAsStream("/images/connect/view.png")); } catch (Exception e) { viewIcon = null; }
         try { tableFolderIcon = new Image(getClass().getResourceAsStream("/images/connect/table_folder.png")); } catch (Exception e) { tableFolderIcon = null; }
@@ -140,7 +161,7 @@ public class ConnectModule implements Module {
         iv.setFitWidth(16);
         iv.setFitHeight(16);
         Image icon = switch (data.getType()) {
-            case DATABASE -> dbIcon;
+            case DATABASE -> data.isOpened() ? dbIcon : dbIconGray;
             case TABLES_FOLDER -> tableFolderIcon;
             case VIEWS_FOLDER -> viewFolderIcon;
             case TABLE -> tableIcon;
@@ -331,15 +352,35 @@ public class ConnectModule implements Module {
                 // 检查是否为数据库动态节点
                 DatabaseNodeData dbData = dbNodeDataMap.get(targetItem);
                 if (dbData != null) {
-                    // 只有数据库、表文件夹、视图文件夹节点显示刷新菜单，具体表和视图不需要
-                    if (dbData.getType() != DatabaseNodeData.NodeType.TABLE && dbData.getType() != DatabaseNodeData.NodeType.VIEW) {
-                        MenuItem refreshItem = new MenuItem("刷新");
-                        refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
-                        contextMenu.getItems().add(refreshItem);
-                    } else if (dbData.getType() == DatabaseNodeData.NodeType.TABLE || dbData.getType() == DatabaseNodeData.NodeType.VIEW) {
-                        MenuItem deleteItem = new MenuItem("删除");
-                        deleteItem.setOnAction(e -> handleDeleteDbNodes());
-                        contextMenu.getItems().add(deleteItem);
+                    switch (dbData.getType()) {
+                        case DATABASE -> {
+                            if (dbData.isOpened()) {
+                                MenuItem closeDbItem = new MenuItem("关闭");
+                                closeDbItem.setOnAction(e -> closeDatabase(targetItem, dbData));
+                                contextMenu.getItems().add(closeDbItem);
+                            } else {
+                                MenuItem openDbItem = new MenuItem("打开");
+                                openDbItem.setOnAction(e -> openDatabase(targetItem, dbData));
+                                contextMenu.getItems().add(openDbItem);
+                            }
+                            MenuItem editDbItem = new MenuItem("编辑");
+                            editDbItem.setOnAction(e -> handleEditDatabase(targetItem, dbData));
+                            MenuItem deleteDbItem = new MenuItem("删除");
+                            deleteDbItem.setOnAction(e -> handleDeleteDatabase(targetItem, dbData));
+                            MenuItem refreshItem = new MenuItem("刷新");
+                            refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
+                            contextMenu.getItems().addAll(new SeparatorMenuItem(), editDbItem, deleteDbItem, new SeparatorMenuItem(), refreshItem);
+                        }
+                        case TABLES_FOLDER, VIEWS_FOLDER -> {
+                            MenuItem refreshItem = new MenuItem("刷新");
+                            refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
+                            contextMenu.getItems().add(refreshItem);
+                        }
+                        case TABLE, VIEW -> {
+                            MenuItem deleteItem = new MenuItem("删除");
+                            deleteItem.setOnAction(e -> handleDeleteDbNodes());
+                            contextMenu.getItems().add(deleteItem);
+                        }
                     }
                 } else {
                 ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
@@ -713,10 +754,22 @@ public class ConnectModule implements Module {
      * 双击数据库节点：加载"表"和"视图"文件夹节点
      */
     private void handleDatabaseDoubleClick(TreeItem<String> dbItem, DatabaseNodeData data) {
-        if (!dbItem.getChildren().isEmpty()) {
+        if (data.isOpened()) {
+            // 已打开状态：折叠/展开切换
             dbItem.setExpanded(!dbItem.isExpanded());
             return;
         }
+
+        // 打开数据库：加载表和视图
+        openDatabase(dbItem, data);
+    }
+
+    /**
+     * 打开数据库节点：加载表和视图文件夹，图标变彩色
+     */
+    private void openDatabase(TreeItem<String> dbItem, DatabaseNodeData data) {
+        data.setOpened(true);
+        dbItem.setGraphic(getDbNodeIcon(data));
 
         ConnectionConfig config = data.getConnectionConfig();
 
@@ -732,9 +785,20 @@ public class ConnectModule implements Module {
         dbItem.getChildren().addAll(tablesFolder, viewsFolder);
         dbItem.setExpanded(true);
 
-        // 自动加载表和视图
+        // 自动加载表和视图（默认不展开子节点）
         loadTablesForFolder(tablesFolder, config, data.getDatabaseName());
         loadViewsForFolder(viewsFolder, config, data.getDatabaseName());
+    }
+
+    /**
+     * 关闭数据库节点：清除子节点，图标变灰色
+     */
+    private void closeDatabase(TreeItem<String> dbItem, DatabaseNodeData data) {
+        removeDbNodeDataRecursive(dbItem);
+        dbItem.getChildren().clear();
+        data.setOpened(false);
+        dbItem.setGraphic(getDbNodeIcon(data));
+        dbItem.setExpanded(false);
     }
 
     /**
@@ -936,6 +1000,144 @@ public class ConnectModule implements Module {
     }
 
     /**
+     * 编辑数据库（修改字符集/排序规则）
+     */
+    private void handleEditDatabase(TreeItem<String> dbItem, DatabaseNodeData data) {
+        ConnectionConfig config = data.getConnectionConfig();
+
+        // 需要密码才能操作
+        if (config.getPassword() == null) {
+            Dialog<String> pwdDialog = new Dialog<>();
+            pwdDialog.setTitle("输入密码");
+            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
+            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+            GridPane grid = new GridPane();
+            grid.setHgap(10);
+            grid.setVgap(10);
+            grid.setPadding(new Insets(20, 10, 10, 10));
+            PasswordField pf = new PasswordField();
+            pf.setPrefWidth(250);
+            grid.add(new Label("密码："), 0, 0);
+            grid.add(pf, 1, 0);
+            pwdDialog.getDialogPane().setContent(grid);
+            pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
+            final String[] passwordHolder = new String[1];
+            pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
+            if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
+            config.setPassword(passwordHolder[0]);
+        }
+
+        Stage stage = getStage();
+        if (stage == null) return;
+
+        String dbName = data.getDatabaseName();
+
+        // 异步获取当前数据库的字符集和排序规则，然后打开编辑对话框
+        new Thread(() -> {
+            try {
+                String[] charsetCollation = DatabaseService.getDatabaseCharsetCollation(config, dbName);
+                String currentCharset = charsetCollation[0];
+                String currentCollation = charsetCollation[1];
+
+                Platform.runLater(() -> {
+                    EditDatabaseDialog dialog = new EditDatabaseDialog(stage, config, dbName, currentCharset, currentCollation);
+                    dialog.showAndWait();
+
+                    if (!dialog.isConfirmed()) return;
+
+                    String charset = dialog.getCharset();
+                    String collation = dialog.getCollation();
+
+                    new Thread(() -> {
+                        try {
+                            DatabaseService.alterDatabase(config, dbName, charset, collation);
+                            Platform.runLater(() -> {
+                                // 刷新数据库节点
+                                handleRefreshDbNode(dbItem, data);
+                            });
+                        } catch (Exception e) {
+                            Platform.runLater(() -> {
+                                Alert alert = new Alert(Alert.AlertType.ERROR);
+                                alert.setTitle("修改失败");
+                                alert.setHeaderText(null);
+                                alert.setContentText("修改数据库失败: " + e.getMessage());
+                                alert.showAndWait();
+                            });
+                        }
+                    }, "DB-AlterDatabase").start();
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("查询失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("获取数据库信息失败: " + e.getMessage());
+                    alert.showAndWait();
+                });
+            }
+        }, "DB-GetDbInfo").start();
+    }
+
+    /**
+     * 删除数据库（确认提示）
+     */
+    private void handleDeleteDatabase(TreeItem<String> dbItem, DatabaseNodeData data) {
+        ConnectionConfig config = data.getConnectionConfig();
+        String dbName = data.getDatabaseName();
+
+        // 确认删除
+        Alert confirm = new Alert(Alert.AlertType.WARNING);
+        confirm.setTitle("删除数据库");
+        confirm.setHeaderText("确定要删除数据库 \"" + dbName + "\" 吗？");
+        confirm.setContentText("此操作不可撤销，该数据库中的所有数据将被永久删除！");
+        confirm.getButtonTypes().setAll(ButtonType.YES, ButtonType.NO);
+        confirm.showAndWait().ifPresent(response -> {
+            if (response != ButtonType.YES) return;
+
+            // 需要密码才能操作
+            if (config.getPassword() == null) {
+                Dialog<String> pwdDialog = new Dialog<>();
+                pwdDialog.setTitle("输入密码");
+                pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
+                pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+                GridPane grid = new GridPane();
+                grid.setHgap(10);
+                grid.setVgap(10);
+                grid.setPadding(new Insets(20, 10, 10, 10));
+                PasswordField pf = new PasswordField();
+                pf.setPrefWidth(250);
+                grid.add(new Label("密码："), 0, 0);
+                grid.add(pf, 1, 0);
+                pwdDialog.getDialogPane().setContent(grid);
+                pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
+                final String[] passwordHolder = new String[1];
+                pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
+                if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
+                config.setPassword(passwordHolder[0]);
+            }
+
+            new Thread(() -> {
+                try {
+                    DatabaseService.dropDatabase(config, dbName);
+                    Platform.runLater(() -> {
+                        // 从树中移除节点
+                        removeDbNodeDataRecursive(dbItem);
+                        dbItem.getParent().getChildren().remove(dbItem);
+                    });
+                } catch (Exception e) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("删除失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("删除数据库失败: " + e.getMessage());
+                        alert.showAndWait();
+                    });
+                }
+            }, "DB-DropDatabase").start();
+        });
+    }
+
+    /**
      * 刷新数据库主机节点下的数据库列表
      */
     private void handleRefreshDbHost(TreeItem<String> hostItem, ConnectionConfig config) {
@@ -989,9 +1191,12 @@ public class ConnectModule implements Module {
         ConnectionConfig config = data.getConnectionConfig();
         switch (data.getType()) {
             case DATABASE -> {
-                item.getChildren().clear();
-                // 重新加载表和视图文件夹
-                handleDatabaseDoubleClick(item, data);
+                if (data.isOpened()) {
+                    // 已打开状态：清除子节点后重新加载
+                    removeDbNodeDataRecursive(item);
+                    item.getChildren().clear();
+                    openDatabase(item, data);
+                }
             }
             case TABLES_FOLDER -> {
                 item.getChildren().clear();

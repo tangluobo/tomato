@@ -369,6 +369,82 @@ public class DatabaseService {
     }
 
     /**
+     * 修改数据库字符集/排序规则
+     */
+    public static void alterDatabase(ConnectionConfig config, String databaseName, String charset, String collation) throws Exception {
+        StringBuilder sql = new StringBuilder();
+        if (config.getType() == ConnectType.MYSQL) {
+            sql.append("ALTER DATABASE `").append(databaseName).append("`");
+            if (charset != null && !charset.isEmpty()) {
+                sql.append(" CHARACTER SET ").append(charset);
+            }
+            if (collation != null && !collation.isEmpty()) {
+                sql.append(" COLLATE ").append(collation);
+            }
+        } else if (config.getType() == ConnectType.POSTGRESQL) {
+            sql.append("ALTER DATABASE \"").append(databaseName).append("\"");
+            if (charset != null && !charset.isEmpty()) {
+                sql.append(" SET encoding = '").append(charset).append("'");
+            }
+        } else if (config.getType() == ConnectType.ORACLE) {
+            // Oracle不支持ALTER DATABASE修改字符集，跳过
+            return;
+        }
+        if (sql.length() > 0) {
+            Connection conn = getConnection(config);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.executeUpdate(sql.toString());
+            }
+        }
+    }
+
+    /**
+     * 删除数据库
+     */
+    public static void dropDatabase(ConnectionConfig config, String databaseName) throws Exception {
+        String sql = buildDropDatabaseSql(config, databaseName);
+        Connection conn = getConnection(config);
+        try (Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(sql);
+        }
+    }
+
+    /**
+     * 获取数据库的当前字符集和排序规则
+     */
+    public static String[] getDatabaseCharsetCollation(ConnectionConfig config, String databaseName) throws Exception {
+        Connection conn = getConnection(config, databaseName);
+        String charset = null;
+        String collation = null;
+
+        if (config.getType() == ConnectType.MYSQL) {
+            try (PreparedStatement stmt = conn.prepareStatement(
+                     "SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?")) {
+                stmt.setString(1, databaseName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        charset = rs.getString("DEFAULT_CHARACTER_SET_NAME");
+                        collation = rs.getString("DEFAULT_COLLATION_NAME");
+                    }
+                }
+            }
+        } else if (config.getType() == ConnectType.POSTGRESQL) {
+            try (PreparedStatement stmt = conn.prepareStatement(
+                     "SELECT pg_encoding_to_char(encoding) AS encoding, datcollate FROM pg_database WHERE datname = ?")) {
+                stmt.setString(1, databaseName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        charset = rs.getString("encoding");
+                        collation = rs.getString("datcollate");
+                    }
+                }
+            }
+        }
+
+        return new String[]{charset, collation};
+    }
+
+    /**
      * 获取服务器支持的字符集及对应排序规则
      */
     public static Map<String, List<String>> getCharsets(ConnectionConfig config) throws Exception {
@@ -423,6 +499,18 @@ public class DatabaseService {
             sql.append("CREATE USER \"").append(databaseName).append("\" IDENTIFIED BY \"").append(databaseName).append("\"");
         }
         return sql.toString();
+    }
+
+    /**
+     * 构建删除数据库SQL
+     */
+    private static String buildDropDatabaseSql(ConnectionConfig config, String databaseName) {
+        return switch (config.getType()) {
+            case MYSQL -> "DROP DATABASE `" + databaseName + "`";
+            case POSTGRESQL -> "DROP DATABASE \"" + databaseName + "\"";
+            case ORACLE -> "DROP USER \"" + databaseName + "\" CASCADE";
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        };
     }
 
     /**
