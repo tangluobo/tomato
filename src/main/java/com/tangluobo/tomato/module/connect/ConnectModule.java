@@ -6,8 +6,11 @@ import javafx.application.Platform;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.Dragboard;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
+import javafx.scene.input.TransferMode;
 import javafx.scene.layout.VBox;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Region;
@@ -54,7 +57,9 @@ public class ConnectModule implements Module {
         headerBar.getChildren().add(searchField);
 
         treeView = new TreeView<>();
-        treeView.setStyle("-fx-background-color: transparent;");
+        treeView.setStyle("-fx-background-color: transparent; -fx-cell-size: 35px;");
+        treeView.setFixedCellSize(35);
+        treeView.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         root = new TreeItem<>("连接");
         root.setExpanded(true);
         treeView.setRoot(root);
@@ -65,6 +70,7 @@ public class ConnectModule implements Module {
         loadTree();
 
         setupContextMenu();
+        setupDragAndDrop();
 
         sidebarContainer.getChildren().addAll(headerBar, treeView);
         treeView.prefHeightProperty().bind(sidebarContainer.heightProperty().subtract(50));
@@ -161,34 +167,50 @@ public class ConnectModule implements Module {
 
     private void setupContextMenu() {
         treeView.setOnContextMenuRequested(event -> {
-            TreeItem<String> tempItem = treeView.getSelectionModel().getSelectedItem();
-            final TreeItem<String> selectedItem = tempItem == null ? root : tempItem;
+            // 判断右键是否点击在某个节点上，还是空白区域
+            Node node = event.getPickResult().getIntersectedNode();
+            TreeItem<String> clickedItem = null;
+            // 向上遍历找到TreeCell
+            while (node != null && !(node instanceof TreeCell)) {
+                node = node.getParent();
+            }
+            if (node instanceof TreeCell<?> cell) {
+                clickedItem = (TreeItem<String>) cell.getTreeItem();
+            }
+
+            // 只有明确点击在节点上时才作为选中项，否则为null（代表根级）
+            final TreeItem<String> targetItem = clickedItem;
 
             ContextMenu contextMenu = new ContextMenu();
 
-            MenuItem addFolder = new MenuItem("新建目录");
-            addFolder.setOnAction(e -> handleAddFolder(selectedItem));
-
-            MenuItem addConnection = new MenuItem("新建连接");
-            addConnection.setOnAction(e -> handleAddConnection(selectedItem));
-
-            MenuItem editItem = new MenuItem("编辑");
-            editItem.setOnAction(e -> handleEdit(selectedItem));
-
-            MenuItem deleteItem = new MenuItem("删除");
-            deleteItem.setOnAction(e -> handleDelete(selectedItem));
-
-            if (selectedItem != root) {
-                ConnectionConfig selectedConfig = itemConfigMap.get(selectedItem);
-                if (selectedConfig != null && selectedConfig.getType() != null) {
+            if (targetItem == null) {
+                // 空白区域右键：以root为父级，可创建根下的目录和连接
+                MenuItem addFolder = new MenuItem("新建目录");
+                addFolder.setOnAction(e -> handleAddFolder(root));
+                MenuItem addConnection = new MenuItem("新建连接");
+                addConnection.setOnAction(e -> handleAddConnection(root));
+                contextMenu.getItems().addAll(addFolder, addConnection);
+            } else {
+                ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
+                if (targetConfig != null && targetConfig.getType() != null) {
+                    // 具体连接节点：只能连接、编辑、删除，不能创建子节点
                     MenuItem connectItem = new MenuItem("连接");
-                    connectItem.setOnAction(e -> handleConnect(selectedConfig));
-                    contextMenu.getItems().addAll(connectItem, addFolder, addConnection, new SeparatorMenuItem(), editItem, deleteItem);
+                    connectItem.setOnAction(e -> handleConnect(targetConfig));
+                    MenuItem editItem = new MenuItem("编辑");
+                    editItem.setOnAction(e -> handleEdit(targetItem));
+                    MenuItem deleteItem = new MenuItem("删除");
+                    deleteItem.setOnAction(e -> handleDelete(targetItem));
+                    contextMenu.getItems().addAll(connectItem, new SeparatorMenuItem(), editItem, deleteItem);
                 } else {
+                    // 目录节点：可以创建子目录/连接，可删除
+                    MenuItem addFolder = new MenuItem("新建目录");
+                    addFolder.setOnAction(e -> handleAddFolder(targetItem));
+                    MenuItem addConnection = new MenuItem("新建连接");
+                    addConnection.setOnAction(e -> handleAddConnection(targetItem));
+                    MenuItem deleteItem = new MenuItem("删除");
+                    deleteItem.setOnAction(e -> handleDelete(targetItem));
                     contextMenu.getItems().addAll(addFolder, addConnection, new SeparatorMenuItem(), deleteItem);
                 }
-            } else {
-                contextMenu.getItems().addAll(addFolder, addConnection);
             }
 
             contextMenu.show(treeView, event.getScreenX(), event.getScreenY());
@@ -205,6 +227,192 @@ public class ConnectModule implements Module {
                 }
             }
         });
+    }
+
+    private static final String DRAG_PREFIX = "ConnectItem|";
+
+    private void setupDragAndDrop() {
+        treeView.setCellFactory(tv -> {
+            TreeCell<String> cell = new TreeCell<>() {
+                @Override
+                protected void updateItem(String item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) {
+                        setText(null);
+                        setGraphic(null);
+                    } else {
+                        setText(item);
+                        TreeItem<String> treeItem = getTreeItem();
+                        if (treeItem != null) {
+                            setGraphic(treeItem.getGraphic());
+                        }
+                    }
+                }
+            };
+
+            // 拖拽源：开始拖拽
+            cell.setOnDragDetected(event -> {
+                if (cell.isEmpty()) {
+                    event.consume();
+                    return;
+                }
+                TreeItem<String> item = cell.getTreeItem();
+                if (item == null || item == root) {
+                    event.consume();
+                    return;
+                }
+                Dragboard db = cell.startDragAndDrop(TransferMode.MOVE);
+                ClipboardContent content = new ClipboardContent();
+                ConnectionConfig config = itemConfigMap.get(item);
+                if (config == null) {
+                    event.consume();
+                    return;
+                }
+                content.putString(DRAG_PREFIX + config.getId());
+                db.setContent(content);
+                event.consume();
+            });
+
+            // 拖拽经过：判断是否可以放置
+            cell.setOnDragOver(event -> {
+                Dragboard db = event.getDragboard();
+                if (db.hasString() && db.getString().startsWith(DRAG_PREFIX)) {
+                    TreeItem<String> targetItem = cell.getTreeItem();
+                    // 只能放到目录节点（type==null）或空白区域
+                    if (targetItem == null || targetItem == root) {
+                        event.acceptTransferModes(TransferMode.MOVE);
+                    } else {
+                        ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
+                        if (targetConfig != null && targetConfig.getType() == null) {
+                            event.acceptTransferModes(TransferMode.MOVE);
+                        }
+                    }
+                }
+                event.consume();
+            });
+
+            // 拖拽进入：高亮
+            cell.setOnDragEntered(event -> {
+                Dragboard db = event.getDragboard();
+                if (db.hasString() && db.getString().startsWith(DRAG_PREFIX)) {
+                    TreeItem<String> targetItem = cell.getTreeItem();
+                    if (targetItem == null || targetItem == root) {
+                        cell.setStyle("-fx-background-color: #e0e0e0;");
+                    } else {
+                        ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
+                        if (targetConfig != null && targetConfig.getType() == null) {
+                            cell.setStyle("-fx-background-color: #e0e0e0;");
+                        }
+                    }
+                }
+                event.consume();
+            });
+
+            // 拖拽退出：取消高亮
+            cell.setOnDragExited(event -> {
+                cell.setStyle("");
+                event.consume();
+            });
+
+            // 放置：移动节点到新的父级
+            cell.setOnDragDropped(event -> {
+                Dragboard db = event.getDragboard();
+                boolean success = false;
+                if (db.hasString() && db.getString().startsWith(DRAG_PREFIX)) {
+                    String dragId = db.getString().substring(DRAG_PREFIX.length());
+                    TreeItem<String> targetItem = cell.getTreeItem();
+
+                    // 确定目标父级
+                    TreeItem<String> newParent;
+                    if (targetItem == null || targetItem == root) {
+                        newParent = root;
+                    } else {
+                        ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
+                        if (targetConfig != null && targetConfig.getType() == null) {
+                            newParent = targetItem;
+                        } else {
+                            newParent = root;
+                        }
+                    }
+
+                    // 查找被拖拽的节点
+                    TreeItem<String> draggedItem = findItemById(root, dragId);
+                    if (draggedItem != null && draggedItem != newParent && !isDescendant(draggedItem, newParent)) {
+                        moveItem(draggedItem, newParent);
+                        success = true;
+                    }
+                }
+                event.setDropCompleted(success);
+                event.consume();
+            });
+
+            return cell;
+        });
+
+        // 空白区域也支持拖拽放置（移动到根级）
+        treeView.setOnDragOver(event -> {
+            Dragboard db = event.getDragboard();
+            if (db.hasString() && db.getString().startsWith(DRAG_PREFIX)) {
+                event.acceptTransferModes(TransferMode.MOVE);
+            }
+            event.consume();
+        });
+
+        treeView.setOnDragDropped(event -> {
+            Dragboard db = event.getDragboard();
+            boolean success = false;
+            if (db.hasString() && db.getString().startsWith(DRAG_PREFIX)) {
+                String dragId = db.getString().substring(DRAG_PREFIX.length());
+                TreeItem<String> draggedItem = findItemById(root, dragId);
+                if (draggedItem != null && draggedItem.getParent() != root) {
+                    moveItem(draggedItem, root);
+                    success = true;
+                }
+            }
+            event.setDropCompleted(success);
+            event.consume();
+        });
+    }
+
+    /**
+     * 判断possibleDescendant是否是ancestor的后代
+     */
+    private boolean isDescendant(TreeItem<String> ancestor, TreeItem<String> possibleDescendant) {
+        if (ancestor == possibleDescendant) return true;
+        for (TreeItem<String> child : ancestor.getChildren()) {
+            if (isDescendant(child, possibleDescendant)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 移动节点到新的父级
+     */
+    private void moveItem(TreeItem<String> item, TreeItem<String> newParent) {
+        ConnectionConfig config = itemConfigMap.get(item);
+        if (config == null) return;
+
+        // 从旧父级移除
+        item.getParent().getChildren().remove(item);
+
+        // 更新parentId
+        if (newParent == root) {
+            config.setParentId(null);
+        } else {
+            ConnectionConfig parentConfig = itemConfigMap.get(newParent);
+            if (parentConfig != null) {
+                config.setParentId(parentConfig.getId());
+            }
+        }
+
+        // 添加到新父级
+        newParent.getChildren().add(item);
+        newParent.setExpanded(true);
+
+        // 持久化
+        ConfigManager.saveConnections(connections);
     }
 
     /**
