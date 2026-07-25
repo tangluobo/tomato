@@ -11,6 +11,7 @@ public class ConnectionConfig {
     private String password;
     private String database;
     private String description;
+    private Integer scrollbackLines; // null=使用全局配置
 
     public ConnectionConfig() {
     }
@@ -100,5 +101,13 @@ public class ConnectionConfig {
 
     public void setDescription(String description) {
         this.description = description;
+    }
+
+    public Integer getScrollbackLines() {
+        return scrollbackLines;
+    }
+
+    public void setScrollbackLines(Integer scrollbackLines) {
+        this.scrollbackLines = scrollbackLines;
     }
 }

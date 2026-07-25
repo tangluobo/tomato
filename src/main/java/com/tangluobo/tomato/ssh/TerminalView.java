@@ -10,6 +10,7 @@ import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
+import javafx.scene.input.ScrollEvent;
 import javafx.scene.paint.Color;
 import javafx.util.Duration;
 
@@ -58,6 +59,12 @@ public class TerminalView extends Canvas {
     private int selectionEndRow = -1;
     private boolean isSelecting = false;
 
+    // 滚动条回调
+    public interface ScrollbarHandler {
+        void onScrollChanged(int scrollbackSize, int scrollOffset, int visibleRows);
+    }
+    private ScrollbarHandler scrollbarHandler;
+
     public interface KeyInputHandler {
         void handleInput(byte[] data);
     }
@@ -83,6 +90,9 @@ public class TerminalView extends Canvas {
         setOnMouseDragged(this::handleMouseDragged);
         setOnMouseReleased(this::handleMouseReleased);
         setOnMouseClicked(this::handleMouseClicked);
+
+        // 鼠标滚轮滚动（回滚历史）
+        setOnScroll(this::handleScroll);
 
         // 光标闪烁定时器，每500ms切换一次
         cursorBlinkTimer = new Timeline(new KeyFrame(Duration.millis(500), e -> {
@@ -147,6 +157,18 @@ public class TerminalView extends Canvas {
 
     public void setResizeHandler(ResizeHandler handler) {
         this.resizeHandler = handler;
+    }
+
+    public void setScrollbarHandler(ScrollbarHandler handler) {
+        this.scrollbarHandler = handler;
+    }
+
+    /**
+     * 由外部滚动条驱动滚动
+     */
+    public void setScrollOffset(int offset) {
+        emulator.setScrollOffset(offset);
+        render();
     }
 
     private void updateFontMetrics() {
@@ -265,6 +287,8 @@ public class TerminalView extends Canvas {
     public void render() {
         int cols = emulator.getCols();
         int rows = emulator.getRows();
+        int scrollOffset = emulator.getScrollOffset();
+        int scrollbackSize = emulator.getScrollbackSize();
         double x0 = 2;
         double y0 = 2;
 
@@ -275,39 +299,73 @@ public class TerminalView extends Canvas {
         // 设置字体
         gc.setFont(javafx.scene.text.Font.font(fontFamily, 13));
 
-        // 逐行渲染
+        // 逐行渲染（支持scrollback偏移）
         for (int y = 0; y < rows; y++) {
             double py = y0 + y * charHeight;
 
+            // 计算该行应该显示的内容
+            // scrollOffset > 0 时，部分行从scrollback取
+            int scrollbackStart = scrollbackSize - scrollOffset;
+            int lineInScrollback = scrollbackStart + y;
+
+            char[] lineChars;
+            int[] lineAttrs;
+            if (lineInScrollback >= 0 && lineInScrollback < scrollbackSize) {
+                // 从scrollback取行
+                lineChars = emulator.getScrollbackLine(lineInScrollback);
+                lineAttrs = emulator.getScrollbackAttrLine(lineInScrollback);
+                if (lineChars == null) continue;
+            } else if (lineInScrollback >= scrollbackSize) {
+                // 从主缓冲区取行
+                int bufY = lineInScrollback - scrollbackSize;
+                if (bufY >= rows) continue;
+                lineChars = null; // 标记使用主缓冲区
+                lineAttrs = null;
+            } else {
+                // 没有内容
+                continue;
+            }
+
             int runStart = 0;
-            int runAttr = emulator.getAttr(0, y);
+            int firstAttr = (lineChars != null) ?
+                ((lineAttrs != null && lineAttrs.length > 0) ? lineAttrs[0] : 0) :
+                emulator.getAttr(0, y);
 
             for (int x = 0; x <= cols; x++) {
-                int attr = (x < cols) ? emulator.getAttr(x, y) : -1;
-                if (attr != runAttr || x == cols) {
+                int attr;
+                if (lineChars != null) {
+                    attr = (x < cols && x < lineAttrs.length) ? lineAttrs[x] : -1;
+                } else {
+                    attr = (x < cols) ? emulator.getAttr(x, y) : -1;
+                }
+
+                if (attr != firstAttr || x == cols) {
                     if (x > runStart) {
-                        Color bg = getAttrBg(runAttr);
+                        Color bg = getAttrBg(firstAttr);
                         gc.setFill(bg);
                         gc.fillRect(x0 + runStart * charWidth, py, (x - runStart) * charWidth, charHeight);
 
-                        // 逐字符渲染，跳过宽字符占位符(\0)，确保每个字符绘制在正确的网格位置
-                        // 避免将\0替换为空格导致宽字符后方内容被遮挡
-                        Color fg = getAttrFg(runAttr);
+                        Color fg = getAttrFg(firstAttr);
                         gc.setFill(fg);
                         for (int i = runStart; i < x; i++) {
-                            char c = emulator.getChar(i, y);
-                            if (c == '\0') continue; // 跳过宽字符占位符
+                            char c;
+                            if (lineChars != null) {
+                                c = (i < lineChars.length) ? lineChars[i] : ' ';
+                            } else {
+                                c = emulator.getChar(i, y);
+                            }
+                            if (c == '\0') continue;
                             gc.fillText(String.valueOf(c), x0 + i * charWidth, py + fontAscent);
                         }
                     }
                     runStart = x;
-                    runAttr = attr;
+                    firstAttr = attr;
                 }
             }
         }
 
-        // 渲染光标（闪烁）
-        if (emulator.isCursorVisible() && cursorBlinkOn) {
+        // 渲染光标（仅在没有回滚偏移时显示）
+        if (emulator.isCursorVisible() && cursorBlinkOn && scrollOffset == 0) {
             int curX = emulator.getCursorX();
             int curY = emulator.getCursorY();
             // 如果光标在宽字符占位符(\0)上，回退到宽字符的首列
@@ -352,6 +410,9 @@ public class TerminalView extends Canvas {
                 gc.fillRect(sx, sy, sw, charHeight);
             }
         }
+
+        // 通知滚动条更新
+        notifyScrollbar();
     }
 
     private Color getAttrFg(int attr) {
@@ -447,6 +508,52 @@ public class TerminalView extends Canvas {
     private void handleMouseClicked(MouseEvent e) {
         requestFocus();
     }
+
+    /**
+     * 鼠标滚轮滚动回滚历史
+     */
+    private void handleScroll(ScrollEvent e) {
+        int scrollbackSize = emulator.getScrollbackSize();
+        if (scrollbackSize == 0) return;
+
+        int delta = (int) -e.getDeltaY();
+        if (delta == 0) return;
+
+        // 标准化滚动量
+        int lines = Math.max(1, Math.abs(delta / 40));
+        int oldOffset = emulator.getScrollOffset();
+        int newOffset;
+        if (delta > 0) {
+            // 向上滚（回看更早的历史）
+            newOffset = Math.min(oldOffset + lines, scrollbackSize);
+        } else {
+            // 向下滚（回到最新的输出）
+            newOffset = Math.max(oldOffset - lines, 0);
+        }
+
+        if (newOffset != oldOffset) {
+            emulator.setScrollOffset(newOffset);
+            render();
+            notifyScrollbar();
+        }
+    }
+
+    private void notifyScrollbar() {
+        if (scrollbarHandler != null) {
+            int sbSize = emulator.getScrollbackSize();
+            int sbOffset = emulator.getScrollOffset();
+            // 只在值变化时通知，避免循环
+            if (sbSize != lastNotifiedScrollbackSize || sbOffset != lastNotifiedScrollOffset) {
+                lastNotifiedScrollbackSize = sbSize;
+                lastNotifiedScrollOffset = sbOffset;
+                scrollbarHandler.onScrollChanged(sbSize, sbOffset, emulator.getRows());
+            }
+        }
+    }
+
+    // 上次通知的值，避免重复通知
+    private int lastNotifiedScrollbackSize = -1;
+    private int lastNotifiedScrollOffset = -1;
 
     /**
      * 是否有选中文本

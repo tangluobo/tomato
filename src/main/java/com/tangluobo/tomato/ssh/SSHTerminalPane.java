@@ -12,6 +12,7 @@ import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.ScrollBar;
 import javafx.scene.control.SplitPane;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
@@ -80,11 +81,15 @@ public class SSHTerminalPane extends BorderPane {
     // 终端容器
     private final Pane terminalPane;
     private final SplitPane splitPane;
+    private final ScrollBar scrollBar;
 
     // SFTP文件浏览器
     private SFTPFileBrowser fileBrowser;
     private SFTPClient sftpClient;
     private boolean fileBrowserVisible = false;
+
+    // 防止scrollbar↔render循环
+    private boolean updatingScrollbar = false;
 
     // 连接信息
     private String host;
@@ -128,7 +133,25 @@ public class SSHTerminalPane extends BorderPane {
 
         statusBar.getChildren().addAll(statusDot, stateLabel, connLabel, encodingLabel, spacer, folderBtn);
 
-        // 终端区域用Pane包裹，保留原来的layoutChildren逻辑
+        // 终端区域 + 右侧滚动条
+        scrollBar = new ScrollBar();
+        scrollBar.setOrientation(javafx.geometry.Orientation.VERTICAL);
+        scrollBar.setStyle("-fx-background-color: #2d2d2d;");
+        scrollBar.setPrefWidth(12);
+        scrollBar.setMin(0);
+        scrollBar.setMax(0);
+        scrollBar.setValue(0);
+        scrollBar.setVisible(false);
+        scrollBar.valueProperty().addListener((obs, oldVal, newVal) -> {
+            if (updatingScrollbar) return; // 防止循环
+            // value从顶部算：value越大越靠近底部
+            // offset从底部算：scrollbackSize - (value - scrollbackSize + visibleRows - 1)
+            double visibleAmt = scrollBar.getVisibleAmount();
+            int maxScrollOffset = (int) (scrollBar.getMax() - visibleAmt + 1);
+            int offset = maxScrollOffset - (int) (newVal.doubleValue() + 0.5);
+            terminalView.setScrollOffset(Math.max(0, Math.min(offset, emulator.getScrollbackSize())));
+        });
+
         terminalPane = new Pane() {
             @Override
             protected void layoutChildren() {
@@ -136,17 +159,44 @@ public class SSHTerminalPane extends BorderPane {
                 double w = getWidth();
                 double h = getHeight();
                 if (w > 0 && h > 0) {
+                    double sbWidth = scrollBar.isVisible() ? scrollBar.getWidth() : 0;
                     terminalView.relocate(0, 0);
-                    terminalView.resize(w, h);
+                    terminalView.resize(w - sbWidth, h);
+                    scrollBar.resizeRelocate(w - scrollBar.getPrefWidth(), 0, scrollBar.getPrefWidth(), h);
                 }
             }
         };
-        terminalPane.getChildren().add(terminalView);
+        terminalPane.getChildren().addAll(terminalView, scrollBar);
         terminalPane.setStyle("-fx-background-color: #1e1e1e;");
         terminalPane.setMaxWidth(Double.MAX_VALUE);
         terminalPane.setMaxHeight(Double.MAX_VALUE);
         terminalPane.setPrefWidth(800);
         terminalPane.setPrefHeight(600);
+
+        // 滚动条回调：更新滚动条状态
+        terminalView.setScrollbarHandler((scrollbackSize, scrollOffset, visibleRows) -> {
+            Platform.runLater(() -> {
+                updatingScrollbar = true; // 防止循环
+                try {
+                    if (scrollbackSize > 0) {
+                        scrollBar.setVisible(true);
+                        // 总内容 = scrollbackSize + visibleRows
+                        int totalContent = scrollbackSize + visibleRows;
+                        scrollBar.setMin(0);
+                        scrollBar.setMax(totalContent - 1);
+                        scrollBar.setVisibleAmount(visibleRows);
+                        // value从顶部算：scrollbackSize - offset + (visibleRows - 1)
+                        // offset=0(底部)时 value = scrollbackSize + visibleRows - 1
+                        // offset=scrollbackSize(顶部)时 value = visibleRows - 1
+                        scrollBar.setValue(scrollbackSize - scrollOffset + visibleRows - 1);
+                    } else {
+                        scrollBar.setVisible(false);
+                    }
+                } finally {
+                    updatingScrollbar = false;
+                }
+            });
+        });
 
         // SplitPane: 终端 + 文件浏览器，支持拖拽调整宽度
         splitPane = new SplitPane();
@@ -254,6 +304,12 @@ public class SSHTerminalPane extends BorderPane {
                 contextMenu.hide();
             }
         });
+        // Canvas会拦截鼠标事件，需要在terminalView上也监听
+        terminalView.setOnMousePressed(e -> {
+            if (contextMenu.isShowing()) {
+                contextMenu.hide();
+            }
+        });
     }
 
     /**
@@ -283,6 +339,13 @@ public class SSHTerminalPane extends BorderPane {
             folderBtn.setStyle("-fx-background-color: #e0e0e0; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand; -fx-border-radius: 3;");
             folderBtn.setGraphic(createSftpButtonIcon(true));
         }
+    }
+
+    /**
+     * 设置回滚行数
+     */
+    public void setScrollbackLines(int lines) {
+        emulator.setMaxScrollback(lines);
     }
 
     /**

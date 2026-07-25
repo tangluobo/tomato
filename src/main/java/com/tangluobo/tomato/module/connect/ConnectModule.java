@@ -580,15 +580,43 @@ public class ConnectModule implements Module {
 
         SSHTerminalPane terminalPane = new SSHTerminalPane();
 
+        // 应用scrollback配置（会话配置优先，否则使用全局配置）
+        int scrollback = config.getScrollbackLines() != null ?
+            config.getScrollbackLines() : GlobalConfig.getInstance().getScrollbackLines();
+        terminalPane.setScrollbackLines(scrollback);
+
         Tab tab = new Tab(config.getName());
         tab.setContent(terminalPane);
         tab.setUserData(config.getId());
 
-        // 标签右键菜单：复制会话
+        // 标签右键菜单
         ContextMenu tabContextMenu = new ContextMenu();
+
         MenuItem copySessionItem = new MenuItem("复制会话");
         copySessionItem.setOnAction(e -> handleConnect(config));
-        tabContextMenu.getItems().add(copySessionItem);
+
+        MenuItem sessionConfigItem = new MenuItem("会话配置");
+        sessionConfigItem.setOnAction(e -> {
+            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
+            SessionConfigDialog.show(stage, config);
+            // 应用更新后的配置
+            int newScrollback = config.getScrollbackLines() != null ?
+                config.getScrollbackLines() : GlobalConfig.getInstance().getScrollbackLines();
+            terminalPane.setScrollbackLines(newScrollback);
+            ConfigManager.saveConnections(connections);
+        });
+
+        MenuItem globalConfigItem = new MenuItem("全局配置");
+        globalConfigItem.setOnAction(e -> {
+            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
+            GlobalConfigDialog.show(stage);
+            // 如果会话使用全局配置，同步更新
+            if (config.getScrollbackLines() == null) {
+                terminalPane.setScrollbackLines(GlobalConfig.getInstance().getScrollbackLines());
+            }
+        });
+
+        tabContextMenu.getItems().addAll(copySessionItem, new SeparatorMenuItem(), sessionConfigItem, globalConfigItem);
         tab.setContextMenu(tabContextMenu);
 
         // 标签关闭时断开连接

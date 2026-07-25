@@ -9,6 +9,7 @@ public class TerminalEmulator {
 
     public static final int DEFAULT_COLS = 80;
     public static final int DEFAULT_ROWS = 24;
+    public static final int DEFAULT_SCROLLBACK = 1000;
 
     // 字符缓冲区
     private char[][] buffer;
@@ -48,6 +49,13 @@ public class TerminalEmulator {
     private int altSavedCursorX = 0;
     private int altSavedCursorY = 0;
     private boolean usingAltBuffer = false;
+
+    // 回滚历史缓冲区
+    private java.util.LinkedList<char[]> scrollbackLines = new java.util.LinkedList<>();
+    private java.util.LinkedList<int[]> scrollbackAttrs = new java.util.LinkedList<>();
+    private int maxScrollback = DEFAULT_SCROLLBACK;
+    // 用户滚动偏移（0=底部，>0=向上回看）
+    private int scrollOffset = 0;
 
     // ANSI解析状态
     private ParseState parseState = ParseState.NORMAL;
@@ -197,6 +205,54 @@ public class TerminalEmulator {
           .append(" appCursor=").append(applicationCursorKeys)
           .append(" altBuf=").append(usingAltBuffer);
         return sb.toString();
+    }
+
+    // === 回滚/滚动相关方法 ===
+
+    public int getScrollbackSize() {
+        return scrollbackLines.size();
+    }
+
+    public int getMaxScrollback() {
+        return maxScrollback;
+    }
+
+    public void setMaxScrollback(int max) {
+        this.maxScrollback = Math.max(0, max);
+        while (scrollbackLines.size() > maxScrollback) {
+            scrollbackLines.removeFirst();
+            scrollbackAttrs.removeFirst();
+        }
+        if (scrollOffset > scrollbackLines.size()) {
+            scrollOffset = scrollbackLines.size();
+        }
+    }
+
+    public int getScrollOffset() {
+        return scrollOffset;
+    }
+
+    /**
+     * 设置滚动偏移（由滚动条驱动）
+     * @param offset 0=底部（最新），max=顶部（最旧）
+     */
+    public void setScrollOffset(int offset) {
+        this.scrollOffset = Math.max(0, Math.min(offset, scrollbackLines.size()));
+    }
+
+    /**
+     * 获取指定行的字符和属性（考虑scrollback偏移）
+     * @param screenRow 屏幕行号（0~rows-1）
+     * @return char[] 和 int[] 的数据，null表示空行
+     */
+    public char[] getScrollbackLine(int index) {
+        if (index < 0 || index >= scrollbackLines.size()) return null;
+        return scrollbackLines.get(index);
+    }
+
+    public int[] getScrollbackAttrLine(int index) {
+        if (index < 0 || index >= scrollbackAttrs.size()) return null;
+        return scrollbackAttrs.get(index);
     }
 
     /**
@@ -805,6 +861,20 @@ public class TerminalEmulator {
         int top = getScrollTop();
         int bottom = getScrollBottom();
         for (int i = 0; i < n; i++) {
+            // 将被滚出的行保存到scrollback
+            if (top == 0 && !usingAltBuffer) {
+                char[] savedLine = new char[cols];
+                int[] savedAttr = new int[cols];
+                System.arraycopy(buffer[0], 0, savedLine, 0, cols);
+                System.arraycopy(attrs[0], 0, savedAttr, 0, cols);
+                scrollbackLines.addLast(savedLine);
+                scrollbackAttrs.addLast(savedAttr);
+                // 超出最大行数时移除最旧的
+                while (scrollbackLines.size() > maxScrollback) {
+                    scrollbackLines.removeFirst();
+                    scrollbackAttrs.removeFirst();
+                }
+            }
             for (int y = top; y < bottom; y++) {
                 System.arraycopy(buffer[y + 1], 0, buffer[y], 0, cols);
                 System.arraycopy(attrs[y + 1], 0, attrs[y], 0, cols);
@@ -814,6 +884,8 @@ public class TerminalEmulator {
                 attrs[bottom][x] = makeAttr(7, 0, false, false, false);
             }
         }
+        // 有新输出时，如果用户在回看，自动滚到底部
+        scrollOffset = 0;
     }
 
     /**
