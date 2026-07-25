@@ -6,6 +6,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
+
 /**
  * 数据库服务：管理JDBC连接，查询数据库/表/视图列表
  */
@@ -174,6 +177,117 @@ public class DatabaseService {
         }
 
         return views;
+    }
+
+    /**
+     * 分页查询表/视图数据
+     * @return TableRowData 包含列名列表和数据行
+     */
+    public static TableRowData queryTableData(ConnectionConfig config, String databaseName, String tableName, int page, int pageSize) throws Exception {
+        Connection conn = getConnection(config, databaseName);
+        TableRowData result = new TableRowData();
+
+        // 获取总行数
+        long totalCount;
+        String countSql = buildCountSql(config, databaseName, tableName);
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(countSql)) {
+            rs.next();
+            totalCount = rs.getLong(1);
+        }
+
+        result.setTotalCount(totalCount);
+        result.setPage(page);
+        result.setPageSize(pageSize);
+        result.setTotalPages((int) Math.ceil((double) totalCount / pageSize));
+
+        // 分页查询数据
+        String dataSql = buildPageSql(config, databaseName, tableName, page, pageSize);
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(dataSql)) {
+            ResultSetMetaData metaData = rs.getMetaData();
+            int columnCount = metaData.getColumnCount();
+
+            // 获取列名
+            List<String> columnNames = new ArrayList<>();
+            for (int i = 1; i <= columnCount; i++) {
+                columnNames.add(metaData.getColumnLabel(i));
+            }
+            result.setColumnNames(columnNames);
+
+            // 获取数据行
+            ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
+            while (rs.next()) {
+                ObservableList<String> row = FXCollections.observableArrayList();
+                for (int i = 1; i <= columnCount; i++) {
+                    String value = rs.getString(i);
+                    row.add(value != null ? value : "NULL");
+                }
+                rows.add(row);
+            }
+            result.setRows(rows);
+        }
+
+        return result;
+    }
+
+    /**
+     * 获取指定数据库的JDBC连接
+     */
+    private static Connection getConnection(ConnectionConfig config, String databaseName) throws Exception {
+        String key = config.getId() + "_" + databaseName;
+        Connection existing = connectionCache.get(key);
+        if (existing != null && !existing.isClosed()) {
+            return existing;
+        }
+
+        String host = config.getHost();
+        int port = config.getPort();
+
+        if (config.isUseSshTunnel()) {
+            String tunnelKey = config.getId();
+            SshTunnel oldTunnel = tunnelCache.get(tunnelKey);
+            if (oldTunnel != null && oldTunnel.isActive()) {
+                port = oldTunnel.getForwardedLocalPort();
+                host = "127.0.0.1";
+            } else {
+                SshTunnel tunnel = SshTunnel.fromConfig(config);
+                int localPort = tunnel.connect();
+                tunnelCache.put(tunnelKey, tunnel);
+                host = "127.0.0.1";
+                port = localPort;
+            }
+        }
+
+        String url = buildJdbcUrl(config, host, port, databaseName);
+        Connection conn = DriverManager.getConnection(url, config.getUsername(), config.getPassword());
+        connectionCache.put(key, conn);
+        return conn;
+    }
+
+    /**
+     * 构建计数SQL
+     */
+    private static String buildCountSql(ConnectionConfig config, String databaseName, String tableName) {
+        return switch (config.getType()) {
+            case MYSQL -> "SELECT COUNT(*) FROM `" + databaseName + "`.`" + tableName + "`";
+            case POSTGRESQL -> "SELECT COUNT(*) FROM \"" + databaseName + "\".\"" + tableName + "\"";
+            case ORACLE -> "SELECT COUNT(*) FROM \"" + databaseName + "\".\"" + tableName + "\"";
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        };
+    }
+
+    /**
+     * 构建分页查询SQL
+     */
+    private static String buildPageSql(ConnectionConfig config, String databaseName, String tableName, int page, int pageSize) {
+        int offset = (page - 1) * pageSize;
+        return switch (config.getType()) {
+            case MYSQL -> "SELECT * FROM `" + databaseName + "`.`" + tableName + "` LIMIT " + pageSize + " OFFSET " + offset;
+            case POSTGRESQL -> "SELECT * FROM \"" + databaseName + "\".\"" + tableName + "\" LIMIT " + pageSize + " OFFSET " + offset;
+            case ORACLE -> "SELECT * FROM (SELECT a.*, ROWNUM rn FROM \"" + databaseName + "\".\"" + tableName + "\" a WHERE ROWNUM <= " + (offset + pageSize) + ") WHERE rn > " + offset;
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        };
     }
 
     /**

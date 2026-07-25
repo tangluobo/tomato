@@ -686,7 +686,7 @@ public class ConnectModule implements Module {
             case DATABASE -> handleDatabaseDoubleClick(item, data);
             case TABLES_FOLDER -> handleTablesFolderDoubleClick(item, data);
             case VIEWS_FOLDER -> handleViewsFolderDoubleClick(item, data);
-            default -> {} // TABLE, VIEW 不做处理
+            case TABLE, VIEW -> handleTableDataDoubleClick(item, data);
         }
     }
 
@@ -798,6 +798,40 @@ public class ConnectModule implements Module {
                 e.printStackTrace();
             }
         }, "DB-LoadViews").start();
+    }
+
+    /**
+     * 双击表/视图节点：以Tab形式打开表格数据视图
+     */
+    private void handleTableDataDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
+        if (contentArea == null || terminalTabPane == null) return;
+        if (!ensureTabPaneInstalled()) return;
+
+        String tabId = data.getConnectionConfig().getId() + "_" + data.getDatabaseName() + "_" + data.getName();
+        // 同一个表/视图只允许一个标签，再次双击定位到已有标签
+        for (Tab tab : terminalTabPane.getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                terminalTabPane.getSelectionModel().select(tab);
+                showDataView();
+                return;
+            }
+        }
+
+        TableDataView dataView = new TableDataView(data.getConnectionConfig(), data.getDatabaseName(), data.getName());
+
+        Tab tab = new Tab(data.getDatabaseName() + "." + data.getName());
+        tab.setContent(dataView);
+        tab.setUserData(tabId);
+
+        tab.setOnClosed(e -> {
+            if (terminalTabPane.getTabs().isEmpty()) {
+                showWelcomeView();
+            }
+        });
+
+        terminalTabPane.getTabs().add(tab);
+        terminalTabPane.getSelectionModel().select(tab);
+        showDataView();
     }
 
     /**
@@ -1112,6 +1146,16 @@ public class ConnectModule implements Module {
     }
 
     private void showTerminalView() {
+        // 隐藏ScrollPane（包含欢迎页），显示TabPane
+        if (contentScrollPane != null) {
+            contentScrollPane.setVisible(false);
+            contentScrollPane.setManaged(false);
+        }
+        terminalTabPane.setVisible(true);
+        terminalTabPane.setManaged(true);
+    }
+
+    private void showDataView() {
         // 隐藏ScrollPane（包含欢迎页），显示TabPane
         if (contentScrollPane != null) {
             contentScrollPane.setVisible(false);
