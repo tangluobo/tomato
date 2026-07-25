@@ -332,7 +332,7 @@ public class TerminalEmulator {
     /**
      * 判断是否为宽字符（CJK等双宽度字符）
      */
-    private boolean isWideChar(char ch) {
+    public boolean isWideChar(char ch) {
         if (ch >= 0x1100 && ch <= 0x115F) return true;
         if (ch >= 0x2E80 && ch <= 0x303E) return true;
         if (ch >= 0x3040 && ch <= 0x3247) return true;

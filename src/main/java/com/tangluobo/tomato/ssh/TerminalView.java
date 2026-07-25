@@ -276,15 +276,15 @@ public class TerminalView extends Canvas {
                         gc.setFill(bg);
                         gc.fillRect(x0 + runStart * charWidth, py, (x - runStart) * charWidth, charHeight);
 
+                        // 逐字符渲染，跳过宽字符占位符(\0)，确保每个字符绘制在正确的网格位置
+                        // 避免将\0替换为空格导致宽字符后方内容被遮挡
                         Color fg = getAttrFg(runAttr);
                         gc.setFill(fg);
-
-                        StringBuilder sb = new StringBuilder();
                         for (int i = runStart; i < x; i++) {
                             char c = emulator.getChar(i, y);
-                            sb.append(c == '\0' ? ' ' : c);
+                            if (c == '\0') continue; // 跳过宽字符占位符
+                            gc.fillText(String.valueOf(c), x0 + i * charWidth, py + fontAscent);
                         }
-                        gc.fillText(sb.toString(), x0 + runStart * charWidth, py + fontAscent);
                     }
                     runStart = x;
                     runAttr = attr;
@@ -294,13 +294,22 @@ public class TerminalView extends Canvas {
 
         // 渲染光标（闪烁）
         if (emulator.isCursorVisible() && cursorBlinkOn) {
-            double cx = x0 + emulator.getCursorX() * charWidth;
-            double cy = y0 + emulator.getCursorY() * charHeight;
+            int curX = emulator.getCursorX();
+            int curY = emulator.getCursorY();
+            // 如果光标在宽字符占位符(\0)上，回退到宽字符的首列
+            char cursorChar = emulator.getChar(curX, curY);
+            int cursorCol = curX;
+            if (cursorChar == '\0' && curX > 0) {
+                cursorCol = curX - 1;
+                cursorChar = emulator.getChar(cursorCol, curY);
+            }
+            double cx = x0 + cursorCol * charWidth;
+            double cy = y0 + curY * charHeight;
+            double cursorWidth = (cursorChar != '\0' && emulator.isWideChar(cursorChar)) ? 2 * charWidth : charWidth;
             gc.setFill(Color.WHITE);
-            gc.fillRect(cx, cy, charWidth, charHeight);
+            gc.fillRect(cx, cy, cursorWidth, charHeight);
             gc.setFill(Color.BLACK);
-            char c = emulator.getChar(emulator.getCursorX(), emulator.getCursorY());
-            gc.fillText(String.valueOf(c == '\0' ? ' ' : c), cx, cy + fontAscent);
+            gc.fillText(String.valueOf(cursorChar == '\0' ? ' ' : cursorChar), cx, cy + fontAscent);
         }
     }
 
