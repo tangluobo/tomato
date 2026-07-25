@@ -151,23 +151,27 @@ public class TomatoController {
     }
 
     private void setupDivider(Region divider) {
+        // 初始化时锁定sidebar最小宽度，防止被内容区压缩
+        sidebarPane.setMinWidth(sidebarPane.getPrefWidth());
+
         divider.setOnMouseEntered(e -> divider.setCursor(Cursor.H_RESIZE));
         divider.setOnMouseExited(e -> divider.setCursor(Cursor.DEFAULT));
-        
+
         divider.setOnMousePressed(e -> {
             dividerStartX = e.getScreenX();
             dividerStartWidth = sidebarPane.getWidth();
             resizingDivider2 = true;
         });
-        
+
         divider.setOnMouseDragged(e -> {
             double deltaX = e.getScreenX() - dividerStartX;
             double newWidth = dividerStartWidth + deltaX;
             if (newWidth >= 60 && newWidth <= 500) {
                 sidebarPane.setPrefWidth(newWidth);
+                sidebarPane.setMinWidth(newWidth);
             }
         });
-        
+
         divider.setOnMouseReleased(e -> {
             resizingDivider2 = false;
         });
