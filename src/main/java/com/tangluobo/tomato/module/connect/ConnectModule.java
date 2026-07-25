@@ -173,6 +173,10 @@ public class ConnectModule implements Module {
     }
 
     private VBox contentArea;
+    private VBox welcomePane;
+    private TabPane terminalTabPane;
+    private ScrollPane contentScrollPane;
+    private VBox contentPaneVBox;
 
     private ContextMenu contextMenu;
 
@@ -472,73 +476,68 @@ public class ConnectModule implements Module {
     }
 
     /**
-     * 处理SSH连接，打开终端（支持rz上传）
+     * 处理连接，以标签方式打开终端
      */
     private void handleConnect(ConnectionConfig config) {
-        if (config.getType() == ConnectType.SSH) {
-            if (contentArea == null) return;
+        if (contentArea == null || terminalTabPane == null) return;
 
-            // 布局链: contentArea(VBox) → ScrollPane → contentPane(VBox) → contentHBox(HBox)
-            // 必须将终端放到HBox中，因为HBox的fillHeight=true会直接拉伸子节点
-            // 而VBox不会给prefHeight=0的子节点分配空间
-            javafx.scene.Parent scrollParent = contentArea.getParent();
-            javafx.scene.layout.HBox contentHBox = null;
-            javafx.scene.layout.VBox contentPane = null;
-            javafx.scene.control.ScrollPane scrollPane = null;
+        // 确保TabPane已安装到contentPaneVBox
+        if (!ensureTabPaneInstalled()) return;
 
-            if (scrollParent instanceof javafx.scene.control.ScrollPane sp) {
-                scrollPane = sp;
-                javafx.scene.Parent cp = sp.getParent();
-                if (cp instanceof javafx.scene.layout.VBox vBox) {
-                    contentPane = vBox;
-                    if (vBox.getParent() instanceof javafx.scene.layout.HBox hBox) {
-                        contentHBox = hBox;
-                    }
+        // RDP同一主机只允许一个标签，再次双击定位到已有标签
+        if (config.getType() == ConnectType.RDP) {
+            for (Tab tab : terminalTabPane.getTabs()) {
+                if (config.getId().equals(tab.getUserData())) {
+                    terminalTabPane.getSelectionModel().select(tab);
+                    showTerminalView();
+                    return;
                 }
             }
+        }
 
-            if (contentHBox == null) {
-                // 找不到contentHBox，回退
-                contentArea.getChildren().clear();
-                SSHTerminalPane terminalPane = new SSHTerminalPane();
-                VBox.setVgrow(terminalPane, javafx.scene.layout.Priority.ALWAYS);
-                contentArea.getChildren().add(terminalPane);
-                doConnect(terminalPane, config);
-                return;
+        SSHTerminalPane terminalPane = new SSHTerminalPane();
+
+        Tab tab = new Tab(config.getName());
+        tab.setContent(terminalPane);
+        tab.setUserData(config.getId());
+        // 标签关闭时断开连接
+        tab.setOnClosed(e -> {
+            terminalPane.disconnect();
+            // 没有标签时恢复欢迎页
+            if (terminalTabPane.getTabs().isEmpty()) {
+                showWelcomeView();
             }
+        });
 
-            javafx.scene.layout.HBox finalContentHBox = contentHBox;
-            javafx.scene.layout.VBox finalContentPane = contentPane;
-            javafx.scene.control.ScrollPane finalScrollPane = scrollPane;
+        terminalTabPane.getTabs().add(tab);
+        terminalTabPane.getSelectionModel().select(tab);
+        showTerminalView();
 
-            // 隐藏contentPane（包含ScrollPane），在HBox中直接放终端
-            finalContentPane.setVisible(false);
-            finalContentPane.setManaged(false);
+        // 断开连接时关闭标签
+        terminalPane.setOnDisconnect(() -> {
+            Platform.runLater(() -> terminalTabPane.getTabs().remove(tab));
+        });
 
-            SSHTerminalPane terminalPane = new SSHTerminalPane();
-            HBox.setHgrow(terminalPane, javafx.scene.layout.Priority.ALWAYS);
+        doConnect(terminalPane, config);
+    }
 
-            finalContentHBox.getChildren().add(terminalPane);
+    private void showTerminalView() {
+        // 隐藏ScrollPane（包含欢迎页），显示TabPane
+        if (contentScrollPane != null) {
+            contentScrollPane.setVisible(false);
+            contentScrollPane.setManaged(false);
+        }
+        terminalTabPane.setVisible(true);
+        terminalTabPane.setManaged(true);
+    }
 
-            // 断开连接时恢复
-            terminalPane.setOnDisconnect(() -> {
-                finalContentHBox.getChildren().remove(terminalPane);
-                finalContentPane.setVisible(true);
-                finalContentPane.setManaged(true);
-            });
-
-            doConnect(terminalPane, config);
-        } else {
-            // 非SSH连接，走编辑流程
-            Stage stage = getStage();
-            if (stage == null) return;
-            ConnectionConfigDialog dialog = new ConnectionConfigDialog(stage, config.getType(), config);
-            ConnectionConfig updatedConfig = dialog.showAndWait();
-            if (updatedConfig != null) {
-                connections.removeIf(c -> c.getId().equals(config.getId()));
-                connections.add(updatedConfig);
-                ConfigManager.saveConnections(connections);
-            }
+    private void showWelcomeView() {
+        // 显示ScrollPane（包含欢迎页），隐藏TabPane
+        terminalTabPane.setVisible(false);
+        terminalTabPane.setManaged(false);
+        if (contentScrollPane != null) {
+            contentScrollPane.setVisible(true);
+            contentScrollPane.setManaged(true);
         }
     }
 
@@ -670,33 +669,57 @@ public class ConnectModule implements Module {
         return null;
     }
 
+    /**
+     * 延迟初始化：将TabPane加入contentPaneVBox（绕过ScrollPane限制）
+     */
+    private boolean ensureTabPaneInstalled() {
+        if (terminalTabPane == null) return false;
+        if (terminalTabPane.getParent() != null) return true; // 已安装
+
+        // 延迟查找父级结构
+        if (contentScrollPane == null || contentPaneVBox == null) {
+            Node parent = contentArea.getParent();
+            while (parent != null) {
+                if (parent instanceof ScrollPane sp) {
+                    contentScrollPane = sp;
+                    if (sp.getParent() instanceof VBox vb) {
+                        contentPaneVBox = vb;
+                    }
+                    break;
+                }
+                parent = parent.getParent();
+            }
+        }
+
+        if (contentPaneVBox != null) {
+            contentPaneVBox.getChildren().add(terminalTabPane);
+            return true;
+        }
+        return false;
+    }
+
     @Override
     public void loadContent(VBox contentArea) {
         this.contentArea = contentArea;
         contentArea.getChildren().clear();
 
+        // 欢迎页
+        welcomePane = new VBox();
+        welcomePane.setPadding(new Insets(30));
         Label title = new Label("连接管理");
         title.setStyle("-fx-font-size: 20px; -fx-font-weight: bold;");
+        Label hint = new Label("双击左侧SSH连接以打开终端");
+        hint.setStyle("-fx-font-size: 13px; -fx-text-fill: #888888;");
+        welcomePane.getChildren().addAll(title, hint);
 
-        VBox form = new VBox(15);
-        form.setPadding(new Insets(20, 0, 0, 0));
+        contentArea.getChildren().add(welcomePane);
 
-        TextField hostField = new TextField();
-        hostField.setPromptText("主机地址");
-        hostField.setStyle("-fx-background-color: #f0f0f0; -fx-border-radius: 6px; -fx-background-radius: 6px; -fx-padding: 8 12;");
-
-        TextField portField = new TextField();
-        portField.setPromptText("端口");
-        portField.setStyle("-fx-background-color: #f0f0f0; -fx-border-radius: 6px; -fx-background-radius: 6px; -fx-padding: 8 12;");
-
-        TextField userField = new TextField();
-        userField.setPromptText("用户名");
-        userField.setStyle("-fx-background-color: #f0f0f0; -fx-border-radius: 6px; -fx-background-radius: 6px; -fx-padding: 8 12;");
-
-        Button connectBtn = new Button("连接");
-        connectBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-width: 100px;");
-
-        form.getChildren().addAll(hostField, portField, userField, connectBtn);
-        contentArea.getChildren().addAll(title, form);
+        // 终端标签页
+        terminalTabPane = new TabPane();
+        terminalTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.ALL_TABS);
+        VBox.setVgrow(terminalTabPane, javafx.scene.layout.Priority.ALWAYS);
+        terminalTabPane.setVisible(false);
+        terminalTabPane.setManaged(false);
+        // TabPane将延迟安装到contentPaneVBox，在首次连接时执行
     }
 }
