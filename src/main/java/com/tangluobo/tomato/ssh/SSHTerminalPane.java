@@ -5,6 +5,8 @@ import com.tangluobo.tomato.zmodem.util.CustomFile;
 import com.tangluobo.tomato.zmodem.util.FileAdapter;
 import com.tangluobo.tomato.zmodem.xfer.zm.util.ZModemCharacter;
 import javafx.application.Platform;
+import javafx.scene.canvas.Canvas;
+import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.control.Button;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
@@ -68,7 +70,8 @@ public class SSHTerminalPane extends BorderPane {
     private boolean renderPending = false;
 
     // 状态栏
-    private final Label statusLabel;
+    private final Label stateLabel;
+    private final Label connLabel;
     private final Label encodingLabel;
     private final Circle statusDot;
     private final Button folderBtn;
@@ -99,10 +102,15 @@ public class SSHTerminalPane extends BorderPane {
         statusBar.setStyle("-fx-background-color: #FFFFFB; -fx-padding: 2 10; -fx-alignment: center-left; -fx-border-color: #e0e0e0; -fx-border-width: 1 0 0 0;");
 
         statusDot = new Circle(4, Color.RED);
-        HBox.setMargin(statusDot, new javafx.geometry.Insets(0, 6, 0, 0));
+        HBox.setMargin(statusDot, new javafx.geometry.Insets(0, 4, 0, 0));
 
-        statusLabel = new Label("未连接");
-        statusLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
+        stateLabel = new Label("未连接");
+        stateLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
+        HBox.setMargin(stateLabel, new javafx.geometry.Insets(0, 8, 0, 0));
+
+        connLabel = new Label("");
+        connLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
+        HBox.setMargin(connLabel, new javafx.geometry.Insets(0, 8, 0, 0));
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
@@ -110,21 +118,13 @@ public class SSHTerminalPane extends BorderPane {
         encodingLabel = new Label("UTF-8");
         encodingLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
 
-        // 文件夹图标按钮
+        // SFTP文件浏览器开关按钮（代码绘制图标：文件夹+上下箭头）
         folderBtn = new Button();
         folderBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
-        try {
-            Image folderImg = new Image(getClass().getResourceAsStream("/images/connect/folder.png"));
-            ImageView folderIcon = new ImageView(folderImg);
-            folderIcon.setFitWidth(14);
-            folderIcon.setFitHeight(14);
-            folderBtn.setGraphic(folderIcon);
-        } catch (Exception e) {
-            folderBtn.setText("📁");
-        }
+        folderBtn.setGraphic(createSftpButtonIcon(false));
         folderBtn.setOnAction(e -> toggleFileBrowser());
 
-        statusBar.getChildren().addAll(statusDot, statusLabel, spacer, encodingLabel, folderBtn);
+        statusBar.getChildren().addAll(statusDot, stateLabel, connLabel, encodingLabel, spacer, folderBtn);
 
         // 终端区域用Pane包裹，保留原来的layoutChildren逻辑
         terminalPane = new Pane() {
@@ -259,6 +259,7 @@ public class SSHTerminalPane extends BorderPane {
             }
             fileBrowserVisible = false;
             folderBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
+            folderBtn.setGraphic(createSftpButtonIcon(false));
         } else {
             // 打开文件浏览器
             if (sshSession == null || !sshSession.isConnected()) return;
@@ -270,6 +271,7 @@ public class SSHTerminalPane extends BorderPane {
             fileBrowser.initConnection();
             fileBrowserVisible = true;
             folderBtn.setStyle("-fx-background-color: #e0e0e0; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand; -fx-border-radius: 3;");
+            folderBtn.setGraphic(createSftpButtonIcon(true));
         }
     }
 
@@ -315,12 +317,49 @@ public class SSHTerminalPane extends BorderPane {
         Platform.runLater(() -> {
             boolean connected = state.equals("已连接") || state.startsWith("ZModem");
             statusDot.setFill(connected ? Color.valueOf("#4CAF50") : Color.RED);
+            stateLabel.setText(state);
             if (host != null) {
-                statusLabel.setText(username + "@" + host + ":" + port + "  |  " + state);
-            } else {
-                statusLabel.setText(state);
+                connLabel.setText(username + "@" + host + ":" + port);
             }
         });
+    }
+
+    /**
+     * 创建SFTP按钮图标：文件夹 + 上下双箭头
+     * @param active 是否激活状态
+     */
+    private ImageView createSftpButtonIcon(boolean active) {
+        int size = 16;
+        Canvas canvas = new Canvas(size, size);
+        GraphicsContext gc = canvas.getGraphicsContext2D();
+
+        Color folderColor = active ? Color.valueOf("#1E88E5") : Color.valueOf("#78909C");
+        Color arrowColor = active ? Color.valueOf("#1565C0") : Color.valueOf("#546E7A");
+
+        // 文件夹主体（后片）
+        gc.setFill(folderColor.deriveColor(0, 1, 0.85, 1));
+        gc.fillRoundRect(1, 3, 14, 11, 2, 2);
+
+        // 文件夹标签页
+        gc.setFill(folderColor);
+        gc.fillRoundRect(1, 1, 6, 4, 2, 2);
+
+        // 文件夹前面（稍微亮一点）
+        gc.setFill(folderColor);
+        gc.fillRoundRect(1, 5, 14, 9, 1, 1);
+
+        // 上下箭头（右侧）
+        gc.setFill(arrowColor);
+        // 上箭头 ▲
+        gc.fillPolygon(new double[]{11, 13, 15}, new double[]{6.5, 3.5, 6.5}, 3);
+        // 下箭头 ▼
+        gc.fillPolygon(new double[]{11, 13, 15}, new double[]{9, 12, 9}, 3);
+
+        Image img = canvas.snapshot(null, null);
+        ImageView iv = new ImageView(img);
+        iv.setFitWidth(16);
+        iv.setFitHeight(16);
+        return iv;
     }
 
     /**

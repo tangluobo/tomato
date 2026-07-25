@@ -11,10 +11,17 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.*;
 import javafx.scene.layout.*;
+import javafx.scene.canvas.Canvas;
+import javafx.scene.canvas.GraphicsContext;
+import javafx.scene.paint.Color;
+import javafx.scene.text.Font;
+import javafx.embed.swing.SwingFXUtils;
 import javafx.stage.FileChooser;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 
+import javax.swing.filechooser.FileSystemView;
+import java.awt.image.BufferedImage;
 import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -42,15 +49,25 @@ public class SFTPFileBrowser extends BorderPane {
 
     // 图标
     private final Image folderIcon;
-    private final Image fileIcon;
+    private final Image defaultFileIcon;
+    private final java.util.Map<String, Image> systemIconCache = new java.util.HashMap<>();
+    private final File iconTempDir;
 
     public SFTPFileBrowser(SSHSession sshSession, SFTPClient sftpClient) {
         this.sshSession = sshSession;
         this.sftpClient = sftpClient;
 
-        // 加载图标
-        folderIcon = loadIcon("/images/connect/folder.png");
-        fileIcon = loadIcon("/images/connect/sftp.png");
+        // 创建临时目录用于获取系统图标
+        iconTempDir = new File(System.getProperty("java.io.tmpdir"), "tomato-icons");
+        if (!iconTempDir.exists()) iconTempDir.mkdirs();
+
+        // 获取系统文件夹图标
+        Image sysFolderIcon = getSystemFolderIcon();
+        folderIcon = sysFolderIcon != null ? sysFolderIcon : loadIcon("/images/connect/folder.png");
+
+        // 获取系统默认文件图标
+        Image sysFileIcon = getSystemFileIcon("txt");
+        defaultFileIcon = sysFileIcon != null ? sysFileIcon : createFileTypeIcon("?", "#9E9E9E");
 
         setPrefWidth(280);
         setMinWidth(200);
@@ -65,6 +82,86 @@ public class SFTPFileBrowser extends BorderPane {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /**
+     * 获取系统文件夹图标
+     */
+    private Image getSystemFolderIcon() {
+        try {
+            javax.swing.Icon icon = FileSystemView.getFileSystemView().getSystemIcon(iconTempDir);
+            return swingIconToImage(icon);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * 根据扩展名获取系统文件图标（通过创建临时文件获取）
+     */
+    private Image getSystemFileIcon(String ext) {
+        if (ext == null || ext.isEmpty()) return null;
+        ext = ext.toLowerCase();
+        // 先查缓存
+        if (systemIconCache.containsKey(ext)) return systemIconCache.get(ext);
+        try {
+            File tmp = new File(iconTempDir, "icon." + ext);
+            if (!tmp.exists()) tmp.createNewFile();
+            javax.swing.Icon icon = FileSystemView.getFileSystemView().getSystemIcon(tmp);
+            Image fxImage = swingIconToImage(icon);
+            if (fxImage != null) {
+                systemIconCache.put(ext, fxImage);
+                return fxImage;
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    /**
+     * Swing Icon 转 JavaFX Image
+     */
+    private Image swingIconToImage(javax.swing.Icon icon) {
+        if (icon == null) return null;
+        try {
+            BufferedImage bi = new BufferedImage(icon.getIconWidth(), icon.getIconHeight(), BufferedImage.TYPE_INT_ARGB);
+            java.awt.Graphics2D g = bi.createGraphics();
+            icon.paintIcon(null, g, 0, 0);
+            g.dispose();
+            return SwingFXUtils.toFXImage(bi, null);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * 代码生成文件类型图标（后备方案）：圆角矩形背景 + 扩展名文字
+     */
+    private Image createFileTypeIcon(String label, String bgColor) {
+        int size = 16;
+        Canvas canvas = new Canvas(size, size);
+        GraphicsContext gc = canvas.getGraphicsContext2D();
+        gc.setFill(Color.valueOf(bgColor));
+        gc.fillRoundRect(0, 0, size, size, 3, 3);
+        gc.setFill(Color.WHITE);
+        gc.setFont(Font.font("SansSerif", 7));
+        javafx.scene.text.Text text = new javafx.scene.text.Text(label);
+        text.setFont(Font.font("SansSerif", 7));
+        double tw = text.getLayoutBounds().getWidth();
+        gc.fillText(label, (size - tw) / 2, size / 2 + 3);
+        return canvas.snapshot(null, null);
+    }
+
+    /**
+     * 根据文件名获取对应图标（优先系统图标，后备生成图标）
+     */
+    private Image getFileIcon(String fileName) {
+        int dotIdx = fileName.lastIndexOf('.');
+        if (dotIdx > 0) {
+            String ext = fileName.substring(dotIdx + 1).toLowerCase();
+            Image sysIcon = getSystemFileIcon(ext);
+            if (sysIcon != null) return sysIcon;
+        }
+        return defaultFileIcon;
     }
 
     private void createUI() {
@@ -483,7 +580,7 @@ public class SFTPFileBrowser extends BorderPane {
                 if (fileItem.isDirectory()) {
                     if (folderIcon != null) icon.setImage(folderIcon);
                 } else {
-                    if (fileIcon != null) icon.setImage(fileIcon);
+                    icon.setImage(getFileIcon(fileItem.getName()));
                 }
                 setGraphic(icon);
             }
