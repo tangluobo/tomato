@@ -5,7 +5,11 @@ import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.KeyEvent;
+import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.paint.Color;
 import javafx.util.Duration;
 
@@ -47,6 +51,13 @@ public class TerminalView extends Canvas {
     private boolean cursorBlinkOn = true;
     private final Timeline cursorBlinkTimer;
 
+    // 文本选择
+    private int selectionStartCol = -1;
+    private int selectionStartRow = -1;
+    private int selectionEndCol = -1;
+    private int selectionEndRow = -1;
+    private boolean isSelecting = false;
+
     public interface KeyInputHandler {
         void handleInput(byte[] data);
     }
@@ -67,8 +78,11 @@ public class TerminalView extends Canvas {
         setOnKeyPressed(this::handleKeyPressed);
         setOnKeyTyped(this::handleKeyTyped);
 
-        // 鼠标点击聚焦
-        setOnMouseClicked(e -> requestFocus());
+        // 鼠标事件处理
+        setOnMousePressed(this::handleMousePressed);
+        setOnMouseDragged(this::handleMouseDragged);
+        setOnMouseReleased(this::handleMouseReleased);
+        setOnMouseClicked(this::handleMouseClicked);
 
         // 光标闪烁定时器，每500ms切换一次
         cursorBlinkTimer = new Timeline(new KeyFrame(Duration.millis(500), e -> {
@@ -311,6 +325,33 @@ public class TerminalView extends Canvas {
             gc.setFill(Color.BLACK);
             gc.fillText(String.valueOf(cursorChar == '\0' ? ' ' : cursorChar), cx, cy + fontAscent);
         }
+
+        // 渲染选择高亮
+        if (hasSelection()) {
+            int startRow, endRow, startCol, endCol;
+            if (selectionStartRow < selectionEndRow ||
+                (selectionStartRow == selectionEndRow && selectionStartCol <= selectionEndCol)) {
+                startRow = selectionStartRow;
+                startCol = selectionStartCol;
+                endRow = selectionEndRow;
+                endCol = selectionEndCol;
+            } else {
+                startRow = selectionEndRow;
+                startCol = selectionEndCol;
+                endRow = selectionStartRow;
+                endCol = selectionStartCol;
+            }
+
+            gc.setFill(Color.rgb(0x42, 0x85, 0xF4, 0.5)); // 蓝色半透明
+            for (int row = startRow; row <= endRow; row++) {
+                int lineStart = (row == startRow) ? startCol : 0;
+                int lineEnd = (row == endRow) ? endCol : cols - 1;
+                double sx = x0 + lineStart * charWidth;
+                double sy = y0 + row * charHeight;
+                double sw = (lineEnd - lineStart + 1) * charWidth;
+                gc.fillRect(sx, sy, sw, charHeight);
+            }
+        }
     }
 
     private Color getAttrFg(int attr) {
@@ -352,5 +393,141 @@ public class TerminalView extends Canvas {
      */
     public void stopBlink() {
         cursorBlinkTimer.stop();
+    }
+
+    // ==================== 文本选择功能 ====================
+
+    /**
+     * 将鼠标像素坐标转换为字符坐标
+     */
+    private int mouseToCol(double mouseX) {
+        int col = (int) ((mouseX - 2) / charWidth);
+        return Math.max(0, Math.min(col, emulator.getCols() - 1));
+    }
+
+    private int mouseToRow(double mouseY) {
+        int row = (int) ((mouseY - 2) / charHeight);
+        return Math.max(0, Math.min(row, emulator.getRows() - 1));
+    }
+
+    private void handleMousePressed(MouseEvent e) {
+        requestFocus();
+        if (e.getButton() == MouseButton.PRIMARY) {
+            isSelecting = true;
+            selectionStartCol = mouseToCol(e.getX());
+            selectionStartRow = mouseToRow(e.getY());
+            selectionEndCol = selectionStartCol;
+            selectionEndRow = selectionStartRow;
+            render();
+        }
+    }
+
+    private void handleMouseDragged(MouseEvent e) {
+        if (isSelecting && e.getButton() == MouseButton.PRIMARY) {
+            selectionEndCol = mouseToCol(e.getX());
+            selectionEndRow = mouseToRow(e.getY());
+            render();
+        }
+    }
+
+    private void handleMouseReleased(MouseEvent e) {
+        if (isSelecting && e.getButton() == MouseButton.PRIMARY) {
+            selectionEndCol = mouseToCol(e.getX());
+            selectionEndRow = mouseToRow(e.getY());
+            isSelecting = false;
+            // 如果起点和终点相同，视为单击，清除选择
+            if (selectionStartCol == selectionEndCol && selectionStartRow == selectionEndRow) {
+                clearSelection();
+            } else {
+                render();
+            }
+        }
+    }
+
+    private void handleMouseClicked(MouseEvent e) {
+        requestFocus();
+    }
+
+    /**
+     * 是否有选中文本
+     */
+    public boolean hasSelection() {
+        return selectionStartCol >= 0 && selectionStartRow >= 0
+                && selectionEndCol >= 0 && selectionEndRow >= 0
+                && (selectionStartCol != selectionEndCol || selectionStartRow != selectionEndRow);
+    }
+
+    /**
+     * 获取选中的文本
+     */
+    public String getSelectedText() {
+        if (!hasSelection()) return "";
+
+        int cols = emulator.getCols();
+        int startRow, endRow, startCol, endCol;
+
+        if (selectionStartRow < selectionEndRow ||
+            (selectionStartRow == selectionEndRow && selectionStartCol <= selectionEndCol)) {
+            startRow = selectionStartRow;
+            startCol = selectionStartCol;
+            endRow = selectionEndRow;
+            endCol = selectionEndCol;
+        } else {
+            startRow = selectionEndRow;
+            startCol = selectionEndCol;
+            endRow = selectionStartRow;
+            endCol = selectionStartCol;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (int row = startRow; row <= endRow; row++) {
+            int lineStart = (row == startRow) ? startCol : 0;
+            int lineEnd = (row == endRow) ? endCol : cols - 1;
+            for (int col = lineStart; col <= lineEnd; col++) {
+                char c = emulator.getChar(col, row);
+                if (c == '\0') continue; // 跳过宽字符占位符
+                sb.append(c);
+            }
+            if (row < endRow) {
+                sb.append('\n');
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 全选
+     */
+    public void selectAll() {
+        selectionStartRow = 0;
+        selectionStartCol = 0;
+        selectionEndRow = emulator.getRows() - 1;
+        selectionEndCol = emulator.getCols() - 1;
+        render();
+    }
+
+    /**
+     * 清除选择
+     */
+    public void clearSelection() {
+        selectionStartCol = -1;
+        selectionStartRow = -1;
+        selectionEndCol = -1;
+        selectionEndRow = -1;
+        isSelecting = false;
+        render();
+    }
+
+    /**
+     * 复制选中文本到系统剪贴板
+     */
+    public void copySelection() {
+        String text = getSelectedText();
+        if (!text.isEmpty()) {
+            Clipboard clipboard = Clipboard.getSystemClipboard();
+            ClipboardContent content = new ClipboardContent();
+            content.putString(text);
+            clipboard.setContent(content);
+        }
     }
 }

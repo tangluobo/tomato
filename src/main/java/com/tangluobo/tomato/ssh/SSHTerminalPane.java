@@ -5,6 +5,11 @@ import com.tangluobo.tomato.zmodem.util.CustomFile;
 import com.tangluobo.tomato.zmodem.util.FileAdapter;
 import com.tangluobo.tomato.zmodem.xfer.zm.util.ZModemCharacter;
 import javafx.application.Platform;
+import javafx.scene.control.ContextMenu;
+import javafx.scene.control.MenuItem;
+import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.Pane;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
@@ -41,6 +46,12 @@ public class SSHTerminalPane extends Pane {
 
     // 断开连接回调
     private Runnable onDisconnect;
+
+    // 粘贴回调
+    private Runnable onPaste;
+
+    // 右键菜单
+    private final ContextMenu contextMenu;
 
     // 渲染节流
     private long lastRenderTime = 0;
@@ -103,6 +114,32 @@ public class SSHTerminalPane extends Pane {
                 e.printStackTrace();
             }
         });
+
+        // 右键菜单（CRT风格）
+        contextMenu = new ContextMenu();
+        MenuItem copyItem = new MenuItem("复制");
+        copyItem.setOnAction(e -> terminalView.copySelection());
+        MenuItem pasteItem = new MenuItem("粘贴");
+        pasteItem.setOnAction(e -> doPaste());
+        MenuItem copyPasteItem = new MenuItem("复制并粘贴");
+        copyPasteItem.setOnAction(e -> {
+            terminalView.copySelection();
+            doPaste();
+        });
+        MenuItem selectAllItem = new MenuItem("全选");
+        selectAllItem.setOnAction(e -> terminalView.selectAll());
+        MenuItem clearItem = new MenuItem("清除选择");
+        clearItem.setOnAction(e -> terminalView.clearSelection());
+        contextMenu.getItems().addAll(copyItem, pasteItem, copyPasteItem, new SeparatorMenuItem(), selectAllItem, clearItem);
+
+        // 右键弹出菜单
+        setOnContextMenuRequested(e -> {
+            copyItem.setDisable(!terminalView.hasSelection());
+            copyPasteItem.setDisable(!terminalView.hasSelection());
+            clearItem.setDisable(!terminalView.hasSelection());
+            contextMenu.show(this, e.getScreenX(), e.getScreenY());
+            e.consume();
+        });
     }
 
     /**
@@ -144,6 +181,31 @@ public class SSHTerminalPane extends Pane {
         startReadThread();
         // requestFocus必须在FX线程执行
         Platform.runLater(() -> terminalView.requestFocus());
+    }
+
+    /**
+     * 粘贴剪贴板内容到终端
+     */
+    private void doPaste() {
+        if (sshSession == null || !sshSession.isConnected()) return;
+        Clipboard clipboard = Clipboard.getSystemClipboard();
+        if (clipboard.hasString()) {
+            String text = clipboard.getString();
+            if (text != null && !text.isEmpty()) {
+                // 将换行符转换为回车，适配终端输入
+                text = text.replace("\r\n", "\r").replace("\n", "\r");
+                try {
+                    OutputStream os = sshSession.getOutputStream();
+                    if (os != null) {
+                        os.write(text.getBytes());
+                        os.flush();
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                terminalView.clearSelection();
+            }
+        }
     }
 
     /**
