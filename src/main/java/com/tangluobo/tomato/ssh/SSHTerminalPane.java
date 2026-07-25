@@ -12,6 +12,7 @@ import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.SplitPane;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.Clipboard;
@@ -78,6 +79,7 @@ public class SSHTerminalPane extends BorderPane {
 
     // 终端容器
     private final Pane terminalPane;
+    private final SplitPane splitPane;
 
     // SFTP文件浏览器
     private SFTPFileBrowser fileBrowser;
@@ -146,7 +148,13 @@ public class SSHTerminalPane extends BorderPane {
         terminalPane.setPrefWidth(800);
         terminalPane.setPrefHeight(600);
 
-        setCenter(terminalPane);
+        // SplitPane: 终端 + 文件浏览器，支持拖拽调整宽度
+        splitPane = new SplitPane();
+        splitPane.getItems().add(terminalPane);
+        splitPane.setDividerPositions(1.0);
+        splitPane.setStyle("-fx-background-color: #1e1e1e;");
+
+        setCenter(splitPane);
         setBottom(statusBar);
         setStyle("-fx-background-color: #1e1e1e;");
 
@@ -255,7 +263,7 @@ public class SSHTerminalPane extends BorderPane {
         if (fileBrowserVisible) {
             // 关闭文件浏览器
             if (fileBrowser != null) {
-                getChildren().remove(fileBrowser);
+                splitPane.getItems().remove(fileBrowser);
             }
             fileBrowserVisible = false;
             folderBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
@@ -267,7 +275,9 @@ public class SSHTerminalPane extends BorderPane {
                 sftpClient = new SFTPClient();
                 fileBrowser = new SFTPFileBrowser(sshSession, sftpClient);
             }
-            setRight(fileBrowser);
+            splitPane.getItems().add(fileBrowser);
+            // 设置分割比例：终端占大部分，文件浏览器占右侧
+            splitPane.setDividerPositions(0.7);
             fileBrowser.initConnection();
             fileBrowserVisible = true;
             folderBtn.setStyle("-fx-background-color: #e0e0e0; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand; -fx-border-radius: 3;");
@@ -409,7 +419,7 @@ public class SSHTerminalPane extends BorderPane {
         }
         // 关闭文件浏览器
         if (fileBrowser != null) {
-            getChildren().remove(fileBrowser);
+            splitPane.getItems().remove(fileBrowser);
         }
         fileBrowserVisible = false;
         fileBrowser = null;
@@ -454,7 +464,10 @@ public class SSHTerminalPane extends BorderPane {
                     sftpClient = new SFTPClient();
                     fileBrowser = new SFTPFileBrowser(sshSession, sftpClient);
                     Platform.runLater(() -> {
-                        setRight(fileBrowser);
+                        if (!splitPane.getItems().contains(fileBrowser)) {
+                            splitPane.getItems().add(fileBrowser);
+                            splitPane.setDividerPositions(0.7);
+                        }
                         fileBrowser.initConnection();
                     });
                 }
