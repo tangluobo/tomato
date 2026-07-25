@@ -5,7 +5,14 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.layout.*;
+import javafx.scene.paint.Color;
+import javafx.scene.text.Text;
+import javafx.scene.text.TextFlow;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 
@@ -22,9 +29,15 @@ public class CreateDatabaseDialog {
     private TextField nameField;
     private ComboBox<String> charsetCombo;
     private ComboBox<String> collationCombo;
-    private TextArea sqlPreviewArea;
+    private TextFlow sqlPreviewFlow;
+    private String currentSql;
 
     private final ConnectionConfig config;
+
+    // SQL关键字（用于语法高亮）
+    private static final Set<String> SQL_KEYWORDS = Set.of(
+        "CREATE", "DATABASE", "CHARACTER", "SET", "COLLATE", "ENCODING", "LC_COLLATE", "USER", "IDENTIFIED", "BY"
+    );
 
     // MySQL常见字符集及其对应排序规则
     private static final Map<String, String[]> CHARSET_COLLATIONS = new LinkedHashMap<>();
@@ -62,6 +75,12 @@ public class CreateDatabaseDialog {
         // 标签页
         TabPane tabPane = new TabPane();
         tabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        tabPane.setStyle(
+            "-fx-tab-min-height: 26px; -fx-tab-max-height: 26px;" +
+            "-fx-border-width: 0; -fx-padding: 0;" +
+            "-fx-tab-header-background-color: transparent;"
+        );
+        tabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
 
         // ---- 常规标签 ----
         Tab generalTab = new Tab("常规");
@@ -113,12 +132,26 @@ public class CreateDatabaseDialog {
         VBox sqlBox = new VBox(10);
         sqlBox.setPadding(new Insets(15));
 
-        sqlPreviewArea = new TextArea();
-        sqlPreviewArea.setEditable(false);
-        sqlPreviewArea.setStyle("-fx-font-family: monospace; -fx-font-size: 13px;");
-        sqlPreviewArea.setPrefRowCount(6);
+        sqlPreviewFlow = new TextFlow();
+        sqlPreviewFlow.setStyle("-fx-background-color: white; -fx-padding: 8; -fx-background-radius: 4px; -fx-border-color: #ddd; -fx-border-width: 1; -fx-border-radius: 4px;");
+        sqlPreviewFlow.setMinHeight(36);
 
-        sqlBox.getChildren().add(sqlPreviewArea);
+        // 右键菜单复制
+        ContextMenu copyMenu = new ContextMenu();
+        MenuItem copyItem = new MenuItem("复制");
+        copyItem.setOnAction(e -> copySqlToClipboard());
+        copyMenu.getItems().add(copyItem);
+        sqlPreviewFlow.setOnContextMenuRequested(e -> copyMenu.show(sqlPreviewFlow, e.getScreenX(), e.getScreenY()));
+
+        // Ctrl+C 快捷键复制
+        sqlPreviewFlow.setFocusTraversable(true);
+        sqlPreviewFlow.setOnKeyPressed(e -> {
+            if (e.isControlDown() && e.getCode() == KeyCode.C) {
+                copySqlToClipboard();
+            }
+        });
+
+        sqlBox.getChildren().add(sqlPreviewFlow);
         sqlTab.setContent(sqlBox);
 
         tabPane.getTabs().addAll(generalTab, sqlTab);
@@ -154,6 +187,17 @@ public class CreateDatabaseDialog {
     }
 
     /**
+     * 复制SQL到剪贴板
+     */
+    private void copySqlToClipboard() {
+        if (currentSql != null && !currentSql.isEmpty()) {
+            ClipboardContent content = new ClipboardContent();
+            content.putString(currentSql);
+            Clipboard.getSystemClipboard().setContent(content);
+        }
+    }
+
+    /**
      * 异步从服务器加载可用的字符集和排序规则
      */
     private void loadServerCharsets() {
@@ -180,10 +224,93 @@ public class CreateDatabaseDialog {
     }
 
     private void updateSqlPreview() {
+        if (sqlPreviewFlow == null) return;
         String sql = generateSql();
-        if (sqlPreviewArea != null) {
-            sqlPreviewArea.setText(sql);
+        currentSql = sql;
+        renderSqlPreview(sql);
+    }
+
+    /**
+     * SQL语法高亮渲染（白色背景）
+     */
+    private void renderSqlPreview(String sql) {
+        sqlPreviewFlow.getChildren().clear();
+
+        if (sql.startsWith("--")) {
+            Text comment = new Text(sql);
+            comment.setStyle("-fx-font-family: monospace; -fx-font-size: 13px;");
+            comment.setFill(Color.valueOf("#6A9955"));
+            sqlPreviewFlow.getChildren().add(comment);
+            return;
         }
+
+        List<String> tokens = tokenizeSql(sql);
+        for (String token : tokens) {
+            Text text = new Text(token);
+            text.setStyle("-fx-font-family: monospace; -fx-font-size: 13px;");
+
+            String upperToken = token.toUpperCase();
+            if (SQL_KEYWORDS.contains(upperToken)) {
+                // SQL关键字：蓝色
+                text.setFill(Color.valueOf("#0000FF"));
+            } else if (token.equals(";")) {
+                // 分号：深灰
+                text.setFill(Color.valueOf("#333333"));
+            } else if (token.startsWith("`") || token.startsWith("\"")) {
+                // 标识符：深绿
+                text.setFill(Color.valueOf("#008000"));
+            } else if (token.startsWith("'")) {
+                // 字符串：橙红
+                text.setFill(Color.valueOf("#A31515"));
+            } else {
+                // 普通文本：黑色
+                text.setFill(Color.valueOf("#000000"));
+            }
+            sqlPreviewFlow.getChildren().add(text);
+        }
+    }
+
+    /**
+     * 将SQL字符串分割为token列表（保留空格和特殊字符）
+     */
+    private List<String> tokenizeSql(String sql) {
+        List<String> tokens = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inBacktick = false;
+        boolean inDoubleQuote = false;
+        boolean inSingleQuote = false;
+
+        for (int i = 0; i < sql.length(); i++) {
+            char c = sql.charAt(i);
+
+            if (c == '`' && !inDoubleQuote && !inSingleQuote) {
+                inBacktick = !inBacktick;
+                current.append(c);
+            } else if (c == '"' && !inBacktick && !inSingleQuote) {
+                inDoubleQuote = !inDoubleQuote;
+                current.append(c);
+            } else if (c == '\'' && !inBacktick && !inDoubleQuote) {
+                inSingleQuote = !inSingleQuote;
+                current.append(c);
+            } else if ((c == ' ' || c == ';' || c == '(' || c == ')') && !inBacktick && !inDoubleQuote && !inSingleQuote) {
+                if (current.length() > 0) {
+                    tokens.add(current.toString());
+                    current = new StringBuilder();
+                }
+                if (c != ' ') {
+                    tokens.add(String.valueOf(c));
+                } else {
+                    tokens.add(" ");
+                }
+            } else {
+                current.append(c);
+            }
+        }
+        if (current.length() > 0) {
+            tokens.add(current.toString());
+        }
+
+        return tokens;
     }
 
     private String generateSql() {
@@ -201,18 +328,18 @@ public class CreateDatabaseDialog {
         if (config.getType() == ConnectType.MYSQL) {
             sql.append("`").append(name).append("`");
             if (!"(默认)".equals(charset)) {
-                sql.append("\n  CHARACTER SET ").append(charset);
+                sql.append(" CHARACTER SET ").append(charset);
             }
             if (!"(默认)".equals(collation)) {
-                sql.append("\n  COLLATE ").append(collation);
+                sql.append(" COLLATE ").append(collation);
             }
         } else if (config.getType() == ConnectType.POSTGRESQL) {
             sql.append("\"").append(name).append("\"");
             if (!"(默认)".equals(charset)) {
-                sql.append("\n  ENCODING '").append(charset).append("'");
+                sql.append(" ENCODING '").append(charset).append("'");
             }
             if (!"(默认)".equals(collation)) {
-                sql.append("\n  LC_COLLATE '").append(collation).append("'");
+                sql.append(" LC_COLLATE '").append(collation).append("'");
             }
         } else if (config.getType() == ConnectType.ORACLE) {
             sql.append("\"").append(name).append("\"");
