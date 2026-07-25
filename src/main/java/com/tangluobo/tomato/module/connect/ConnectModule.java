@@ -903,6 +903,14 @@ public class ConnectModule implements Module {
         TableDataView dataView = new TableDataView(data.getConnectionConfig(), data.getDatabaseName(), data.getName());
 
         Tab tab = new Tab(data.getDatabaseName() + "." + data.getName());
+        // 设置标签头图标：表或视图
+        Image tabIcon = data.getType() == DatabaseNodeData.NodeType.VIEW ? viewIcon : tableIcon;
+        if (tabIcon != null) {
+            ImageView tabIconView = new ImageView(tabIcon);
+            tabIconView.setFitWidth(14);
+            tabIconView.setFitHeight(14);
+            tab.setGraphic(tabIconView);
+        }
         tab.setContent(dataView);
         tab.setUserData(tabId);
 
