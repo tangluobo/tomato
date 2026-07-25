@@ -3,6 +3,7 @@ package com.tangluobo.tomato.ssh;
 /**
  * VT100终端模拟器
  * 解析ANSI转义序列，维护字符缓冲区和光标状态
+ * 支持滚动区域、交替屏幕缓冲区
  */
 public class TerminalEmulator {
 
@@ -26,9 +27,35 @@ public class TerminalEmulator {
     private boolean cursorVisible = true;
     // 是否换行模式
     private boolean autoWrap = true;
+    // 是否插入模式(IRM) - 插入字符而非替换
+    private boolean insertMode = false;
+    // 是否应用光标键模式(DECCKM) - 方向键发送\033OA而非\033[A
+    private boolean applicationCursorKeys = false;
+    // 是否原点模式(DECOM) - 光标定位相对于滚动区域
+    private boolean originMode = false;
+    // ANSI.SYS保存的光标位置（不同于DECSC的savedCursorX/Y）
+    private int ansiSavedCursorX = 0;
+    private int ansiSavedCursorY = 0;
+    // 滚动区域（1-based，0表示整屏）
+    private int scrollTop = 0;
+    private int scrollBottom = 0;
+
+    // 交替屏幕缓冲区
+    private char[][] altBuffer;
+    private int[][] altAttrs;
+    private int altCursorX = 0;
+    private int altCursorY = 0;
+    private int altSavedCursorX = 0;
+    private int altSavedCursorY = 0;
+    private boolean usingAltBuffer = false;
+
     // ANSI解析状态
     private ParseState parseState = ParseState.NORMAL;
     private StringBuilder escapeSeq = new StringBuilder();
+    // 响应回调（发送数据回SSH服务器）
+    private ResponseHandler responseHandler;
+    // 调试输出
+    private java.util.function.Consumer<String> debugWriter;
     // 当前属性
     private int currentFg = 7; // 默认白色
     private int currentBg = 0; // 默认黑色
@@ -69,14 +96,21 @@ public class TerminalEmulator {
         this.rows = rows;
         this.buffer = new char[rows][cols];
         this.attrs = new int[rows][cols];
-        clearBuffer();
+        clearBuffer(buffer, attrs);
+        initAltBuffer();
     }
 
-    private void clearBuffer() {
+    private void initAltBuffer() {
+        altBuffer = new char[rows][cols];
+        altAttrs = new int[rows][cols];
+        clearBuffer(altBuffer, altAttrs);
+    }
+
+    private void clearBuffer(char[][] buf, int[][] att) {
         for (int y = 0; y < rows; y++) {
             for (int x = 0; x < cols; x++) {
-                buffer[y][x] = ' ';
-                attrs[y][x] = makeAttr(7, 0, false, false, false);
+                buf[y][x] = ' ';
+                att[y][x] = makeAttr(7, 0, false, false, false);
             }
         }
     }
@@ -96,8 +130,74 @@ public class TerminalEmulator {
     public int getCursorX() { return cursorX; }
     public int getCursorY() { return cursorY; }
     public boolean isCursorVisible() { return cursorVisible; }
+    public boolean isApplicationCursorKeys() { return applicationCursorKeys; }
     public char getChar(int x, int y) { return buffer[y][x]; }
     public int getAttr(int x, int y) { return attrs[y][x]; }
+
+    public interface ResponseHandler {
+        void sendResponse(byte[] data);
+    }
+
+    public void setResponseHandler(ResponseHandler handler) {
+        this.responseHandler = handler;
+    }
+
+    public void setDebugWriter(java.util.function.Consumer<String> writer) {
+        this.debugWriter = writer;
+    }
+
+    private void sendResponse(String data) {
+        if (responseHandler != null) {
+            responseHandler.sendResponse(data.getBytes());
+        }
+    }
+
+    private static String bytesToHex(byte[] data, int offset, int len) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = offset; i < offset + len && i < data.length; i++) {
+            int b = data[i] & 0xFF;
+            if (b < 0x20 || b > 0x7E) {
+                sb.append(String.format("<%02X>", b));
+            } else if (b == 0x20) {
+                sb.append(' ');
+            } else {
+                sb.append((char) b);
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 导出当前缓冲区内容（调试用）
+     */
+    public String dumpBuffer() {
+        StringBuilder sb = new StringBuilder();
+        for (int y = 0; y < rows; y++) {
+            for (int x = 0; x < cols; x++) {
+                char c = buffer[y][x];
+                sb.append(c == '\0' ? '·' : c);
+            }
+            sb.append('\n');
+        }
+        sb.append("cursor=(").append(cursorX).append(",").append(cursorY)
+          .append(") scrollRegion=[").append(scrollTop).append(",").append(scrollBottom)
+          .append("] originMode=").append(originMode)
+          .append(" insertMode=").append(insertMode)
+          .append(" appCursor=").append(applicationCursorKeys)
+          .append(" altBuf=").append(usingAltBuffer);
+        return sb.toString();
+    }
+
+    /**
+     * 获取滚动区域（0-based）
+     */
+    private int getScrollTop() {
+        return scrollTop > 0 ? scrollTop - 1 : 0;
+    }
+
+    private int getScrollBottom() {
+        return scrollBottom > 0 ? scrollBottom - 1 : rows - 1;
+    }
 
     /**
      * 调整终端大小
@@ -122,12 +222,22 @@ public class TerminalEmulator {
         this.rows = newRows;
         if (cursorX >= newCols) cursorX = newCols - 1;
         if (cursorY >= newRows) cursorY = newRows - 1;
+        // 重置滚动区域
+        scrollTop = 0;
+        scrollBottom = 0;
+        // 重建交替缓冲区
+        initAltBuffer();
     }
 
     /**
      * 处理输入的字节流（UTF-8解码后处理）
      */
     public void process(byte[] data, int offset, int len) {
+        // 调试：记录收到的原始数据
+        if (debugWriter != null) {
+            String hex = bytesToHex(data, offset, len);
+            debugWriter.accept("[RECV " + len + "] " + hex + "\n");
+        }
         String text = new String(data, offset, len, java.nio.charset.StandardCharsets.UTF_8);
         processString(text);
     }
@@ -174,9 +284,9 @@ public class TerminalEmulator {
             cursorX = 0;
         } else if (ch == '\n') {
             cursorY++;
-            if (cursorY >= rows) {
+            if (cursorY > getScrollBottom()) {
+                cursorY = getScrollBottom();
                 scrollUp(1);
-                cursorY = rows - 1;
             }
         } else if (ch == '\t') {
             cursorX = (cursorX / 8 + 1) * 8;
@@ -194,18 +304,24 @@ public class TerminalEmulator {
                 if (autoWrap) {
                     cursorX = 0;
                     cursorY++;
-                    if (cursorY >= rows) {
+                    if (cursorY > getScrollBottom()) {
+                        cursorY = getScrollBottom();
                         scrollUp(1);
-                        cursorY = rows - 1;
                     }
                 } else {
                     cursorX = cols - charWidth;
                 }
             }
+            if (insertMode) {
+                // 插入模式：字符插入到光标位置，右侧字符右移
+                for (int x = cols - 1; x > cursorX; x--) {
+                    buffer[cursorY][x] = buffer[cursorY][x - charWidth];
+                    attrs[cursorY][x] = attrs[cursorY][x - charWidth];
+                }
+            }
             buffer[cursorY][cursorX] = ch;
             attrs[cursorY][cursorX] = makeAttr(currentFg, currentBg, bold, underline, reverse);
             if (wideChar && cursorX + 1 < cols) {
-                // 宽字符占2格，第二格标记为0表示属于前一个字符
                 buffer[cursorY][cursorX + 1] = 0;
                 attrs[cursorY][cursorX + 1] = attrs[cursorY][cursorX];
             }
@@ -241,52 +357,45 @@ public class TerminalEmulator {
             parseState = ParseState.OSC;
             escapeSeq.setLength(0);
         } else if (ch == '7') {
-            // 保存光标
             savedCursorX = cursorX;
             savedCursorY = cursorY;
             parseState = ParseState.NORMAL;
         } else if (ch == '8') {
-            // 恢复光标
             cursorX = savedCursorX;
             cursorY = savedCursorY;
             parseState = ParseState.NORMAL;
         } else if (ch == 'D') {
-            // 索引（下移一行，必要时滚动）
             cursorY++;
-            if (cursorY >= rows) {
+            if (cursorY > getScrollBottom()) {
+                cursorY = getScrollBottom();
                 scrollUp(1);
-                cursorY = rows - 1;
             }
             parseState = ParseState.NORMAL;
         } else if (ch == 'M') {
-            // 反向索引（上移一行，必要时滚动）
-            if (cursorY == 0) {
+            if (cursorY == getScrollTop()) {
                 scrollDown(1);
             } else {
                 cursorY--;
             }
             parseState = ParseState.NORMAL;
         } else if (ch == 'c') {
-            // 重置终端
             reset();
             parseState = ParseState.NORMAL;
         } else if (ch == '(') {
-            // 设计G0字符集 - 跳过下一个字符
             parseState = ParseState.CHARSET;
         } else if (ch == ')') {
-            // 设计G1字符集 - 跳过下一个字符
             parseState = ParseState.CHARSET;
         } else {
-            // 未知ESC序列，忽略
             parseState = ParseState.NORMAL;
         }
     }
 
     private void processCsiChar(char ch) {
-        if ((ch >= '0' && ch <= '9') || ch == ';' || ch == '?' || ch == ' ' || ch == ':') {
+        // CSI参数字节: 0x30-0x3F (0-9, ;, <, =, >, ?)
+        // CSI中间字节: 0x20-0x2F (space, !, ", #, $, %, &, ', (, ), *, +, -, ., /)
+        if ((ch >= 0x30 && ch <= 0x3F) || (ch >= 0x20 && ch <= 0x2F)) {
             escapeSeq.append(ch);
         } else {
-            // CSI序列结束，执行命令
             executeCsiCommand(ch);
             parseState = ParseState.NORMAL;
         }
@@ -300,33 +409,53 @@ public class TerminalEmulator {
         } else if (ch == '\033') {
             parseState = ParseState.ESC;
         }
-        // 忽略OSC内容（标题设置等）
     }
 
     private void executeCsiCommand(char cmd) {
         String seq = escapeSeq.toString();
         boolean privateMode = false;
+        boolean greaterThan = false;
         if (seq.startsWith("?")) {
             privateMode = true;
             seq = seq.substring(1);
+        } else if (seq.startsWith(">")) {
+            greaterThan = true;
+            seq = seq.substring(1);
         }
 
-        int[] params = parseParams(seq);
+        // 去掉中间字节（0x20-0x2F范围）
+        String cleanSeq = "";
+        for (int i = 0; i < seq.length(); i++) {
+            char c = seq.charAt(i);
+            if (c >= 0x30 && c <= 0x3F) {
+                cleanSeq += c;
+            }
+        }
+
+        int[] params = parseParams(cleanSeq);
 
         switch (cmd) {
             case 'H': // 光标位置
             case 'f':
-                cursorY = (params.length > 0 ? params[0] : 1) - 1;
-                cursorX = (params.length > 1 ? params[1] : 1) - 1;
+                int row = (params.length > 0 ? params[0] : 1) - 1;
+                int col = (params.length > 1 ? params[1] : 1) - 1;
+                if (originMode) {
+                    // DECOM: 坐标相对于滚动区域
+                    cursorY = getScrollTop() + row;
+                    cursorX = col;
+                } else {
+                    cursorY = row;
+                    cursorX = col;
+                }
                 clampCursor();
                 break;
             case 'A': // 光标上移
                 cursorY -= (params.length > 0 ? params[0] : 1);
-                if (cursorY < 0) cursorY = 0;
+                if (cursorY < getScrollTop()) cursorY = getScrollTop();
                 break;
             case 'B': // 光标下移
                 cursorY += (params.length > 0 ? params[0] : 1);
-                if (cursorY >= rows) cursorY = rows - 1;
+                if (cursorY > getScrollBottom()) cursorY = getScrollBottom();
                 break;
             case 'C': // 光标右移
                 cursorX += (params.length > 0 ? params[0] : 1);
@@ -347,6 +476,14 @@ public class TerminalEmulator {
             case 'J': // 清屏
                 clearScreen(params.length > 0 ? params[0] : 0);
                 break;
+            case 's': // ANSI保存光标位置
+                ansiSavedCursorX = cursorX;
+                ansiSavedCursorY = cursorY;
+                break;
+            case 'u': // ANSI恢复光标位置
+                cursorX = ansiSavedCursorX;
+                cursorY = ansiSavedCursorY;
+                break;
             case 'K': // 清行
                 clearLine(params.length > 0 ? params[0] : 0);
                 break;
@@ -355,24 +492,60 @@ public class TerminalEmulator {
                 break;
             case 'h': // 设置模式
                 if (privateMode) {
-                    if (params.length > 0 && params[0] == 25) {
-                        cursorVisible = true;
+                    for (int p : params) {
+                        switch (p) {
+                            case 25: cursorVisible = true; break;
+                            case 1: applicationCursorKeys = true; break;
+                            case 6: originMode = true; break;
+                            case 1049: // 切换到交替屏幕缓冲区
+                                if (!usingAltBuffer) switchToAltBuffer();
+                                break;
+                            case 47: // 交替屏幕缓冲区（旧版）
+                                if (!usingAltBuffer) switchToAltBuffer();
+                                break;
+                            case 7: autoWrap = true; break;
+                        }
                     }
-                } else if (params.length > 0 && params[0] == 7) {
-                    autoWrap = true;
+                } else {
+                    for (int p : params) {
+                        switch (p) {
+                            case 4: insertMode = true; break;
+                            case 7: autoWrap = true; break;
+                        }
+                    }
                 }
                 break;
             case 'l': // 重置模式
                 if (privateMode) {
-                    if (params.length > 0 && params[0] == 25) {
-                        cursorVisible = false;
+                    for (int p : params) {
+                        switch (p) {
+                            case 25: cursorVisible = false; break;
+                            case 1: applicationCursorKeys = false; break;
+                            case 6: originMode = false; break;
+                            case 1049: // 切回主屏幕缓冲区
+                                if (usingAltBuffer) switchToMainBuffer();
+                                break;
+                            case 47: // 交替屏幕缓冲区（旧版）
+                                if (usingAltBuffer) switchToMainBuffer();
+                                break;
+                            case 7: autoWrap = false; break;
+                        }
                     }
-                } else if (params.length > 0 && params[0] == 7) {
-                    autoWrap = false;
+                } else {
+                    for (int p : params) {
+                        switch (p) {
+                            case 4: insertMode = false; break;
+                            case 7: autoWrap = false; break;
+                        }
+                    }
                 }
                 break;
-            case 'r': // 设置滚动区域
-                // 简化实现，忽略
+            case 'r': // 设置滚动区域（DECSTBM）
+                scrollTop = (params.length > 0 && params[0] > 0) ? params[0] : 0;
+                scrollBottom = (params.length > 1 && params[1] > 0) ? params[1] : 0;
+                // 光标移到滚动区域起始位置
+                cursorX = 0;
+                cursorY = getScrollTop();
                 break;
             case 'S': // 向上滚动
                 scrollUp(params.length > 0 ? params[0] : 1);
@@ -395,10 +568,73 @@ public class TerminalEmulator {
             case 'X': // 删除字符（用空格替换）
                 eraseChars(params.length > 0 ? params[0] : 1);
                 break;
+            case 'c': // DA - Device Attributes
+                if (greaterThan) {
+                    // DA2: \033[>0;0;0c (VT220, firmware 0, ROM 0)
+                    sendResponse("\033[>0;0;0c");
+                } else if (!privateMode) {
+                    // DA1: \033[?64;1;2;6;9c (xterm VT220)
+                    sendResponse("\033[?64;1;2;6;9c");
+                }
+                break;
+            case 'n': // DSR - Device Status Report
+                if (params.length > 0 && params[0] == 6) {
+                    // 报告光标位置: \033[row;colR
+                    sendResponse("\033[" + (cursorY + 1) + ";" + (cursorX + 1) + "R");
+                }
+                break;
             default:
                 // 忽略不支持的命令
                 break;
         }
+    }
+
+    /**
+     * 切换到交替屏幕缓冲区
+     */
+    private void switchToAltBuffer() {
+        // 保存当前缓冲区
+        char[][] tmpBuf = buffer;
+        int[][] tmpAttrs = attrs;
+        // 切换到交替缓冲区
+        buffer = altBuffer;
+        attrs = altAttrs;
+        altBuffer = tmpBuf;
+        altAttrs = tmpAttrs;
+        // 保存光标
+        altSavedCursorX = savedCursorX;
+        altSavedCursorY = savedCursorY;
+        savedCursorX = cursorX;
+        savedCursorY = cursorY;
+        // 清除交替缓冲区
+        clearBuffer(buffer, attrs);
+        cursorX = 0;
+        cursorY = 0;
+        usingAltBuffer = true;
+        scrollTop = 0;
+        scrollBottom = 0;
+    }
+
+    /**
+     * 切回主屏幕缓冲区
+     */
+    private void switchToMainBuffer() {
+        // 保存交替缓冲区内容
+        char[][] tmpBuf = buffer;
+        int[][] tmpAttrs = attrs;
+        // 切回主缓冲区
+        buffer = altBuffer;
+        attrs = altAttrs;
+        altBuffer = tmpBuf;
+        altAttrs = tmpAttrs;
+        // 恢复光标
+        cursorX = savedCursorX;
+        cursorY = savedCursorY;
+        savedCursorX = altSavedCursorX;
+        savedCursorY = altSavedCursorY;
+        usingAltBuffer = false;
+        scrollTop = 0;
+        scrollBottom = 0;
     }
 
     private int[] parseParams(String seq) {
@@ -449,7 +685,9 @@ public class TerminalEmulator {
                 }
                 break;
             case 2: // 整个屏幕
-                clearBuffer();
+                clearBuffer(buffer, attrs);
+                break;
+            case 3: // 清除回滚缓冲（我们没有回滚缓冲，忽略）
                 break;
         }
     }
@@ -515,36 +753,47 @@ public class TerminalEmulator {
         }
     }
 
+    /**
+     * 在滚动区域内向上滚动n行
+     */
     private void scrollUp(int n) {
+        int top = getScrollTop();
+        int bottom = getScrollBottom();
         for (int i = 0; i < n; i++) {
-            for (int y = 0; y < rows - 1; y++) {
+            for (int y = top; y < bottom; y++) {
                 System.arraycopy(buffer[y + 1], 0, buffer[y], 0, cols);
                 System.arraycopy(attrs[y + 1], 0, attrs[y], 0, cols);
             }
             for (int x = 0; x < cols; x++) {
-                buffer[rows - 1][x] = ' ';
-                attrs[rows - 1][x] = makeAttr(7, 0, false, false, false);
+                buffer[bottom][x] = ' ';
+                attrs[bottom][x] = makeAttr(7, 0, false, false, false);
             }
         }
     }
 
+    /**
+     * 在滚动区域内向下滚动n行
+     */
     private void scrollDown(int n) {
+        int top = getScrollTop();
+        int bottom = getScrollBottom();
         for (int i = 0; i < n; i++) {
-            for (int y = rows - 1; y > 0; y--) {
+            for (int y = bottom; y > top; y--) {
                 System.arraycopy(buffer[y - 1], 0, buffer[y], 0, cols);
                 System.arraycopy(attrs[y - 1], 0, attrs[y], 0, cols);
             }
             for (int x = 0; x < cols; x++) {
-                buffer[0][x] = ' ';
-                attrs[0][x] = makeAttr(7, 0, false, false, false);
+                buffer[top][x] = ' ';
+                attrs[top][x] = makeAttr(7, 0, false, false, false);
             }
         }
     }
 
     private void insertLines(int n) {
+        int bottom = getScrollBottom();
         for (int i = 0; i < n; i++) {
-            if (cursorY < rows - 1) {
-                for (int y = rows - 1; y > cursorY; y--) {
+            if (cursorY < bottom) {
+                for (int y = bottom; y > cursorY; y--) {
                     System.arraycopy(buffer[y - 1], 0, buffer[y], 0, cols);
                     System.arraycopy(attrs[y - 1], 0, attrs[y], 0, cols);
                 }
@@ -557,14 +806,15 @@ public class TerminalEmulator {
     }
 
     private void deleteLines(int n) {
+        int bottom = getScrollBottom();
         for (int i = 0; i < n; i++) {
-            for (int y = cursorY; y < rows - 1; y++) {
+            for (int y = cursorY; y < bottom; y++) {
                 System.arraycopy(buffer[y + 1], 0, buffer[y], 0, cols);
                 System.arraycopy(attrs[y + 1], 0, attrs[y], 0, cols);
             }
             for (int x = 0; x < cols; x++) {
-                buffer[rows - 1][x] = ' ';
-                attrs[rows - 1][x] = makeAttr(7, 0, false, false, false);
+                buffer[bottom][x] = ' ';
+                attrs[bottom][x] = makeAttr(7, 0, false, false, false);
             }
         }
     }
@@ -601,7 +851,7 @@ public class TerminalEmulator {
     }
 
     private void reset() {
-        clearBuffer();
+        clearBuffer(buffer, attrs);
         cursorX = 0;
         cursorY = 0;
         currentFg = 7;
@@ -611,5 +861,10 @@ public class TerminalEmulator {
         reverse = false;
         cursorVisible = true;
         autoWrap = true;
+        insertMode = false;
+        applicationCursorKeys = false;
+        originMode = false;
+        scrollTop = 0;
+        scrollBottom = 0;
     }
 }

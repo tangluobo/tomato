@@ -10,6 +10,9 @@ import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
 import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -57,6 +60,21 @@ public class SSHTerminalPane extends Pane {
         setMaxHeight(Double.MAX_VALUE);
         setPrefWidth(800);
         setPrefHeight(600);
+
+        // 设置终端响应回调（DA查询、DSR查询等需要回传数据）
+        emulator.setResponseHandler(data -> {
+            if (sshSession != null && sshSession.isConnected()) {
+                try {
+                    OutputStream os = sshSession.getOutputStream();
+                    if (os != null) {
+                        os.write(data);
+                        os.flush();
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        });
 
         // 终端大小变化时通知SSH服务器
         terminalView.setResizeHandler((cols, rows, width, height) -> {
@@ -108,6 +126,15 @@ public class SSHTerminalPane extends Pane {
         sshSession = new SSHSession(host, port, username, password);
         sshSession.connect();
         running.set(true);
+
+        // 启用调试日志（写入/tmp/terminal_debug.log）
+        try {
+            PrintWriter pw = new PrintWriter(new FileWriter("/tmp/terminal_debug.log"));
+            emulator.setDebugWriter(line -> {
+                pw.print(line);
+                pw.flush();
+            });
+        } catch (Exception ignored) {}
 
         // 通知SSH服务器终端大小
         sshSession.resize(emulator.getCols(), emulator.getRows(),
@@ -440,5 +467,12 @@ public class SSHTerminalPane extends Pane {
             }
             return input.read(b, off, len);
         }
+    }
+
+    /**
+     * 导出终端缓冲区内容（调试用）
+     */
+    public String dumpBuffer() {
+        return emulator.dumpBuffer();
     }
 }

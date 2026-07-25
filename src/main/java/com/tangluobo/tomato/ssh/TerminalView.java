@@ -162,23 +162,31 @@ public class TerminalView extends Canvas {
         } else if (event.getCode() == javafx.scene.input.KeyCode.TAB) {
             data = "\t".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.UP) {
-            data = "\033[A".getBytes();
+            data = emulator.isApplicationCursorKeys() ? "\033OA".getBytes() : "\033[A".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.DOWN) {
-            data = "\033[B".getBytes();
+            data = emulator.isApplicationCursorKeys() ? "\033OB".getBytes() : "\033[B".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.RIGHT) {
-            data = "\033[C".getBytes();
+            data = emulator.isApplicationCursorKeys() ? "\033OC".getBytes() : "\033[C".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.LEFT) {
-            data = "\033[D".getBytes();
+            data = emulator.isApplicationCursorKeys() ? "\033OD".getBytes() : "\033[D".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.HOME) {
-            data = "\033[H".getBytes();
+            data = emulator.isApplicationCursorKeys() ? "\033OH".getBytes() : "\033[H".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.END) {
-            data = "\033[F".getBytes();
+            data = emulator.isApplicationCursorKeys() ? "\033OF".getBytes() : "\033[F".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.DELETE) {
             data = "\033[3~".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.PAGE_UP) {
             data = "\033[5~".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.PAGE_DOWN) {
             data = "\033[6~".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.F1) {
+            data = "\033OP".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.F2) {
+            data = "\033OQ".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.F3) {
+            data = "\033OR".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.F4) {
+            data = "\033OS".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.C && event.isControlDown()) {
             data = "\003".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.D && event.isControlDown()) {
@@ -199,6 +207,20 @@ public class TerminalView extends Canvas {
             data = "\027".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.R && event.isControlDown()) {
             data = "\022".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.D && event.isControlDown() && event.isShiftDown()) {
+            // Ctrl+Shift+D: 调试 - 导出终端缓冲区到文件
+            try {
+                String dump = emulator.dumpBuffer();
+                java.nio.file.Files.writeString(
+                    java.nio.file.Path.of("/tmp/terminal_dump.txt"),
+                    dump + "\n"
+                );
+                System.out.println("Terminal buffer dumped to /tmp/terminal_dump.txt");
+            } catch (Exception ex) {
+                ex.printStackTrace();
+            }
+            event.consume();
+            return;
         }
 
         if (data != null) {
