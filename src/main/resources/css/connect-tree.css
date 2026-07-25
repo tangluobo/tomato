@@ -11,16 +11,23 @@
 
 .tree-cell:selected {
     -fx-background-color: #C9EBC6;
+    -fx-background-insets: 0;
     -fx-text-fill: black;
 }
 
 .tree-cell:focused {
     -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
     -fx-text-fill: black;
 }
 
 .tree-cell:selected:focused {
     -fx-background-color: #C9EBC6;
+    -fx-background-insets: 0;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
     -fx-text-fill: black;
 }
 
