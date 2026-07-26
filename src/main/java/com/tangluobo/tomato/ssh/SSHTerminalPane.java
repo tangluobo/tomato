@@ -154,13 +154,12 @@ public class SSHTerminalPane extends BorderPane {
         scrollBar.setValue(0);
         scrollBar.setVisible(false);
         scrollBar.valueProperty().addListener((obs, oldVal, newVal) -> {
-            if (updatingScrollbar) return; // 防止循环
-            // value从顶部算：value越大越靠近底部
-            // offset从底部算：scrollbackSize - (value - scrollbackSize + visibleRows - 1)
+            if (updatingScrollbar) return;
             double visibleAmt = scrollBar.getVisibleAmount();
-            int maxScrollOffset = (int) (scrollBar.getMax() - visibleAmt + 1);
-            int offset = maxScrollOffset - (int) (newVal.doubleValue() + 0.5);
-            terminalView.setScrollOffset(Math.max(0, Math.min(offset, emulator.getScrollbackSize())));
+            int scrollbackSize = emulator.getScrollbackSize();
+            double val = newVal.doubleValue();
+            int offset = (int) Math.round(scrollbackSize - val + visibleAmt - 1);
+            terminalView.setScrollOffset(Math.max(0, Math.min(offset, scrollbackSize)));
         });
 
         terminalPane = new Pane() {
@@ -187,19 +186,17 @@ public class SSHTerminalPane extends BorderPane {
         // 滚动条回调：更新滚动条状态
         terminalView.setScrollbarHandler((scrollbackSize, scrollOffset, visibleRows) -> {
             Platform.runLater(() -> {
-                updatingScrollbar = true; // 防止循环
+                updatingScrollbar = true;
                 try {
-                    if (scrollbackSize > 0) {
+                    int currentSbSize = emulator.getScrollbackSize();
+                    int currentOffset = emulator.getScrollOffset();
+                    if (currentSbSize > 0) {
                         scrollBar.setVisible(true);
-                        // 总内容 = scrollbackSize + visibleRows
-                        int totalContent = scrollbackSize + visibleRows;
+                        int totalContent = currentSbSize + visibleRows;
                         scrollBar.setMin(0);
                         scrollBar.setMax(totalContent - 1);
                         scrollBar.setVisibleAmount(visibleRows);
-                        // value从顶部算：scrollbackSize - offset + (visibleRows - 1)
-                        // offset=0(底部)时 value = scrollbackSize + visibleRows - 1
-                        // offset=scrollbackSize(顶部)时 value = visibleRows - 1
-                        scrollBar.setValue(scrollbackSize - scrollOffset + visibleRows - 1);
+                        scrollBar.setValue(currentSbSize - currentOffset + visibleRows - 1);
                     } else {
                         scrollBar.setVisible(false);
                     }

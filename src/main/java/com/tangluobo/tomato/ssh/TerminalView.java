@@ -292,51 +292,47 @@ public class TerminalView extends Canvas {
         double x0 = 2;
         double y0 = 2;
 
-        // 清除背景
         gc.setFill(defaultBg);
         gc.fillRect(0, 0, getWidth(), getHeight());
 
-        // 设置字体
         gc.setFont(javafx.scene.text.Font.font(fontFamily, 13));
 
-        // 逐行渲染（支持scrollback偏移）
         for (int y = 0; y < rows; y++) {
             double py = y0 + y * charHeight;
 
-            // 计算该行应该显示的内容
-            // scrollOffset > 0 时，部分行从scrollback取
             int scrollbackStart = scrollbackSize - scrollOffset;
             int lineInScrollback = scrollbackStart + y;
 
             char[] lineChars;
             int[] lineAttrs;
+            int bufY = -1;
             if (lineInScrollback >= 0 && lineInScrollback < scrollbackSize) {
-                // 从scrollback取行
                 lineChars = emulator.getScrollbackLine(lineInScrollback);
                 lineAttrs = emulator.getScrollbackAttrLine(lineInScrollback);
                 if (lineChars == null) continue;
             } else if (lineInScrollback >= scrollbackSize) {
-                // 从主缓冲区取行
-                int bufY = lineInScrollback - scrollbackSize;
+                bufY = lineInScrollback - scrollbackSize;
                 if (bufY >= rows) continue;
-                lineChars = null; // 标记使用主缓冲区
+                lineChars = null;
                 lineAttrs = null;
             } else {
-                // 没有内容
                 continue;
             }
 
             int runStart = 0;
-            int firstAttr = (lineChars != null) ?
-                ((lineAttrs != null && lineAttrs.length > 0) ? lineAttrs[0] : 0) :
-                emulator.getAttr(0, y);
+            int firstAttr;
+            if (lineChars != null) {
+                firstAttr = (lineAttrs != null && lineAttrs.length > 0) ? lineAttrs[0] : 0;
+            } else {
+                firstAttr = emulator.getAttr(0, bufY);
+            }
 
             for (int x = 0; x <= cols; x++) {
                 int attr;
                 if (lineChars != null) {
                     attr = (x < cols && x < lineAttrs.length) ? lineAttrs[x] : -1;
                 } else {
-                    attr = (x < cols) ? emulator.getAttr(x, y) : -1;
+                    attr = (x < cols) ? emulator.getAttr(x, bufY) : -1;
                 }
 
                 if (attr != firstAttr || x == cols) {
@@ -352,7 +348,7 @@ public class TerminalView extends Canvas {
                             if (lineChars != null) {
                                 c = (i < lineChars.length) ? lineChars[i] : ' ';
                             } else {
-                                c = emulator.getChar(i, y);
+                                c = emulator.getChar(i, bufY);
                             }
                             if (c == '\0') continue;
                             gc.fillText(String.valueOf(c), x0 + i * charWidth, py + fontAscent);

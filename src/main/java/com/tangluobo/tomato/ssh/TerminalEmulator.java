@@ -861,7 +861,6 @@ public class TerminalEmulator {
         int top = getScrollTop();
         int bottom = getScrollBottom();
         for (int i = 0; i < n; i++) {
-            // 将被滚出的行保存到scrollback
             if (top == 0 && !usingAltBuffer) {
                 char[] savedLine = new char[cols];
                 int[] savedAttr = new int[cols];
@@ -869,7 +868,6 @@ public class TerminalEmulator {
                 System.arraycopy(attrs[0], 0, savedAttr, 0, cols);
                 scrollbackLines.addLast(savedLine);
                 scrollbackAttrs.addLast(savedAttr);
-                // 超出最大行数时移除最旧的
                 while (scrollbackLines.size() > maxScrollback) {
                     scrollbackLines.removeFirst();
                     scrollbackAttrs.removeFirst();
@@ -884,8 +882,9 @@ public class TerminalEmulator {
                 attrs[bottom][x] = makeAttr(7, 0, false, false, false);
             }
         }
-        // 有新输出时，如果用户在回看，自动滚到底部
-        scrollOffset = 0;
+        if (scrollOffset > 0) {
+            scrollOffset = Math.min(scrollOffset + n, scrollbackLines.size());
+        }
     }
 
     /**
