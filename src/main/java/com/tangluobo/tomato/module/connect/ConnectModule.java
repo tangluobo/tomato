@@ -45,6 +45,7 @@ public class ConnectModule implements Module {
     private List<ConnectionConfig> connections;
     private Map<TreeItem<String>, ConnectionConfig> itemConfigMap;
     private Map<TreeItem<String>, DatabaseNodeData> dbNodeDataMap;
+    private Map<TreeItem<String>, Boolean> connectionStateMap;
     private Image folderIcon;
     private Image dbIcon;
     private Image dbIconGray;
@@ -92,6 +93,7 @@ public class ConnectModule implements Module {
 
         itemConfigMap = new HashMap<>();
         dbNodeDataMap = new HashMap<>();
+        connectionStateMap = new HashMap<>();
         connections = ConfigManager.loadConnections();
         loadTree();
 
@@ -260,6 +262,14 @@ public class ConnectModule implements Module {
         TreeItem<String> item = new TreeItem<>(config.getName());
         item.setGraphic(getIconForConfig(config));
         itemConfigMap.put(item, config);
+        connectionStateMap.put(item, false);
+
+        if (config.getType() == ConnectType.MYSQL) {
+            item.expandedProperty().addListener((obs, wasExpanded, isExpanded) -> {
+                updateMysqlHostIcon(item, config);
+            });
+        }
+
         return item;
     }
 
@@ -1111,16 +1121,40 @@ public class ConnectModule implements Module {
      * 更新主机节点图标（连接/断开状态）
      */
     private void updateHostIcon(TreeItem<String> hostItem, ConnectionConfig config, boolean connected) {
+        connectionStateMap.put(hostItem, connected);
+        if (config.getType() == ConnectType.MYSQL) {
+            updateMysqlHostIcon(hostItem, config);
+        } else {
+            ImageView imageView = new ImageView();
+            imageView.setFitWidth(16);
+            imageView.setFitHeight(16);
+            try {
+                String iconPath = config.getType().getIconPath();
+                Image icon = new Image(getClass().getResourceAsStream(iconPath));
+                if (icon != null) {
+                    imageView.setImage(icon);
+                    if (connected) {
+                        imageView.setStyle("-fx-effect: dropshadow(gaussian, #4CAF50, 2, 0.5, 0, 0);");
+                    }
+                }
+            } catch (Exception e) {
+                // fallback
+            }
+            hostItem.setGraphic(imageView);
+        }
+    }
+
+    private void updateMysqlHostIcon(TreeItem<String> hostItem, ConnectionConfig config) {
         ImageView imageView = new ImageView();
         imageView.setFitWidth(16);
         imageView.setFitHeight(16);
         try {
-            String iconPath = config.getType().getIconPath();
+            String iconPath = hostItem.isExpanded() ? "/images/connect/mysql_open.png" : "/images/connect/mysql.png";
             Image icon = new Image(getClass().getResourceAsStream(iconPath));
             if (icon != null) {
                 imageView.setImage(icon);
-                // 已连接状态加绿色透明遮罩效果
-                if (connected) {
+                Boolean connected = connectionStateMap.get(hostItem);
+                if (connected != null && connected) {
                     imageView.setStyle("-fx-effect: dropshadow(gaussian, #4CAF50, 2, 0.5, 0, 0);");
                 }
             }

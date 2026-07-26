@@ -123,14 +123,15 @@
 .combo-box, .combo-box-base {
     -fx-background-radius: 0;
     -fx-border-radius: 0;
-    -fx-border-color: #F0F0F0;
+    -fx-border-color: #CCCCCC;
     -fx-border-width: 1px;
     -fx-focus-color: transparent;
     -fx-faint-focus-color: transparent;
+    -fx-pref-height: 28px;
 }
 
 .combo-box:focused, .combo-box-base:focused {
-    -fx-border-color: #F0F0F0;
+    -fx-border-color: #CCCCCC;
     -fx-border-width: 1px;
     -fx-focus-color: transparent;
     -fx-faint-focus-color: transparent;
@@ -140,6 +141,7 @@
     -fx-background-radius: 0;
     -fx-border-radius: 0;
     -fx-border-color: transparent;
+    -fx-pref-height: 26px;
 }
 
 .combo-box-base:focused .text-field {
@@ -151,6 +153,24 @@
 .combo-box .arrow-button {
     -fx-background-radius: 0;
     -fx-border-radius: 0;
+    -fx-pref-height: 26px;
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+}
+
+.combo-box:hover .arrow-button {
+    -fx-background-color: #E5F1FB;
+    -fx-border-color: #CCCCCC;
+    -fx-border-width: 0 0 0 1px;
+}
+
+.combo-box .arrow {
+    -fx-background-color: #999999;
+}
+
+.combo-box:hover .arrow {
+    -fx-background-color: #666666;
 }
 
 .combo-box-connection .text-field {
