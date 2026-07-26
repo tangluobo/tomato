@@ -163,39 +163,46 @@ public class BackupDialog {
         objectTree.setShowRoot(false);
         objectTree.setStyle("-fx-font-size: 12px;");
         objectTree.setCellFactory(tv -> new TreeCell<>() {
-            private CheckBox checkBox = new CheckBox();
-            private HBox hbox = new HBox(2);
-            private ImageView iconView = new ImageView() {{
-                setFitWidth(16);
-                setFitHeight(16);
-            }};
+            private final CheckBox checkBox = new CheckBox();
+            private final HBox hbox = new HBox(2);
+            private final ImageView iconView = new ImageView();
+            private BackupObject currentItem;
+            private javafx.beans.value.ChangeListener<Boolean> selectedListener;
             private javafx.beans.value.ChangeListener<String> labelListener;
-            private BackupObject boundObj;
 
             {
+                iconView.setFitWidth(16);
+                iconView.setFitHeight(16);
                 hbox.setAlignment(Pos.CENTER_LEFT);
                 hbox.getChildren().addAll(checkBox, iconView);
+                // 点击复选框 → 写回模型
+                checkBox.setOnAction(e -> {
+                    if (currentItem != null) {
+                        currentItem.setSelected(checkBox.isSelected());
+                    }
+                });
             }
 
             @Override
             public void updateItem(BackupObject item, boolean empty) {
-                super.updateItem(item, empty);
-
-                // 解绑旧对象
-                if (boundObj != null) {
-                    checkBox.selectedProperty().unbindBidirectional(boundObj.selectedProperty());
-                    boundObj = null;
+                // 先清理旧监听
+                if (selectedListener != null && currentItem != null) {
+                    currentItem.selectedProperty().removeListener(selectedListener);
+                    selectedListener = null;
                 }
-                if (labelListener != null && getItem() != null) {
-                    getItem().customLabelProperty().removeListener(labelListener);
+                if (labelListener != null && currentItem != null) {
+                    currentItem.customLabelProperty().removeListener(labelListener);
                     labelListener = null;
                 }
+                currentItem = null;
+
+                super.updateItem(item, empty);
 
                 if (empty || item == null) {
                     setText(null);
                     setGraphic(null);
                 } else {
-                    // 只有"自定义"节点才拼接计数
+                    // 文本
                     if (item.getSpecialType() == BackupObject.SpecialType.CUSTOMIZE) {
                         String label = item.getCustomLabel();
                         setText(item.getDisplayName() + (label != null ? label : ""));
@@ -203,17 +210,23 @@ public class BackupDialog {
                         setText(item.getDisplayName());
                     }
 
-                    ImageView icon = createIcon(item.getType());
-                    iconView.setImage(icon.getImage());
+                    // 图标
+                    iconView.setImage(createIcon(item.getType()).getImage());
 
                     if (item.isGroupNode()) {
-                        setGraphic(icon);
+                        setGraphic(createIcon(item.getType()));
                     } else {
-                        checkBox.selectedProperty().bindBidirectional(item.selectedProperty());
-                        boundObj = item;
+                        currentItem = item;
+                        checkBox.setSelected(item.isSelected());
+
+                        // 模型→UI：模型变化时同步复选框
+                        selectedListener = (obs, old, val) -> checkBox.setSelected(val);
+                        item.selectedProperty().addListener(selectedListener);
+
                         setGraphic(hbox);
                     }
 
+                    // "自定义"计数监听
                     if (item.getSpecialType() == BackupObject.SpecialType.CUSTOMIZE) {
                         labelListener = (obs, oldVal, newVal) -> {
                             String lbl = item.getCustomLabel();
@@ -443,13 +456,15 @@ public class BackupDialog {
 
         final boolean[] suppress = {false};
 
-        // --- 规则1: 选中"运行期间的全部" → 取消"自定义"（互斥），不影响子对象 ---
+        // --- 规则1: 选中"运行期间的全部" → 取消"自定义" + 取消所有子对象 ---
         selectAllObj.selectedProperty().addListener((obs, old, val) -> {
             if (suppress[0]) return;
             if (val) {
                 suppress[0] = true;
                 customizeObj.setSelected(false);
+                for (TreeItem<BackupObject> c : customizeItem.getChildren()) c.getValue().setSelected(false);
                 suppress[0] = false;
+                refreshCustomizeCount(customizeItem);
             }
         });
 
