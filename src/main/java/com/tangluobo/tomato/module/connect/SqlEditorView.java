@@ -11,6 +11,12 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.*;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -245,11 +251,111 @@ public class SqlEditorView extends BorderPane {
         }
     }
 
+    private static final String APP_DIR = System.getProperty("user.home") + "/.tomato";
+    private static final String QUERY_DIR = "query";
+
     public void doSave(String name) {
         this.queryName = name;
         this.savedSql = editor.getText();
         this.modified = false;
         notifyTitleChange();
+
+        persistToFile(name);
+    }
+
+    private void persistToFile(String name) {
+        ConnectionConfig config = connectionCombo.getValue();
+        String dbName = databaseCombo.getValue();
+        if (config == null || dbName == null) return;
+
+        String sanitizedConn = sanitizeFileName(config.getName());
+        String sanitizedDb = sanitizeFileName(dbName);
+        String sanitizedQuery = sanitizeFileName(name);
+
+        Path dir = Paths.get(APP_DIR, sanitizedConn, sanitizedDb, QUERY_DIR);
+        try {
+            Files.createDirectories(dir);
+            Path file = dir.resolve(sanitizedQuery + ".sql");
+            Files.writeString(file, savedSql, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            System.err.println("保存查询文件失败: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private static String sanitizeFileName(String name) {
+        if (name == null || name.isEmpty()) return "unnamed";
+        return name.replaceAll("[\\\\/:*?\"<>|]", "_")
+                   .replaceAll("\\s+", "_")
+                   .replaceAll("_{2,}", "_")
+                   .replaceAll("^_|_$", "");
+    }
+
+    public void loadFromFile(String connectionName, String dbName, String queryName) {
+        String sanitizedConn = sanitizeFileName(connectionName);
+        String sanitizedDb = sanitizeFileName(dbName);
+        String sanitizedQuery = sanitizeFileName(queryName);
+
+        Path file = Paths.get(APP_DIR, sanitizedConn, sanitizedDb, QUERY_DIR, sanitizedQuery + ".sql");
+        if (Files.exists(file)) {
+            try {
+                String content = Files.readString(file, StandardCharsets.UTF_8);
+                setSqlText(content);
+                this.savedSql = content;
+                this.modified = false;
+            } catch (IOException e) {
+                System.err.println("加载查询文件失败: " + e.getMessage());
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public void deleteQueryFile(String connectionName, String dbName, String queryName) {
+        String sanitizedConn = sanitizeFileName(connectionName);
+        String sanitizedDb = sanitizeFileName(dbName);
+        String sanitizedQuery = sanitizeFileName(queryName);
+
+        Path file = Paths.get(APP_DIR, sanitizedConn, sanitizedDb, QUERY_DIR, sanitizedQuery + ".sql");
+        try {
+            Files.deleteIfExists(file);
+        } catch (IOException e) {
+            System.err.println("删除查询文件失败: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    public static void cleanupQueryFile(String connectionName, String dbName, String queryName) {
+        String sanitizedConn = sanitizeFileName(connectionName);
+        String sanitizedDb = sanitizeFileName(dbName);
+        String sanitizedQuery = sanitizeFileName(queryName);
+
+        Path file = Paths.get(APP_DIR, sanitizedConn, sanitizedDb, QUERY_DIR, sanitizedQuery + ".sql");
+        try {
+            Files.deleteIfExists(file);
+        } catch (IOException e) {
+            System.err.println("删除查询文件失败: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    public static List<String> listQueries(String connectionName, String dbName) {
+        String sanitizedConn = sanitizeFileName(connectionName);
+        String sanitizedDb = sanitizeFileName(dbName);
+
+        Path dir = Paths.get(APP_DIR, sanitizedConn, sanitizedDb, QUERY_DIR);
+        List<String> queries = new ArrayList<>();
+        if (!Files.isDirectory(dir)) return queries;
+
+        try (java.util.stream.Stream<Path> stream = Files.list(dir)) {
+            stream.filter(p -> p.toString().endsWith(".sql"))
+                  .forEach(p -> {
+                      String fileName = p.getFileName().toString();
+                      queries.add(fileName.substring(0, fileName.length() - 4));
+                  });
+        } catch (IOException e) {
+            System.err.println("加载查询列表失败: " + e.getMessage());
+        }
+        return queries;
     }
 
     // ==================== 数据库列表 ====================

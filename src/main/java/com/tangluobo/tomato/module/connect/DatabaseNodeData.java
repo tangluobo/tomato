@@ -11,7 +11,7 @@ public class DatabaseNodeData {
         QUERY_FOLDER,   // "查询"文件夹节点
         TABLE,          // 表节点
         VIEW,           // 视图节点
-        FUNCTION_FOLDER, BACKUP_FOLDER, QUERY           // 查询节点
+        FUNCTION_FOLDER, BACKUP_FOLDER, QUERY, BACKUP
     }
 
     private final NodeType type;

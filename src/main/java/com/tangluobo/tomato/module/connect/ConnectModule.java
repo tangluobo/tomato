@@ -33,6 +33,9 @@ import javafx.embed.swing.SwingFXUtils;
 import javax.swing.filechooser.FileSystemView;
 import java.awt.image.BufferedImage;
 import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -155,6 +158,7 @@ public class ConnectModule implements Module {
             case VIEW -> viewIcon;
             case FUNCTION_FOLDER -> functionIcon;
             case BACKUP_FOLDER -> backupIcon;
+            case BACKUP -> backupIcon;
             case QUERY -> queryIcon;
         };
         if (icon != null) iv.setImage(icon);
@@ -381,6 +385,13 @@ public class ConnectModule implements Module {
                             refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
                             contextMenu.getItems().addAll(newQueryItem, new SeparatorMenuItem(), refreshItem);
                         }
+                        case BACKUP_FOLDER -> {
+                            MenuItem newBackupItem = new MenuItem("新建备份");
+                            newBackupItem.setOnAction(e -> handleNewBackup(targetItem, dbData));
+                            MenuItem refreshItem = new MenuItem("刷新");
+                            refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
+                            contextMenu.getItems().addAll(newBackupItem, new SeparatorMenuItem(), refreshItem);
+                        }
                         case TABLE, VIEW -> {
                             MenuItem deleteItem = new MenuItem("删除");
                             deleteItem.setOnAction(e -> handleDeleteDbNodes());
@@ -394,6 +405,15 @@ public class ConnectModule implements Module {
                             MenuItem deleteQueryItem = new MenuItem("删除");
                             deleteQueryItem.setOnAction(e -> handleDeleteQuery(targetItem, dbData));
                             contextMenu.getItems().addAll(openQueryItem, new SeparatorMenuItem(), renameQueryItem, deleteQueryItem);
+                        }
+                        case BACKUP -> {
+                            MenuItem restoreItem = new MenuItem("还原备份");
+                            restoreItem.setOnAction(e -> handleRestoreBackup(targetItem, dbData));
+                            MenuItem renameBackupItem = new MenuItem("重命名");
+                            renameBackupItem.setOnAction(e -> handleRenameBackup(targetItem, dbData));
+                            MenuItem deleteBackupItem = new MenuItem("删除");
+                            deleteBackupItem.setOnAction(e -> handleDeleteBackup(targetItem, dbData));
+                            contextMenu.getItems().addAll(restoreItem, new SeparatorMenuItem(), renameBackupItem, deleteBackupItem);
                         }
                     }
                 } else {
@@ -762,7 +782,12 @@ public class ConnectModule implements Module {
             case VIEWS_FOLDER -> handleViewsFolderDoubleClick(item, data);
             case TABLE, VIEW -> handleTableDataDoubleClick(item, data);
             case QUERY -> handleQueryDoubleClick(item, data);
+            case BACKUP -> handleRestoreBackup(item, data);
             case QUERY_FOLDER -> item.setExpanded(!item.isExpanded());
+            case BACKUP_FOLDER -> {
+                loadBackupsForFolder(item, data.getConnectionConfig(), data.getDatabaseName());
+                item.setExpanded(!item.isExpanded());
+            }
         }
     }
 
@@ -807,9 +832,14 @@ public class ConnectModule implements Module {
         queryFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, data.getDatabaseName())));
         dbNodeDataMap.put(queryFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, data.getDatabaseName()));
 
+        // 从文件系统加载已保存的查询
+        loadQueriesForFolder(queryFolder, config, data.getDatabaseName());
+
         TreeItem<String> backupFolder = new TreeItem<>("备份");
         backupFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, data.getDatabaseName())));
         dbNodeDataMap.put(backupFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, data.getDatabaseName()));
+
+        loadBackupsForFolder(backupFolder, config, data.getDatabaseName());
 
         dbItem.getChildren().addAll(tablesFolder, viewsFolder, functionFolder,queryFolder,backupFolder);
         dbItem.setExpanded(true);
@@ -850,6 +880,20 @@ public class ConnectModule implements Module {
             return;
         }
         loadViewsForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName());
+    }
+
+    /**
+     * 从文件系统加载已保存的查询列表到指定文件夹节点
+     */
+    private void loadQueriesForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName) {
+        List<String> queryNames = SqlEditorView.listQueries(config.getName(), dbName);
+        folderItem.getChildren().clear();
+        for (String queryName : queryNames) {
+            TreeItem<String> queryItem = new TreeItem<>(queryName);
+            queryItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, queryName, config, dbName)));
+            dbNodeDataMap.put(queryItem, new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, queryName, config, dbName));
+            folderItem.getChildren().add(queryItem);
+        }
     }
 
     /**
@@ -1043,6 +1087,7 @@ public class ConnectModule implements Module {
         SqlEditorView editorView = new SqlEditorView(connections, data.getConnectionConfig(), data.getDatabaseName());
         editorView.setQueryName(data.getName());
         editorView.setQueryNode(queryItem);
+        editorView.loadFromFile(data.getConnectionConfig().getName(), data.getDatabaseName(), data.getName());
 
         Tab tab = new Tab(data.getName());
         Image tabIcon = queryIcon;
@@ -1094,12 +1139,42 @@ public class ConnectModule implements Module {
         dialog.showAndWait().ifPresent(name -> {
             if (name.trim().isEmpty()) return;
             String newName = name.trim();
+
+            // 读取旧文件内容
+            String oldSanitizedConn = sanitizeForFs(data.getConnectionConfig().getName());
+            String oldSanitizedDb = sanitizeForFs(data.getDatabaseName());
+            String oldSanitizedQuery = sanitizeForFs(data.getName());
+            String newSanitizedQuery = sanitizeForFs(newName);
+
+            java.nio.file.Path oldFile = Paths.get(System.getProperty("user.home") + "/.tomato",
+                    oldSanitizedConn, oldSanitizedDb, "query", oldSanitizedQuery + ".sql");
+            java.nio.file.Path newFile = Paths.get(System.getProperty("user.home") + "/.tomato",
+                    oldSanitizedConn, oldSanitizedDb, "query", newSanitizedQuery + ".sql");
+
+            try {
+                if (Files.exists(oldFile)) {
+                    String content = Files.readString(oldFile, StandardCharsets.UTF_8);
+                    Files.createDirectories(newFile.getParent());
+                    Files.writeString(newFile, content, StandardCharsets.UTF_8);
+                    Files.deleteIfExists(oldFile);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+
             queryItem.setValue(newName);
-            // 更新 dbNodeDataMap 中的数据
-            dbNodeDataMap.remove(queryItem);
             DatabaseNodeData newData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, newName, data.getConnectionConfig(), data.getDatabaseName());
+            dbNodeDataMap.remove(queryItem);
             dbNodeDataMap.put(queryItem, newData);
         });
+    }
+
+    private String sanitizeForFs(String name) {
+        if (name == null || name.isEmpty()) return "unnamed";
+        return name.replaceAll("[\\\\/:*?\"<>|]", "_")
+                   .replaceAll("\\s+", "_")
+                   .replaceAll("_{2,}", "_")
+                   .replaceAll("^_|_$", "");
     }
 
     /**
@@ -1111,10 +1186,78 @@ public class ConnectModule implements Module {
         confirm.setHeaderText("确定要删除查询 \"" + data.getName() + "\" 吗？");
         confirm.showAndWait().ifPresent(response -> {
             if (response == ButtonType.OK) {
+                SqlEditorView.cleanupQueryFile(data.getConnectionConfig().getName(), data.getDatabaseName(), data.getName());
                 dbNodeDataMap.remove(queryItem);
                 queryItem.getParent().getChildren().remove(queryItem);
             }
         });
+    }
+
+    private void loadBackupsForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName) {
+        List<String> backupNames = BackupService.listBackups(config.getName(), dbName);
+        folderItem.getChildren().clear();
+        for (String backupName : backupNames) {
+            TreeItem<String> backupItem = new TreeItem<>(backupName);
+            backupItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP, backupName, config, dbName)));
+            dbNodeDataMap.put(backupItem, new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP, backupName, config, dbName));
+            folderItem.getChildren().add(backupItem);
+        }
+    }
+
+    private void handleNewBackup(TreeItem<String> folderItem, DatabaseNodeData data) {
+        BackupDialog dialog = new BackupDialog(getStage(),
+                data.getConnectionConfig(), data.getDatabaseName());
+        dialog.showAndWait();
+
+        loadBackupsForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName());
+    }
+
+    private void handleDeleteBackup(TreeItem<String> backupItem, DatabaseNodeData data) {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("删除备份");
+        confirm.setHeaderText("确定要删除备份 \"" + data.getName() + "\" 吗？");
+        confirm.showAndWait().ifPresent(response -> {
+            if (response == ButtonType.OK) {
+                BackupService.deleteBackupFile(data.getConnectionConfig().getName(),
+                        data.getDatabaseName(), data.getName());
+                dbNodeDataMap.remove(backupItem);
+                backupItem.getParent().getChildren().remove(backupItem);
+            }
+        });
+    }
+
+    private void handleRenameBackup(TreeItem<String> backupItem, DatabaseNodeData data) {
+        TextInputDialog dialog = new TextInputDialog(data.getName());
+        dialog.setTitle("重命名备份");
+        dialog.setHeaderText(null);
+        dialog.setContentText("新名称：");
+        dialog.showAndWait().ifPresent(name -> {
+            if (name.trim().isEmpty()) return;
+            String newName = name.trim();
+            try {
+                BackupService.renameBackupFile(data.getConnectionConfig().getName(),
+                        data.getDatabaseName(), data.getName(), newName);
+                backupItem.setValue(newName);
+                DatabaseNodeData newData = new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP,
+                        newName, data.getConnectionConfig(), data.getDatabaseName());
+                dbNodeDataMap.remove(backupItem);
+                dbNodeDataMap.put(backupItem, newData);
+            } catch (Exception e) {
+                Alert err = new Alert(Alert.AlertType.ERROR);
+                err.setTitle("重命名失败");
+                err.setHeaderText(null);
+                err.setContentText(e.getMessage());
+                err.showAndWait();
+            }
+        });
+    }
+
+    private void handleRestoreBackup(TreeItem<String> backupItem, DatabaseNodeData data) {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle("还原备份");
+        alert.setHeaderText(null);
+        alert.setContentText("还原备份功能需要将数据写回数据库。\n\n此功能正在开发中。");
+        alert.showAndWait();
     }
 
     /**
@@ -1431,7 +1574,10 @@ public class ConnectModule implements Module {
                 loadViewsForFolder(item, config, data.getDatabaseName());
             }
             case QUERY_FOLDER -> {
-                // 查询节点不需要从服务器刷新
+                loadQueriesForFolder(item, config, data.getDatabaseName());
+            }
+            case BACKUP_FOLDER -> {
+                loadBackupsForFolder(item, config, data.getDatabaseName());
             }
             default -> {}
         }

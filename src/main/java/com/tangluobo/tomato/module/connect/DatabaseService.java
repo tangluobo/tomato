@@ -176,6 +176,44 @@ public class DatabaseService {
         return views;
     }
 
+    public static List<String> getFunctions(ConnectionConfig config, String databaseName) throws Exception {
+        Connection conn = getConnection(config);
+        List<String> functions = new ArrayList<>();
+
+        if (config.getType() == ConnectType.MYSQL) {
+            try (PreparedStatement stmt = conn.prepareStatement(
+                     "SELECT ROUTINE_NAME FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = ? AND ROUTINE_TYPE = 'FUNCTION' ORDER BY ROUTINE_NAME")) {
+                stmt.setString(1, databaseName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        functions.add(rs.getString(1));
+                    }
+                }
+            }
+        }
+
+        return functions;
+    }
+
+    public static List<String> getEvents(ConnectionConfig config, String databaseName) throws Exception {
+        Connection conn = getConnection(config);
+        List<String> events = new ArrayList<>();
+
+        if (config.getType() == ConnectType.MYSQL) {
+            try (PreparedStatement stmt = conn.prepareStatement(
+                     "SELECT EVENT_NAME FROM information_schema.EVENTS WHERE EVENT_SCHEMA = ? ORDER BY EVENT_NAME")) {
+                stmt.setString(1, databaseName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        events.add(rs.getString(1));
+                    }
+                }
+            }
+        }
+
+        return events;
+    }
+
     /**
      * 分页查询表/视图数据
      * @return TableRowData 包含列名列表和数据行
@@ -231,7 +269,7 @@ public class DatabaseService {
     /**
      * 获取指定数据库的JDBC连接
      */
-    private static Connection getConnection(ConnectionConfig config, String databaseName) throws Exception {
+    public static Connection getConnection(ConnectionConfig config, String databaseName) throws Exception {
         String key = config.getId() + "_" + databaseName;
         Connection existing = connectionCache.get(key);
         if (existing != null && !existing.isClosed()) {
