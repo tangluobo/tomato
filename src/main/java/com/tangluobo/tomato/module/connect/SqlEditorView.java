@@ -164,6 +164,7 @@ public class SqlEditorView extends BorderPane {
         // ---- 结果区域 ----
         VBox resultBox = new VBox();
         resultBox.setStyle("-fx-background-color: white;");
+        resultBox.setMinHeight(0);
 
         resultTable = new TableView<>();
         resultTable.setStyle("-fx-font-size: 12px;");
@@ -180,7 +181,7 @@ public class SqlEditorView extends BorderPane {
         SplitPane splitPane = new SplitPane();
         splitPane.setOrientation(javafx.geometry.Orientation.VERTICAL);
         splitPane.getItems().addAll(editor.getNode(), resultBox);
-        splitPane.setDividerPositions(0.5);
+        splitPane.setDividerPositions(0.6);
 
         this.setTop(toolbar);
         setCenter(splitPane);
@@ -484,6 +485,9 @@ public class SqlEditorView extends BorderPane {
             lineNumberBox.setPrefWidth(40);
             lineNumberBox.setMinWidth(40);
             lineNumberBox.setMaxWidth(40);
+            // 不驱动父布局高度，由父容器(HBox)分配空间后被动填充
+            lineNumberBox.setMinHeight(0);
+            lineNumberBox.setPrefHeight(0);
 
             java.util.List<Label> lineNumberLabels = new java.util.ArrayList<>();
             for (int i = 1; i <= MAX_LINES; i++) {
@@ -505,6 +509,9 @@ public class SqlEditorView extends BorderPane {
             editorContainer = new javafx.scene.layout.HBox();
             editorContainer.getChildren().addAll(lineNumberBox, scrollPane);
             javafx.scene.layout.HBox.setHgrow(scrollPane, javafx.scene.layout.Priority.ALWAYS);
+            // 不驱动SplitPane分配，被动接受SplitPane给的空间
+            editorContainer.setMinHeight(0);
+            editorContainer.setPrefHeight(200);
 
             textArea.estimatedScrollYProperty().addListener((obs, oldVal, newVal) -> {
                 lineNumberBox.setTranslateY(-newVal.doubleValue());
