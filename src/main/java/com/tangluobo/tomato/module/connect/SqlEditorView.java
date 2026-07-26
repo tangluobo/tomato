@@ -24,8 +24,7 @@ public class SqlEditorView extends BorderPane {
 
     private ComboBox<ConnectionConfig> connectionCombo;
     private ComboBox<String> databaseCombo;
-    private TableView<ObservableList<String>> resultTable;
-    private Label statusLabel;
+    private TabPane resultTabPane;
 
     private boolean modified = false;
     private String queryName = null;
@@ -162,25 +161,22 @@ public class SqlEditorView extends BorderPane {
         editor = createdEditor;
 
         // ---- 结果区域 ----
-        VBox resultBox = new VBox();
-        resultBox.setStyle("-fx-background-color: white;");
-        resultBox.setMinHeight(0);
+        resultTabPane = new TabPane();
+        resultTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        resultTabPane.setStyle("-fx-font-size: 12px;");
+        resultTabPane.setMinHeight(0);
 
-        resultTable = new TableView<>();
-        resultTable.setStyle("-fx-font-size: 12px;");
-        resultTable.setPlaceholder(new Label("无结果"));
-
-        statusLabel = new Label();
-        statusLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #888; -fx-padding: 4 8 4 8; -fx-background-color: #f8f8f8;");
-        statusLabel.setMaxWidth(Double.MAX_VALUE);
-
-        resultBox.getChildren().addAll(resultTable, statusLabel);
-        VBox.setVgrow(resultTable, Priority.ALWAYS);
+        // 初始占位标签
+        Tab placeholderTab = new Tab("信息");
+        Label placeholder = new Label("执行查询以查看结果");
+        placeholder.setStyle("-fx-text-fill: #888; -fx-padding: 16;");
+        placeholderTab.setContent(placeholder);
+        resultTabPane.getTabs().add(placeholderTab);
 
         // ---- 主布局 ----
         SplitPane splitPane = new SplitPane();
         splitPane.setOrientation(javafx.geometry.Orientation.VERTICAL);
-        splitPane.getItems().addAll(editor.getNode(), resultBox);
+        splitPane.getItems().addAll(editor.getNode(), resultTabPane);
         splitPane.setDividerPositions(0.6);
 
         this.setTop(toolbar);
@@ -282,25 +278,40 @@ public class SqlEditorView extends BorderPane {
         ConnectionConfig config = connectionCombo.getValue();
         String dbName = databaseCombo.getValue();
         if (config == null || dbName == null) {
-            statusLabel.setText("请先选择连接和数据库");
+            showInfo("请先选择连接和数据库");
             return;
         }
         String sql = getEffectiveSql();
         if (sql.isEmpty()) return;
-        statusLabel.setText("执行中...");
+
+        // 显示执行中状态
+        resultTabPane.getTabs().clear();
+        Tab loadingTab = new Tab("信息");
+        Label loadingLabel = new Label("执行中...");
+        loadingLabel.setStyle("-fx-text-fill: #888; -fx-padding: 16;");
+        loadingTab.setContent(loadingLabel);
+        resultTabPane.getTabs().add(loadingTab);
+
         new Thread(() -> {
             try {
-                TableRowData result = DatabaseService.executeSqlQuery(config, dbName, sql, 1000);
-                Platform.runLater(() -> {
-                    displayResult(result);
-                    statusLabel.setText("查询完成，共 " + result.getTotalCount() + " 行，耗时 " + result.getQueryTime() + "ms");
-                });
+                MultiStatementResult multiResult = DatabaseService.executeMultiSqlQuery(config, dbName, sql, 1000);
+
+                // 收集剖析结果（对SELECT语句执行EXPLAIN）
+                List<TableRowData> explainResults = new java.util.ArrayList<>();
+                List<String> explainSqls = new java.util.ArrayList<>();
+                for (SqlStatementResult sr : multiResult.getResults()) {
+                    if (sr.isSuccess() && sr.isSelect() && sr.isHasResultSet()) {
+                        explainSqls.add(sr.getSql());
+                        explainResults.add(DatabaseService.executeExplainQuery(config, dbName, sr.getSql()));
+                    }
+                }
+
+                // 获取服务器状态
+                TableRowData statusResult = DatabaseService.executeStatusQuery(config, dbName);
+
+                Platform.runLater(() -> buildResultTabs(multiResult, explainResults, explainSqls, statusResult));
             } catch (Exception e) {
-                Platform.runLater(() -> {
-                    resultTable.getColumns().clear();
-                    resultTable.getItems().clear();
-                    statusLabel.setText("执行失败: " + e.getMessage());
-                });
+                Platform.runLater(() -> showInfo("执行失败: " + e.getMessage()));
             }
         }, "DB-ExecuteQuery").start();
     }
@@ -309,25 +320,42 @@ public class SqlEditorView extends BorderPane {
         ConnectionConfig config = connectionCombo.getValue();
         String dbName = databaseCombo.getValue();
         if (config == null || dbName == null) {
-            statusLabel.setText("请先选择连接和数据库");
+            showInfo("请先选择连接和数据库");
             return;
         }
         String sql = getEffectiveSql();
         if (sql.isEmpty()) return;
-        statusLabel.setText("执行解释...");
+
+        resultTabPane.getTabs().clear();
+        Tab loadingTab = new Tab("剖析");
+        Label loadingLabel = new Label("执行解释...");
+        loadingLabel.setStyle("-fx-text-fill: #888; -fx-padding: 16;");
+        loadingTab.setContent(loadingLabel);
+        resultTabPane.getTabs().add(loadingTab);
+
         new Thread(() -> {
             try {
-                TableRowData result = DatabaseService.executeSqlQuery(config, dbName, "EXPLAIN " + sql, 1000);
+                List<String> statements = SqlSplitter.split(sql);
+                List<TableRowData> explainResults = new java.util.ArrayList<>();
+                List<String> explainSqls = new java.util.ArrayList<>();
+                for (String stmt : statements) {
+                    if (SqlSplitter.isSelectStatement(stmt)) {
+                        explainSqls.add(stmt);
+                        explainResults.add(DatabaseService.executeExplainQuery(config, dbName, stmt));
+                    }
+                }
+
                 Platform.runLater(() -> {
-                    displayResult(result);
-                    statusLabel.setText("解释完成，耗时 " + result.getQueryTime() + "ms");
+                    resultTabPane.getTabs().clear();
+                    if (explainResults.isEmpty()) {
+                        showInfo("没有可解释的SELECT语句");
+                    } else {
+                        resultTabPane.getTabs().add(buildExplainTab(explainResults, explainSqls));
+                        resultTabPane.getSelectionModel().select(0);
+                    }
                 });
             } catch (Exception e) {
-                Platform.runLater(() -> {
-                    resultTable.getColumns().clear();
-                    resultTable.getItems().clear();
-                    statusLabel.setText("解释失败: " + e.getMessage());
-                });
+                Platform.runLater(() -> showInfo("解释失败: " + e.getMessage()));
             }
         }, "DB-ExplainQuery").start();
     }
@@ -370,13 +398,161 @@ public class SqlEditorView extends BorderPane {
         if (sql.isEmpty()) return "";
         String selected = editor.getSelectedText();
         if (selected != null && !selected.trim().isEmpty()) sql = selected.trim();
-        if (sql.endsWith(";")) sql = sql.substring(0, sql.length() - 1).trim();
         return sql;
     }
 
-    private void displayResult(TableRowData result) {
-        resultTable.getColumns().clear();
-        resultTable.getItems().clear();
+    // ==================== 结果标签页构建 ====================
+
+    private void showInfo(String message) {
+        resultTabPane.getTabs().clear();
+        Tab tab = new Tab("信息");
+        Label label = new Label(message);
+        label.setStyle("-fx-text-fill: #c00; -fx-padding: 16;");
+        label.setWrapText(true);
+        tab.setContent(label);
+        resultTabPane.getTabs().add(tab);
+    }
+
+    private void buildResultTabs(MultiStatementResult multiResult,
+                                  List<TableRowData> explainResults,
+                                  List<String> explainSqls,
+                                  TableRowData statusResult) {
+        resultTabPane.getTabs().clear();
+
+        List<SqlStatementResult> selectResults = multiResult.getSelectResults();
+
+        // 1. 信息标签
+        resultTabPane.getTabs().add(buildInfoTab(multiResult));
+
+        // 2. 结果标签（每个有结果集的语句一个）
+        for (int i = 0; i < selectResults.size(); i++) {
+            String tabName = selectResults.size() == 1 ? "结果" : "结果" + (i + 1);
+            resultTabPane.getTabs().add(buildResultTab(tabName, selectResults.get(i)));
+        }
+
+        // 3. 剖析标签（有SELECT语句时生成）
+        if (!explainResults.isEmpty()) {
+            resultTabPane.getTabs().add(buildExplainTab(explainResults, explainSqls));
+        }
+
+        // 4. 状态标签
+        resultTabPane.getTabs().add(buildStatusTab(statusResult));
+
+        // 默认选中策略
+        if (multiResult.getFailCount() > 0) {
+            resultTabPane.getSelectionModel().select(0); // 有错误选信息
+        } else if (!selectResults.isEmpty()) {
+            resultTabPane.getSelectionModel().select(1); // 选第一个结果
+        } else {
+            resultTabPane.getSelectionModel().select(0); // 选信息
+        }
+    }
+
+    private Tab buildInfoTab(MultiStatementResult multiResult) {
+        Tab tab = new Tab("信息");
+        TextArea infoArea = new TextArea();
+        infoArea.setEditable(false);
+        infoArea.setWrapText(true);
+        infoArea.setStyle("-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 12px; " +
+                "-fx-control-inner-background: white; -fx-padding: 8; -fx-background-color: white;");
+
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < multiResult.getResults().size(); i++) {
+            SqlStatementResult sr = multiResult.getResults().get(i);
+            if (i > 0) sb.append("\n");
+
+            // 显示SQL文本
+            sb.append(sr.getSql()).append("\n");
+
+            // 显示执行状态
+            if (sr.isSuccess()) {
+                sb.append(" > OK\n");
+                sb.append(" > 时间: ").append(String.format("%.3fs", sr.getQueryTime() / 1000.0)).append("\n");
+                if (sr.isHasResultSet() && sr.getResultData() != null) {
+                    sb.append(" > 行数: ").append(sr.getResultData().getTotalCount()).append("\n");
+                } else if (!sr.isHasResultSet()) {
+                    int updateCount = sr.getUpdateCount();
+                    if (updateCount >= 0) {
+                        sb.append(" > 影响: ").append(updateCount).append(" 行\n");
+                    }
+                }
+            } else {
+                sb.append(" > 错误\n");
+                sb.append(" > ").append(sr.getErrorMessage()).append("\n");
+            }
+        }
+
+        // 汇总
+        sb.append("\n--- 汇总 ---\n");
+        sb.append("总耗时: ").append(String.format("%.3fs", multiResult.getTotalTime() / 1000.0)).append("\n");
+        sb.append("成功: ").append(multiResult.getSuccessCount());
+        sb.append("  失败: ").append(multiResult.getFailCount());
+
+        infoArea.setText(sb.toString());
+        tab.setContent(infoArea);
+        return tab;
+    }
+
+    private Tab buildResultTab(String tabName, SqlStatementResult stmtResult) {
+        Tab tab = new Tab(tabName);
+        if (stmtResult.getResultData() != null) {
+            tab.setContent(createTableView(stmtResult.getResultData()));
+        } else {
+            Label label = new Label("无结果集");
+            label.setStyle("-fx-text-fill: #888; -fx-padding: 16;");
+            tab.setContent(label);
+        }
+        return tab;
+    }
+
+    private Tab buildExplainTab(List<TableRowData> explainResults, List<String> explainSqls) {
+        Tab tab = new Tab("剖析");
+        if (explainResults.size() == 1) {
+            tab.setContent(createTableView(explainResults.get(0)));
+        } else {
+            VBox vbox = new VBox(8);
+            vbox.setStyle("-fx-padding: 4; -fx-background-color: white;");
+            for (int i = 0; i < explainResults.size(); i++) {
+                if (i > 0) {
+                    Separator sep = new Separator();
+                    vbox.getChildren().add(sep);
+                }
+                // 显示对应的SQL片段
+                String sqlSnippet = explainSqls.get(i);
+                if (sqlSnippet.length() > 80) sqlSnippet = sqlSnippet.substring(0, 80) + "...";
+                Label sqlLabel = new Label("SQL: " + sqlSnippet);
+                sqlLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666; -fx-padding: 2 0;");
+                vbox.getChildren().add(sqlLabel);
+
+                TableView<ObservableList<String>> tableView = createTableView(explainResults.get(i));
+                VBox.setVgrow(tableView, Priority.ALWAYS);
+                vbox.getChildren().add(tableView);
+            }
+            tab.setContent(vbox);
+        }
+        return tab;
+    }
+
+    private Tab buildStatusTab(TableRowData statusResult) {
+        Tab tab = new Tab("状态");
+        if (statusResult != null) {
+            tab.setContent(createTableView(statusResult));
+        } else {
+            Label label = new Label("无法获取状态信息");
+            label.setStyle("-fx-text-fill: #888; -fx-padding: 16;");
+            tab.setContent(label);
+        }
+        return tab;
+    }
+
+    /**
+     * 从TableRowData创建TableView（复用逻辑）
+     */
+    private TableView<ObservableList<String>> createTableView(TableRowData result) {
+        TableView<ObservableList<String>> tableView = new TableView<>();
+        tableView.setStyle("-fx-font-size: 12px;");
+        tableView.setPlaceholder(new Label("无数据"));
+
         List<String> columns = result.getColumnNames();
         for (int i = 0; i < columns.size(); i++) {
             final int colIndex = i;
@@ -386,9 +562,12 @@ public class SqlEditorView extends BorderPane {
                 ObservableList<String> row = param.getValue();
                 return new javafx.beans.property.SimpleStringProperty(colIndex < row.size() ? row.get(colIndex) : "");
             });
-            resultTable.getColumns().add(col);
+            tableView.getColumns().add(col);
         }
-        resultTable.getItems().addAll(result.getRows());
+        if (result.getRows() != null) {
+            tableView.getItems().addAll(result.getRows());
+        }
+        return tableView;
     }
 
     // ==================== Getter/Setter ====================

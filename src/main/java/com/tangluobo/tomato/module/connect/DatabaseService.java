@@ -603,6 +603,126 @@ public class DatabaseService {
     }
 
     /**
+     * 执行多条SQL语句，每条独立执行，一条失败不中断后续
+     */
+    public static MultiStatementResult executeMultiSqlQuery(ConnectionConfig config, String databaseName, String sql, int pageSize) throws Exception {
+        List<String> statements = SqlSplitter.split(sql);
+        MultiStatementResult multiResult = new MultiStatementResult();
+        List<SqlStatementResult> results = new ArrayList<>();
+
+        long totalStart = System.currentTimeMillis();
+        Connection conn = getConnection(config, databaseName);
+
+        for (String stmt : statements) {
+            SqlStatementResult sr = new SqlStatementResult();
+            sr.setSql(stmt);
+            sr.setSelect(SqlSplitter.isSelectStatement(stmt));
+
+            long start = System.currentTimeMillis();
+            try (Statement jdbcStmt = conn.createStatement()) {
+                jdbcStmt.setMaxRows(pageSize);
+                boolean hasResultSet = jdbcStmt.execute(stmt);
+                long queryTime = System.currentTimeMillis() - start;
+
+                sr.setSuccess(true);
+                sr.setQueryTime(queryTime);
+                sr.setHasResultSet(hasResultSet);
+
+                if (hasResultSet) {
+                    try (ResultSet rs = jdbcStmt.getResultSet()) {
+                        TableRowData result = new TableRowData();
+                        ResultSetMetaData metaData = rs.getMetaData();
+                        int columnCount = metaData.getColumnCount();
+
+                        List<String> columnNames = new ArrayList<>();
+                        for (int i = 1; i <= columnCount; i++) {
+                            columnNames.add(metaData.getColumnLabel(i));
+                        }
+                        result.setColumnNames(columnNames);
+
+                        ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
+                        long count = 0;
+                        while (rs.next() && count < pageSize) {
+                            ObservableList<String> row = FXCollections.observableArrayList();
+                            for (int i = 1; i <= columnCount; i++) {
+                                String val = rs.getString(i);
+                                row.add(val != null ? val : "");
+                            }
+                            rows.add(row);
+                            count++;
+                        }
+                        result.setRows(rows);
+                        result.setTotalCount(count);
+                        result.setQueryTime(queryTime);
+                        sr.setResultData(result);
+                    }
+                } else {
+                    int updateCount = jdbcStmt.getUpdateCount();
+                    sr.setUpdateCount(updateCount);
+                }
+            } catch (Exception e) {
+                long queryTime = System.currentTimeMillis() - start;
+                sr.setSuccess(false);
+                sr.setQueryTime(queryTime);
+                sr.setErrorMessage(e.getMessage());
+            }
+
+            results.add(sr);
+        }
+
+        multiResult.setResults(results);
+        multiResult.setTotalTime(System.currentTimeMillis() - totalStart);
+        return multiResult;
+    }
+
+    /**
+     * 执行EXPLAIN查询，返回执行计划
+     */
+    public static TableRowData executeExplainQuery(ConnectionConfig config, String databaseName, String sql) {
+        try {
+            return executeSqlQuery(config, databaseName, "EXPLAIN " + sql, 1000);
+        } catch (Exception e) {
+            TableRowData result = new TableRowData();
+            result.setColumnNames(List.of("错误"));
+            ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
+            rows.add(FXCollections.observableArrayList(e.getMessage()));
+            result.setRows(rows);
+            result.setTotalCount(1);
+            return result;
+        }
+    }
+
+    /**
+     * 获取服务器状态信息
+     */
+    public static TableRowData executeStatusQuery(ConnectionConfig config, String databaseName) {
+        try {
+            Connection conn = getConnection(config, databaseName);
+            if (config.getType() == ConnectType.MYSQL) {
+                return executeSqlQuery(config, databaseName, "SHOW STATUS", 1000);
+            } else if (config.getType() == ConnectType.POSTGRESQL) {
+                return executeSqlQuery(config, databaseName, "SELECT name, setting, short_desc AS \"Description\", category FROM pg_settings ORDER BY category, name", 1000);
+            } else {
+                TableRowData result = new TableRowData();
+                result.setColumnNames(List.of("信息"));
+                ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
+                rows.add(FXCollections.observableArrayList("当前数据库类型不支持状态查询"));
+                result.setRows(rows);
+                result.setTotalCount(1);
+                return result;
+            }
+        } catch (Exception e) {
+            TableRowData result = new TableRowData();
+            result.setColumnNames(List.of("错误"));
+            ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
+            rows.add(FXCollections.observableArrayList(e.getMessage()));
+            result.setRows(rows);
+            result.setTotalCount(1);
+            return result;
+        }
+    }
+
+    /**
      * 构建JDBC URL
      */
     private static String buildJdbcUrl(ConnectionConfig config, String host, int port, String database) {
