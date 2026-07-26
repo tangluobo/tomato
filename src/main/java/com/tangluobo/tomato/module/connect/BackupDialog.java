@@ -162,22 +162,25 @@ public class BackupDialog {
         objectTree = new TreeView<>();
         objectTree.setShowRoot(false);
         objectTree.setStyle("-fx-font-size: 12px;");
+        objectTree.setFixedCellSize(26);
         objectTree.setCellFactory(tv -> new TreeCell<>() {
             private final CheckBox checkBox = new CheckBox();
             private final HBox hbox = new HBox(2);
             private final ImageView iconView = new ImageView();
             private BackupObject currentItem;
             private javafx.beans.value.ChangeListener<Boolean> selectedListener;
+            private javafx.beans.value.ChangeListener<Boolean> indeterminateListener;
             private javafx.beans.value.ChangeListener<String> labelListener;
 
             {
-                iconView.setFitWidth(16);
-                iconView.setFitHeight(16);
+                iconView.setFitWidth(20);
+                iconView.setFitHeight(20);
                 hbox.setAlignment(Pos.CENTER_LEFT);
                 hbox.getChildren().addAll(checkBox, iconView);
                 // 点击复选框 → 写回模型
                 checkBox.setOnAction(e -> {
                     if (currentItem != null) {
+                        currentItem.setIndeterminate(false);
                         currentItem.setSelected(checkBox.isSelected());
                     }
                 });
@@ -189,6 +192,10 @@ public class BackupDialog {
                 if (selectedListener != null && currentItem != null) {
                     currentItem.selectedProperty().removeListener(selectedListener);
                     selectedListener = null;
+                }
+                if (indeterminateListener != null && currentItem != null) {
+                    currentItem.indeterminateProperty().removeListener(indeterminateListener);
+                    indeterminateListener = null;
                 }
                 if (labelListener != null && currentItem != null) {
                     currentItem.customLabelProperty().removeListener(labelListener);
@@ -218,10 +225,15 @@ public class BackupDialog {
                     } else {
                         currentItem = item;
                         checkBox.setSelected(item.isSelected());
+                        checkBox.setIndeterminate(item.isIndeterminate());
 
-                        // 模型→UI：模型变化时同步复选框
+                        // 模型→UI：选中状态
                         selectedListener = (obs, old, val) -> checkBox.setSelected(val);
                         item.selectedProperty().addListener(selectedListener);
+
+                        // 模型→UI：半选状态
+                        indeterminateListener = (obs, old, val) -> checkBox.setIndeterminate(val);
+                        item.indeterminateProperty().addListener(indeterminateListener);
 
                         setGraphic(hbox);
                     }
@@ -462,6 +474,7 @@ public class BackupDialog {
             if (val) {
                 suppress[0] = true;
                 customizeObj.setSelected(false);
+                customizeObj.setIndeterminate(false);
                 for (TreeItem<BackupObject> c : customizeItem.getChildren()) c.getValue().setSelected(false);
                 suppress[0] = false;
                 refreshCustomizeCount(customizeItem);
@@ -473,6 +486,7 @@ public class BackupDialog {
         customizeObj.selectedProperty().addListener((obs, old, val) -> {
             if (suppress[0]) return;
             suppress[0] = true;
+            customizeObj.setIndeterminate(false);
             if (val) {
                 selectAllObj.setSelected(false);
                 for (TreeItem<BackupObject> c : customizeItem.getChildren()) c.getValue().setSelected(true);
@@ -495,14 +509,22 @@ public class BackupDialog {
         return groupItem;
     }
 
-    /** 更新"自定义"节点上的计数，如 (3/10) */
+    /** 更新"自定义"节点上的计数和半选状态 */
     private void refreshCustomizeCount(TreeItem<BackupObject> customizeItem) {
         int total = customizeItem.getChildren().size();
         int selected = 0;
         for (TreeItem<BackupObject> c : customizeItem.getChildren()) {
             if (c.getValue().isSelected()) selected++;
         }
-        customizeItem.getValue().setCustomLabel(" (" + selected + "/" + total + ")");
+        BackupObject customizeObj = customizeItem.getValue();
+        customizeObj.setCustomLabel(" (" + selected + "/" + total + ")");
+        // 半选：部分选中但未全选
+        customizeObj.setIndeterminate(selected > 0 && selected < total);
+        // 全选时设为选中态
+        if (selected == total && total > 0) {
+            customizeObj.setSelected(true);
+            customizeObj.setIndeterminate(false);
+        }
     }
 
     private ImageView createIcon(BackupObject.Type type) {
@@ -515,8 +537,8 @@ public class BackupDialog {
         try {
             Image img = new Image(getClass().getResourceAsStream(resourcePath));
             ImageView iv = new ImageView(img);
-            iv.setFitWidth(16);
-            iv.setFitHeight(16);
+            iv.setFitWidth(20);
+            iv.setFitHeight(20);
             return iv;
         } catch (Exception e) {
             return new ImageView();
@@ -702,6 +724,7 @@ public class BackupDialog {
         private final String name;
         private String displayName;
         private final SimpleBooleanProperty selected = new SimpleBooleanProperty(false);
+        private final SimpleBooleanProperty indeterminate = new SimpleBooleanProperty(false);
         private final javafx.beans.property.SimpleStringProperty customLabel = new javafx.beans.property.SimpleStringProperty();
         private final SpecialType specialType;
         private final boolean groupNode;
@@ -735,6 +758,9 @@ public class BackupDialog {
         public SimpleBooleanProperty selectedProperty() { return selected; }
         public boolean isSelected() { return selected.get(); }
         public void setSelected(boolean selected) { this.selected.set(selected); }
+        public SimpleBooleanProperty indeterminateProperty() { return indeterminate; }
+        public boolean isIndeterminate() { return indeterminate.get(); }
+        public void setIndeterminate(boolean indeterminate) { this.indeterminate.set(indeterminate); }
     }
 
     public static class BackupTask extends javafx.concurrent.Task<String> {
