@@ -4,6 +4,7 @@ import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.CheckBoxTreeCell;
@@ -62,7 +63,7 @@ public class BackupDialog {
 
         TabPane tabPane = createTabPane();
         root.setCenter(tabPane);
-        BorderPane.setMargin(tabPane, new Insets(10, 10, 0, 10));
+        BorderPane.setMargin(tabPane, new Insets(0, 0, 0, 0));
 
         HBox bottomBar = createBottomBar();
         root.setBottom(bottomBar);
@@ -161,43 +162,47 @@ public class BackupDialog {
         objectTree = new TreeView<>();
         objectTree.setShowRoot(false);
         objectTree.setStyle("-fx-font-size: 12px;");
-        objectTree.setCellFactory(tv -> {
-            CheckBoxTreeCell<BackupObject> cell = new CheckBoxTreeCell<>() {
-                private javafx.beans.value.ChangeListener<String> labelListener;
+        objectTree.setCellFactory(tv -> new TreeCell<>() {
+            private CheckBox checkBox;
+            private javafx.beans.value.ChangeListener<String> labelListener;
 
-                @Override
-                public void updateItem(BackupObject item, boolean empty) {
-                    super.updateItem(item, empty);
-                    if (labelListener != null) {
-                        if (getItem() != null) {
-                            getItem().customLabelProperty().removeListener(labelListener);
-                        }
-                        labelListener = null;
-                    }
-                    if (empty || item == null) {
-                        setText(null);
-                        setGraphic(null);
-                    } else {
-                        updateText(item);
-                        setGraphic(createIcon(item.getType()));
-                        labelListener = (obs, oldVal, newVal) -> updateText(item);
-                        item.customLabelProperty().addListener(labelListener);
-                    }
+            @Override
+            public void updateItem(BackupObject item, boolean empty) {
+                super.updateItem(item, empty);
+                if (labelListener != null && getItem() != null) {
+                    getItem().customLabelProperty().removeListener(labelListener);
+                    labelListener = null;
                 }
-
-                private void updateText(BackupObject item) {
+                if (empty || item == null) {
+                    setText(null);
+                    setGraphic(null);
+                } else {
                     String text = item.getDisplayName();
                     String label = item.getCustomLabel();
                     setText(label != null ? text + label : text);
+
+                    ImageView icon = createIcon(item.getType());
+
+                    if (item.isGroupNode()) {
+                        setGraphic(icon);
+                    } else {
+                        if (checkBox == null) {
+                            checkBox = new CheckBox();
+                        }
+                        checkBox.selectedProperty().bindBidirectional(item.selectedProperty());
+                        HBox hbox = new HBox(2, checkBox, icon);
+                        hbox.setAlignment(Pos.CENTER_LEFT);
+                        setGraphic(hbox);
+                    }
+
+                    labelListener = (obs, oldVal, newVal) -> {
+                        String t = item.getDisplayName();
+                        String l = item.getCustomLabel();
+                        setText(l != null ? t + l : t);
+                    };
+                    item.customLabelProperty().addListener(labelListener);
                 }
-            };
-
-            cell.setSelectedStateCallback(treeItem -> {
-                BackupObject obj = treeItem.getValue();
-                return obj != null ? obj.selectedProperty() : null;
-            });
-
-            return cell;
+            }
         });
 
         VBox.setVgrow(objectTree, Priority.ALWAYS);
@@ -392,15 +397,16 @@ public class BackupDialog {
 
     private TreeItem<BackupObject> createTypeGroup(BackupObject.Type type, List<BackupObject> objects) {
         String typeDisplayName = type.getDisplayName();
-        BackupObject groupObj = new BackupObject(type, typeDisplayName);
+        BackupObject groupObj = new BackupObject(type, typeDisplayName, BackupObject.SpecialType.NONE, true);
         TreeItem<BackupObject> groupItem = new TreeItem<>(groupObj);
-        groupItem.setGraphic(createIcon(type));
+        groupItem.setExpanded(true);
 
         BackupObject selectAllObj = new BackupObject(type, "运行期间的全部" + typeDisplayName+"(*)", BackupObject.SpecialType.SELECT_ALL);
         TreeItem<BackupObject> selectAllItem = new TreeItem<>(selectAllObj);
 
         BackupObject customizeObj = new BackupObject(type, "自定义", BackupObject.SpecialType.CUSTOMIZE);
         TreeItem<BackupObject> customizeItem = new TreeItem<>(customizeObj);
+        customizeItem.setExpanded(true);
 
         final boolean[] suppressEvents = {false};
 
@@ -445,16 +451,7 @@ public class BackupDialog {
             if (suppressEvents[0]) return;
             if (isSelected) {
                 suppressEvents[0] = true;
-                for (TreeItem<BackupObject> child : customizeItem.getChildren()) {
-                    child.getValue().setSelected(true);
-                }
                 customizeObj.setSelected(false);
-                suppressEvents[0] = false;
-            } else {
-                suppressEvents[0] = true;
-                for (TreeItem<BackupObject> child : customizeItem.getChildren()) {
-                    child.getValue().setSelected(false);
-                }
                 suppressEvents[0] = false;
             }
             updateGroupState(groupItem, selectAllItem, customizeItem);
@@ -721,16 +718,22 @@ public class BackupDialog {
         private final SimpleBooleanProperty selected = new SimpleBooleanProperty(false);
         private final javafx.beans.property.SimpleStringProperty customLabel = new javafx.beans.property.SimpleStringProperty();
         private final SpecialType specialType;
+        private final boolean groupNode;
 
         public BackupObject(Type type, String name) {
-            this(type, name, SpecialType.NONE);
+            this(type, name, SpecialType.NONE, false);
         }
 
         public BackupObject(Type type, String name, SpecialType specialType) {
+            this(type, name, specialType, false);
+        }
+
+        public BackupObject(Type type, String name, SpecialType specialType, boolean groupNode) {
             this.type = type;
             this.name = name;
             this.displayName = name;
             this.specialType = specialType;
+            this.groupNode = groupNode;
         }
 
         public Type getType() { return type; }
@@ -742,6 +745,7 @@ public class BackupDialog {
         public javafx.beans.property.SimpleStringProperty customLabelProperty() { return customLabel; }
         public SpecialType getSpecialType() { return specialType; }
         public boolean isSpecial() { return specialType != SpecialType.NONE; }
+        public boolean isGroupNode() { return groupNode; }
         public SimpleBooleanProperty selectedProperty() { return selected; }
         public boolean isSelected() { return selected.get(); }
         public void setSelected(boolean selected) { this.selected.set(selected); }
