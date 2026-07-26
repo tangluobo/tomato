@@ -132,26 +132,7 @@ public class ConnectModule implements Module {
 
     private void loadDbIcons() {
         try { dbIcon = new Image(getClass().getResourceAsStream("/images/connect/database.png")); } catch (Exception e) { dbIcon = null; }
-        // 创建灰色数据库图标（关闭状态）
-        if (dbIcon != null) {
-            int w = (int) dbIcon.getWidth();
-            int h = (int) dbIcon.getHeight();
-            javafx.scene.image.WritableImage grayImg = new javafx.scene.image.WritableImage(w, h);
-            javafx.scene.image.PixelReader reader = dbIcon.getPixelReader();
-            javafx.scene.image.PixelWriter writer = grayImg.getPixelWriter();
-            for (int y = 0; y < h; y++) {
-                for (int x = 0; x < w; x++) {
-                    javafx.scene.paint.Color c = reader.getColor(x, y);
-                    if (c.getOpacity() > 0) {
-                        double gray = c.getRed() * 0.3 + c.getGreen() * 0.59 + c.getBlue() * 0.11;
-                        writer.setColor(x, y, new javafx.scene.paint.Color(gray, gray, gray, c.getOpacity()));
-                    } else {
-                        writer.setColor(x, y, javafx.scene.paint.Color.TRANSPARENT);
-                    }
-                }
-            }
-            dbIconGray = grayImg;
-        }
+        try { dbIconGray = new Image(getClass().getResourceAsStream("/images/connect/database_gray.png")); } catch (Exception e) { dbIconGray = null; }
         try { tableIcon = new Image(getClass().getResourceAsStream("/images/connect/table.png")); } catch (Exception e) { tableIcon = null; }
         try { viewIcon = new Image(getClass().getResourceAsStream("/images/connect/view.png")); } catch (Exception e) { viewIcon = null; }
         try { tableFolderIcon = new Image(getClass().getResourceAsStream("/images/connect/table_folder.png")); } catch (Exception e) { tableFolderIcon = null; }
