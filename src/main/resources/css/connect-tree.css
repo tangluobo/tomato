@@ -119,3 +119,52 @@
     -fx-background-color: #f7f7f7;
     -fx-border-color: transparent;
 }
+
+.combo-box, .combo-box-base {
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
+    -fx-border-color: #F0F0F0;
+    -fx-border-width: 1px;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+}
+
+.combo-box:focused, .combo-box-base:focused {
+    -fx-border-color: #F0F0F0;
+    -fx-border-width: 1px;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+}
+
+.combo-box-base .text-field {
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
+    -fx-border-color: transparent;
+}
+
+.combo-box-base:focused .text-field {
+    -fx-border-color: transparent;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+}
+
+.combo-box .arrow-button {
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
+}
+
+.combo-box-connection .text-field {
+    -fx-background-image: url('../images/connect/mysql_open.png');
+    -fx-background-repeat: no-repeat;
+    -fx-background-position: 2px center;
+    -fx-background-size: 16px 16px;
+    -fx-padding: 0 0 0 20;
+}
+
+.combo-box-database .text-field {
+    -fx-background-image: url('../images/connect/database.png');
+    -fx-background-repeat: no-repeat;
+    -fx-background-position: 2px center;
+    -fx-background-size: 16px 16px;
+    -fx-padding: 0 0 0 20;
+}

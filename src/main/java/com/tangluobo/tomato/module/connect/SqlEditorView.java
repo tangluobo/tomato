@@ -5,6 +5,8 @@ import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.*;
@@ -40,20 +42,19 @@ public class SqlEditorView extends BorderPane {
         toolbar.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #e0e0e0; -fx-border-width: 0 0 1 0;");
         toolbar.setAlignment(Pos.CENTER_LEFT);
 
-        Button saveBtn = new Button("保存");
-        saveBtn.setStyle("-fx-background-radius: 4px; -fx-border-radius: 4px; -fx-pref-width: 55px;");
+        Button saveBtn = createToolbarButton("保存", "/images/connect/save.png");
         saveBtn.setOnAction(e -> handleSave());
 
-        Button beautifyBtn = new Button("美化");
-        beautifyBtn.setStyle("-fx-background-radius: 4px; -fx-border-radius: 4px; -fx-pref-width: 55px;");
+        Button beautifyBtn = createToolbarButton("美化", "/images/connect/beautiful.png");
         beautifyBtn.setOnAction(e -> beautifySql());
 
-        Button runBtn = new Button("运行");
-        runBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-background-radius: 4px; -fx-border-radius: 4px; -fx-pref-width: 55px;");
+        Button createQueryToolBtn = createToolbarButton("创建查询工具", "/images/connect/create_query_tool.png");
+        createQueryToolBtn.setOnAction(e -> createQueryTool());
+
+        Button runBtn = createToolbarButton("运行", "/images/connect/execute.png");
         runBtn.setOnAction(e -> executeQuery());
 
-        Button explainBtn = new Button("解释");
-        explainBtn.setStyle("-fx-background-radius: 4px; -fx-border-radius: 4px; -fx-pref-width: 55px;");
+        Button explainBtn = createToolbarButton("解释", "/images/connect/code.png");
         explainBtn.setOnAction(e -> explainQuery());
 
         Separator sep1 = new Separator();
@@ -62,20 +63,80 @@ public class SqlEditorView extends BorderPane {
 
         connectionCombo = new ComboBox<>();
         connectionCombo.setPrefWidth(140);
+        connectionCombo.setEditable(true);
+        connectionCombo.setStyle("-fx-background-radius: 0; -fx-border-radius: 0;");
         connectionCombo.setConverter(new javafx.util.StringConverter<>() {
             @Override public String toString(ConnectionConfig c) { return c == null ? "" : c.getName(); }
-            @Override public ConnectionConfig fromString(String s) { return null; }
+            @Override public ConnectionConfig fromString(String s) {
+                if (s == null || s.trim().isEmpty()) return null;
+                return connections.stream()
+                    .filter(c -> c.getName().equals(s.trim()))
+                    .findFirst()
+                    .orElse(null);
+            }
         });
+
+        Image connectionIcon = new Image(getClass().getResourceAsStream("/images/connect/mysql_open.png"));
+        if (connectionIcon != null) {
+            connectionCombo.setCellFactory(lv -> new ListCell<>() {
+                @Override protected void updateItem(ConnectionConfig item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) {
+                        setText("");
+                        setGraphic(null);
+                    } else {
+                        setText(item.getName());
+                        ImageView cellIcon = new ImageView(connectionIcon);
+                        cellIcon.setFitWidth(16);
+                        cellIcon.setFitHeight(16);
+                        setGraphic(cellIcon);
+                        setContentDisplay(ContentDisplay.LEFT);
+                        setGraphicTextGap(4);
+                    }
+                }
+            });
+        }
+
         if (connections != null) connectionCombo.getItems().addAll(connections);
         if (initialConfig != null) connectionCombo.setValue(initialConfig);
-        connectionCombo.valueProperty().addListener((obs, oldVal, newVal) -> refreshDatabaseList());
+
+        connectionCombo.getStyleClass().add("combo-box-connection");
+        connectionCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
+            if (newVal != null) refreshDatabaseList();
+        });
 
         databaseCombo = new ComboBox<>();
         databaseCombo.setPrefWidth(120);
+        databaseCombo.setEditable(true);
+        databaseCombo.setStyle("-fx-background-radius: 0; -fx-border-radius: 0;");
+
+        Image databaseIcon = new Image(getClass().getResourceAsStream("/images/connect/database.png"));
+        if (databaseIcon != null) {
+            databaseCombo.setCellFactory(lv -> new ListCell<>() {
+                @Override protected void updateItem(String item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) {
+                        setText("");
+                        setGraphic(null);
+                    } else {
+                        setText(item);
+                        ImageView cellIcon = new ImageView(databaseIcon);
+                        cellIcon.setFitWidth(16);
+                        cellIcon.setFitHeight(16);
+                        setGraphic(cellIcon);
+                        setContentDisplay(ContentDisplay.LEFT);
+                        setGraphicTextGap(4);
+                    }
+                }
+            });
+        }
+
         if (initialDatabase != null) {
             databaseCombo.getItems().add(initialDatabase);
             databaseCombo.setValue(initialDatabase);
         }
+
+        databaseCombo.getStyleClass().add("combo-box-database");
 
         toolbar.getChildren().addAll(saveBtn, beautifyBtn, runBtn, explainBtn, sep1, connectionCombo, databaseCombo);
 
@@ -121,6 +182,88 @@ public class SqlEditorView extends BorderPane {
         if (initialConfig != null) {
             refreshDatabaseList();
         }
+    }
+
+    // ==================== 工具栏按钮创建 ====================
+
+    private Button createToolbarButton(String text, String iconPath) {
+        Button button = new Button(text);
+        button.setStyle(
+            "-fx-background-color: #f8f8f8; " +
+            "-fx-background-radius: 0; " +
+            "-fx-border-radius: 0; " +
+            "-fx-border-color: transparent; " +
+            "-fx-padding: 4 8; " +
+            "-fx-content-display: LEFT; " +
+            "-fx-graphic-text-gap: 4;"
+        );
+
+        Image icon = new Image(getClass().getResourceAsStream(iconPath));
+        if (icon != null) {
+            ImageView iconView = new ImageView(icon);
+            iconView.setFitWidth(16);
+            iconView.setFitHeight(16);
+            button.setGraphic(iconView);
+        }
+
+        button.setOnMouseEntered(e -> button.setStyle(
+            "-fx-background-color: #D8E6F2; " +
+            "-fx-background-radius: 0; " +
+            "-fx-border-radius: 0; " +
+            "-fx-border-color: #CCCCCC; " +
+            "-fx-border-width: 1px; " +
+            "-fx-padding: 4 8; " +
+            "-fx-content-display: LEFT; " +
+            "-fx-graphic-text-gap: 4;"
+        ));
+
+        button.setOnMouseExited(e -> button.setStyle(
+            "-fx-background-color: #f8f8f8; " +
+            "-fx-background-radius: 0; " +
+            "-fx-border-radius: 0; " +
+            "-fx-border-color: transparent; " +
+            "-fx-padding: 4 8; " +
+            "-fx-content-display: LEFT; " +
+            "-fx-graphic-text-gap: 4;"
+        ));
+
+        button.setOnMousePressed(e -> button.setStyle(
+            "-fx-background-color: #C0DCF3; " +
+            "-fx-background-radius: 0; " +
+            "-fx-border-radius: 0; " +
+            "-fx-border-color: #90C8F6; " +
+            "-fx-border-width: 1px; " +
+            "-fx-padding: 4 8; " +
+            "-fx-content-display: LEFT; " +
+            "-fx-graphic-text-gap: 4;"
+        ));
+
+        button.setOnMouseReleased(e -> {
+            if (button.isHover()) {
+                button.setStyle(
+                    "-fx-background-color: #D8E6F2; " +
+                    "-fx-background-radius: 0; " +
+                    "-fx-border-radius: 0; " +
+                    "-fx-border-color: #CCCCCC; " +
+                    "-fx-border-width: 1px; " +
+                    "-fx-padding: 4 8; " +
+                    "-fx-content-display: LEFT; " +
+                    "-fx-graphic-text-gap: 4;"
+                );
+            } else {
+                button.setStyle(
+                    "-fx-background-color: #f8f8f8; " +
+                    "-fx-background-radius: 0; " +
+                    "-fx-border-radius: 0; " +
+                    "-fx-border-color: transparent; " +
+                    "-fx-padding: 4 8; " +
+                    "-fx-content-display: LEFT; " +
+                    "-fx-graphic-text-gap: 4;"
+                );
+            }
+        });
+
+        return button;
     }
 
     // ==================== 保存逻辑 ====================
@@ -223,6 +366,12 @@ public class SqlEditorView extends BorderPane {
     }
 
     private void beautifySql() {
+        String sql = editor.getText().trim();
+        if (sql.isEmpty()) return;
+        editor.setText(formatSql(sql));
+    }
+
+    private void createQueryTool() {
         String sql = editor.getText().trim();
         if (sql.isEmpty()) return;
         editor.setText(formatSql(sql));
