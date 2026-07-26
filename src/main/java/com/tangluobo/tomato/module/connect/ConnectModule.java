@@ -50,9 +50,8 @@ public class ConnectModule implements Module {
     private Image dbIconGray;
     private Image tableIcon;
     private Image viewIcon;
-    private Image tableFolderIcon;
-    private Image viewFolderIcon;
-    private Image queryFolderIcon;
+    private Image functionIcon;
+    private Image backupIcon;
     private Image queryIcon;
     private TextField searchField;
 
@@ -135,24 +134,25 @@ public class ConnectModule implements Module {
         try { dbIconGray = new Image(getClass().getResourceAsStream("/images/connect/database_gray.png")); } catch (Exception e) { dbIconGray = null; }
         try { tableIcon = new Image(getClass().getResourceAsStream("/images/connect/table.png")); } catch (Exception e) { tableIcon = null; }
         try { viewIcon = new Image(getClass().getResourceAsStream("/images/connect/view.png")); } catch (Exception e) { viewIcon = null; }
-        try { tableFolderIcon = new Image(getClass().getResourceAsStream("/images/connect/table_folder.png")); } catch (Exception e) { tableFolderIcon = null; }
-        try { viewFolderIcon = new Image(getClass().getResourceAsStream("/images/connect/view_folder.png")); } catch (Exception e) { viewFolderIcon = null; }
+        try { queryIcon = new Image(getClass().getResourceAsStream("/images/connect/query.png")); } catch (Exception e) { queryIcon = null; }
+        try { functionIcon = new Image(getClass().getResourceAsStream("/images/connect/function.png")); } catch (Exception e) { functionIcon = null; }
+        try { backupIcon = new Image(getClass().getResourceAsStream("/images/connect/backup.png")); } catch (Exception e) { backupIcon = null; }
         // 查询图标：复用表图标作为查询图标，文件夹复用表文件夹图标
-        queryIcon = tableIcon;
-        queryFolderIcon = tableFolderIcon;
     }
 
     private ImageView getDbNodeIcon(DatabaseNodeData data) {
         ImageView iv = new ImageView();
-        iv.setFitWidth(16);
-        iv.setFitHeight(16);
+        iv.setFitWidth(20);
+        iv.setFitHeight(20);
         Image icon = switch (data.getType()) {
             case DATABASE -> data.isOpened() ? dbIcon : dbIconGray;
-            case TABLES_FOLDER -> tableFolderIcon;
-            case VIEWS_FOLDER -> viewFolderIcon;
-            case QUERY_FOLDER -> queryFolderIcon;
+            case TABLES_FOLDER -> tableIcon;
+            case VIEWS_FOLDER -> viewIcon;
+            case QUERY_FOLDER -> queryIcon;
             case TABLE -> tableIcon;
             case VIEW -> viewIcon;
+            case FUNCTION_FOLDER -> functionIcon;
+            case BACKUP_FOLDER -> backupIcon;
             case QUERY -> queryIcon;
         };
         if (icon != null) iv.setImage(icon);
@@ -788,12 +788,20 @@ public class ConnectModule implements Module {
         viewsFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.VIEWS_FOLDER, "视图", config, data.getDatabaseName())));
         dbNodeDataMap.put(viewsFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.VIEWS_FOLDER, "视图", config, data.getDatabaseName()));
 
+        TreeItem<String> functionFolder = new TreeItem<>("函数");
+        functionFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.FUNCTION_FOLDER, "函数", config, data.getDatabaseName())));
+        dbNodeDataMap.put(functionFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.FUNCTION_FOLDER, "函数", config, data.getDatabaseName()));
+
         // 添加"查询"文件夹节点
         TreeItem<String> queryFolder = new TreeItem<>("查询");
         queryFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, data.getDatabaseName())));
         dbNodeDataMap.put(queryFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, data.getDatabaseName()));
 
-        dbItem.getChildren().addAll(tablesFolder, viewsFolder, queryFolder);
+        TreeItem<String> backupFolder = new TreeItem<>("备份");
+        backupFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, data.getDatabaseName())));
+        dbNodeDataMap.put(backupFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, data.getDatabaseName()));
+
+        dbItem.getChildren().addAll(tablesFolder, viewsFolder, functionFolder,queryFolder,backupFolder);
         dbItem.setExpanded(true);
 
         // 自动加载表和视图（默认不展开子节点）
