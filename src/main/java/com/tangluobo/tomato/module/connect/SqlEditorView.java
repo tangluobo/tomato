@@ -182,21 +182,15 @@ public class SqlEditorView extends BorderPane {
         if (initialConfig != null) {
             refreshDatabaseList();
         }
+
+        getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
     }
 
     // ==================== 工具栏按钮创建 ====================
 
     private Button createToolbarButton(String text, String iconPath) {
         Button button = new Button(text);
-        button.setStyle(
-            "-fx-background-color: #f8f8f8; " +
-            "-fx-background-radius: 0; " +
-            "-fx-border-radius: 0; " +
-            "-fx-border-color: transparent; " +
-            "-fx-padding: 4 8; " +
-            "-fx-content-display: LEFT; " +
-            "-fx-graphic-text-gap: 4;"
-        );
+        button.getStyleClass().add("toolbar-button");
 
         Image icon = new Image(getClass().getResourceAsStream(iconPath));
         if (icon != null) {
@@ -205,63 +199,6 @@ public class SqlEditorView extends BorderPane {
             iconView.setFitHeight(16);
             button.setGraphic(iconView);
         }
-
-        button.setOnMouseEntered(e -> button.setStyle(
-            "-fx-background-color: #D8E6F2; " +
-            "-fx-background-radius: 0; " +
-            "-fx-border-radius: 0; " +
-            "-fx-border-color: #CCCCCC; " +
-            "-fx-border-width: 1px; " +
-            "-fx-padding: 4 8; " +
-            "-fx-content-display: LEFT; " +
-            "-fx-graphic-text-gap: 4;"
-        ));
-
-        button.setOnMouseExited(e -> button.setStyle(
-            "-fx-background-color: #f8f8f8; " +
-            "-fx-background-radius: 0; " +
-            "-fx-border-radius: 0; " +
-            "-fx-border-color: transparent; " +
-            "-fx-padding: 4 8; " +
-            "-fx-content-display: LEFT; " +
-            "-fx-graphic-text-gap: 4;"
-        ));
-
-        button.setOnMousePressed(e -> button.setStyle(
-            "-fx-background-color: #C0DCF3; " +
-            "-fx-background-radius: 0; " +
-            "-fx-border-radius: 0; " +
-            "-fx-border-color: #90C8F6; " +
-            "-fx-border-width: 1px; " +
-            "-fx-padding: 4 8; " +
-            "-fx-content-display: LEFT; " +
-            "-fx-graphic-text-gap: 4;"
-        ));
-
-        button.setOnMouseReleased(e -> {
-            if (button.isHover()) {
-                button.setStyle(
-                    "-fx-background-color: #D8E6F2; " +
-                    "-fx-background-radius: 0; " +
-                    "-fx-border-radius: 0; " +
-                    "-fx-border-color: #CCCCCC; " +
-                    "-fx-border-width: 1px; " +
-                    "-fx-padding: 4 8; " +
-                    "-fx-content-display: LEFT; " +
-                    "-fx-graphic-text-gap: 4;"
-                );
-            } else {
-                button.setStyle(
-                    "-fx-background-color: #f8f8f8; " +
-                    "-fx-background-radius: 0; " +
-                    "-fx-border-radius: 0; " +
-                    "-fx-border-color: transparent; " +
-                    "-fx-padding: 4 8; " +
-                    "-fx-content-display: LEFT; " +
-                    "-fx-graphic-text-gap: 4;"
-                );
-            }
-        });
 
         return button;
     }
