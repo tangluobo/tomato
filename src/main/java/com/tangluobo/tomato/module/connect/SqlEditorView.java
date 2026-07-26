@@ -66,20 +66,26 @@ public class SqlEditorView extends BorderPane {
         connectionCombo.setEditable(true);
         connectionCombo.setStyle("-fx-background-radius: 0; -fx-border-radius: 0;");
         connectionCombo.setConverter(new javafx.util.StringConverter<>() {
-            @Override public String toString(ConnectionConfig c) { return c == null ? "" : c.getName(); }
-            @Override public ConnectionConfig fromString(String s) {
+            @Override
+            public String toString(ConnectionConfig c) {
+                return c == null ? "" : c.getName();
+            }
+
+            @Override
+            public ConnectionConfig fromString(String s) {
                 if (s == null || s.trim().isEmpty()) return null;
                 return connections.stream()
-                    .filter(c -> c.getName().equals(s.trim()))
-                    .findFirst()
-                    .orElse(null);
+                        .filter(c -> c.getName().equals(s.trim()))
+                        .findFirst()
+                        .orElse(null);
             }
         });
 
         Image connectionIcon = new Image(getClass().getResourceAsStream("/images/connect/mysql_open.png"));
         if (connectionIcon != null) {
             connectionCombo.setCellFactory(lv -> new ListCell<>() {
-                @Override protected void updateItem(ConnectionConfig item, boolean empty) {
+                @Override
+                protected void updateItem(ConnectionConfig item, boolean empty) {
                     super.updateItem(item, empty);
                     if (empty || item == null) {
                         setText("");
@@ -113,7 +119,8 @@ public class SqlEditorView extends BorderPane {
         Image databaseIcon = new Image(getClass().getResourceAsStream("/images/connect/database.png"));
         if (databaseIcon != null) {
             databaseCombo.setCellFactory(lv -> new ListCell<>() {
-                @Override protected void updateItem(String item, boolean empty) {
+                @Override
+                protected void updateItem(String item, boolean empty) {
                     super.updateItem(item, empty);
                     if (empty || item == null) {
                         setText("");
@@ -138,7 +145,7 @@ public class SqlEditorView extends BorderPane {
 
         databaseCombo.getStyleClass().add("combo-box-database");
 
-        toolbar.getChildren().addAll(saveBtn, beautifyBtn, runBtn, explainBtn, sep1, connectionCombo, databaseCombo);
+        toolbar.getChildren().addAll(connectionCombo, databaseCombo, sep1, saveBtn, createQueryToolBtn, beautifyBtn, runBtn, explainBtn);
 
         // ---- 编辑器区域 ----
         // 优先尝试 RichTextFX CodeArea，失败回退到 TextArea
@@ -225,12 +232,17 @@ public class SqlEditorView extends BorderPane {
 
     private void handleSave() {
         if (queryName == null) {
-            if (onSaveRequest != null) { onSaveRequest.run(); return; }
+            if (onSaveRequest != null) {
+                onSaveRequest.run();
+                return;
+            }
             TextInputDialog dialog = new TextInputDialog("查询1");
             dialog.setTitle("保存查询");
             dialog.setHeaderText(null);
             dialog.setContentText("查询名称：");
-            dialog.showAndWait().ifPresent(name -> { if (!name.trim().isEmpty()) doSave(name.trim()); });
+            dialog.showAndWait().ifPresent(name -> {
+                if (!name.trim().isEmpty()) doSave(name.trim());
+            });
         } else {
             doSave(queryName);
         }
@@ -268,7 +280,10 @@ public class SqlEditorView extends BorderPane {
     private void executeQuery() {
         ConnectionConfig config = connectionCombo.getValue();
         String dbName = databaseCombo.getValue();
-        if (config == null || dbName == null) { statusLabel.setText("请先选择连接和数据库"); return; }
+        if (config == null || dbName == null) {
+            statusLabel.setText("请先选择连接和数据库");
+            return;
+        }
         String sql = getEffectiveSql();
         if (sql.isEmpty()) return;
         statusLabel.setText("执行中...");
@@ -280,7 +295,11 @@ public class SqlEditorView extends BorderPane {
                     statusLabel.setText("查询完成，共 " + result.getTotalCount() + " 行，耗时 " + result.getQueryTime() + "ms");
                 });
             } catch (Exception e) {
-                Platform.runLater(() -> { resultTable.getColumns().clear(); resultTable.getItems().clear(); statusLabel.setText("执行失败: " + e.getMessage()); });
+                Platform.runLater(() -> {
+                    resultTable.getColumns().clear();
+                    resultTable.getItems().clear();
+                    statusLabel.setText("执行失败: " + e.getMessage());
+                });
             }
         }, "DB-ExecuteQuery").start();
     }
@@ -288,16 +307,26 @@ public class SqlEditorView extends BorderPane {
     private void explainQuery() {
         ConnectionConfig config = connectionCombo.getValue();
         String dbName = databaseCombo.getValue();
-        if (config == null || dbName == null) { statusLabel.setText("请先选择连接和数据库"); return; }
+        if (config == null || dbName == null) {
+            statusLabel.setText("请先选择连接和数据库");
+            return;
+        }
         String sql = getEffectiveSql();
         if (sql.isEmpty()) return;
         statusLabel.setText("执行解释...");
         new Thread(() -> {
             try {
                 TableRowData result = DatabaseService.executeSqlQuery(config, dbName, "EXPLAIN " + sql, 1000);
-                Platform.runLater(() -> { displayResult(result); statusLabel.setText("解释完成，耗时 " + result.getQueryTime() + "ms"); });
+                Platform.runLater(() -> {
+                    displayResult(result);
+                    statusLabel.setText("解释完成，耗时 " + result.getQueryTime() + "ms");
+                });
             } catch (Exception e) {
-                Platform.runLater(() -> { resultTable.getColumns().clear(); resultTable.getItems().clear(); statusLabel.setText("解释失败: " + e.getMessage()); });
+                Platform.runLater(() -> {
+                    resultTable.getColumns().clear();
+                    resultTable.getItems().clear();
+                    statusLabel.setText("解释失败: " + e.getMessage());
+                });
             }
         }, "DB-ExplainQuery").start();
     }
@@ -317,11 +346,11 @@ public class SqlEditorView extends BorderPane {
     private String formatSql(String sql) {
         sql = sql.replaceAll("\\s+", " ").trim();
         String[] lineBreakBefore = {
-            " SELECT ", " FROM ", " WHERE ", " INNER JOIN ", " LEFT JOIN ",
-            " RIGHT JOIN ", " CROSS JOIN ", " FULL JOIN ", " ON ",
-            " GROUP BY ", " ORDER BY ", " HAVING ", " LIMIT ", " OFFSET ",
-            " UNION ", " INSERT INTO ", " VALUES ", " UPDATE ", " SET ",
-            " DELETE FROM ", " CREATE TABLE ", " DROP TABLE ", " ALTER TABLE "
+                " SELECT ", " FROM ", " WHERE ", " INNER JOIN ", " LEFT JOIN ",
+                " RIGHT JOIN ", " CROSS JOIN ", " FULL JOIN ", " ON ",
+                " GROUP BY ", " ORDER BY ", " HAVING ", " LIMIT ", " OFFSET ",
+                " UNION ", " INSERT INTO ", " VALUES ", " UPDATE ", " SET ",
+                " DELETE FROM ", " CREATE TABLE ", " DROP TABLE ", " ALTER TABLE "
         };
         for (String keyword : lineBreakBefore) {
             String upper = keyword.toUpperCase();
@@ -363,30 +392,64 @@ public class SqlEditorView extends BorderPane {
 
     // ==================== Getter/Setter ====================
 
-    public String getSqlText() { return editor.getText(); }
-    public void setSqlText(String sql) { editor.setText(sql); }
+    public String getSqlText() {
+        return editor.getText();
+    }
 
-    public String getQueryName() { return queryName; }
-    public void setQueryName(String name) { this.queryName = name; notifyTitleChange(); }
+    public void setSqlText(String sql) {
+        editor.setText(sql);
+    }
 
-    public boolean isModified() { return modified; }
-    public boolean isNamed() { return queryName != null; }
+    public String getQueryName() {
+        return queryName;
+    }
 
-    public TreeItem<String> getQueryNode() { return queryNode; }
-    public void setQueryNode(TreeItem<String> node) { this.queryNode = node; }
+    public void setQueryName(String name) {
+        this.queryName = name;
+        notifyTitleChange();
+    }
 
-    public ConnectionConfig getSelectedConnection() { return connectionCombo.getValue(); }
-    public String getSelectedDatabase() { return databaseCombo.getValue(); }
+    public boolean isModified() {
+        return modified;
+    }
 
-    public void setOnTitleChange(Consumer<String> callback) { this.onTitleChange = callback; }
-    public void setOnSaveRequest(Runnable callback) { this.onSaveRequest = callback; }
+    public boolean isNamed() {
+        return queryName != null;
+    }
+
+    public TreeItem<String> getQueryNode() {
+        return queryNode;
+    }
+
+    public void setQueryNode(TreeItem<String> node) {
+        this.queryNode = node;
+    }
+
+    public ConnectionConfig getSelectedConnection() {
+        return connectionCombo.getValue();
+    }
+
+    public String getSelectedDatabase() {
+        return databaseCombo.getValue();
+    }
+
+    public void setOnTitleChange(Consumer<String> callback) {
+        this.onTitleChange = callback;
+    }
+
+    public void setOnSaveRequest(Runnable callback) {
+        this.onSaveRequest = callback;
+    }
 
     // ==================== 编辑器接口 ====================
 
     private interface SqlEditor {
         javafx.scene.Node getNode();
+
         String getText();
+
         void setText(String text);
+
         String getSelectedText();
     }
 
@@ -399,16 +462,16 @@ public class SqlEditorView extends BorderPane {
 
         // 内联CSS样式字符串，直接应用到文本段
         private static final String STYLE_KEYWORD = "-fx-fill: #0000FF; -fx-font-weight: bold;";
-        private static final String STYLE_STRING   = "-fx-fill: #A31515;";
-        private static final String STYLE_COMMENT  = "-fx-fill: #6A9955; -fx-font-style: italic;";
-        private static final String STYLE_NUMBER   = "-fx-fill: #098658;";
+        private static final String STYLE_STRING = "-fx-fill: #A31515;";
+        private static final String STYLE_COMMENT = "-fx-fill: #6A9955; -fx-font-style: italic;";
+        private static final String STYLE_NUMBER = "-fx-fill: #098658;";
 
         RichTextSqlEditor(Runnable onModified) {
             textArea = new org.fxmisc.richtext.InlineCssTextArea();
             textArea.setParagraphGraphicFactory(org.fxmisc.richtext.LineNumberFactory.get(textArea));
             textArea.setStyle(
-                "-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 13px; " +
-                "-fx-background-color: white; -fx-padding: 0; -fx-text-fill: #333;"
+                    "-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 13px; " +
+                            "-fx-background-color: white; -fx-padding: 0; -fx-text-fill: #333;"
             );
 
             // 内容变化
@@ -438,30 +501,30 @@ public class SqlEditorView extends BorderPane {
         }
 
         private static final String[] KEYWORDS = {
-            "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET",
-            "DELETE", "CREATE", "DROP", "ALTER", "TABLE", "INDEX", "VIEW", "DATABASE",
-            "AND", "OR", "NOT", "IN", "EXISTS", "BETWEEN", "LIKE", "IS", "NULL",
-            "JOIN", "INNER", "LEFT", "RIGHT", "OUTER", "FULL", "CROSS", "ON",
-            "GROUP", "BY", "ORDER", "HAVING", "LIMIT", "OFFSET", "UNION", "ALL",
-            "AS", "DISTINCT", "CASE", "WHEN", "THEN", "ELSE", "END",
-            "COUNT", "SUM", "AVG", "MIN", "MAX",
-            "PRIMARY", "KEY", "FOREIGN", "REFERENCES", "CONSTRAINT",
-            "DEFAULT", "CHECK", "UNIQUE", "AUTO_INCREMENT",
-            "IF", "CASCADE", "RENAME", "TO",
-            "BEGIN", "COMMIT", "ROLLBACK", "TRANSACTION",
-            "GRANT", "REVOKE", "PRIVILEGES",
-            "SHOW", "DESCRIBE", "EXPLAIN", "USE", "TRUNCATE",
-            "CHARACTER", "COLLATE", "REPLACE"
+                "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET",
+                "DELETE", "CREATE", "DROP", "ALTER", "TABLE", "INDEX", "VIEW", "DATABASE",
+                "AND", "OR", "NOT", "IN", "EXISTS", "BETWEEN", "LIKE", "IS", "NULL",
+                "JOIN", "INNER", "LEFT", "RIGHT", "OUTER", "FULL", "CROSS", "ON",
+                "GROUP", "BY", "ORDER", "HAVING", "LIMIT", "OFFSET", "UNION", "ALL",
+                "AS", "DISTINCT", "CASE", "WHEN", "THEN", "ELSE", "END",
+                "COUNT", "SUM", "AVG", "MIN", "MAX",
+                "PRIMARY", "KEY", "FOREIGN", "REFERENCES", "CONSTRAINT",
+                "DEFAULT", "CHECK", "UNIQUE", "AUTO_INCREMENT",
+                "IF", "CASCADE", "RENAME", "TO",
+                "BEGIN", "COMMIT", "ROLLBACK", "TRANSACTION",
+                "GRANT", "REVOKE", "PRIVILEGES",
+                "SHOW", "DESCRIBE", "EXPLAIN", "USE", "TRUNCATE",
+                "CHARACTER", "COLLATE", "REPLACE"
         };
 
         // 关键词不区分大小写
         private static final String KEYWORD_PATTERN = "(?i)\\b(" + String.join("|", KEYWORDS) + ")\\b";
         private static final java.util.regex.Pattern SYNTAX_PATTERN = java.util.regex.Pattern.compile(
-            "(?<KEYWORD>" + KEYWORD_PATTERN + ")" +
-            "|(?<STRING>'[^']*')" +
-            "|(?<COMMENT1>--[^\n]*)" +
-            "|(?<COMMENT2>/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/)" +
-            "|(?<NUMBER>\\b\\d+(\\.\\d+)?\\b)"
+                "(?<KEYWORD>" + KEYWORD_PATTERN + ")" +
+                        "|(?<STRING>'[^']*')" +
+                        "|(?<COMMENT1>--[^\n]*)" +
+                        "|(?<COMMENT2>/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/)" +
+                        "|(?<NUMBER>\\b\\d+(\\.\\d+)?\\b)"
         );
 
         private void applyHighlighting() {
@@ -471,7 +534,7 @@ public class SqlEditorView extends BorderPane {
                 java.util.regex.Matcher matcher = SYNTAX_PATTERN.matcher(text);
                 int lastKwEnd = 0;
                 org.fxmisc.richtext.model.StyleSpansBuilder<String> spansBuilder =
-                    new org.fxmisc.richtext.model.StyleSpansBuilder<>();
+                        new org.fxmisc.richtext.model.StyleSpansBuilder<>();
                 while (matcher.find()) {
                     String style;
                     if (matcher.group("KEYWORD") != null) style = STYLE_KEYWORD;
@@ -496,10 +559,25 @@ public class SqlEditorView extends BorderPane {
             }
         }
 
-        @Override public javafx.scene.Node getNode() { return textArea; }
-        @Override public String getText() { return textArea.getText(); }
-        @Override public void setText(String text) { textArea.replaceText(text); }
-        @Override public String getSelectedText() { return textArea.getSelectedText(); }
+        @Override
+        public javafx.scene.Node getNode() {
+            return textArea;
+        }
+
+        @Override
+        public String getText() {
+            return textArea.getText();
+        }
+
+        @Override
+        public void setText(String text) {
+            textArea.replaceText(text);
+        }
+
+        @Override
+        public String getSelectedText() {
+            return textArea.getSelectedText();
+        }
     }
 
     /**
@@ -511,13 +589,13 @@ public class SqlEditorView extends BorderPane {
         PlainSqlEditor(Runnable onModified) {
             textArea = new TextArea();
             textArea.setStyle(
-                "-fx-background-color: white; " +
-                "-fx-text-fill: #333; " +
-                "-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 13px; " +
-                "-fx-padding: 8; " +
-                "-fx-border-color: transparent; " +
-                "-fx-focus-color: transparent; " +
-                "-fx-faint-focus-color: transparent;"
+                    "-fx-background-color: white; " +
+                            "-fx-text-fill: #333; " +
+                            "-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 13px; " +
+                            "-fx-padding: 8; " +
+                            "-fx-border-color: transparent; " +
+                            "-fx-focus-color: transparent; " +
+                            "-fx-faint-focus-color: transparent;"
             );
             textArea.setWrapText(false);
             textArea.setPromptText("输入SQL语句...");
@@ -538,9 +616,24 @@ public class SqlEditorView extends BorderPane {
             });
         }
 
-        @Override public javafx.scene.Node getNode() { return textArea; }
-        @Override public String getText() { return textArea.getText(); }
-        @Override public void setText(String text) { textArea.setText(text); }
-        @Override public String getSelectedText() { return textArea.getSelectedText(); }
+        @Override
+        public javafx.scene.Node getNode() {
+            return textArea;
+        }
+
+        @Override
+        public String getText() {
+            return textArea.getText();
+        }
+
+        @Override
+        public void setText(String text) {
+            textArea.setText(text);
+        }
+
+        @Override
+        public String getSelectedText() {
+            return textArea.getSelectedText();
+        }
     }
 }
