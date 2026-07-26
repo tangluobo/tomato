@@ -58,6 +58,7 @@ public class TomatoController {
     private boolean resizingTop = false;
     private boolean resizingBottom = false;
     private boolean resizingDivider2 = false;
+    private boolean windowManagementActive = false;
 
     private static final int EDGE_THRESHOLD = 10;
 
@@ -136,12 +137,6 @@ public class TomatoController {
 
     @FXML
     public void initialize() {
-        rootPane.setOnMousePressed(this::onMousePressed);
-        rootPane.setOnMouseDragged(this::onMouseDragged);
-        rootPane.setOnMouseMoved(this::onMouseMoved);
-        rootPane.setOnMouseExited(this::onMouseExited);
-        rootPane.setOnMouseReleased(this::onMouseReleased);
-
         divider2.setViewOrder(-1);
         divider2.setMouseTransparent(false);
 
@@ -155,12 +150,19 @@ public class TomatoController {
                         stage.maximizedProperty().addListener((prop, oldVal, newVal) -> {
                             if (newVal) {
                                 rootPane.setStyle("-fx-border-color: transparent; -fx-border-width: 0;");
+                                rootPane.setCursor(Cursor.DEFAULT);
                             } else {
                                 rootPane.setStyle("-fx-border-color: #D9D9D7; -fx-border-width: 1px;");
                             }
                         });
                     }
                 });
+
+                newScene.addEventFilter(MouseEvent.MOUSE_PRESSED, this::onMousePressed);
+                newScene.addEventFilter(MouseEvent.MOUSE_DRAGGED, this::onMouseDragged);
+                newScene.addEventFilter(MouseEvent.MOUSE_MOVED, this::onMouseMoved);
+                newScene.addEventFilter(MouseEvent.MOUSE_EXITED, this::onMouseExited);
+                newScene.addEventFilter(MouseEvent.MOUSE_RELEASED, this::onMouseReleased);
             }
         });
 
@@ -195,7 +197,17 @@ public class TomatoController {
     }
 
     private void onMouseMoved(MouseEvent event) {
+        if (resizingDivider2) {
+            return;
+        }
+
         Stage stage = (Stage) rootPane.getScene().getWindow();
+
+        if (stage.isMaximized()) {
+            rootPane.setCursor(Cursor.DEFAULT);
+            return;
+        }
+
         double sceneX = event.getSceneX();
         double sceneY = event.getSceneY();
         double width = stage.getWidth();
@@ -226,7 +238,31 @@ public class TomatoController {
     }
 
     private void onMousePressed(MouseEvent event) {
+        if (resizingDivider2) {
+            return;
+        }
+
+        windowManagementActive = true;
+
+        if (event.getTarget() instanceof javafx.scene.control.TextInputControl ||
+            event.getTarget() instanceof javafx.scene.control.ButtonBase ||
+            event.getTarget() instanceof javafx.scene.control.ListCell) {
+            windowManagementActive = false;
+            return;
+        }
+
         Stage stage = (Stage) rootPane.getScene().getWindow();
+
+        if (stage.isMaximized()) {
+            resizingLeft = false;
+            resizingRight = false;
+            resizingTop = false;
+            resizingBottom = false;
+            xOffset = event.getSceneX();
+            yOffset = event.getSceneY();
+            return;
+        }
+
         double sceneX = event.getSceneX();
         double sceneY = event.getSceneY();
         double width = stage.getWidth();
@@ -251,11 +287,15 @@ public class TomatoController {
     }
 
     private void onMouseDragged(MouseEvent event) {
-        Stage stage = (Stage) rootPane.getScene().getWindow();
-
         if (resizingDivider2) {
             return;
         }
+
+        if (!windowManagementActive) {
+            return;
+        }
+
+        Stage stage = (Stage) rootPane.getScene().getWindow();
 
         if (resizingLeft || resizingRight || resizingTop || resizingBottom) {
             double deltaX = event.getScreenX() - startX;
@@ -291,9 +331,15 @@ public class TomatoController {
     }
 
     private void onMouseReleased(MouseEvent event) {
+        if (resizingDivider2) {
+            return;
+        }
+
+        windowManagementActive = false;
         resizingLeft = false;
         resizingRight = false;
         resizingTop = false;
         resizingBottom = false;
+        rootPane.setCursor(Cursor.DEFAULT);
     }
 }
