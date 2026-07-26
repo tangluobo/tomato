@@ -52,6 +52,8 @@ public class ConnectModule implements Module {
     private Image viewIcon;
     private Image tableFolderIcon;
     private Image viewFolderIcon;
+    private Image queryFolderIcon;
+    private Image queryIcon;
     private TextField searchField;
 
     @Override
@@ -154,6 +156,9 @@ public class ConnectModule implements Module {
         try { viewIcon = new Image(getClass().getResourceAsStream("/images/connect/view.png")); } catch (Exception e) { viewIcon = null; }
         try { tableFolderIcon = new Image(getClass().getResourceAsStream("/images/connect/table_folder.png")); } catch (Exception e) { tableFolderIcon = null; }
         try { viewFolderIcon = new Image(getClass().getResourceAsStream("/images/connect/view_folder.png")); } catch (Exception e) { viewFolderIcon = null; }
+        // 查询图标：复用表图标作为查询图标，文件夹复用表文件夹图标
+        queryIcon = tableIcon;
+        queryFolderIcon = tableFolderIcon;
     }
 
     private ImageView getDbNodeIcon(DatabaseNodeData data) {
@@ -164,8 +169,10 @@ public class ConnectModule implements Module {
             case DATABASE -> data.isOpened() ? dbIcon : dbIconGray;
             case TABLES_FOLDER -> tableFolderIcon;
             case VIEWS_FOLDER -> viewFolderIcon;
+            case QUERY_FOLDER -> queryFolderIcon;
             case TABLE -> tableIcon;
             case VIEW -> viewIcon;
+            case QUERY -> queryIcon;
         };
         if (icon != null) iv.setImage(icon);
         return iv;
@@ -376,10 +383,26 @@ public class ConnectModule implements Module {
                             refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
                             contextMenu.getItems().add(refreshItem);
                         }
+                        case QUERY_FOLDER -> {
+                            MenuItem newQueryItem = new MenuItem("新建查询");
+                            newQueryItem.setOnAction(e -> handleNewQuery(targetItem, dbData));
+                            MenuItem refreshItem = new MenuItem("刷新");
+                            refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
+                            contextMenu.getItems().addAll(newQueryItem, new SeparatorMenuItem(), refreshItem);
+                        }
                         case TABLE, VIEW -> {
                             MenuItem deleteItem = new MenuItem("删除");
                             deleteItem.setOnAction(e -> handleDeleteDbNodes());
                             contextMenu.getItems().add(deleteItem);
+                        }
+                        case QUERY -> {
+                            MenuItem openQueryItem = new MenuItem("打开");
+                            openQueryItem.setOnAction(e -> handleQueryDoubleClick(targetItem, dbData));
+                            MenuItem renameQueryItem = new MenuItem("重命名");
+                            renameQueryItem.setOnAction(e -> handleRenameQuery(targetItem, dbData));
+                            MenuItem deleteQueryItem = new MenuItem("删除");
+                            deleteQueryItem.setOnAction(e -> handleDeleteQuery(targetItem, dbData));
+                            contextMenu.getItems().addAll(openQueryItem, new SeparatorMenuItem(), renameQueryItem, deleteQueryItem);
                         }
                     }
                 } else {
@@ -747,6 +770,8 @@ public class ConnectModule implements Module {
             case TABLES_FOLDER -> handleTablesFolderDoubleClick(item, data);
             case VIEWS_FOLDER -> handleViewsFolderDoubleClick(item, data);
             case TABLE, VIEW -> handleTableDataDoubleClick(item, data);
+            case QUERY -> handleQueryDoubleClick(item, data);
+            case QUERY_FOLDER -> item.setExpanded(!item.isExpanded());
         }
     }
 
@@ -782,7 +807,12 @@ public class ConnectModule implements Module {
         viewsFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.VIEWS_FOLDER, "视图", config, data.getDatabaseName())));
         dbNodeDataMap.put(viewsFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.VIEWS_FOLDER, "视图", config, data.getDatabaseName()));
 
-        dbItem.getChildren().addAll(tablesFolder, viewsFolder);
+        // 添加"查询"文件夹节点
+        TreeItem<String> queryFolder = new TreeItem<>("查询");
+        queryFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, data.getDatabaseName())));
+        dbNodeDataMap.put(queryFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, data.getDatabaseName()));
+
+        dbItem.getChildren().addAll(tablesFolder, viewsFolder, queryFolder);
         dbItem.setExpanded(true);
 
         // 自动加载表和视图（默认不展开子节点）
@@ -923,6 +953,169 @@ public class ConnectModule implements Module {
         terminalTabPane.getTabs().add(tab);
         terminalTabPane.getSelectionModel().select(tab);
         showDataView();
+    }
+
+    /**
+     * 右键"查询"文件夹：新建查询（直接创建编辑器标签）
+     */
+    private void handleNewQuery(TreeItem<String> folderItem, DatabaseNodeData data) {
+        ConnectionConfig config = data.getConnectionConfig();
+        String dbName = data.getDatabaseName();
+
+        // 找到查询文件夹对应的数据库节点，用于保存时添加子节点
+        SqlEditorView editorView = new SqlEditorView(connections, config, dbName);
+
+        // 设置标签
+        Tab tab = new Tab("*未保存查询");
+        Image tabIcon = queryIcon;
+        if (tabIcon != null) {
+            ImageView tabIconView = new ImageView(tabIcon);
+            tabIconView.setFitWidth(14);
+            tabIconView.setFitHeight(14);
+            tab.setGraphic(tabIconView);
+        }
+
+        String tabId = "query_new_" + System.currentTimeMillis();
+        tab.setUserData(tabId);
+        tab.setContent(editorView);
+
+        // 标题变更回调
+        editorView.setOnTitleChange(title -> tab.setText(title));
+
+        // 保存请求回调：弹出输入框，创建树节点
+        editorView.setOnSaveRequest(() -> {
+            TextInputDialog dialog = new TextInputDialog("查询" + (folderItem.getChildren().size() + 1));
+            dialog.setTitle("保存查询");
+            dialog.setHeaderText(null);
+            dialog.setContentText("查询名称：");
+            dialog.showAndWait().ifPresent(name -> {
+                if (name.trim().isEmpty()) return;
+
+                String queryName = name.trim();
+                editorView.doSave(queryName);
+
+                // 创建树节点
+                TreeItem<String> queryItem = new TreeItem<>(queryName);
+                DatabaseNodeData queryData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, queryName, config, dbName);
+                queryItem.setGraphic(getDbNodeIcon(queryData));
+                dbNodeDataMap.put(queryItem, queryData);
+                folderItem.getChildren().add(queryItem);
+                folderItem.setExpanded(true);
+
+                editorView.setQueryNode(queryItem);
+
+                // 更新tab的id以便后续查找
+                String newTabId = "query_" + config.getId() + "_" + dbName + "_" + queryName;
+                tab.setUserData(newTabId);
+            });
+        });
+
+        tab.setOnClosed(e -> {
+            if (terminalTabPane.getTabs().isEmpty()) {
+                showWelcomeView();
+            }
+        });
+
+        // 标记为修改状态（新查询默认未保存）
+        editorView.markModified();
+
+        if (!ensureTabPaneInstalled()) return;
+        terminalTabPane.getTabs().add(tab);
+        terminalTabPane.getSelectionModel().select(tab);
+        showDataView();
+    }
+
+    /**
+     * 双击查询节点：打开SQL编辑器标签
+     */
+    private void handleQueryDoubleClick(TreeItem<String> queryItem, DatabaseNodeData data) {
+        if (contentArea == null || terminalTabPane == null) return;
+        if (!ensureTabPaneInstalled()) return;
+
+        String tabId = "query_" + data.getConnectionConfig().getId() + "_" + data.getDatabaseName() + "_" + data.getName();
+        for (Tab tab : terminalTabPane.getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                terminalTabPane.getSelectionModel().select(tab);
+                showDataView();
+                return;
+            }
+        }
+
+        SqlEditorView editorView = new SqlEditorView(connections, data.getConnectionConfig(), data.getDatabaseName());
+        editorView.setQueryName(data.getName());
+        editorView.setQueryNode(queryItem);
+
+        Tab tab = new Tab(data.getName());
+        Image tabIcon = queryIcon;
+        if (tabIcon != null) {
+            ImageView tabIconView = new ImageView(tabIcon);
+            tabIconView.setFitWidth(14);
+            tabIconView.setFitHeight(14);
+            tab.setGraphic(tabIconView);
+        }
+        tab.setContent(editorView);
+        tab.setUserData(tabId);
+
+        // 标题变更回调
+        editorView.setOnTitleChange(title -> tab.setText(title));
+
+        // 保存请求回调：弹出输入框
+        editorView.setOnSaveRequest(() -> {
+            TextInputDialog dialog = new TextInputDialog(data.getName());
+            dialog.setTitle("保存查询");
+            dialog.setHeaderText(null);
+            dialog.setContentText("查询名称：");
+            dialog.showAndWait().ifPresent(name -> {
+                if (name.trim().isEmpty()) return;
+                editorView.doSave(name.trim());
+                // 更新树节点
+                queryItem.setValue(name.trim());
+            });
+        });
+
+        tab.setOnClosed(e -> {
+            if (terminalTabPane.getTabs().isEmpty()) {
+                showWelcomeView();
+            }
+        });
+
+        terminalTabPane.getTabs().add(tab);
+        terminalTabPane.getSelectionModel().select(tab);
+        showDataView();
+    }
+
+    /**
+     * 重命名查询节点
+     */
+    private void handleRenameQuery(TreeItem<String> queryItem, DatabaseNodeData data) {
+        TextInputDialog dialog = new TextInputDialog(data.getName());
+        dialog.setTitle("重命名查询");
+        dialog.setHeaderText(null);
+        dialog.setContentText("新名称：");
+        dialog.showAndWait().ifPresent(name -> {
+            if (name.trim().isEmpty()) return;
+            String newName = name.trim();
+            queryItem.setValue(newName);
+            // 更新 dbNodeDataMap 中的数据
+            dbNodeDataMap.remove(queryItem);
+            DatabaseNodeData newData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, newName, data.getConnectionConfig(), data.getDatabaseName());
+            dbNodeDataMap.put(queryItem, newData);
+        });
+    }
+
+    /**
+     * 删除查询节点
+     */
+    private void handleDeleteQuery(TreeItem<String> queryItem, DatabaseNodeData data) {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("删除查询");
+        confirm.setHeaderText("确定要删除查询 \"" + data.getName() + "\" 吗？");
+        confirm.showAndWait().ifPresent(response -> {
+            if (response == ButtonType.OK) {
+                dbNodeDataMap.remove(queryItem);
+                queryItem.getParent().getChildren().remove(queryItem);
+            }
+        });
     }
 
     /**
@@ -1213,6 +1406,9 @@ public class ConnectModule implements Module {
             case VIEWS_FOLDER -> {
                 item.getChildren().clear();
                 loadViewsForFolder(item, config, data.getDatabaseName());
+            }
+            case QUERY_FOLDER -> {
+                // 查询节点不需要从服务器刷新
             }
             default -> {}
         }

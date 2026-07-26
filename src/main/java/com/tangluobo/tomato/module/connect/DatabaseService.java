@@ -275,6 +275,66 @@ public class DatabaseService {
     }
 
     /**
+     * 执行自定义SQL查询（SELECT语句），返回结果
+     */
+    public static TableRowData executeSqlQuery(ConnectionConfig config, String databaseName, String sql, int pageSize) throws Exception {
+        Connection conn = getConnection(config, databaseName);
+        long startTime = System.currentTimeMillis();
+
+        TableRowData result = new TableRowData();
+
+        try (Statement stmt = conn.createStatement()) {
+            stmt.setMaxRows(pageSize);
+            boolean hasResultSet = stmt.execute(sql);
+
+            long queryTime = System.currentTimeMillis() - startTime;
+
+            if (hasResultSet) {
+                try (ResultSet rs = stmt.getResultSet()) {
+                    ResultSetMetaData metaData = rs.getMetaData();
+                    int columnCount = metaData.getColumnCount();
+
+                    List<String> columnNames = new ArrayList<>();
+                    for (int i = 1; i <= columnCount; i++) {
+                        columnNames.add(metaData.getColumnLabel(i));
+                    }
+                    result.setColumnNames(columnNames);
+
+                    ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
+                    long count = 0;
+                    while (rs.next() && count < pageSize) {
+                        ObservableList<String> row = FXCollections.observableArrayList();
+                        for (int i = 1; i <= columnCount; i++) {
+                            String val = rs.getString(i);
+                            row.add(val != null ? val : "");
+                        }
+                        rows.add(row);
+                        count++;
+                    }
+                    result.setRows(rows);
+                    result.setTotalCount(count);
+                }
+            } else {
+                int updateCount = stmt.getUpdateCount();
+                result.setColumnNames(List.of("结果"));
+                ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
+                ObservableList<String> row = FXCollections.observableArrayList();
+                row.add(updateCount >= 0 ? updateCount + " 行受影响" : "执行成功");
+                rows.add(row);
+                result.setRows(rows);
+                result.setTotalCount(1);
+            }
+
+            result.setPage(1);
+            result.setPageSize(pageSize);
+            result.setTotalPages(1);
+            result.setQueryTime(queryTime);
+        }
+
+        return result;
+    }
+
+    /**
      * 构建分页查询SQL
      */
     private static String buildPageSql(ConnectionConfig config, String databaseName, String tableName, int page, int pageSize) {

@@ -14,6 +14,7 @@ public class TableRowData {
     private int page;
     private int pageSize;
     private int totalPages;
+    private long queryTime;
 
     public List<String> getColumnNames() { return columnNames; }
     public void setColumnNames(List<String> columnNames) { this.columnNames = columnNames; }
@@ -32,4 +33,7 @@ public class TableRowData {
 
     public int getTotalPages() { return totalPages; }
     public void setTotalPages(int totalPages) { this.totalPages = totalPages; }
+
+    public long getQueryTime() { return queryTime; }
+    public void setQueryTime(long queryTime) { this.queryTime = queryTime; }
 }

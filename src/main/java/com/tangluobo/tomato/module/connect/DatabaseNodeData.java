@@ -8,8 +8,10 @@ public class DatabaseNodeData {
         DATABASE,       // 数据库节点
         TABLES_FOLDER,  // "表"文件夹节点
         VIEWS_FOLDER,   // "视图"文件夹节点
+        QUERY_FOLDER,   // "查询"文件夹节点
         TABLE,          // 表节点
-        VIEW            // 视图节点
+        VIEW,           // 视图节点
+        QUERY           // 查询节点
     }
 
     private final NodeType type;
