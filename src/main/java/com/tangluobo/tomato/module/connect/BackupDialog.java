@@ -163,44 +163,64 @@ public class BackupDialog {
         objectTree.setShowRoot(false);
         objectTree.setStyle("-fx-font-size: 12px;");
         objectTree.setCellFactory(tv -> new TreeCell<>() {
-            private CheckBox checkBox;
+            private CheckBox checkBox = new CheckBox();
+            private HBox hbox = new HBox(2);
+            private ImageView iconView = new ImageView() {{
+                setFitWidth(16);
+                setFitHeight(16);
+            }};
             private javafx.beans.value.ChangeListener<String> labelListener;
+            private BackupObject boundObj;
+
+            {
+                hbox.setAlignment(Pos.CENTER_LEFT);
+                hbox.getChildren().addAll(checkBox, iconView);
+            }
 
             @Override
             public void updateItem(BackupObject item, boolean empty) {
                 super.updateItem(item, empty);
+
+                // 解绑旧对象
+                if (boundObj != null) {
+                    checkBox.selectedProperty().unbindBidirectional(boundObj.selectedProperty());
+                    boundObj = null;
+                }
                 if (labelListener != null && getItem() != null) {
                     getItem().customLabelProperty().removeListener(labelListener);
                     labelListener = null;
                 }
+
                 if (empty || item == null) {
                     setText(null);
                     setGraphic(null);
                 } else {
-                    String text = item.getDisplayName();
-                    String label = item.getCustomLabel();
-                    setText(label != null ? text + label : text);
+                    // 只有"自定义"节点才拼接计数
+                    if (item.getSpecialType() == BackupObject.SpecialType.CUSTOMIZE) {
+                        String label = item.getCustomLabel();
+                        setText(item.getDisplayName() + (label != null ? label : ""));
+                    } else {
+                        setText(item.getDisplayName());
+                    }
 
                     ImageView icon = createIcon(item.getType());
+                    iconView.setImage(icon.getImage());
 
                     if (item.isGroupNode()) {
                         setGraphic(icon);
                     } else {
-                        if (checkBox == null) {
-                            checkBox = new CheckBox();
-                        }
                         checkBox.selectedProperty().bindBidirectional(item.selectedProperty());
-                        HBox hbox = new HBox(2, checkBox, icon);
-                        hbox.setAlignment(Pos.CENTER_LEFT);
+                        boundObj = item;
                         setGraphic(hbox);
                     }
 
-                    labelListener = (obs, oldVal, newVal) -> {
-                        String t = item.getDisplayName();
-                        String l = item.getCustomLabel();
-                        setText(l != null ? t + l : t);
-                    };
-                    item.customLabelProperty().addListener(labelListener);
+                    if (item.getSpecialType() == BackupObject.SpecialType.CUSTOMIZE) {
+                        labelListener = (obs, oldVal, newVal) -> {
+                            String lbl = item.getCustomLabel();
+                            setText(item.getDisplayName() + (lbl != null ? lbl : ""));
+                        };
+                        item.customLabelProperty().addListener(labelListener);
+                    }
                 }
             }
         });
@@ -397,126 +417,77 @@ public class BackupDialog {
 
     private TreeItem<BackupObject> createTypeGroup(BackupObject.Type type, List<BackupObject> objects) {
         String typeDisplayName = type.getDisplayName();
+
+        // --- 创建节点 ---
+        // 大类节点（无复选框）
         BackupObject groupObj = new BackupObject(type, typeDisplayName, BackupObject.SpecialType.NONE, true);
         TreeItem<BackupObject> groupItem = new TreeItem<>(groupObj);
         groupItem.setExpanded(true);
 
-        BackupObject selectAllObj = new BackupObject(type, "运行期间的全部" + typeDisplayName+"(*)", BackupObject.SpecialType.SELECT_ALL);
+        // "运行期间的全部" 节点
+        BackupObject selectAllObj = new BackupObject(type, "运行期间的全部" + typeDisplayName + "(*)", BackupObject.SpecialType.SELECT_ALL);
         TreeItem<BackupObject> selectAllItem = new TreeItem<>(selectAllObj);
 
+        // "自定义" 节点
         BackupObject customizeObj = new BackupObject(type, "自定义", BackupObject.SpecialType.CUSTOMIZE);
         TreeItem<BackupObject> customizeItem = new TreeItem<>(customizeObj);
         customizeItem.setExpanded(true);
 
-        final boolean[] suppressEvents = {false};
+        // 初始化计数
+        customizeObj.setCustomLabel(objects.isEmpty() ? " (0/0)" : " (0/" + objects.size() + ")");
 
-        int total = objects.size();
-        if (total > 0) {
-            customizeObj.setCustomLabel(" (0/" + total + ")");
-        } else {
-            customizeObj.setCustomLabel(" (0/0)");
-        }
-
+        // 子对象加入"自定义"下
         for (BackupObject obj : objects) {
-            TreeItem<BackupObject> childItem = new TreeItem<>(obj);
-            childItem.setGraphic(createIcon(type));
-            obj.selectedProperty().addListener((obs, wasSelected, isSelected) -> {
-                if (suppressEvents[0]) return;
-                updateCustomizeState(customizeItem, selectAllItem);
-                updateGroupState(groupItem, selectAllItem, customizeItem);
-            });
-            customizeItem.getChildren().add(childItem);
+            customizeItem.getChildren().add(new TreeItem<>(obj));
         }
 
-        Runnable syncChildrenToGroup = () -> {
-            if (suppressEvents[0]) return;
-            if (groupObj.isSelected()) {
-                if (!selectAllObj.isSelected() && !customizeObj.isSelected()) {
-                    suppressEvents[0] = true;
-                    selectAllObj.setSelected(true);
-                    suppressEvents[0] = false;
-                }
-            } else {
-                suppressEvents[0] = true;
-                selectAllObj.setSelected(false);
-                customizeObj.setSelected(false);
-                suppressEvents[0] = false;
-                updateGroupState(groupItem, selectAllItem, customizeItem);
-            }
-        };
+        final boolean[] suppress = {false};
 
-        groupObj.selectedProperty().addListener((obs, wasSelected, isSelected) -> syncChildrenToGroup.run());
-
-        selectAllObj.selectedProperty().addListener((obs, wasSelected, isSelected) -> {
-            if (suppressEvents[0]) return;
-            if (isSelected) {
-                suppressEvents[0] = true;
+        // --- 规则1: 选中"运行期间的全部" → 取消"自定义"（互斥），不影响子对象 ---
+        selectAllObj.selectedProperty().addListener((obs, old, val) -> {
+            if (suppress[0]) return;
+            if (val) {
+                suppress[0] = true;
                 customizeObj.setSelected(false);
-                suppressEvents[0] = false;
+                suppress[0] = false;
             }
-            updateGroupState(groupItem, selectAllItem, customizeItem);
         });
 
-        customizeObj.selectedProperty().addListener((obs, wasSelected, isSelected) -> {
-            if (suppressEvents[0]) return;
-            if (isSelected) {
-                suppressEvents[0] = true;
+        // --- 规则2: 选中"自定义" → 取消"运行期间的全部"（互斥）+ 全选子对象 ---
+        //           取消"自定义" → 取消所有子对象 ---
+        customizeObj.selectedProperty().addListener((obs, old, val) -> {
+            if (suppress[0]) return;
+            suppress[0] = true;
+            if (val) {
                 selectAllObj.setSelected(false);
-                suppressEvents[0] = false;
+                for (TreeItem<BackupObject> c : customizeItem.getChildren()) c.getValue().setSelected(true);
             } else {
-                suppressEvents[0] = true;
-                for (TreeItem<BackupObject> child : customizeItem.getChildren()) {
-                    child.getValue().setSelected(false);
-                }
-                suppressEvents[0] = false;
+                for (TreeItem<BackupObject> c : customizeItem.getChildren()) c.getValue().setSelected(false);
             }
-            updateGroupState(groupItem, selectAllItem, customizeItem);
+            suppress[0] = false;
+            refreshCustomizeCount(customizeItem);
         });
+
+        // --- 规则3: 手动勾/取消子对象 → 仅更新计数 ---
+        for (TreeItem<BackupObject> child : customizeItem.getChildren()) {
+            child.getValue().selectedProperty().addListener((obs, old, val) -> {
+                if (suppress[0]) return;
+                refreshCustomizeCount(customizeItem);
+            });
+        }
 
         groupItem.getChildren().addAll(selectAllItem, customizeItem);
         return groupItem;
     }
 
-    private void updateCustomizeState(TreeItem<BackupObject> customizeItem, TreeItem<BackupObject> selectAllItem) {
-        BackupObject customizeObj = customizeItem.getValue();
+    /** 更新"自定义"节点上的计数，如 (3/10) */
+    private void refreshCustomizeCount(TreeItem<BackupObject> customizeItem) {
         int total = customizeItem.getChildren().size();
         int selected = 0;
-
-        for (TreeItem<BackupObject> child : customizeItem.getChildren()) {
-            if (child.getValue().isSelected()) {
-                selected++;
-            }
+        for (TreeItem<BackupObject> c : customizeItem.getChildren()) {
+            if (c.getValue().isSelected()) selected++;
         }
-
-        if (total > 0) {
-            customizeObj.setCustomLabel(" (" + selected + "/" + total + ")");
-        } else {
-            customizeObj.setCustomLabel(" (0/0)");
-        }
-
-        if (selectAllItem.getValue().isSelected()) {
-            if (selected < total) {
-                for (TreeItem<BackupObject> child : customizeItem.getChildren()) {
-                    child.getValue().setSelected(true);
-                }
-            }
-            return;
-        }
-
-        if (selected == total && total > 0) {
-            selectAllItem.getValue().setSelected(true);
-            customizeObj.setSelected(false);
-        }
-    }
-
-    private void updateGroupState(TreeItem<BackupObject> groupItem,
-                                   TreeItem<BackupObject> selectAllItem,
-                                   TreeItem<BackupObject> customizeItem) {
-        BackupObject groupObj = groupItem.getValue();
-        boolean allSelected = selectAllItem.getValue().isSelected();
-        boolean anyCustomSelected = customizeItem.getValue().isSelected();
-
-        groupObj.setSelected(allSelected || anyCustomSelected);
+        customizeItem.getValue().setCustomLabel(" (" + selected + "/" + total + ")");
     }
 
     private ImageView createIcon(BackupObject.Type type) {
