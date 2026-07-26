@@ -459,6 +459,10 @@ public class SqlEditorView extends BorderPane {
      */
     private static class RichTextSqlEditor implements SqlEditor {
         private final org.fxmisc.richtext.InlineCssTextArea textArea;
+        private final org.fxmisc.flowless.VirtualizedScrollPane<org.fxmisc.richtext.InlineCssTextArea> scrollPane;
+        private final javafx.scene.layout.HBox editorContainer;
+        private final javafx.scene.layout.VBox lineNumberBox;
+        private static final int MAX_LINES = 500;
 
         // 内联CSS样式字符串，直接应用到文本段
         private static final String STYLE_KEYWORD = "-fx-fill: #0000FF; -fx-font-weight: bold;";
@@ -468,16 +472,49 @@ public class SqlEditorView extends BorderPane {
 
         RichTextSqlEditor(Runnable onModified) {
             textArea = new org.fxmisc.richtext.InlineCssTextArea();
-            textArea.setParagraphGraphicFactory(org.fxmisc.richtext.LineNumberFactory.get(textArea));
             textArea.setStyle(
                     "-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 13px; " +
                             "-fx-background-color: white; -fx-padding: 0; -fx-text-fill: #333;"
             );
 
+            scrollPane = new org.fxmisc.flowless.VirtualizedScrollPane<>(textArea);
+
+            lineNumberBox = new javafx.scene.layout.VBox();
+            lineNumberBox.setStyle("-fx-background-color: #f8f8f8; -fx-padding: 0;");
+            lineNumberBox.setPrefWidth(40);
+            lineNumberBox.setMinWidth(40);
+            lineNumberBox.setMaxWidth(40);
+
+            java.util.List<Label> lineNumberLabels = new java.util.ArrayList<>();
+            for (int i = 1; i <= MAX_LINES; i++) {
+                Label label = new Label(Integer.toString(i));
+                label.setStyle("-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 13px; " +
+                        "-fx-text-fill: #888888; -fx-alignment: CENTER_RIGHT; -fx-padding: 0 8 0 4;");
+                label.setVisible(false);
+                label.setManaged(false);
+                lineNumberLabels.add(label);
+                lineNumberBox.getChildren().add(label);
+            }
+            javafx.scene.layout.Region filler = new javafx.scene.layout.Region();
+            javafx.scene.layout.VBox.setVgrow(filler, javafx.scene.layout.Priority.ALWAYS);
+            lineNumberBox.getChildren().add(filler);
+
+            // 初始显示第1行
+            updateLineNumbers(lineNumberLabels, 1);
+
+            editorContainer = new javafx.scene.layout.HBox();
+            editorContainer.getChildren().addAll(lineNumberBox, scrollPane);
+            javafx.scene.layout.HBox.setHgrow(scrollPane, javafx.scene.layout.Priority.ALWAYS);
+
+            textArea.estimatedScrollYProperty().addListener((obs, oldVal, newVal) -> {
+                lineNumberBox.setTranslateY(-newVal.doubleValue());
+            });
+
             // 内容变化
             textArea.textProperty().addListener((obs, oldVal, newVal) -> {
                 onModified.run();
                 applyHighlighting();
+                updateLineNumbers(lineNumberLabels, textArea.getParagraphs().size());
             });
 
             // Tab缩进
@@ -527,6 +564,15 @@ public class SqlEditorView extends BorderPane {
                         "|(?<NUMBER>\\b\\d+(\\.\\d+)?\\b)"
         );
 
+        private static void updateLineNumbers(java.util.List<Label> labels, int lineCount) {
+            int visibleCount = Math.min(lineCount, labels.size());
+            for (int i = 0; i < labels.size(); i++) {
+                boolean show = i < visibleCount;
+                labels.get(i).setVisible(show);
+                labels.get(i).setManaged(show);
+            }
+        }
+
         private void applyHighlighting() {
             String text = textArea.getText();
             if (text.isEmpty()) return;
@@ -561,7 +607,7 @@ public class SqlEditorView extends BorderPane {
 
         @Override
         public javafx.scene.Node getNode() {
-            return textArea;
+            return editorContainer;
         }
 
         @Override

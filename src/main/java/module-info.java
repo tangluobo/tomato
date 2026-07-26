@@ -11,6 +11,7 @@ module tomato {
     requires org.fxmisc.richtext;
     requires org.fxmisc.flowless;
     requires org.fxmisc.undo;
+    requires reactfx;
 
     opens com.tangluobo.tomato to javafx.fxml;
     exports com.tangluobo.tomato;
