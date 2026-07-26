@@ -201,7 +201,7 @@ public class SSHTerminalPane extends BorderPane {
         splitPane = new SplitPane();
         splitPane.getItems().add(terminalPane);
         splitPane.setDividerPositions(1.0);
-        splitPane.setStyle("-fx-background-color: #1e1e1e;");
+//        splitPane.setStyle("-fx-background-color: #1e1e1e;");
 
         setCenter(splitPane);
         setBottom(statusBar);

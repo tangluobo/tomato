@@ -71,7 +71,7 @@ public class SFTPFileBrowser extends BorderPane {
 
         setPrefWidth(280);
         setMinWidth(200);
-        setStyle("-fx-background-color: #FFFFFF; -fx-border-color: #e0e0e0; -fx-border-width: 0 0 0 1;");
+        setStyle("-fx-background-color: #FFFFFF;");
 
         createUI();
     }
