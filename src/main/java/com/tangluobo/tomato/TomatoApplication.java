@@ -4,6 +4,7 @@ import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Scene;
+import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 
@@ -14,6 +15,7 @@ public class TomatoApplication extends Application {
     public void start(Stage stage) throws IOException {
         FXMLLoader fxmlLoader = new FXMLLoader(TomatoApplication.class.getResource("tomato-view.fxml"));
         Scene scene = new Scene(fxmlLoader.load(), 1200, 900);
+        scene.setFill(Color.WHITE);
         stage.initStyle(StageStyle.UNDECORATED);
         stage.setScene(scene);
         stage.show();

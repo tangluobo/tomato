@@ -147,6 +147,23 @@ public class TomatoController {
 
         setupDivider(divider2);
 
+        rootPane.sceneProperty().addListener((obs, oldScene, newScene) -> {
+            if (newScene != null) {
+                newScene.windowProperty().addListener((o, oldWindow, newWindow) -> {
+                    if (newWindow != null) {
+                        Stage stage = (Stage) newWindow;
+                        stage.maximizedProperty().addListener((prop, oldVal, newVal) -> {
+                            if (newVal) {
+                                rootPane.setStyle("-fx-border-color: transparent; -fx-border-width: 0;");
+                            } else {
+                                rootPane.setStyle("-fx-border-color: #D9D9D7; -fx-border-width: 1px;");
+                            }
+                        });
+                    }
+                });
+            }
+        });
+
         loadModule(new ConnectModule());
     }
 
