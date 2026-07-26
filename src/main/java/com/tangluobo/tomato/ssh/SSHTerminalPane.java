@@ -75,16 +75,22 @@ public class SSHTerminalPane extends BorderPane {
     private final Label encodingLabel;
     private final Circle statusDot;
     private final Button folderBtn;
+    private final Button monitorBtn;
 
     // 终端容器
     private final Pane terminalPane;
     private final SplitPane splitPane;
     private final ScrollBar scrollBar;
+    private final javafx.scene.layout.VBox rightPanel;
 
     // SFTP文件浏览器
     private SFTPFileBrowser fileBrowser;
     private SFTPClient sftpClient;
     private boolean fileBrowserVisible = false;
+
+    // 监控视图
+    private boolean monitorVisible = false;
+    private MonitorPanel monitorPanel;
 
     // 防止scrollbar↔render循环
     private boolean updatingScrollbar = false;
@@ -124,13 +130,19 @@ public class SSHTerminalPane extends BorderPane {
         encodingLabel = new Label("UTF-8");
         encodingLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
 
-        // SFTP文件浏览器开关按钮（代码绘制图标：文件夹+上下箭头）
+        // SFTP文件浏览器开关按钮
         folderBtn = new Button();
         folderBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
-        folderBtn.setGraphic(createSftpButtonIcon(false));
+        folderBtn.setGraphic(createIcon("/images/connect/folder.png", false));
         folderBtn.setOnAction(e -> toggleFileBrowser());
 
-        statusBar.getChildren().addAll(statusDot, stateLabel, connLabel, encodingLabel, spacer, folderBtn);
+        // 监控视图开关按钮
+        monitorBtn = new Button();
+        monitorBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
+        monitorBtn.setGraphic(createIcon("/images/connect/monitor.png", false));
+        monitorBtn.setOnAction(e -> toggleMonitor());
+
+        statusBar.getChildren().addAll(statusDot, stateLabel, connLabel, encodingLabel, spacer, folderBtn, monitorBtn);
 
         // 终端区域 + 右侧滚动条
         scrollBar = new ScrollBar();
@@ -197,7 +209,11 @@ public class SSHTerminalPane extends BorderPane {
             });
         });
 
-        // SplitPane: 终端 + 文件浏览器，支持拖拽调整宽度
+        // 右侧面板：文件浏览器 + 监控面板（垂直排列）
+        rightPanel = new javafx.scene.layout.VBox();
+        rightPanel.setStyle("-fx-background-color: #FFFFFF;");
+
+        // SplitPane: 终端 + 右侧面板，支持拖拽调整宽度
         splitPane = new SplitPane();
         splitPane.getItems().add(terminalPane);
         splitPane.setDividerPositions(1.0);
@@ -318,12 +334,13 @@ public class SSHTerminalPane extends BorderPane {
     private void toggleFileBrowser() {
         if (fileBrowserVisible) {
             // 关闭文件浏览器
-            if (fileBrowser != null) {
-                splitPane.getItems().remove(fileBrowser);
+            if (fileBrowser != null && rightPanel.getChildren().contains(fileBrowser)) {
+                rightPanel.getChildren().remove(fileBrowser);
             }
             fileBrowserVisible = false;
             folderBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
-            folderBtn.setGraphic(createSftpButtonIcon(false));
+            folderBtn.setGraphic(createIcon("/images/connect/folder.png", false));
+            updateRightPanelVisibility();
         } else {
             // 打开文件浏览器
             if (sshSession == null || !sshSession.isConnected()) return;
@@ -331,13 +348,76 @@ public class SSHTerminalPane extends BorderPane {
                 sftpClient = new SFTPClient();
                 fileBrowser = new SFTPFileBrowser(sshSession, sftpClient);
             }
-            splitPane.getItems().add(fileBrowser);
-            // 设置分割比例：终端占大部分，文件浏览器占右侧
+            ensureRightPanelVisible();
+            if (!rightPanel.getChildren().contains(fileBrowser)) {
+                rightPanel.getChildren().add(0, fileBrowser);
+            }
             splitPane.setDividerPositions(0.7);
             fileBrowser.initConnection();
             fileBrowserVisible = true;
             folderBtn.setStyle("-fx-background-color: #e0e0e0; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand; -fx-border-radius: 3;");
-            folderBtn.setGraphic(createSftpButtonIcon(true));
+            folderBtn.setGraphic(createIcon("/images/connect/folder.png", true));
+        }
+    }
+
+    /**
+     * 切换监控视图显示
+     */
+    private void toggleMonitor() {
+        if (monitorVisible) {
+            // 关闭监控视图
+            if (monitorPanel != null) {
+                monitorPanel.stopMonitoring();
+                if (rightPanel.getChildren().contains(monitorPanel)) {
+                    rightPanel.getChildren().remove(monitorPanel);
+                }
+            }
+            monitorVisible = false;
+            monitorBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
+            monitorBtn.setGraphic(createIcon("/images/connect/monitor.png", false));
+            updateRightPanelVisibility();
+        } else {
+            // 打开监控视图
+            if (sshSession == null || !sshSession.isConnected()) return;
+            if (monitorPanel == null) {
+                monitorPanel = new MonitorPanel(sshSession);
+            }
+            ensureRightPanelVisible();
+            if (!rightPanel.getChildren().contains(monitorPanel)) {
+                rightPanel.getChildren().add(monitorPanel);
+            }
+            monitorPanel.startMonitoring();
+            monitorVisible = true;
+            monitorBtn.setStyle("-fx-background-color: #e0e0e0; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand; -fx-border-radius: 3;");
+            monitorBtn.setGraphic(createIcon("/images/connect/monitor.png", true));
+        }
+    }
+
+    /**
+     * 确保右侧面板在SplitPane中可见
+     */
+    private void ensureRightPanelVisible() {
+        if (!splitPane.getItems().contains(rightPanel)) {
+            splitPane.getItems().add(rightPanel);
+            if (fileBrowserVisible && monitorVisible) {
+                splitPane.setDividerPositions(0.7);
+            } else {
+                splitPane.setDividerPositions(0.8);
+            }
+        }
+    }
+
+    /**
+     * 更新右侧面板的可见性
+     */
+    private void updateRightPanelVisibility() {
+        if (!fileBrowserVisible && !monitorVisible) {
+            if (splitPane.getItems().contains(rightPanel)) {
+                splitPane.getItems().remove(rightPanel);
+            }
+        } else if (!splitPane.getItems().contains(rightPanel)) {
+            splitPane.getItems().add(rightPanel);
+            splitPane.setDividerPositions(fileBrowserVisible && monitorVisible ? 0.7 : 0.8);
         }
     }
 
@@ -407,40 +487,16 @@ public class SSHTerminalPane extends BorderPane {
     }
 
     /**
-     * 创建SFTP按钮图标：文件夹 + 上下双箭头
+     * 创建图标ImageView
+     * @param path 图标资源路径
      * @param active 是否激活状态
      */
-    private ImageView createSftpButtonIcon(boolean active) {
-        int size = 16;
-        Canvas canvas = new Canvas(size, size);
-        GraphicsContext gc = canvas.getGraphicsContext2D();
-
-        Color folderColor = active ? Color.valueOf("#1E88E5") : Color.valueOf("#78909C");
-        Color arrowColor = active ? Color.valueOf("#1565C0") : Color.valueOf("#546E7A");
-
-        // 文件夹主体（后片）
-        gc.setFill(folderColor.deriveColor(0, 1, 0.85, 1));
-        gc.fillRoundRect(1, 3, 14, 11, 2, 2);
-
-        // 文件夹标签页
-        gc.setFill(folderColor);
-        gc.fillRoundRect(1, 1, 6, 4, 2, 2);
-
-        // 文件夹前面（稍微亮一点）
-        gc.setFill(folderColor);
-        gc.fillRoundRect(1, 5, 14, 9, 1, 1);
-
-        // 上下箭头（右侧）
-        gc.setFill(arrowColor);
-        // 上箭头 ▲
-        gc.fillPolygon(new double[]{11, 13, 15}, new double[]{6.5, 3.5, 6.5}, 3);
-        // 下箭头 ▼
-        gc.fillPolygon(new double[]{11, 13, 15}, new double[]{9, 12, 9}, 3);
-
-        Image img = canvas.snapshot(null, null);
-        ImageView iv = new ImageView(img);
+    private ImageView createIcon(String path, boolean active) {
+        Image image = new Image(getClass().getResourceAsStream(path));
+        ImageView iv = new ImageView(image);
         iv.setFitWidth(16);
         iv.setFitHeight(16);
+        iv.setOpacity(active ? 1.0 : 0.6);
         return iv;
     }
 
@@ -496,6 +552,17 @@ public class SSHTerminalPane extends BorderPane {
         fileBrowserVisible = false;
         fileBrowser = null;
         sftpClient = null;
+
+        // 关闭监控视图
+        if (monitorPanel != null) {
+            monitorPanel.stopMonitoring();
+            if (rightPanel.getChildren().contains(monitorPanel)) {
+                rightPanel.getChildren().remove(monitorPanel);
+            }
+        }
+        monitorVisible = false;
+        monitorPanel = null;
+
         updateStatusBar("已断开");
     }
 
