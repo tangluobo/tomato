@@ -512,7 +512,7 @@ public class TerminalView extends Canvas {
         int scrollbackSize = emulator.getScrollbackSize();
         if (scrollbackSize == 0) return;
 
-        int delta = (int) -e.getDeltaY();
+        int delta = (int) e.getDeltaY();
         if (delta == 0) return;
 
         // 标准化滚动量
@@ -520,10 +520,10 @@ public class TerminalView extends Canvas {
         int oldOffset = emulator.getScrollOffset();
         int newOffset;
         if (delta > 0) {
-            // 向上滚（回看更早的历史）
+            // 滚轮向上（回看更早的历史）
             newOffset = Math.min(oldOffset + lines, scrollbackSize);
         } else {
-            // 向下滚（回到最新的输出）
+            // 滚轮向下（回到最新的输出）
             newOffset = Math.max(oldOffset - lines, 0);
         }
 
