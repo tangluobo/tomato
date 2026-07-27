@@ -944,9 +944,6 @@ public class TableDataView extends BorderPane {
 
         tableView.setItems(data.getRows());
 
-        // 在底部添加空白新行
-        addEmptyNewRow();
-
         // 布局完成后绑定表头点击事件和排序箭头
         bindColumnHeaderEvents();
     }
