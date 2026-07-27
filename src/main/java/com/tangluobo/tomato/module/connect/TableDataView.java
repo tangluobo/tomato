@@ -586,33 +586,36 @@ public class TableDataView extends BorderPane {
                     // 查找匹配的TableColumn
                     @SuppressWarnings("unchecked")
                     TableColumn<ObservableList<String>, ?> matchedCol = null;
-                    int colIndex = -1;
+                    int tableColIndex = -1;
                     for (int i = 0; i < tableView.getColumns().size(); i++) {
                         TableColumn<ObservableList<String>, ?> tc = tableView.getColumns().get(i);
                         if (tc == colBase) {
                             matchedCol = tc;
-                            colIndex = i - 1; // 减去行选择器列
+                            tableColIndex = i;
                             break;
                         }
                     }
                     if (matchedCol == null || ROW_SELECTOR_COL.equals(matchedCol.getUserData())) return;
 
                     String colName = matchedCol.getText();
-                    final int ci = colIndex;
+                    final int tci = tableColIndex;
+                    // 拦截所有鼠标事件，阻止默认排序/选中行为
                     header.setOnMousePressed(event -> {
                         event.consume();
-                        if (event.getButton() == MouseButton.SECONDARY) {
-                            showSortMenu(header, colName);
-                        } else if (event.getButton() == MouseButton.PRIMARY) {
+                        if (event.getButton() == MouseButton.PRIMARY) {
                             double clickX = event.getX();
                             double headerWidth = header.getWidth();
                             if (clickX > headerWidth - 20) {
                                 showSortMenu(header, colName);
                             } else {
-                                selectColumn(ci);
+                                selectColumnByTableIndex(tci);
                             }
+                        } else if (event.getButton() == MouseButton.SECONDARY) {
+                            showSortMenu(header, colName);
                         }
                     });
+                    header.setOnMouseClicked(event -> event.consume());
+                    header.setOnMouseReleased(event -> event.consume());
                 }
             });
         });
@@ -631,11 +634,11 @@ public class TableDataView extends BorderPane {
     /**
      * 选中整列
      */
-    private void selectColumn(int colIndex) {
+    private void selectColumnByTableIndex(int tableColIndex) {
         tableView.getSelectionModel().clearSelection();
+        TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(tableColIndex);
         for (int row = 0; row < tableView.getItems().size(); row++) {
-            // colIndex+1 因为第一列是行选择器列
-            tableView.getSelectionModel().select(row, tableView.getColumns().get(colIndex + 1));
+            tableView.getSelectionModel().select(row, col);
         }
     }
 
