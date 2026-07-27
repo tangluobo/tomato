@@ -977,13 +977,16 @@ public class ConnectModule implements Module {
 
         TableDataView dataView = new TableDataView(data.getConnectionConfig(), data.getDatabaseName(), data.getName());
 
-        Tab tab = new Tab(data.getDatabaseName() + "." + data.getName());
+        ConnectionConfig config = data.getConnectionConfig();
+        String typeLabel = data.getType() == DatabaseNodeData.NodeType.VIEW ? "视图" : "表";
+        String tabTitle = data.getName() + "@" + data.getDatabaseName() + "(" + config.getHost() + ":" + config.getPort() + ")-" + typeLabel;
+        Tab tab = new Tab(tabTitle);
         // 设置标签头图标：表或视图
         Image tabIcon = data.getType() == DatabaseNodeData.NodeType.VIEW ? viewIcon : tableIcon;
         if (tabIcon != null) {
             ImageView tabIconView = new ImageView(tabIcon);
-            tabIconView.setFitWidth(14);
-            tabIconView.setFitHeight(14);
+            tabIconView.setFitWidth(18);
+            tabIconView.setFitHeight(18);
             tab.setGraphic(tabIconView);
         }
         tab.setContent(dataView);

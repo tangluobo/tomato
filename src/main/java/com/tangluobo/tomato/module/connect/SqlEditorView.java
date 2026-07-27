@@ -667,7 +667,6 @@ public class SqlEditorView extends BorderPane {
      */
     private Node createTableView(TableRowData result, String sourceTableName) {
         TableView<ObservableList<String>> tableView = new TableView<>();
-        tableView.setMaxWidth(Region.USE_PREF_SIZE);
         GlobalConfig globalConfig = GlobalConfig.getInstance();
         String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
                 globalConfig.getTableFontName(), globalConfig.getTableFontSize());
@@ -703,7 +702,13 @@ public class SqlEditorView extends BorderPane {
             setupQueryResultDeleteMenu(tableView, sourceTableName, columns);
         }
 
-        return tableView;
+        ScrollPane scrollPane = new ScrollPane(tableView);
+        scrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
+        scrollPane.setFitToHeight(true);
+        scrollPane.setFitToWidth(false);
+        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        return scrollPane;
     }
 
     /**

@@ -156,7 +156,6 @@ public class TableDataView extends BorderPane {
     private void initializeUI() {
         // TableView
         tableView = new TableView<>();
-        tableView.setMaxWidth(Region.USE_PREF_SIZE);
         GlobalConfig globalConfig = GlobalConfig.getInstance();
         String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
                 globalConfig.getTableFontName(), globalConfig.getTableFontSize());
@@ -173,10 +172,17 @@ public class TableDataView extends BorderPane {
         // 加载指示器
         loadingIndicator = new ProgressIndicator();
         loadingIndicator.setMaxSize(40, 40);
-
         loadingIndicator.setVisible(false);
 
-        centerPane = new StackPane(tableView, loadingIndicator);
+        // ScrollPane包裹TableView：提供全宽水平滚动条，TableView自身只负责垂直滚动
+        ScrollPane tableScrollPane = new ScrollPane(tableView);
+        tableScrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
+        tableScrollPane.setFitToHeight(true);
+        tableScrollPane.setFitToWidth(false);
+        tableScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        tableScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+
+        centerPane = new StackPane(tableScrollPane, loadingIndicator);
         centerPane.setPadding(Insets.EMPTY);
 
         // 分页状态栏

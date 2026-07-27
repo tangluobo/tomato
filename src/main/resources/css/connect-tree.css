@@ -363,11 +363,22 @@
     -fx-padding: 0;
 }
 
-.table-view .virtual-flow .scroll-bar:vertical {
+.table-view .virtual-flow .scroll-bar:horizontal {
     -fx-padding: 0;
+    -fx-opacity: 0;
+    -fx-pref-height: 0;
+    -fx-min-height: 0;
+    -fx-max-height: 0;
 }
 
-.table-view .virtual-flow .scroll-bar:horizontal {
+.table-view .virtual-flow .scroll-bar:horizontal .track,
+.table-view .virtual-flow .scroll-bar:horizontal .thumb {
+    -fx-pref-height: 0;
+    -fx-min-height: 0;
+    -fx-max-height: 0;
+}
+
+.table-view .virtual-flow .scroll-bar:vertical {
     -fx-padding: 0;
 }
 
