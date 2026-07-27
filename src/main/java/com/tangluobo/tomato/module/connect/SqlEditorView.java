@@ -632,7 +632,7 @@ public class SqlEditorView extends BorderPane {
                 sqlLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666; -fx-padding: 2 0;");
                 vbox.getChildren().add(sqlLabel);
 
-                ScrollPane tableView = createTableView(explainResults.get(i));
+                Node tableView = createTableView(explainResults.get(i));
                 VBox.setVgrow(tableView, Priority.ALWAYS);
                 vbox.getChildren().add(tableView);
             }
@@ -656,7 +656,7 @@ public class SqlEditorView extends BorderPane {
     /**
      * 从TableRowData创建TableView（复用逻辑）
      */
-    private ScrollPane createTableView(TableRowData result) {
+    private Node createTableView(TableRowData result) {
         return createTableView(result, null);
     }
 
@@ -665,8 +665,9 @@ public class SqlEditorView extends BorderPane {
      * @param result 表格数据
      * @param sourceTableName 源表名，若非null且有主键则启用右键删除
      */
-    private ScrollPane createTableView(TableRowData result, String sourceTableName) {
+    private Node createTableView(TableRowData result, String sourceTableName) {
         TableView<ObservableList<String>> tableView = new TableView<>();
+        tableView.setMaxWidth(Region.USE_PREF_SIZE);
         GlobalConfig globalConfig = GlobalConfig.getInstance();
         String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
                 globalConfig.getTableFontName(), globalConfig.getTableFontSize());
@@ -702,14 +703,7 @@ public class SqlEditorView extends BorderPane {
             setupQueryResultDeleteMenu(tableView, sourceTableName, columns);
         }
 
-        // ScrollPane包裹TableView，支持横向滚动
-        ScrollPane scrollPane = new ScrollPane(tableView);
-        scrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
-        scrollPane.setFitToHeight(true);
-        scrollPane.setFitToWidth(false);
-        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
-        scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
-        return scrollPane;
+        return tableView;
     }
 
     /**
