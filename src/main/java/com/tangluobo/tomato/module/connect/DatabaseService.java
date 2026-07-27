@@ -656,6 +656,11 @@ public class DatabaseService {
             sr.setSql(stmt);
             sr.setSelect(SqlSplitter.isSelectStatement(stmt));
 
+            // 尝试从SELECT语句中提取源表名，用于右键删除行
+            if (sr.isSelect()) {
+                sr.setSourceTableName(SqlSplitter.extractTableName(stmt));
+            }
+
             long start = System.currentTimeMillis();
             try (Statement jdbcStmt = conn.createStatement()) {
                 jdbcStmt.setMaxRows(pageSize);
@@ -758,6 +763,93 @@ public class DatabaseService {
             result.setTotalCount(1);
             return result;
         }
+    }
+
+    /**
+     * 获取表的主键列名列表
+     * @return 主键列名列表，若无主键返回空列表
+     */
+    public static List<String> getPrimaryKeys(ConnectionConfig config, String databaseName, String tableName) throws Exception {
+        Connection conn = getConnection(config, databaseName);
+        List<String> primaryKeys = new ArrayList<>();
+
+        try (ResultSet rs = conn.getMetaData().getPrimaryKeys(databaseName, null, tableName)) {
+            while (rs.next()) {
+                primaryKeys.add(rs.getString("COLUMN_NAME"));
+            }
+        }
+
+        return primaryKeys;
+    }
+
+    /**
+     * 根据主键删除指定行
+     * @param config 连接配置
+     * @param databaseName 数据库名
+     * @param tableName 表名
+     * @param primaryKeyColumns 主键列名列表
+     * @param columnNames 所有列名列表
+     * @param rows 要删除的行数据（每行为列值列表，顺序与columnNames对应）
+     * @return 删除的行数
+     */
+    public static int deleteRowsByPrimaryKeys(ConnectionConfig config, String databaseName, String tableName,
+                                               List<String> primaryKeyColumns, List<String> columnNames,
+                                               List<ObservableList<String>> rows) throws Exception {
+        Connection conn = getConnection(config, databaseName);
+        int totalDeleted = 0;
+
+        // 构建主键列在columnNames中的索引
+        List<Integer> pkIndexes = new ArrayList<>();
+        for (String pkCol : primaryKeyColumns) {
+            int idx = -1;
+            for (int i = 0; i < columnNames.size(); i++) {
+                if (columnNames.get(i).equalsIgnoreCase(pkCol)) {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx < 0) {
+                throw new RuntimeException("主键列 " + pkCol + " 在结果集中未找到");
+            }
+            pkIndexes.add(idx);
+        }
+
+        // 构建DELETE语句的WHERE部分：WHERE pk1=? AND pk2=?
+        String qualifiedTable = switch (config.getType()) {
+            case MYSQL -> "`" + databaseName + "`.`" + tableName + "`";
+            case POSTGRESQL, ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        };
+
+        StringBuilder whereClause = new StringBuilder();
+        for (int i = 0; i < primaryKeyColumns.size(); i++) {
+            if (i > 0) whereClause.append(" AND ");
+            String pkCol = primaryKeyColumns.get(i);
+            String quotedCol = switch (config.getType()) {
+                case MYSQL -> "`" + pkCol + "`";
+                case POSTGRESQL, ORACLE -> "\"" + pkCol + "\"";
+                default -> pkCol;
+            };
+            whereClause.append(quotedCol).append(" = ?");
+        }
+
+        String deleteSql = "DELETE FROM " + qualifiedTable + " WHERE " + whereClause;
+
+        try (PreparedStatement pstmt = conn.prepareStatement(deleteSql)) {
+            for (ObservableList<String> row : rows) {
+                for (int i = 0; i < pkIndexes.size(); i++) {
+                    String value = row.get(pkIndexes.get(i));
+                    if ("NULL".equals(value)) {
+                        pstmt.setNull(i + 1, Types.VARCHAR);
+                    } else {
+                        pstmt.setString(i + 1, value);
+                    }
+                }
+                totalDeleted += pstmt.executeUpdate();
+            }
+        }
+
+        return totalDeleted;
     }
 
     /**

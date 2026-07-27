@@ -602,7 +602,7 @@ public class SqlEditorView extends BorderPane {
     private Tab buildResultTab(String tabName, SqlStatementResult stmtResult) {
         Tab tab = new Tab(tabName);
         if (stmtResult.getResultData() != null) {
-            tab.setContent(createTableView(stmtResult.getResultData()));
+            tab.setContent(createTableView(stmtResult.getResultData(), stmtResult.getSourceTableName()));
         } else {
             Label label = new Label("无结果集");
             label.setStyle("-fx-text-fill: #888; -fx-padding: 16;");
@@ -655,9 +655,19 @@ public class SqlEditorView extends BorderPane {
      * 从TableRowData创建TableView（复用逻辑）
      */
     private TableView<ObservableList<String>> createTableView(TableRowData result) {
+        return createTableView(result, null);
+    }
+
+    /**
+     * 从TableRowData创建TableView，可指定源表名以支持右键删除行
+     * @param result 表格数据
+     * @param sourceTableName 源表名，若非null且有主键则启用右键删除
+     */
+    private TableView<ObservableList<String>> createTableView(TableRowData result, String sourceTableName) {
         TableView<ObservableList<String>> tableView = new TableView<>();
         tableView.setStyle("-fx-font-size: 12px;");
         tableView.setPlaceholder(new Label("无数据"));
+        tableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
 
         List<String> columns = result.getColumnNames();
         for (int i = 0; i < columns.size(); i++) {
@@ -673,7 +683,82 @@ public class SqlEditorView extends BorderPane {
         if (result.getRows() != null) {
             tableView.getItems().addAll(result.getRows());
         }
+
+        // 如果有源表名，异步加载主键并设置右键删除菜单
+        if (sourceTableName != null) {
+            setupQueryResultDeleteMenu(tableView, sourceTableName, columns);
+        }
+
         return tableView;
+    }
+
+    /**
+     * 为查询结果TableView设置右键删除菜单
+     */
+    private void setupQueryResultDeleteMenu(TableView<ObservableList<String>> tableView, String tableName, List<String> columnNames) {
+        ConnectionConfig config = connectionCombo.getValue();
+        String dbName = databaseCombo.getValue();
+        if (config == null || dbName == null) return;
+
+        new Thread(() -> {
+            try {
+                List<String> pks = DatabaseService.getPrimaryKeys(config, dbName, tableName);
+                if (pks.isEmpty()) return;
+                Platform.runLater(() -> {
+                    ContextMenu contextMenu = new ContextMenu();
+                    MenuItem deleteItem = new MenuItem("删除所选行");
+                    deleteItem.setStyle("-fx-text-fill: #c00;");
+                    deleteItem.setOnAction(e -> handleQueryResultDeleteRows(tableView, tableName, pks, columnNames));
+                    contextMenu.getItems().add(deleteItem);
+                    tableView.setContextMenu(contextMenu);
+                });
+            } catch (Exception e) {
+                // 获取主键失败，不提供删除功能
+            }
+        }, "DB-LoadPrimaryKeys-Query").start();
+    }
+
+    /**
+     * 处理查询结果表格中的行删除
+     */
+    private void handleQueryResultDeleteRows(TableView<ObservableList<String>> tableView, String tableName,
+                                              List<String> primaryKeyColumns, List<String> columnNames) {
+        ConnectionConfig config = connectionCombo.getValue();
+        String dbName = databaseCombo.getValue();
+        if (config == null || dbName == null) return;
+
+        ObservableList<ObservableList<String>> selectedRows = tableView.getSelectionModel().getSelectedItems();
+        if (selectedRows.isEmpty()) return;
+
+        int count = selectedRows.size();
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("删除行");
+        confirm.setHeaderText(null);
+        confirm.setContentText("确定要从表 " + tableName + " 中删除选中的 " + count + " 行吗？此操作不可撤销！");
+        confirm.showAndWait().ifPresent(response -> {
+            if (response != ButtonType.OK) return;
+
+            List<ObservableList<String>> rowsToDelete = new ArrayList<>(selectedRows);
+
+            new Thread(() -> {
+                try {
+                    int deleted = DatabaseService.deleteRowsByPrimaryKeys(
+                            config, dbName, tableName,
+                            primaryKeyColumns, columnNames, rowsToDelete);
+                    Platform.runLater(() -> {
+                        tableView.getItems().removeAll(rowsToDelete);
+                    });
+                } catch (Exception e) {
+                    Platform.runLater(() -> {
+                        Alert err = new Alert(Alert.AlertType.ERROR);
+                        err.setTitle("删除失败");
+                        err.setHeaderText(null);
+                        err.setContentText("删除行失败: " + e.getMessage());
+                        err.showAndWait();
+                    });
+                }
+            }, "DB-DeleteRows-Query").start();
+        });
     }
 
     // ==================== Getter/Setter ====================

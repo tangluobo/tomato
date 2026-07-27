@@ -12,6 +12,7 @@ public class SqlStatementResult {
     private TableRowData resultData;
     private int updateCount;
     private boolean isSelect;
+    private String sourceTableName; // 查询的源表名，用于右键删除行
 
     public String getSql() { return sql; }
     public void setSql(String sql) { this.sql = sql; }
@@ -36,4 +37,7 @@ public class SqlStatementResult {
 
     public boolean isSelect() { return isSelect; }
     public void setSelect(boolean select) { isSelect = select; }
+
+    public String getSourceTableName() { return sourceTableName; }
+    public void setSourceTableName(String sourceTableName) { this.sourceTableName = sourceTableName; }
 }

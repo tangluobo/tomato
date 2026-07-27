@@ -5,16 +5,13 @@ import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
-import javafx.scene.control.Button;
-import javafx.scene.control.Label;
-import javafx.scene.control.ProgressIndicator;
-import javafx.scene.control.TableColumn;
-import javafx.scene.control.TableView;
-import javafx.scene.control.TextField;
+import javafx.scene.control.*;
+import javafx.scene.input.MouseButton;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -43,13 +40,114 @@ public class TableDataView extends BorderPane {
     private int totalPages = 0;
     private long totalCount = 0;
 
+    // 主键列名缓存
+    private List<String> primaryKeyColumns;
+
     public TableDataView(ConnectionConfig config, String databaseName, String tableName) {
         this.config = config;
         this.databaseName = databaseName;
         this.tableName = tableName;
 
         initializeUI();
+        loadPrimaryKeys();
         loadData(1);
+    }
+
+    /**
+     * 异步加载主键信息
+     */
+    private void loadPrimaryKeys() {
+        new Thread(() -> {
+            try {
+                List<String> pks = DatabaseService.getPrimaryKeys(config, databaseName, tableName);
+                Platform.runLater(() -> {
+                    this.primaryKeyColumns = pks;
+                    setupRowContextMenu();
+                });
+            } catch (Exception e) {
+                // 获取主键失败时不影响正常使用，仅不提供删除功能
+                this.primaryKeyColumns = new ArrayList<>();
+            }
+        }, "DB-LoadPrimaryKeys").start();
+    }
+
+    /**
+     * 设置表格行右键菜单：如果有主键则提供删除功能
+     */
+    private void setupRowContextMenu() {
+        if (primaryKeyColumns == null || primaryKeyColumns.isEmpty()) return;
+
+        ContextMenu contextMenu = new ContextMenu();
+        MenuItem deleteItem = new MenuItem("删除所选行");
+        deleteItem.setStyle("-fx-text-fill: #c00;");
+        deleteItem.setOnAction(e -> handleDeleteSelectedRows());
+        contextMenu.getItems().add(deleteItem);
+
+        tableView.setContextMenu(contextMenu);
+
+        // 右键时自动选中行
+        tableView.setOnContextMenuRequested(event -> {
+            // 如果右键的行未被选中，则只选中该行
+            if (tableView.getSelectionModel().getSelectedItems().isEmpty()) {
+                // 不做额外处理，JavaFX默认行为会选中
+            }
+        });
+    }
+
+    /**
+     * 处理删除选中行
+     */
+    private void handleDeleteSelectedRows() {
+        if (primaryKeyColumns == null || primaryKeyColumns.isEmpty()) return;
+
+        ObservableList<ObservableList<String>> selectedRows = tableView.getSelectionModel().getSelectedItems();
+        if (selectedRows.isEmpty()) return;
+
+        int count = selectedRows.size();
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("删除行");
+        confirm.setHeaderText(null);
+        confirm.setContentText("确定要删除选中的 " + count + " 行吗？此操作不可撤销！");
+        confirm.showAndWait().ifPresent(response -> {
+            if (response != ButtonType.OK) return;
+
+            // 复制选中行数据（避免在删除过程中ObservableList变化）
+            List<ObservableList<String>> rowsToDelete = new ArrayList<>(selectedRows);
+            // 获取当前列名（跳过行号列#）
+            List<String> dataColumns = new ArrayList<>();
+            for (TableColumn<?, ?> col : tableView.getColumns()) {
+                String colName = col.getText();
+                if (!"#".equals(colName)) {
+                    dataColumns.add(colName);
+                }
+            }
+
+            new Thread(() -> {
+                try {
+                    int deleted = DatabaseService.deleteRowsByPrimaryKeys(
+                            config, databaseName, tableName,
+                            primaryKeyColumns, dataColumns, rowsToDelete);
+                    Platform.runLater(() -> {
+                        // 从TableView中移除已删除的行
+                        tableView.getItems().removeAll(rowsToDelete);
+                        // 更新总行数
+                        totalCount -= deleted;
+                        totalPages = (int) Math.ceil((double) totalCount / DEFAULT_PAGE_SIZE);
+                        if (totalPages < 1) totalPages = 1;
+                        if (currentPage > totalPages) currentPage = totalPages;
+                        updateStatusBar();
+                    });
+                } catch (Exception e) {
+                    Platform.runLater(() -> {
+                        Alert err = new Alert(Alert.AlertType.ERROR);
+                        err.setTitle("删除失败");
+                        err.setHeaderText(null);
+                        err.setContentText("删除行失败: " + e.getMessage());
+                        err.showAndWait();
+                    });
+                }
+            }, "DB-DeleteRows").start();
+        });
     }
 
     private void initializeUI() {
@@ -57,6 +155,7 @@ public class TableDataView extends BorderPane {
         tableView = new TableView<>();
         tableView.setStyle("-fx-font-size: 12px;");
         tableView.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        tableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
 
         // 加载指示器
         loadingIndicator = new ProgressIndicator();
