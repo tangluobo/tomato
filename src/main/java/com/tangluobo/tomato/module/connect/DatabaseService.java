@@ -1172,7 +1172,7 @@ public class DatabaseService {
                 col.put("字段名", colName);
                 col.put("类型", rs.getString("TYPE_NAME"));
                 col.put("长度", rs.getString("COLUMN_SIZE"));
-                col.put("可为空", "YES".equalsIgnoreCase(rs.getString("IS_NULLABLE")) ? "是" : "否");
+                col.put("非空", "NO".equalsIgnoreCase(rs.getString("IS_NULLABLE")) ? "是" : "否");
                 col.put("主键", primaryKeys.contains(colName) ? "是" : "否");
                 String autoIncrement = rs.getString("IS_AUTOINCREMENT");
                 col.put("自增", "YES".equalsIgnoreCase(autoIncrement) ? "是" : "否");

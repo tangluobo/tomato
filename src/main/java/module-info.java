@@ -15,6 +15,7 @@ module tomato {
     requires org.apache.commons.compress;
     requires org.apache.commons.codec;
     requires org.apache.commons.io;
+    requires rdp;
 
     opens com.tangluobo.tomato to javafx.fxml;
     exports com.tangluobo.tomato;
@@ -30,6 +31,8 @@ module tomato {
     opens com.tangluobo.tomato.utils to com.google.gson, javafx.fxml;
     exports com.tangluobo.tomato.ssh;
     opens com.tangluobo.tomato.ssh to javafx.fxml;
+    exports com.tangluobo.tomato.rdp;
+    opens com.tangluobo.tomato.rdp to javafx.fxml;
     exports com.tangluobo.tomato.ssh.zmodem;
     exports com.tangluobo.tomato.ssh.zmodem.xfer.util;
     exports com.tangluobo.tomato.ssh.zmodem.xfer.zm.util;

@@ -85,6 +85,11 @@ public class ConnectionConfigDialog {
     private CheckBox simpleSavePasswordCheckBox;
     private TextField simpleDescriptionField;
 
+    // ===== RDP专属字段 =====
+    private TextField rdpDomainField;
+    private ComboBox<String> rdpResolutionCombo;
+    private ComboBox<String> rdpColorDepthCombo;
+
     /**
      * 密钥条目：每行一个密钥文件（复选框 + 路径 + 浏览 + 删除）
      */
@@ -604,6 +609,31 @@ public class ConnectionConfigDialog {
         simplePwdBox.getChildren().addAll(simplePasswordField, simpleSavePasswordCheckBox);
         grid.add(simplePwdBox, 1, row++);
 
+        // RDP专属字段：域
+        grid.add(new Label("域："), 0, row);
+        rdpDomainField = new TextField();
+        rdpDomainField.setPromptText("Windows域（可选）");
+        rdpDomainField.setPrefWidth(280);
+        grid.add(rdpDomainField, 1, row++);
+
+        // RDP专属字段：分辨率
+        grid.add(new Label("分辨率："), 0, row);
+        rdpResolutionCombo = new ComboBox<>();
+        rdpResolutionCombo.getItems().addAll("800x600", "1024x768", "1280x720", "1280x1024", "1920x1080");
+        rdpResolutionCombo.setEditable(true);
+        rdpResolutionCombo.setPromptText("宽x高");
+        rdpResolutionCombo.setPrefWidth(150);
+        rdpResolutionCombo.setValue("1024x768");
+        grid.add(rdpResolutionCombo, 1, row++);
+
+        // RDP专属字段：色深
+        grid.add(new Label("色深："), 0, row);
+        rdpColorDepthCombo = new ComboBox<>();
+        rdpColorDepthCombo.getItems().addAll("16位", "24位");
+        rdpColorDepthCombo.setPrefWidth(100);
+        rdpColorDepthCombo.setValue("24位");
+        grid.add(rdpColorDepthCombo, 1, row++);
+
         grid.add(new Label("备注："), 0, row);
         simpleDescriptionField = new TextField();
         simpleDescriptionField.setPromptText("备注信息");
@@ -859,6 +889,22 @@ public class ConnectionConfigDialog {
             }
             simpleSavePasswordCheckBox.setSelected(existingConfig.isSavePassword());
             simpleDescriptionField.setText(existingConfig.getDescription());
+
+            // RDP专属配置回填
+            if (selectedType == ConnectType.RDP) {
+                if (existingConfig.getDomain() != null) {
+                    rdpDomainField.setText(existingConfig.getDomain());
+                }
+                int w = existingConfig.getScreenWidth();
+                int h = existingConfig.getScreenHeight();
+                if (w > 0 && h > 0) {
+                    rdpResolutionCombo.setValue(w + "x" + h);
+                }
+                int bpp = existingConfig.getColorDepth();
+                if (bpp > 0) {
+                    rdpColorDepthCombo.setValue(bpp + "位");
+                }
+            }
         }
     }
 
@@ -980,6 +1026,25 @@ public class ConnectionConfigDialog {
                 config.setPassword(null);
             }
             config.setDescription(simpleDescriptionField.getText().trim());
+
+            // RDP专属配置
+            if (selectedType == ConnectType.RDP) {
+                config.setDomain(rdpDomainField.getText().trim());
+                // 解析分辨率
+                String resolution = rdpResolutionCombo.getValue();
+                if (resolution != null && resolution.contains("x")) {
+                    try {
+                        String[] parts = resolution.split("x");
+                        config.setScreenWidth(Integer.parseInt(parts[0].trim()));
+                        config.setScreenHeight(Integer.parseInt(parts[1].trim()));
+                    } catch (NumberFormatException ignored) {}
+                }
+                // 解析色深
+                String colorDepth = rdpColorDepthCombo.getValue();
+                if (colorDepth != null) {
+                    config.setColorDepth(Integer.parseInt(colorDepth.replace("位", "").trim()));
+                }
+            }
         }
 
         confirmed = true;

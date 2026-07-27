@@ -1,6 +1,7 @@
 package com.tangluobo.tomato.module.connect;
 
 import com.tangluobo.tomato.module.Module;
+import com.tangluobo.tomato.rdp.RdpPane;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
 import javafx.application.Platform;
 import javafx.collections.ObservableList;
@@ -1922,6 +1923,12 @@ public class ConnectModule implements Module {
             }
         }
 
+        // RDP类型：使用Java原生RDP客户端连接
+        if (config.getType() == ConnectType.RDP) {
+            doRdpConnect(config);
+            return;
+        }
+
         // 数据库类型连接：通过树节点加载数据库列表
         boolean isDatabase = config.getType() == ConnectType.MYSQL
             || config.getType() == ConnectType.POSTGRESQL
@@ -2247,6 +2254,91 @@ public class ConnectModule implements Module {
                 e.printStackTrace();
             }
         }, "SSH-Connect").start();
+    }
+
+    /**
+     * 处理RDP连接，使用Java原生RDP协议实现远程桌面
+     */
+    private void doRdpConnect(ConnectionConfig config) {
+        // 需要密码但密码未保存时，弹出输入密码对话框
+        String password = config.getPassword();
+        if (password == null || password.isEmpty()) {
+            Dialog<String> pwdDialog = new Dialog<>();
+            pwdDialog.setTitle("输入密码");
+            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
+            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+            GridPane grid = new GridPane();
+            grid.setHgap(10);
+            grid.setVgap(10);
+            grid.setPadding(new Insets(20, 10, 10, 10));
+            PasswordField pf = new PasswordField();
+            pf.setPrefWidth(250);
+            grid.add(new Label("密码："), 0, 0);
+            grid.add(pf, 1, 0);
+            pwdDialog.getDialogPane().setContent(grid);
+
+            pwdDialog.setResultConverter(dialogButton -> {
+                if (dialogButton == ButtonType.OK) {
+                    return pf.getText();
+                }
+                return null;
+            });
+
+            var result = pwdDialog.showAndWait();
+            if (result.isEmpty() || result.get().isEmpty()) return;
+            password = result.get();
+        }
+
+        // 创建RDP面板
+        RdpPane rdpPane = new RdpPane();
+
+        Tab tab = new Tab(config.getName());
+        tab.setContent(rdpPane);
+        tab.setUserData(config.getId());
+
+        // 标签右键菜单（RDP不支持复制会话）
+        ContextMenu tabContextMenu = new ContextMenu();
+
+        MenuItem sessionConfigItem = new MenuItem("会话配置");
+        sessionConfigItem.setOnAction(e -> {
+            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
+            SessionConfigDialog.show(stage, config);
+            ConfigManager.saveConnections(connections);
+        });
+
+        tabContextMenu.getItems().add(sessionConfigItem);
+        tab.setContextMenu(tabContextMenu);
+
+        // 标签关闭时断开连接
+        tab.setOnClosed(e -> {
+            rdpPane.disconnect();
+            if (terminalTabPane.getTabs().isEmpty()) {
+                showWelcomeView();
+            }
+        });
+
+        // Tab选中时请求RDP画布焦点
+        terminalTabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
+            if (newTab == tab) {
+                rdpPane.requestRdpFocus();
+            }
+        });
+
+        terminalTabPane.getTabs().add(tab);
+        terminalTabPane.getSelectionModel().select(tab);
+        showTerminalView();
+
+        // 获取RDP配置参数
+        int rdpPort = config.getPort() > 0 ? config.getPort() : 3389;
+        int width = config.getScreenWidth() > 0 ? config.getScreenWidth() : 1024;
+        int height = config.getScreenHeight() > 0 ? config.getScreenHeight() : 768;
+        int bpp = config.getColorDepth() > 0 ? config.getColorDepth() : 24;
+        String domain = config.getDomain();
+
+        // 执行RDP连接
+        rdpPane.connect(config.getHost(), rdpPort, config.getUsername(), password,
+                domain, width, height, bpp);
     }
 
     private void handleAddFolder(TreeItem<String> parent) {

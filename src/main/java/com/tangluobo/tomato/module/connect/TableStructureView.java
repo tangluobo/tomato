@@ -140,7 +140,7 @@ public class TableStructureView extends BorderPane {
                 case "字段名" -> 150;
                 case "类型" -> 120;
                 case "长度" -> 60;
-                case "可为空", "主键", "自增" -> 60;
+                case "可为空", "非空", "主键", "自增" -> 60;
                 case "默认值" -> 120;
                 case "注释" -> 200;
                 default -> 80;
@@ -168,6 +168,9 @@ public class TableStructureView extends BorderPane {
                         row.set(colIndex, newValue);
                     }
                 });
+            } else if ("主键".equals(title) || "非空".equals(title)) {
+                // "主键"/"非空"列使用复选框，点击直接切换
+                col.setCellFactory(tc -> new PrimaryKeyCheckBoxTableCell());
             } else {
                 // 其他列保持只读
                 col.setCellFactory(tc -> new TableCell<>() {
@@ -216,6 +219,44 @@ public class TableStructureView extends BorderPane {
         String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
                 config.getTableFontName(), config.getTableFontSize());
         tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0;");
+    }
+
+    /**
+     * "主键"列的复选框单元格，点击直接切换，无需先进入编辑模式
+     */
+    private class PrimaryKeyCheckBoxTableCell extends TableCell<ObservableList<String>, String> {
+        private final CheckBox checkBox;
+
+        public PrimaryKeyCheckBoxTableCell() {
+            this.checkBox = new CheckBox();
+            checkBox.setStyle("-fx-padding: 0; -fx-alignment: center;");
+            // 点击复选框直接更新数据模型
+            checkBox.setOnAction(e -> {
+                TableRow<?> tableRow = getTableRow();
+                if (tableRow == null || tableRow.getItem() == null) return;
+                @SuppressWarnings("unchecked")
+                ObservableList<String> row = (ObservableList<String>) tableRow.getItem();
+                int colIndex = getTableView().getColumns().indexOf(getTableColumn());
+                if (colIndex >= 0 && colIndex < row.size()) {
+                    row.set(colIndex, checkBox.isSelected() ? "是" : "否");
+                }
+            });
+        }
+
+        @Override
+        protected void updateItem(String item, boolean empty) {
+            super.updateItem(item, empty);
+            if (empty || item == null) {
+                setGraphic(null);
+                setText(null);
+                setStyle("-fx-border-color: transparent; -fx-padding: 0;");
+            } else {
+                checkBox.setSelected("是".equals(item));
+                setGraphic(checkBox);
+                setText(null);
+                setStyle("-fx-alignment: center; -fx-border-color: transparent; -fx-padding: 0;");
+            }
+        }
     }
 
     /**
