@@ -24,8 +24,7 @@ import javafx.scene.shape.Polygon;
 import javafx.scene.shape.Rectangle;
 import javafx.scene.shape.StrokeType;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 /**
  * 表格数据展示视图：包含工具栏、TableView和分页状态栏
@@ -64,6 +63,12 @@ public class TableDataView extends BorderPane {
 
     // 列名缓存（数据列，不含行选择器列）
     private List<String> dataColumnNames = new ArrayList<>();
+
+    // ---- 行状态追踪（延迟保存） ----
+    /** 尚未持久化到数据库的新行 */
+    private final Set<ObservableList<String>> newRows = new HashSet<>();
+    /** 现有行的原始值（加载时的快照），用于检测哪些列被修改 */
+    private final Map<ObservableList<String>, ObservableList<String>> originalValuesMap = new HashMap<>();
 
     public TableDataView(ConnectionConfig config, String databaseName, String tableName) {
         this.config = config;
@@ -136,8 +141,11 @@ public class TableDataView extends BorderPane {
         });
     }
 
+    // Shift选择锚点：记录最近一次普通点击的cell位置 [row, colIndex]
+    private int[] anchorCell = {-1, -1};
+
     /**
-     * 鼠标拖拽选中多个cell
+     * 鼠标拖拽选中多个cell + Shift点击范围选中
      */
     private void setupDragSelection() {
         // 记录拖拽起始cell
@@ -149,9 +157,30 @@ public class TableDataView extends BorderPane {
             // 找到点击的cell位置
             int[] cellPos = getCellPositionAt(event);
             if (cellPos == null) return;
+
+            if (event.isShiftDown() && anchorCell[0] >= 0) {
+                // Shift+点击：从锚点到当前cell的矩形范围选中
+                int minRow = Math.min(anchorCell[0], cellPos[0]);
+                int maxRow = Math.max(anchorCell[0], cellPos[0]);
+                int minCol = Math.min(anchorCell[1], cellPos[1]);
+                int maxCol = Math.max(anchorCell[1], cellPos[1]);
+                tableView.getSelectionModel().clearSelection();
+                for (int r = minRow; r <= maxRow; r++) {
+                    for (int c = minCol; c <= maxCol; c++) {
+                        TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(c);
+                        tableView.getSelectionModel().select(r, col);
+                    }
+                }
+                event.consume();
+                return;
+            }
+
             dragStart[0] = cellPos[0];
             dragStart[1] = cellPos[1];
             dragging[0] = false;
+            // 更新锚点
+            anchorCell[0] = cellPos[0];
+            anchorCell[1] = cellPos[1];
             // 清除已有选中，选中起始cell
             tableView.getSelectionModel().clearSelection();
             TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(cellPos[1]);
@@ -274,12 +303,21 @@ public class TableDataView extends BorderPane {
      * 处理删除选中行
      */
     private void handleDeleteSelectedRows() {
-        if (primaryKeyColumns == null || primaryKeyColumns.isEmpty()) return;
-
         // cell selection模式下getSelectedItems可能包含重复行，需去重
         List<ObservableList<String>> selectedRows = tableView.getSelectionModel().getSelectedItems()
                 .stream().distinct().toList();
         if (selectedRows.isEmpty()) return;
+
+        // 分离新行和现有行
+        List<ObservableList<String>> newRowsToDelete = new ArrayList<>();
+        List<ObservableList<String>> existingRowsToDelete = new ArrayList<>();
+        for (ObservableList<String> row : selectedRows) {
+            if (newRows.contains(row)) {
+                newRowsToDelete.add(row);
+            } else {
+                existingRowsToDelete.add(row);
+            }
+        }
 
         int count = selectedRows.size();
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
@@ -289,33 +327,57 @@ public class TableDataView extends BorderPane {
         confirm.showAndWait().ifPresent(response -> {
             if (response != ButtonType.OK) return;
 
-            // 复制选中行数据（避免在删除过程中ObservableList变化）
-            List<ObservableList<String>> rowsToDelete = new ArrayList<>(selectedRows);
-            List<String> dataColumns = getDataColumnNames();
-
-            new Thread(() -> {
-                try {
-                    int deleted = DatabaseService.deleteRowsByPrimaryKeys(
-                            config, databaseName, tableName,
-                            primaryKeyColumns, dataColumns, rowsToDelete);
-                    Platform.runLater(() -> {
-                        tableView.getItems().removeAll(rowsToDelete);
-                        totalCount -= deleted;
-                        totalPages = (int) Math.ceil((double) totalCount / DEFAULT_PAGE_SIZE);
-                        if (totalPages < 1) totalPages = 1;
-                        if (currentPage > totalPages) currentPage = totalPages;
-                        updateStatusBar();
-                    });
-                } catch (Exception e) {
-                    Platform.runLater(() -> {
-                        Alert err = new Alert(Alert.AlertType.ERROR);
-                        err.setTitle("删除失败");
-                        err.setHeaderText(null);
-                        err.setContentText("删除行失败: " + e.getMessage());
-                        err.showAndWait();
-                    });
+            // 新行：仅从UI和追踪集合中移除，不调用DB
+            if (!newRowsToDelete.isEmpty()) {
+                for (ObservableList<String> row : newRowsToDelete) {
+                    newRows.remove(row);
+                    originalValuesMap.remove(row);
                 }
-            }, "DB-DeleteRows").start();
+                tableView.getItems().removeAll(newRowsToDelete);
+            }
+
+            // 现有行：从DB删除
+            if (!existingRowsToDelete.isEmpty()) {
+                if (primaryKeyColumns == null || primaryKeyColumns.isEmpty()) {
+                    Alert warn = new Alert(Alert.AlertType.WARNING);
+                    warn.setTitle("无法删除");
+                    warn.setHeaderText(null);
+                    warn.setContentText("该表无主键，无法从数据库删除行");
+                    warn.showAndWait();
+                    return;
+                }
+
+                // 复制选中行数据（避免在删除过程中ObservableList变化）
+                List<ObservableList<String>> rowsToDelete = new ArrayList<>(existingRowsToDelete);
+                List<String> dataColumns = getDataColumnNames();
+
+                new Thread(() -> {
+                    try {
+                        int deleted = DatabaseService.deleteRowsByPrimaryKeys(
+                                config, databaseName, tableName,
+                                primaryKeyColumns, dataColumns, rowsToDelete);
+                        Platform.runLater(() -> {
+                            for (ObservableList<String> row : rowsToDelete) {
+                                originalValuesMap.remove(row);
+                            }
+                            tableView.getItems().removeAll(rowsToDelete);
+                            totalCount -= deleted;
+                            totalPages = (int) Math.ceil((double) totalCount / DEFAULT_PAGE_SIZE);
+                            if (totalPages < 1) totalPages = 1;
+                            if (currentPage > totalPages) currentPage = totalPages;
+                            updateStatusBar();
+                        });
+                    } catch (Exception e) {
+                        Platform.runLater(() -> {
+                            Alert err = new Alert(Alert.AlertType.ERROR);
+                            err.setTitle("删除失败");
+                            err.setHeaderText(null);
+                            err.setContentText("删除行失败: " + e.getMessage());
+                            err.showAndWait();
+                        });
+                    }
+                }, "DB-DeleteRows").start();
+            }
         });
     }
 
@@ -330,6 +392,54 @@ public class TableDataView extends BorderPane {
             }
         }
         return cols;
+    }
+
+    /**
+     * 判断行是否完全为空（所有单元格都是空字符串）
+     */
+    private boolean isRowEmpty(ObservableList<String> row) {
+        for (String val : row) {
+            if (val != null && !val.isEmpty()) return false;
+        }
+        return true;
+    }
+
+    /**
+     * 判断是否有未保存的更改
+     */
+    private boolean hasUnsavedChanges() {
+        // 检查新行是否有非空内容
+        for (ObservableList<String> row : newRows) {
+            if (!isRowEmpty(row)) return true;
+        }
+        // 检查现有行是否有值变化
+        for (Map.Entry<ObservableList<String>, ObservableList<String>> entry : originalValuesMap.entrySet()) {
+            ObservableList<String> current = entry.getKey();
+            ObservableList<String> original = entry.getValue();
+            // 跳过新行
+            if (newRows.contains(current)) continue;
+            for (int i = 0; i < current.size(); i++) {
+                String orig = i < original.size() ? original.get(i) : "";
+                if (!current.get(i).equals(orig)) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 获取指定行的状态
+     */
+    private RowState getRowState(ObservableList<String> row) {
+        if (row == null) return RowState.EXISTING;
+        if (newRows.contains(row)) return RowState.NEW;
+        ObservableList<String> original = originalValuesMap.get(row);
+        if (original != null) {
+            for (int i = 0; i < row.size(); i++) {
+                String orig = i < original.size() ? original.get(i) : "";
+                if (!row.get(i).equals(orig)) return RowState.EXISTING_DIRTY;
+            }
+        }
+        return RowState.EXISTING;
     }
 
     private void initializeUI() {
@@ -432,7 +542,7 @@ public class TableDataView extends BorderPane {
     }
 
     /**
-     * 创建工具栏：添加、删除、更新、刷新按钮（图标+名称）
+     * 创建工具栏：添加、删除、保存、刷新按钮（图标+名称）
      */
     private HBox createToolBar() {
         HBox toolBar = new HBox(2);
@@ -440,17 +550,17 @@ public class TableDataView extends BorderPane {
         toolBar.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #ddd; -fx-border-width: 0 0 1 0;");
         toolBar.setAlignment(Pos.CENTER_LEFT);
 
-        // 添加按钮：绿色加号
+        // 添加按钮：绿色加号（仅在UI添加空行，不触发DB插入）
         Button addBtn = createToolBarButton("添加", createAddIcon());
-        addBtn.setOnAction(e -> handleAddRow());
+        addBtn.setOnAction(e -> handleAddNewRow());
 
         // 删除按钮：红色减号/叉号
         Button deleteBtn = createToolBarButton("删除", createDeleteIcon());
         deleteBtn.setOnAction(e -> handleDeleteSelectedRows());
 
-        // 更新按钮：蓝色上箭头/提交
-        Button updateBtn = createToolBarButton("更新", createUpdateIcon());
-        updateBtn.setOnAction(e -> handleUpdateSubmit());
+        // 保存按钮：蓝色上箭头（提交所有更改）
+        Button saveBtn = createToolBarButton("保存", createSaveIcon());
+        saveBtn.setOnAction(e -> handleSave());
 
         // 分隔符
         Separator separator = new Separator();
@@ -461,7 +571,7 @@ public class TableDataView extends BorderPane {
         Button refreshBtn = createToolBarButton("刷新", createRefreshIcon());
         refreshBtn.setOnAction(e -> refreshData());
 
-        toolBar.getChildren().addAll(addBtn, deleteBtn, updateBtn, separator, refreshBtn);
+        toolBar.getChildren().addAll(addBtn, deleteBtn, saveBtn, separator, refreshBtn);
         return toolBar;
     }
 
@@ -509,8 +619,8 @@ public class TableDataView extends BorderPane {
         return g;
     }
 
-    /** 更新图标：蓝色上箭头（提交） */
-    private Node createUpdateIcon() {
+    /** 保存图标：蓝色上箭头 */
+    private Node createSaveIcon() {
         javafx.scene.Group g = new javafx.scene.Group();
         Rectangle bg = new Rectangle(14, 14);
         bg.setFill(Color.valueOf("#1E88E5"));
@@ -537,35 +647,123 @@ public class TableDataView extends BorderPane {
     }
 
     /**
-     * 处理添加行：插入一行DEFAULT值后刷新
+     * 在表格底部添加一行空白行（仅UI，不触发DB插入）
      */
-    private void handleAddRow() {
-        List<String> columns = getDataColumnNames();
-        if (columns.isEmpty()) return;
-
-        new Thread(() -> {
-            try {
-                DatabaseService.insertEmptyRow(config, databaseName, tableName, columns);
-                Platform.runLater(() -> refreshData());
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    Alert err = new Alert(Alert.AlertType.ERROR);
-                    err.setTitle("添加失败");
-                    err.setHeaderText(null);
-                    err.setContentText("添加行失败: " + e.getMessage());
-                    err.showAndWait();
-                });
-            }
-        }, "DB-InsertRow").start();
+    private void handleAddNewRow() {
+        addEmptyNewRow();
     }
 
     /**
-     * 处理更新提交：提交所有编辑中的单元格
+     * 添加空白新行到tableView底部
      */
-    private void handleUpdateSubmit() {
+    private void addEmptyNewRow() {
+        List<String> columns = getDataColumnNames();
+        if (columns.isEmpty()) return;
+
+        ObservableList<String> emptyRow = FXCollections.observableArrayList();
+        for (int i = 0; i < columns.size(); i++) {
+            emptyRow.add("");  // 空字符串，不是"NULL"
+        }
+        newRows.add(emptyRow);
+        tableView.getItems().add(emptyRow);
+    }
+
+    /**
+     * 保存所有更改：INSERT新行，UPDATE修改的现有行
+     */
+    private void handleSave() {
+        // 先提交当前正在编辑的单元格
         if (tableView.getEditingCell() != null) {
             tableView.edit(-1, null);
         }
+
+        List<String> dataColumns = getDataColumnNames();
+        if (dataColumns.isEmpty()) return;
+
+        // 收集非空新行（跳过完全空白的新行）
+        List<ObservableList<String>> rowsToInsert = new ArrayList<>();
+        for (ObservableList<String> row : newRows) {
+            if (!isRowEmpty(row)) {
+                rowsToInsert.add(row);
+            }
+        }
+
+        // 收集有修改的现有行
+        List<ObservableList<String>> rowsToUpdate = new ArrayList<>();
+        List<ObservableList<String>> originalValuesForUpdate = new ArrayList<>();
+        List<Set<Integer>> modifiedColumnsPerRow = new ArrayList<>();
+        for (Map.Entry<ObservableList<String>, ObservableList<String>> entry : originalValuesMap.entrySet()) {
+            ObservableList<String> currentRow = entry.getKey();
+            // 跳过新行
+            if (newRows.contains(currentRow)) continue;
+            ObservableList<String> originalRow = entry.getValue();
+            Set<Integer> modifiedCols = new LinkedHashSet<>();
+            for (int i = 0; i < currentRow.size(); i++) {
+                String current = currentRow.get(i);
+                String original = i < originalRow.size() ? originalRow.get(i) : "";
+                if (!current.equals(original)) {
+                    modifiedCols.add(i);
+                }
+            }
+            if (!modifiedCols.isEmpty()) {
+                rowsToUpdate.add(currentRow);
+                originalValuesForUpdate.add(originalRow);
+                modifiedColumnsPerRow.add(modifiedCols);
+            }
+        }
+
+        if (rowsToInsert.isEmpty() && rowsToUpdate.isEmpty()) {
+            // 没有需要保存的更改
+            return;
+        }
+
+        // 检查更新操作是否需要主键
+        if (!rowsToUpdate.isEmpty() && (primaryKeyColumns == null || primaryKeyColumns.isEmpty())) {
+            Alert warn = new Alert(Alert.AlertType.WARNING);
+            warn.setTitle("无法更新");
+            warn.setHeaderText(null);
+            warn.setContentText("该表无主键，无法更新现有行。只有新行会被插入。");
+            warn.showAndWait();
+            // 继续插入新行，跳过更新
+            rowsToUpdate.clear();
+            originalValuesForUpdate.clear();
+            modifiedColumnsPerRow.clear();
+        }
+
+        final List<ObservableList<String>> finalRowsToInsert = new ArrayList<>(rowsToInsert);
+        final List<ObservableList<String>> finalRowsToUpdate = new ArrayList<>(rowsToUpdate);
+        final List<ObservableList<String>> finalOriginalValues = new ArrayList<>(originalValuesForUpdate);
+        final List<Set<Integer>> finalModifiedColumns = new ArrayList<>(modifiedColumnsPerRow);
+
+        new Thread(() -> {
+            try {
+                // INSERT 新行
+                if (!finalRowsToInsert.isEmpty()) {
+                    DatabaseService.insertRows(config, databaseName, tableName,
+                            dataColumns, finalRowsToInsert, primaryKeyColumns);
+                }
+
+                // UPDATE 修改的现有行
+                if (!finalRowsToUpdate.isEmpty()) {
+                    DatabaseService.updateRows(config, databaseName, tableName,
+                            primaryKeyColumns, dataColumns,
+                            finalRowsToUpdate, finalOriginalValues, finalModifiedColumns);
+                }
+
+                Platform.runLater(() -> {
+                    // 保存成功后刷新数据，获取DB生成的值（如自增主键、默认值、触发器结果）
+                    refreshData();
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert err = new Alert(Alert.AlertType.ERROR);
+                    err.setTitle("保存失败");
+                    err.setHeaderText(null);
+                    err.setContentText("保存失败: " + e.getMessage());
+                    err.showAndWait();
+                });
+            }
+        }, "DB-SaveChanges").start();
     }
 
     /**
@@ -588,6 +786,16 @@ public class TableDataView extends BorderPane {
     }
 
     private void loadData(int page) {
+        // 检查是否有未保存的更改
+        if (hasUnsavedChanges() && page != currentPage) {
+            Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+            confirm.setTitle("切换页面");
+            confirm.setHeaderText(null);
+            confirm.setContentText("有未保存的更改，切换页面将丢失这些更改。确定切换？");
+            Optional<ButtonType> result = confirm.showAndWait();
+            if (result.isEmpty() || result.get() != ButtonType.OK) return;
+        }
+
         loadingIndicator.setVisible(true);
         tableView.setDisable(true);
 
@@ -620,6 +828,10 @@ public class TableDataView extends BorderPane {
     private void updateTableView(TableRowData data) {
         tableView.getColumns().clear();
         tableView.getItems().clear();
+
+        // 初始化行状态追踪
+        newRows.clear();
+        originalValuesMap.clear();
 
         // 缓存数据列名
         dataColumnNames = new ArrayList<>(data.getColumnNames());
@@ -699,7 +911,6 @@ public class TableDataView extends BorderPane {
         List<String> columnNames = data.getColumnNames();
         for (int i = 0; i < columnNames.size(); i++) {
             final int colIndex = i;
-            final String colName = columnNames.get(i);
             TableColumn<ObservableList<String>, String> col = new TableColumn<>(columnNames.get(i));
             // 根据表头文字长度动态设置列宽（每个字符约8px，加padding）
             int headerLen = columnNames.get(i).length();
@@ -718,17 +929,24 @@ public class TableDataView extends BorderPane {
                 String newValue = event.getNewValue();
                 if (oldValue.equals(newValue)) return;
 
-                // 更新数据模型
+                // 仅更新数据模型（延迟保存，不立即提交到数据库）
                 row.set(colIndex, newValue);
-
-                // 提交到数据库
-                commitCellUpdate(row, colIndex, oldValue, newValue);
             });
 
             tableView.getColumns().add(col);
         }
 
+        // 保存现有行的原始值快照
+        for (ObservableList<String> row : data.getRows()) {
+            ObservableList<String> original = FXCollections.observableArrayList(row);
+            originalValuesMap.put(row, original);
+        }
+
         tableView.setItems(data.getRows());
+
+        // 在底部添加空白新行
+        addEmptyNewRow();
+
         // 布局完成后绑定表头点击事件和排序箭头
         bindColumnHeaderEvents();
     }
@@ -894,51 +1112,6 @@ public class TableDataView extends BorderPane {
         return arrow;
     }
 
-    /**
-     * 提交单元格更新到数据库
-     */
-    private void commitCellUpdate(ObservableList<String> row, int colIndex, String oldValue, String newValue) {
-        if (primaryKeyColumns == null || primaryKeyColumns.isEmpty()) {
-            // 无主键，无法定位行，回滚
-            Platform.runLater(() -> {
-                row.set(colIndex, oldValue);
-                Alert warn = new Alert(Alert.AlertType.WARNING);
-                warn.setTitle("无法更新");
-                warn.setHeaderText(null);
-                warn.setContentText("该表无主键，无法定位行进行更新");
-                warn.showAndWait();
-            });
-            return;
-        }
-
-        List<String> dataColumns = getDataColumnNames();
-        new Thread(() -> {
-            try {
-                int affected = DatabaseService.updateCell(config, databaseName, tableName,
-                        primaryKeyColumns, dataColumns, row, colIndex, newValue);
-                if (affected == 0) {
-                    Platform.runLater(() -> {
-                        row.set(colIndex, oldValue);
-                        Alert warn = new Alert(Alert.AlertType.WARNING);
-                        warn.setTitle("更新失败");
-                        warn.setHeaderText(null);
-                        warn.setContentText("未找到匹配行，数据可能已被其他操作修改，请刷新后重试");
-                        warn.showAndWait();
-                    });
-                }
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    row.set(colIndex, oldValue);
-                    Alert err = new Alert(Alert.AlertType.ERROR);
-                    err.setTitle("更新失败");
-                    err.setHeaderText(null);
-                    err.setContentText("更新单元格失败: " + e.getMessage());
-                    err.showAndWait();
-                });
-            }
-        }, "DB-UpdateCell").start();
-    }
-
     private void updateStatusBar() {
         if (totalCount == 0) {
             pageInfoLabel.setText("无数据");
@@ -960,14 +1133,26 @@ public class TableDataView extends BorderPane {
     }
 
     public void refreshData() {
+        if (hasUnsavedChanges()) {
+            Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+            confirm.setTitle("刷新");
+            confirm.setHeaderText(null);
+            confirm.setContentText("有未保存的更改，刷新将丢失这些更改。确定刷新？");
+            Optional<ButtonType> result = confirm.showAndWait();
+            if (result.isEmpty() || result.get() != ButtonType.OK) return;
+        }
         loadData(currentPage);
     }
 
     /**
      * 可编辑单元格：选中时蓝色背景，进入编辑时白色背景+蓝色边框
+     * 新行显示浅黄背景+斜体，修改行显示浅蓝背景
+     * 失去焦点时保留编辑值（仅按Escape时才真正取消编辑）
      */
-    private static class EditableTableCell extends TableCell<ObservableList<String>, String> {
+    private class EditableTableCell extends TableCell<ObservableList<String>, String> {
         private TextField textField;
+        /** 标记用户是否按下了Escape键（真正取消编辑） */
+        private boolean escapePressed = false;
 
         public EditableTableCell() {
             super();
@@ -975,6 +1160,7 @@ public class TableDataView extends BorderPane {
 
         @Override
         public void startEdit() {
+            escapePressed = false;
             super.startEdit();
             if (textField == null) {
                 createTextField();
@@ -990,10 +1176,23 @@ public class TableDataView extends BorderPane {
 
         @Override
         public void cancelEdit() {
+            // 非Escape触发的cancel（如点击其他cell导致失焦），保留编辑值到数据模型
+            if (!escapePressed && textField != null) {
+                String newValue = textField.getText();
+                String currentValue = getItem() != null ? getItem() : "";
+                if (!newValue.equals(currentValue)) {
+                    // 直接更新数据模型，保留编辑值
+                    updateCellData(newValue);
+                }
+            }
+            escapePressed = false;
             super.cancelEdit();
-            setText(getItem() != null ? getItem() : "");
+            // cancelEdit后getItem()返回的是原值，但数据模型可能已更新，
+            // 需要重新从数据模型读取显示值
+            String displayValue = getCellData();
+            setText(displayValue != null ? displayValue : "");
             setGraphic(null);
-            setStyle("");
+            applyRowStateStyle();
         }
 
         @Override
@@ -1014,8 +1213,63 @@ public class TableDataView extends BorderPane {
                 } else {
                     setText(item != null ? item : "");
                     setGraphic(null);
-                    setStyle("");
+                    applyRowStateStyle();
                 }
+            }
+        }
+
+        /**
+         * 更新当前单元格对应的数据模型值
+         */
+        private void updateCellData(String newValue) {
+            TableRow<?> tableRow = getTableRow();
+            if (tableRow == null) return;
+            @SuppressWarnings("unchecked")
+            ObservableList<String> row = (ObservableList<String>) tableRow.getItem();
+            if (row == null) return;
+            int tableViewColIndex = getTableView().getColumns().indexOf(getTableColumn());
+            int dataColIndex = tableViewColIndex - 1; // 减去行选择器列
+            if (dataColIndex >= 0 && dataColIndex < row.size()) {
+                row.set(dataColIndex, newValue);
+            }
+        }
+
+        /**
+         * 从数据模型获取当前单元格的值
+         */
+        private String getCellData() {
+            TableRow<?> tableRow = getTableRow();
+            if (tableRow == null) return getItem();
+            @SuppressWarnings("unchecked")
+            ObservableList<String> row = (ObservableList<String>) tableRow.getItem();
+            if (row == null) return getItem();
+            int tableViewColIndex = getTableView().getColumns().indexOf(getTableColumn());
+            int dataColIndex = tableViewColIndex - 1;
+            if (dataColIndex >= 0 && dataColIndex < row.size()) {
+                return row.get(dataColIndex);
+            }
+            return getItem();
+        }
+
+        /**
+         * 根据行状态应用视觉样式
+         */
+        private void applyRowStateStyle() {
+            TableRow<?> tableRow = getTableRow();
+            if (tableRow == null) {
+                setStyle("");
+                return;
+            }
+            @SuppressWarnings("unchecked")
+            ObservableList<String> row = (ObservableList<String>) tableRow.getItem();
+            RowState state = getRowState(row);
+            switch (state) {
+                case NEW ->
+                    setStyle("-fx-background-color: #FFFFF0; -fx-font-style: italic; -fx-text-fill: #666;");
+                case EXISTING_DIRTY ->
+                    setStyle("-fx-background-color: #E8F4FD;");
+                default ->
+                    setStyle("");
             }
         }
 
@@ -1024,6 +1278,10 @@ public class TableDataView extends BorderPane {
             textField.setMinWidth(this.getWidth() - this.getGraphicTextGap() * 2);
             // 白色背景，无边框，看起来是cell本身在编辑
             textField.setStyle("-fx-background-color: white; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0 4; -fx-focus-color: transparent; -fx-faint-focus-color: transparent; -fx-text-fill: black;");
+            // 记录Escape按键，用于区分用户主动取消和失焦导致的取消
+            textField.setOnKeyPressed(event -> {
+                escapePressed = (event.getCode() == javafx.scene.input.KeyCode.ESCAPE);
+            });
             textField.setOnAction(e -> commitEdit(textField.getText()));
             textField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
                 if (!isNowFocused) {

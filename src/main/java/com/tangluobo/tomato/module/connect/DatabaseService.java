@@ -972,6 +972,180 @@ public class DatabaseService {
     }
 
     /**
+     * 插入多行数据（使用具体值而非DEFAULT）
+     * @param config 连接配置
+     * @param databaseName 数据库名
+     * @param tableName 表名
+     * @param columnNames 列名列表
+     * @param rows 要插入的行数据
+     * @param primaryKeyColumns 主键列名列表（空值的自增PK列跳过，让DB自动生成）
+     * @return 插入的行数
+     */
+    public static int insertRows(ConnectionConfig config, String databaseName, String tableName,
+                                 List<String> columnNames, List<ObservableList<String>> rows,
+                                 List<String> primaryKeyColumns) throws Exception {
+        Connection conn = getConnection(config, databaseName);
+        int totalInserted = 0;
+
+        String qualifiedTable = switch (config.getType()) {
+            case MYSQL -> "`" + databaseName + "`.`" + tableName + "`";
+            case POSTGRESQL, ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        };
+
+        for (ObservableList<String> row : rows) {
+            // 确定要包含的列（空值的自增PK列跳过）
+            List<Integer> includeIndexes = new ArrayList<>();
+            StringBuilder cols = new StringBuilder();
+            StringBuilder placeholders = new StringBuilder();
+
+            for (int i = 0; i < columnNames.size(); i++) {
+                String value = i < row.size() ? row.get(i) : "";
+                // 空值的主键列跳过（让DB自动生成）
+                if (isNullOrEmpty(value) && isPrimaryKeyColumn(columnNames.get(i), primaryKeyColumns)) {
+                    continue;
+                }
+                if (!includeIndexes.isEmpty()) { cols.append(", "); placeholders.append(", "); }
+                String quotedCol = switch (config.getType()) {
+                    case MYSQL -> "`" + columnNames.get(i) + "`";
+                    case POSTGRESQL, ORACLE -> "\"" + columnNames.get(i) + "\"";
+                    default -> columnNames.get(i);
+                };
+                cols.append(quotedCol);
+                placeholders.append("?");
+                includeIndexes.add(i);
+            }
+
+            String sql = "INSERT INTO " + qualifiedTable + " (" + cols + ") VALUES (" + placeholders + ")";
+            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                for (int j = 0; j < includeIndexes.size(); j++) {
+                    int colIdx = includeIndexes.get(j);
+                    String value = colIdx < row.size() ? row.get(colIdx) : "";
+                    if (isNullOrEmpty(value) || "NULL".equals(value)) {
+                        pstmt.setNull(j + 1, Types.VARCHAR);
+                    } else {
+                        pstmt.setString(j + 1, value);
+                    }
+                }
+                totalInserted += pstmt.executeUpdate();
+            }
+        }
+
+        return totalInserted;
+    }
+
+    /**
+     * 更新多行数据（仅更新修改过的列）
+     * @param config 连接配置
+     * @param databaseName 数据库名
+     * @param tableName 表名
+     * @param primaryKeyColumns 主键列名列表
+     * @param columnNames 所有列名列表
+     * @param currentRows 当前行值
+     * @param originalRows 原始行值（WHERE子句使用原始主键值）
+     * @param modifiedColumnsPerRow 每行修改过的列索引集合
+     * @return 总受影响行数
+     */
+    public static int updateRows(ConnectionConfig config, String databaseName, String tableName,
+                                 List<String> primaryKeyColumns, List<String> columnNames,
+                                 List<ObservableList<String>> currentRows,
+                                 List<ObservableList<String>> originalRows,
+                                 List<java.util.Set<Integer>> modifiedColumnsPerRow) throws Exception {
+        Connection conn = getConnection(config, databaseName);
+        int totalUpdated = 0;
+
+        String qualifiedTable = switch (config.getType()) {
+            case MYSQL -> "`" + databaseName + "`.`" + tableName + "`";
+            case POSTGRESQL, ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        };
+
+        // 构建主键列索引映射
+        List<Integer> pkIndexes = new ArrayList<>();
+        for (String pkCol : primaryKeyColumns) {
+            for (int i = 0; i < columnNames.size(); i++) {
+                if (columnNames.get(i).equalsIgnoreCase(pkCol)) {
+                    pkIndexes.add(i);
+                    break;
+                }
+            }
+        }
+
+        for (int rowIdx = 0; rowIdx < currentRows.size(); rowIdx++) {
+            ObservableList<String> currentRow = currentRows.get(rowIdx);
+            ObservableList<String> originalRow = originalRows.get(rowIdx);
+            java.util.Set<Integer> modifiedCols = modifiedColumnsPerRow.get(rowIdx);
+
+            // SET子句仅包含修改过的列
+            StringBuilder setClause = new StringBuilder();
+            List<Integer> setColIndexes = new ArrayList<>();
+            for (int colIdx : modifiedCols) {
+                if (!setColIndexes.isEmpty()) setClause.append(", ");
+                String colName = columnNames.get(colIdx);
+                String quotedCol = switch (config.getType()) {
+                    case MYSQL -> "`" + colName + "`";
+                    case POSTGRESQL, ORACLE -> "\"" + colName + "\"";
+                    default -> colName;
+                };
+                setClause.append(quotedCol).append(" = ?");
+                setColIndexes.add(colIdx);
+            }
+
+            // WHERE子句使用原始主键值
+            StringBuilder whereClause = new StringBuilder();
+            for (int i = 0; i < primaryKeyColumns.size(); i++) {
+                if (i > 0) whereClause.append(" AND ");
+                String pkCol = primaryKeyColumns.get(i);
+                String quotedCol = switch (config.getType()) {
+                    case MYSQL -> "`" + pkCol + "`";
+                    case POSTGRESQL, ORACLE -> "\"" + pkCol + "\"";
+                    default -> pkCol;
+                };
+                whereClause.append(quotedCol).append(" = ?");
+            }
+
+            String sql = "UPDATE " + qualifiedTable + " SET " + setClause + " WHERE " + whereClause;
+
+            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                int paramIdx = 1;
+                // SET参数（新值）
+                for (int colIdx : setColIndexes) {
+                    String newValue = currentRow.get(colIdx);
+                    if ("NULL".equals(newValue) || isNullOrEmpty(newValue)) {
+                        pstmt.setNull(paramIdx++, Types.VARCHAR);
+                    } else {
+                        pstmt.setString(paramIdx++, newValue);
+                    }
+                }
+                // WHERE参数（原始主键值）
+                for (int pkIdx : pkIndexes) {
+                    String pkValue = originalRow.get(pkIdx);
+                    if ("NULL".equals(pkValue)) {
+                        pstmt.setNull(paramIdx++, Types.VARCHAR);
+                    } else {
+                        pstmt.setString(paramIdx++, pkValue);
+                    }
+                }
+                totalUpdated += pstmt.executeUpdate();
+            }
+        }
+
+        return totalUpdated;
+    }
+
+    private static boolean isNullOrEmpty(String value) {
+        return value == null || value.isEmpty();
+    }
+
+    private static boolean isPrimaryKeyColumn(String columnName, List<String> primaryKeyColumns) {
+        if (primaryKeyColumns == null) return false;
+        for (String pk : primaryKeyColumns) {
+            if (pk.equalsIgnoreCase(columnName)) return true;
+        }
+        return false;
+    }
+
+    /**
      * 构建JDBC URL
      */
     private static String buildJdbcUrl(ConnectionConfig config, String host, int port, String database) {
