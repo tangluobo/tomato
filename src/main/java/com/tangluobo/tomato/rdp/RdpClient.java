@@ -3,10 +3,13 @@ package com.tangluobo.tomato.rdp;
 import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.URL;
+import java.security.Security;
+import java.security.cert.X509Certificate;
 import java.util.function.Consumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import javax.net.ssl.X509TrustManager;
 import javax.swing.JComponent;
 
 import com.sshtools.javardp.CredentialProvider;
@@ -144,6 +147,26 @@ public class RdpClient {
         options.setMapClipboard(true);
         options.setLowLatency(true);
 
+        // 配置安全类型：优先使用HYBRID(NLA+SSL)
+        // securityTypes通过Options构造函数默认设置，包含HYBRID/SSL/STANDARD
+
+        // 设置宽松的TrustManager：接受RDP服务器自签名证书
+        options.setTrustManager(new X509TrustManager() {
+            @Override
+            public void checkClientTrusted(X509Certificate[] chain, String authType) {
+            }
+            @Override
+            public void checkServerTrusted(X509Certificate[] chain, String authType) {
+            }
+            @Override
+            public X509Certificate[] getAcceptedIssuers() {
+                return new X509Certificate[0];
+            }
+        });
+
+        // 允许RDP所需的TLS密码套件（Java 24默认禁用了DHE密码）
+        enableRdpTlsCiphers();
+
         // 创建凭证
         DefaultCredentialsProvider dcp = new DefaultCredentialsProvider();
         if (username != null) dcp.setUsername(username);
@@ -153,20 +176,26 @@ public class RdpClient {
         // 创建状态
         state = new State(options);
 
-        // 加载键盘映射
+        // 加载键盘映射（keymaps在rdp JAR的根目录下）
         String keyMapPath = "keymaps/";
         String mapFile = "en-us";
         try {
-            URL resource = getClass().getResource("/" + keyMapPath + mapFile);
+            // 尝试从rdp JAR的classpath加载
+            URL resource = KeyCode_FileBased.class.getResource("/" + keyMapPath + mapFile);
+            if (resource == null) {
+                // 备选：用ClassLoader加载
+                resource = ClassLoader.getSystemResource(keyMapPath + mapFile);
+            }
             if (resource != null) {
                 InputStream istr = resource.openStream();
                 if (istr != null) {
                     KeyCode_FileBased keyMap = new KeyCode_FileBased(options, resource, istr);
                     options.setKeymap(keyMap);
                     istr.close();
+                    logger.info("键盘映射加载成功: " + mapFile);
                 }
             } else {
-                logger.warning("未找到键盘映射文件: " + mapFile + "，使用默认映射");
+                logger.warning("未找到键盘映射文件: " + keyMapPath + mapFile + "，使用默认映射");
             }
         } catch (Exception e) {
             logger.log(Level.WARNING, "加载键盘映射失败: " + e.getMessage());
@@ -295,5 +324,30 @@ public class RdpClient {
      */
     public RdesktopCanvas getCanvas() {
         return canvas;
+    }
+
+    /**
+     * 允许RDP协议所需的TLS密码套件
+     * Java 24默认禁用了DHE等旧版密码套件，但RDP服务器可能要求使用它们
+     */
+    private static void enableRdpTlsCiphers() {
+        try {
+            // 从jdk.tls.disabledAlgorithms中移除DHE相关限制
+            String disabled = Security.getProperty("jdk.tls.disabledAlgorithms");
+            if (disabled != null) {
+                // 移除DHE相关限制
+                String[] toRemove = {"DH keySize", "DHE", "TLSv1", "TLSv1.1"};
+                String modified = disabled;
+                for (String item : toRemove) {
+                    modified = modified.replaceAll(item + "\\s*,?\\s*", "");
+                    modified = modified.replaceAll(",\\s*,", ",");
+                }
+                modified = modified.replaceAll("^\\s*,", "").replaceAll(",\\s*$", "");
+                Security.setProperty("jdk.tls.disabledAlgorithms", modified);
+                logger.info("已调整TLS禁用算法以兼容RDP协议");
+            }
+        } catch (Exception e) {
+            logger.log(Level.WARNING, "调整TLS安全属性失败: " + e.getMessage());
+        }
     }
 }
