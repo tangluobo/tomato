@@ -706,11 +706,17 @@ public class SqlEditorView extends BorderPane {
                 if (pks.isEmpty()) return;
                 Platform.runLater(() -> {
                     ContextMenu contextMenu = new ContextMenu();
-                    MenuItem deleteItem = new MenuItem("删除所选行");
+                    MenuItem deleteItem = new MenuItem();
                     deleteItem.setStyle("-fx-text-fill: #c00;");
                     deleteItem.setOnAction(e -> handleQueryResultDeleteRows(tableView, tableName, pks, columnNames));
                     contextMenu.getItems().add(deleteItem);
                     tableView.setContextMenu(contextMenu);
+
+                    // 右键时根据选中行数动态更新菜单文字
+                    tableView.setOnContextMenuRequested(event -> {
+                        int count = tableView.getSelectionModel().getSelectedItems().size();
+                        deleteItem.setText("删除" + (count > 0 ? count : 1) + "条数据");
+                    });
                 });
             } catch (Exception e) {
                 // 获取主键失败，不提供删除功能

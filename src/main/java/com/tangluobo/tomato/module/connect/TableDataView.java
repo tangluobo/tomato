@@ -6,10 +6,13 @@ import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
+import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.Polygon;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -78,19 +81,17 @@ public class TableDataView extends BorderPane {
         if (primaryKeyColumns == null || primaryKeyColumns.isEmpty()) return;
 
         ContextMenu contextMenu = new ContextMenu();
-        MenuItem deleteItem = new MenuItem("删除所选行");
+        MenuItem deleteItem = new MenuItem();
         deleteItem.setStyle("-fx-text-fill: #c00;");
         deleteItem.setOnAction(e -> handleDeleteSelectedRows());
         contextMenu.getItems().add(deleteItem);
 
         tableView.setContextMenu(contextMenu);
 
-        // 右键时自动选中行
+        // 右键时根据选中行数动态更新菜单文字
         tableView.setOnContextMenuRequested(event -> {
-            // 如果右键的行未被选中，则只选中该行
-            if (tableView.getSelectionModel().getSelectedItems().isEmpty()) {
-                // 不做额外处理，JavaFX默认行为会选中
-            }
+            int count = tableView.getSelectionModel().getSelectedItems().size();
+            deleteItem.setText("删除" + (count > 0 ? count : 1) + "条数据");
         });
     }
 
@@ -107,18 +108,17 @@ public class TableDataView extends BorderPane {
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         confirm.setTitle("删除行");
         confirm.setHeaderText(null);
-        confirm.setContentText("确定要删除选中的 " + count + " 行吗？此操作不可撤销！");
+        confirm.setContentText("确定删除" + count + "条数据？此操作不可撤销！");
         confirm.showAndWait().ifPresent(response -> {
             if (response != ButtonType.OK) return;
 
             // 复制选中行数据（避免在删除过程中ObservableList变化）
             List<ObservableList<String>> rowsToDelete = new ArrayList<>(selectedRows);
-            // 获取当前列名（跳过行号列#）
+            // 获取当前数据列名（跳过行选择器列）
             List<String> dataColumns = new ArrayList<>();
             for (TableColumn<?, ?> col : tableView.getColumns()) {
-                String colName = col.getText();
-                if (!"#".equals(colName)) {
-                    dataColumns.add(colName);
+                if (!ROW_SELECTOR_COL.equals(col.getUserData())) {
+                    dataColumns.add(col.getText());
                 }
             }
 
@@ -244,20 +244,58 @@ public class TableDataView extends BorderPane {
         }, "DB-LoadTableData").start();
     }
 
+    /** 行选择器列的标识名，用于在获取数据列名时跳过 */
+    private static final String ROW_SELECTOR_COL = "__ROW_SELECTOR__";
+
     private void updateTableView(TableRowData data) {
         tableView.getColumns().clear();
         tableView.getItems().clear();
 
-        // 创建行号列
-        TableColumn<ObservableList<String>, String> rownumCol = new TableColumn<>("#");
-        rownumCol.setPrefWidth(50);
-        rownumCol.setMaxWidth(60);
-        rownumCol.setStyle("-fx-alignment: CENTER;");
-        rownumCol.setCellValueFactory(param -> {
-            int index = tableView.getItems().indexOf(param.getValue()) + 1 + (currentPage - 1) * DEFAULT_PAGE_SIZE;
-            return new javafx.beans.property.SimpleStringProperty(String.valueOf(index));
+        // 创建行选择器列：选中行显示黑色实心三角箭头
+        TableColumn<ObservableList<String>, String> selectorCol = new TableColumn<>();
+        selectorCol.setPrefWidth(30);
+        selectorCol.setMaxWidth(30);
+        selectorCol.setMinWidth(30);
+        selectorCol.setSortable(false);
+        selectorCol.setReorderable(false);
+        selectorCol.setStyle("-fx-alignment: CENTER;");
+        // 用userData标记此列，删除时跳过
+        selectorCol.setUserData(ROW_SELECTOR_COL);
+        selectorCol.setCellFactory(col -> new TableCell<>() {
+            private final Polygon arrow = new Polygon(0, 0, 8, 4.5, 0, 9);
+            private javafx.beans.value.ChangeListener<Boolean> selectionListener;
+
+            {
+                arrow.setFill(Color.BLACK);
+                setGraphic(arrow);
+                setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+                setAlignment(Pos.CENTER);
+                arrow.setVisible(false);
+            }
+
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                // 清理旧监听
+                if (selectionListener != null && getTableRow() != null) {
+                    getTableRow().selectedProperty().removeListener(selectionListener);
+                    selectionListener = null;
+                }
+
+                super.updateItem(item, empty);
+                if (empty || getTableRow() == null || getTableRow().getItem() == null) {
+                    arrow.setVisible(false);
+                    return;
+                }
+
+                TableRow<?> row = getTableRow();
+                arrow.setVisible(row.isSelected());
+
+                // 监听行的选中状态变化
+                selectionListener = (obs, wasSel, isSel) -> arrow.setVisible(isSel);
+                row.selectedProperty().addListener(selectionListener);
+            }
         });
-        tableView.getColumns().add(rownumCol);
+        tableView.getColumns().add(selectorCol);
 
         // 创建数据列
         List<String> columnNames = data.getColumnNames();
