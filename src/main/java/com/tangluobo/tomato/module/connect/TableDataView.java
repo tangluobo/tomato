@@ -97,12 +97,20 @@ public class TableDataView extends BorderPane {
      * 设置表格行右键菜单：如果有主键则提供删除功能
      */
     private void setupRowContextMenu() {
-        if (primaryKeyColumns == null || primaryKeyColumns.isEmpty()) return;
-
         ContextMenu contextMenu = new ContextMenu();
+
+        // 复制菜单项
+        MenuItem copyItem = new MenuItem("复制");
+        copyItem.setOnAction(e -> handleCopySelectedCells());
+        contextMenu.getItems().add(copyItem);
+
+        // 删除菜单项（仅在有主键时可用）
         MenuItem deleteItem = new MenuItem();
         deleteItem.setStyle("-fx-text-fill: #c00;");
         deleteItem.setOnAction(e -> handleDeleteSelectedRows());
+        boolean hasPrimaryKey = primaryKeyColumns != null && !primaryKeyColumns.isEmpty();
+        deleteItem.setDisable(!hasPrimaryKey);
+        contextMenu.getItems().add(new SeparatorMenuItem());
         contextMenu.getItems().add(deleteItem);
 
         // 只在数据行区域显示右键菜单，表头区域不显示
@@ -114,12 +122,13 @@ public class TableDataView extends BorderPane {
                     target.getStyleClass().contains("column-header-background") ||
                     target.getStyleClass().contains("filler") ||
                     target.getStyleClass().contains("nested-column-header")) {
-                    // 在表头区域，不显示行右键菜单
                     event.consume();
                     return;
                 }
                 target = target.getParent();
             }
+            int cellCount = tableView.getSelectionModel().getSelectedCells().size();
+            copyItem.setText("复制" + (cellCount > 0 ? "(" + cellCount + "个单元格)" : ""));
             int count = (int) tableView.getSelectionModel().getSelectedItems().stream().distinct().count();
             deleteItem.setText("删除" + (count > 0 ? count : 1) + "条数据");
             contextMenu.show(tableView, event.getScreenX(), event.getScreenY());
@@ -196,6 +205,57 @@ public class TableDataView extends BorderPane {
             target = target.getParent();
         }
         return null;
+    }
+
+    /**
+     * 复制选中的cell到剪贴板，按行列排列，Tab分隔列，换行分隔行
+     */
+    private void handleCopySelectedCells() {
+        @SuppressWarnings("unchecked")
+        ObservableList<TablePosition<ObservableList<String>, ?>> selectedCells =
+                (ObservableList<TablePosition<ObservableList<String>, ?>>) (ObservableList<?>) tableView.getSelectionModel().getSelectedCells();
+        if (selectedCells.isEmpty()) return;
+
+        // 收集选中cell的行列范围
+        int minRow = Integer.MAX_VALUE, maxRow = -1;
+        int minCol = Integer.MAX_VALUE, maxCol = -1;
+        for (TablePosition<?, ?> pos : selectedCells) {
+            int row = pos.getRow();
+            int col = tableView.getColumns().indexOf(pos.getTableColumn());
+            minRow = Math.min(minRow, row);
+            maxRow = Math.max(maxRow, row);
+            minCol = Math.min(minCol, col);
+            maxCol = Math.max(maxCol, col);
+        }
+
+        // 构建选中区域数据，用Set快速判断是否选中
+        java.util.Set<String> selectedSet = new java.util.HashSet<>();
+        for (TablePosition<?, ?> pos : selectedCells) {
+            int col = tableView.getColumns().indexOf(pos.getTableColumn());
+            selectedSet.add(pos.getRow() + "," + col);
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (int r = minRow; r <= maxRow; r++) {
+            ObservableList<String> rowData = tableView.getItems().get(r);
+            boolean firstCol = true;
+            for (int c = minCol; c <= maxCol; c++) {
+                if (!selectedSet.contains(r + "," + c)) continue;
+                if (!firstCol) sb.append('\t');
+                firstCol = false;
+                int dataColIndex = c - 1; // 减去行选择器列
+                if (dataColIndex >= 0 && dataColIndex < rowData.size()) {
+                    String value = rowData.get(dataColIndex);
+                    sb.append(value != null ? value : "");
+                }
+            }
+            if (r < maxRow) sb.append('\n');
+        }
+
+        javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
+        javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
+        content.putString(sb.toString());
+        clipboard.setContent(content);
     }
 
     /**
