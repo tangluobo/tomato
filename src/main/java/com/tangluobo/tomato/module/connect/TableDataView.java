@@ -208,6 +208,18 @@ public class TableDataView extends BorderPane {
     }
 
     /**
+     * 键盘快捷键：Ctrl+C复制
+     */
+    private void setupKeyboardShortcuts() {
+        tableView.setOnKeyPressed(event -> {
+            if (event.isControlDown() && event.getCode() == javafx.scene.input.KeyCode.C) {
+                handleCopySelectedCells();
+                event.consume();
+            }
+        });
+    }
+
+    /**
      * 复制选中的cell到剪贴板，按行列排列，Tab分隔列，换行分隔行
      */
     private void handleCopySelectedCells() {
@@ -339,6 +351,8 @@ public class TableDataView extends BorderPane {
 
         // 鼠标拖拽选中多个cell
         setupDragSelection();
+        // Ctrl+C 复制选中cell
+        setupKeyboardShortcuts();
         // 布局后移除内部节点的默认padding/border，消除左侧间隔
         tableView.skinProperty().addListener((obs, oldSkin, newSkin) -> {
             if (newSkin != null) {
