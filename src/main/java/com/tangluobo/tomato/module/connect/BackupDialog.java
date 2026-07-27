@@ -800,7 +800,7 @@ public class BackupDialog {
 
             String filename = customFilename;
             if (filename == null || filename.isEmpty()) {
-                filename = databaseName + "_backup_" + new java.text.SimpleDateFormat("yyyyMMdd_HHmmss").format(new java.util.Date());
+                filename = new java.text.SimpleDateFormat("yyyyMMddHHmmss").format(new java.util.Date());
             }
             filename = filename.replaceAll("[\\\\/:*?\"<>|]", "_") + ".nb3";
 

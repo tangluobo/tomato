@@ -409,11 +409,13 @@ public class ConnectModule implements Module {
                         case BACKUP -> {
                             MenuItem restoreItem = new MenuItem("还原备份");
                             restoreItem.setOnAction(e -> handleRestoreBackup(targetItem, dbData));
+                            MenuItem openDirItem = new MenuItem("打开备份目录");
+                            openDirItem.setOnAction(e -> handleOpenBackupDir(dbData));
                             MenuItem renameBackupItem = new MenuItem("重命名");
                             renameBackupItem.setOnAction(e -> handleRenameBackup(targetItem, dbData));
                             MenuItem deleteBackupItem = new MenuItem("删除");
                             deleteBackupItem.setOnAction(e -> handleDeleteBackup(targetItem, dbData));
-                            contextMenu.getItems().addAll(restoreItem, new SeparatorMenuItem(), renameBackupItem, deleteBackupItem);
+                            contextMenu.getItems().addAll(restoreItem, new SeparatorMenuItem(), openDirItem, new SeparatorMenuItem(), renameBackupItem, deleteBackupItem);
                         }
                     }
                 } else {
@@ -1253,11 +1255,58 @@ public class ConnectModule implements Module {
     }
 
     private void handleRestoreBackup(TreeItem<String> backupItem, DatabaseNodeData data) {
-        Alert alert = new Alert(Alert.AlertType.INFORMATION);
-        alert.setTitle("还原备份");
-        alert.setHeaderText(null);
-        alert.setContentText("还原备份功能需要将数据写回数据库。\n\n此功能正在开发中。");
-        alert.showAndWait();
+        Stage stage = getStage();
+        if (stage == null) return;
+
+        RestoreDialog dialog = new RestoreDialog(stage,
+                data.getConnectionConfig(), data.getDatabaseName(), data.getName());
+        dialog.showAndWait();
+    }
+
+    /**
+     * 打开备份目录并选中备份文件
+     */
+    private void handleOpenBackupDir(DatabaseNodeData data) {
+        String sanitizedConn = sanitizeForFs(data.getConnectionConfig().getName());
+        String sanitizedDb = sanitizeForFs(data.getDatabaseName());
+        java.nio.file.Path backupDir = Paths.get(System.getProperty("user.home") + "/.tomato",
+                sanitizedConn, sanitizedDb, "backup");
+        java.nio.file.Path backupFile = backupDir.resolve(data.getName() + ".nb3");
+
+        new Thread(() -> {
+            try {
+                if (java.awt.Desktop.isDesktopSupported()) {
+                    java.awt.Desktop desktop = java.awt.Desktop.getDesktop();
+                    if (backupFile.toFile().exists()) {
+                        // 打开目录并选中文件
+                        if (desktop.isSupported(java.awt.Desktop.Action.BROWSE_FILE_DIR)) {
+                            desktop.browseFileDirectory(backupFile.toFile());
+                        } else {
+                            // 不支持选中文件时，仅打开目录
+                            desktop.open(backupDir.toFile());
+                        }
+                    } else {
+                        desktop.open(backupDir.toFile());
+                    }
+                }
+            } catch (Exception e) {
+                // 兜底：使用系统命令打开目录
+                try {
+                    String[] cmd = {
+                        "xdg-open", backupDir.toAbsolutePath().toString()
+                    };
+                    Runtime.getRuntime().exec(cmd);
+                } catch (Exception ex) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("打开目录失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("无法打开备份目录: " + ex.getMessage());
+                        alert.showAndWait();
+                    });
+                }
+            }
+        }, "OpenBackupDir").start();
     }
 
     /**
