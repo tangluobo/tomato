@@ -853,6 +853,111 @@ public class DatabaseService {
     }
 
     /**
+     * 根据主键更新指定单元格
+     * @param config 连接配置
+     * @param databaseName 数据库名
+     * @param tableName 表名
+     * @param primaryKeyColumns 主键列名列表
+     * @param columnNames 所有列名列表
+     * @param row 行数据（主键值在row中按columnNames顺序取）
+     * @param columnIndex 要更新的列在columnNames中的索引
+     * @param newValue 新值
+     * @return 受影响行数
+     */
+    public static int updateCell(ConnectionConfig config, String databaseName, String tableName,
+                                 List<String> primaryKeyColumns, List<String> columnNames,
+                                 ObservableList<String> row, int columnIndex, String newValue) throws Exception {
+        Connection conn = getConnection(config, databaseName);
+
+        String qualifiedTable = switch (config.getType()) {
+            case MYSQL -> "`" + databaseName + "`.`" + tableName + "`";
+            case POSTGRESQL, ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        };
+
+        String updateCol = columnNames.get(columnIndex);
+        String quotedUpdateCol = switch (config.getType()) {
+            case MYSQL -> "`" + updateCol + "`";
+            case POSTGRESQL, ORACLE -> "\"" + updateCol + "\"";
+            default -> updateCol;
+        };
+
+        StringBuilder whereClause = new StringBuilder();
+        List<Integer> pkIndexes = new ArrayList<>();
+        for (int i = 0; i < primaryKeyColumns.size(); i++) {
+            if (i > 0) whereClause.append(" AND ");
+            String pkCol = primaryKeyColumns.get(i);
+            String quotedCol = switch (config.getType()) {
+                case MYSQL -> "`" + pkCol + "`";
+                case POSTGRESQL, ORACLE -> "\"" + pkCol + "\"";
+                default -> pkCol;
+            };
+            whereClause.append(quotedCol).append(" = ?");
+            for (int j = 0; j < columnNames.size(); j++) {
+                if (columnNames.get(j).equalsIgnoreCase(pkCol)) {
+                    pkIndexes.add(j);
+                    break;
+                }
+            }
+        }
+
+        String sql = "UPDATE " + qualifiedTable + " SET " + quotedUpdateCol + " = ? WHERE " + whereClause;
+
+        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            if ("NULL".equals(newValue)) {
+                pstmt.setNull(1, Types.VARCHAR);
+            } else {
+                pstmt.setString(1, newValue);
+            }
+            for (int i = 0; i < pkIndexes.size(); i++) {
+                String pkValue = row.get(pkIndexes.get(i));
+                if ("NULL".equals(pkValue)) {
+                    pstmt.setNull(i + 2, Types.VARCHAR);
+                } else {
+                    pstmt.setString(i + 2, pkValue);
+                }
+            }
+            return pstmt.executeUpdate();
+        }
+    }
+
+    /**
+     * 插入一行空数据（所有列设为DEFAULT/NULL）
+     * @param config 连接配置
+     * @param databaseName 数据库名
+     * @param tableName 表名
+     * @param columnNames 列名列表
+     */
+    public static void insertEmptyRow(ConnectionConfig config, String databaseName, String tableName,
+                                      List<String> columnNames) throws Exception {
+        Connection conn = getConnection(config, databaseName);
+
+        String qualifiedTable = switch (config.getType()) {
+            case MYSQL -> "`" + databaseName + "`.`" + tableName + "`";
+            case POSTGRESQL, ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        };
+
+        StringBuilder cols = new StringBuilder();
+        StringBuilder vals = new StringBuilder();
+        for (int i = 0; i < columnNames.size(); i++) {
+            if (i > 0) { cols.append(", "); vals.append(", "); }
+            String quotedCol = switch (config.getType()) {
+                case MYSQL -> "`" + columnNames.get(i) + "`";
+                case POSTGRESQL, ORACLE -> "\"" + columnNames.get(i) + "\"";
+                default -> columnNames.get(i);
+            };
+            cols.append(quotedCol);
+            vals.append("DEFAULT");
+        }
+
+        String sql = "INSERT INTO " + qualifiedTable + " (" + cols + ") VALUES (" + vals + ")";
+        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.executeUpdate();
+        }
+    }
+
+    /**
      * 构建JDBC URL
      */
     private static String buildJdbcUrl(ConnectionConfig config, String host, int port, String database) {
