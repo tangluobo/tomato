@@ -128,6 +128,77 @@ public class TableDataView extends BorderPane {
     }
 
     /**
+     * 鼠标拖拽选中多个cell
+     */
+    private void setupDragSelection() {
+        // 记录拖拽起始cell
+        final int[] dragStart = {-1, -1}; // [row, colIndex in tableView.getColumns()]
+        final boolean[] dragging = {false};
+
+        tableView.setOnMousePressed(event -> {
+            if (event.getButton() != MouseButton.PRIMARY) return;
+            // 找到点击的cell位置
+            int[] cellPos = getCellPositionAt(event);
+            if (cellPos == null) return;
+            dragStart[0] = cellPos[0];
+            dragStart[1] = cellPos[1];
+            dragging[0] = false;
+            // 清除已有选中，选中起始cell
+            tableView.getSelectionModel().clearSelection();
+            TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(cellPos[1]);
+            tableView.getSelectionModel().select(cellPos[0], col);
+        });
+
+        tableView.setOnMouseDragged(event -> {
+            if (event.getButton() != MouseButton.PRIMARY) return;
+            if (dragStart[0] < 0) return;
+            int[] cellPos = getCellPositionAt(event);
+            if (cellPos == null) return;
+            dragging[0] = true;
+            int endRow = cellPos[0];
+            int endCol = cellPos[1];
+            // 范围选中
+            int minRow = Math.min(dragStart[0], endRow);
+            int maxRow = Math.max(dragStart[0], endRow);
+            int minCol = Math.min(dragStart[1], endCol);
+            int maxCol = Math.max(dragStart[1], endCol);
+            tableView.getSelectionModel().clearSelection();
+            for (int r = minRow; r <= maxRow; r++) {
+                for (int c = minCol; c <= maxCol; c++) {
+                    TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(c);
+                    tableView.getSelectionModel().select(r, col);
+                }
+            }
+        });
+
+        tableView.setOnMouseReleased(event -> {
+            dragStart[0] = -1;
+            dragging[0] = false;
+        });
+    }
+
+    /**
+     * 根据鼠标事件位置获取对应的cell坐标 [row, colIndex]
+     */
+    private int[] getCellPositionAt(javafx.scene.input.MouseEvent event) {
+        Node target = event.getPickResult().getIntersectedNode();
+        // 向上查找TableCell
+        while (target != null && target != tableView) {
+            if (target instanceof TableCell<?, ?> cell) {
+                if (cell.getTableColumn() != null && cell.getTableRow() != null) {
+                    int row = cell.getTableRow().getIndex();
+                    int col = tableView.getColumns().indexOf(cell.getTableColumn());
+                    if (col >= 0) {
+                        return new int[]{row, col};
+                    }
+                }
+            }
+            target = target.getParent();
+        }
+        return null;
+    }
+
+    /**
      * 处理删除选中行
      */
     private void handleDeleteSelectedRows() {
@@ -205,6 +276,9 @@ public class TableDataView extends BorderPane {
         tableView.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         tableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         tableView.getSelectionModel().setCellSelectionEnabled(true);
+
+        // 鼠标拖拽选中多个cell
+        setupDragSelection();
         // 布局后移除内部节点的默认padding/border，消除左侧间隔
         tableView.skinProperty().addListener((obs, oldSkin, newSkin) -> {
             if (newSkin != null) {
