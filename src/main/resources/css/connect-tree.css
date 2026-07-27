@@ -428,6 +428,13 @@
 
 .table-view .table-row-cell:selected .table-cell {
     -fx-text-fill: white;
+    -fx-background-color: #3592CB;
+}
+
+/* cell selection模式：选中的cell蓝色背景白色文字 */
+.table-view .table-cell:selected {
+    -fx-background-color: #3592CB;
+    -fx-text-fill: white;
 }
 
 .table-view .table-cell {

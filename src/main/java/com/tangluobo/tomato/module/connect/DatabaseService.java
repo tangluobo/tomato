@@ -219,6 +219,10 @@ public class DatabaseService {
      * @return TableRowData 包含列名列表和数据行
      */
     public static TableRowData queryTableData(ConnectionConfig config, String databaseName, String tableName, int page, int pageSize) throws Exception {
+        return queryTableData(config, databaseName, tableName, page, pageSize, null, false);
+    }
+
+    public static TableRowData queryTableData(ConnectionConfig config, String databaseName, String tableName, int page, int pageSize, String sortColumn, boolean sortDescending) throws Exception {
         Connection conn = getConnection(config, databaseName);
         TableRowData result = new TableRowData();
 
@@ -237,7 +241,7 @@ public class DatabaseService {
         result.setTotalPages((int) Math.ceil((double) totalCount / pageSize));
 
         // 分页查询数据
-        String dataSql = buildPageSql(config, databaseName, tableName, page, pageSize);
+        String dataSql = buildPageSql(config, databaseName, tableName, page, pageSize, sortColumn, sortDescending);
         try (Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(dataSql)) {
             ResultSetMetaData metaData = rs.getMetaData();
@@ -375,12 +379,22 @@ public class DatabaseService {
     /**
      * 构建分页查询SQL
      */
-    private static String buildPageSql(ConnectionConfig config, String databaseName, String tableName, int page, int pageSize) {
+    private static String buildPageSql(ConnectionConfig config, String databaseName, String tableName, int page, int pageSize, String sortColumn, boolean sortDescending) {
         int offset = (page - 1) * pageSize;
+        String orderBy = "";
+        if (sortColumn != null && !sortColumn.isEmpty()) {
+            String quotedCol = switch (config.getType()) {
+                case MYSQL -> "`" + sortColumn + "`";
+                case POSTGRESQL, ORACLE -> "\"" + sortColumn + "\"";
+                default -> sortColumn;
+            };
+            orderBy = " ORDER BY " + quotedCol + (sortDescending ? " DESC" : " ASC");
+        }
+        final String order = orderBy;
         return switch (config.getType()) {
-            case MYSQL -> "SELECT * FROM `" + databaseName + "`.`" + tableName + "` LIMIT " + pageSize + " OFFSET " + offset;
-            case POSTGRESQL -> "SELECT * FROM \"" + databaseName + "\".\"" + tableName + "\" LIMIT " + pageSize + " OFFSET " + offset;
-            case ORACLE -> "SELECT * FROM (SELECT a.*, ROWNUM rn FROM \"" + databaseName + "\".\"" + tableName + "\" a WHERE ROWNUM <= " + (offset + pageSize) + ") WHERE rn > " + offset;
+            case MYSQL -> "SELECT * FROM `" + databaseName + "`.`" + tableName + "`" + order + " LIMIT " + pageSize + " OFFSET " + offset;
+            case POSTGRESQL -> "SELECT * FROM \"" + databaseName + "\".\"" + tableName + "\"" + order + " LIMIT " + pageSize + " OFFSET " + offset;
+            case ORACLE -> "SELECT * FROM (SELECT a.*, ROWNUM rn FROM \"" + databaseName + "\".\"" + tableName + "\" a WHERE ROWNUM <= " + (offset + pageSize) + order + ") WHERE rn > " + offset;
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
     }

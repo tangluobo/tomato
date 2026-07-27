@@ -8,6 +8,7 @@ import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.control.*;
+import javafx.scene.control.skin.TableColumnHeader;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.BorderPane;
@@ -51,6 +52,10 @@ public class TableDataView extends BorderPane {
     private int currentPage = 1;
     private int totalPages = 0;
     private long totalCount = 0;
+
+    // 排序状态
+    private String sortColumn;
+    private boolean sortDescending = false;
 
     // 主键列名缓存
     private List<String> primaryKeyColumns;
@@ -423,7 +428,7 @@ public class TableDataView extends BorderPane {
 
         new Thread(() -> {
             try {
-                TableRowData data = DatabaseService.queryTableData(config, databaseName, tableName, page, DEFAULT_PAGE_SIZE);
+                TableRowData data = DatabaseService.queryTableData(config, databaseName, tableName, page, DEFAULT_PAGE_SIZE, sortColumn, sortDescending);
                 Platform.runLater(() -> {
                     currentPage = data.getPage();
                     totalPages = data.getTotalPages();
@@ -466,7 +471,7 @@ public class TableDataView extends BorderPane {
         selectorCol.setUserData(ROW_SELECTOR_COL);
         selectorCol.setCellFactory(col -> new TableCell<>() {
             private final Polygon arrow = new Polygon(0, -0.5, 5, 4.5, 0, 9.5);
-            private javafx.beans.value.ChangeListener<Boolean> selectionListener;
+            private javafx.beans.InvalidationListener selectionListener;
 
             {
                 arrow.setFill(Color.BLACK);
@@ -476,13 +481,32 @@ public class TableDataView extends BorderPane {
                 arrow.setVisible(false);
                 // 左侧加网格线
                 setStyle("-fx-border-color: transparent #BEBEBC transparent #BEBEBC; -fx-border-width: 0 1 0 1;");
+                // 点击行选择器列时选中整行
+                setOnMousePressed(event -> {
+                    if (getTableRow() != null && getTableRow().getItem() != null) {
+                        int row = getTableRow().getIndex();
+                        if (event.isControlDown()) {
+                            if (isRowSelected(row)) {
+                                tableView.getSelectionModel().clearSelection(row);
+                            } else {
+                                tableView.getSelectionModel().select(row);
+                            }
+                        } else if (event.isShiftDown()) {
+                            tableView.getSelectionModel().selectRange(row, tableView.getSelectionModel().getFocusedIndex());
+                        } else {
+                            tableView.getSelectionModel().clearSelection();
+                            tableView.getSelectionModel().select(row);
+                        }
+                        event.consume();
+                    }
+                });
             }
 
             @Override
             protected void updateItem(String item, boolean empty) {
                 // 清理旧监听
-                if (selectionListener != null && getTableRow() != null) {
-                    getTableRow().selectedProperty().removeListener(selectionListener);
+                if (selectionListener != null) {
+                    tableView.getSelectionModel().getSelectedCells().removeListener(selectionListener);
                     selectionListener = null;
                 }
 
@@ -492,12 +516,16 @@ public class TableDataView extends BorderPane {
                     return;
                 }
 
-                TableRow<?> row = getTableRow();
-                arrow.setVisible(row.isSelected());
+                // 初始状态
+                arrow.setVisible(isRowSelected(getTableRow().getIndex()));
 
-                // 监听行的选中状态变化
-                selectionListener = (obs, wasSel, isSel) -> arrow.setVisible(isSel);
-                row.selectedProperty().addListener(selectionListener);
+                // 监听选中cells变化
+                selectionListener = obs -> {
+                    if (getTableRow() != null) {
+                        arrow.setVisible(isRowSelected(getTableRow().getIndex()));
+                    }
+                };
+                tableView.getSelectionModel().getSelectedCells().addListener(selectionListener);
             }
         });
         tableView.getColumns().add(selectorCol);
@@ -506,6 +534,7 @@ public class TableDataView extends BorderPane {
         List<String> columnNames = data.getColumnNames();
         for (int i = 0; i < columnNames.size(); i++) {
             final int colIndex = i;
+            final String colName = columnNames.get(i);
             TableColumn<ObservableList<String>, String> col = new TableColumn<>(columnNames.get(i));
             // 根据表头文字长度动态设置列宽（每个字符约8px，加padding）
             int headerLen = columnNames.get(i).length();
@@ -530,10 +559,127 @@ public class TableDataView extends BorderPane {
                 // 提交到数据库
                 commitCellUpdate(row, colIndex, oldValue, newValue);
             });
+
+            // 排序状态图标
+            if (colName.equals(sortColumn)) {
+                col.setGraphic(createSortArrow(sortDescending));
+                col.setStyle("-fx-alignment: CENTER-LEFT;");
+            }
+
             tableView.getColumns().add(col);
         }
 
         tableView.setItems(data.getRows());
+        // 布局完成后绑定表头点击事件
+        bindColumnHeaderEvents();
+    }
+
+    /**
+     * 绑定所有表头点击事件（在布局完成后调用）
+     */
+    private void bindColumnHeaderEvents() {
+        Platform.runLater(() -> {
+            tableView.lookupAll(".column-header").forEach(headerNode -> {
+                if (headerNode instanceof TableColumnHeader header) {
+                    var colBase = header.getTableColumn();
+                    if (colBase == null) return;
+                    // 查找匹配的TableColumn
+                    @SuppressWarnings("unchecked")
+                    TableColumn<ObservableList<String>, ?> matchedCol = null;
+                    int colIndex = -1;
+                    for (int i = 0; i < tableView.getColumns().size(); i++) {
+                        TableColumn<ObservableList<String>, ?> tc = tableView.getColumns().get(i);
+                        if (tc == colBase) {
+                            matchedCol = tc;
+                            colIndex = i - 1; // 减去行选择器列
+                            break;
+                        }
+                    }
+                    if (matchedCol == null || ROW_SELECTOR_COL.equals(matchedCol.getUserData())) return;
+
+                    String colName = matchedCol.getText();
+                    final int ci = colIndex;
+                    header.setOnMousePressed(event -> {
+                        event.consume();
+                        if (event.getButton() == MouseButton.SECONDARY) {
+                            showSortMenu(header, colName);
+                        } else if (event.getButton() == MouseButton.PRIMARY) {
+                            double clickX = event.getX();
+                            double headerWidth = header.getWidth();
+                            if (clickX > headerWidth - 20) {
+                                showSortMenu(header, colName);
+                            } else {
+                                selectColumn(ci);
+                            }
+                        }
+                    });
+                }
+            });
+        });
+    }
+
+    /**
+     * 判断指定行是否有任何cell被选中
+     */
+    private boolean isRowSelected(int rowIndex) {
+        for (TablePosition<?, ?> pos : tableView.getSelectionModel().getSelectedCells()) {
+            if (pos.getRow() == rowIndex) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 选中整列
+     */
+    private void selectColumn(int colIndex) {
+        tableView.getSelectionModel().clearSelection();
+        for (int row = 0; row < tableView.getItems().size(); row++) {
+            // colIndex+1 因为第一列是行选择器列
+            tableView.getSelectionModel().select(row, tableView.getColumns().get(colIndex + 1));
+        }
+    }
+
+    /**
+     * 弹出排序菜单
+     */
+    private void showSortMenu(Node anchor, String colName) {
+        ContextMenu sortMenu = new ContextMenu();
+        MenuItem ascItem = new MenuItem("正序排列");
+        ascItem.setOnAction(e -> {
+            sortColumn = colName;
+            sortDescending = false;
+            loadData(1);
+        });
+        MenuItem descItem = new MenuItem("倒序排列");
+        descItem.setOnAction(e -> {
+            sortColumn = colName;
+            sortDescending = true;
+            loadData(1);
+        });
+        MenuItem clearSortItem = new MenuItem("取消排序");
+        clearSortItem.setOnAction(e -> {
+            sortColumn = null;
+            sortDescending = false;
+            loadData(1);
+        });
+        sortMenu.getItems().addAll(ascItem, descItem, new SeparatorMenuItem(), clearSortItem);
+        sortMenu.show(anchor, javafx.geometry.Side.BOTTOM, 0, 0);
+    }
+
+    /**
+     * 创建排序箭头图标
+     */
+    private Node createSortArrow(boolean descending) {
+        Polygon arrow = new Polygon();
+        if (descending) {
+            // 下箭头
+            arrow.getPoints().addAll(4.0, 0.0, 8.0, 0.0, 6.0, 4.0);
+        } else {
+            // 上箭头
+            arrow.getPoints().addAll(6.0, 0.0, 8.0, 4.0, 4.0, 4.0);
+        }
+        arrow.setFill(Color.valueOf("#3592CB"));
+        return arrow;
     }
 
     /**
@@ -606,7 +752,7 @@ public class TableDataView extends BorderPane {
     }
 
     /**
-     * 可编辑单元格：点击时进入编辑模式，蓝色边框覆盖原有表格线
+     * 可编辑单元格：选中时蓝色背景，进入编辑时白色背景+蓝色边框
      */
     private static class EditableTableCell extends TableCell<ObservableList<String>, String> {
         private TextField textField;
@@ -626,8 +772,8 @@ public class TableDataView extends BorderPane {
             textField.setText(getItem() != null ? getItem() : "");
             textField.selectAll();
             textField.requestFocus();
-            // 蓝色边框覆盖原有表格线，无内边距让TextField填满
-            setStyle("-fx-border-color: #3592CB; -fx-border-width: 2; -fx-padding: 0;");
+            // 编辑状态：白色背景+蓝色边框覆盖表格线
+            setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 2; -fx-padding: 0; -fx-text-fill: black;");
         }
 
         @Override
@@ -652,7 +798,7 @@ public class TableDataView extends BorderPane {
                     }
                     setText(null);
                     setGraphic(textField);
-                    setStyle("-fx-border-color: #3592CB; -fx-border-width: 2; -fx-padding: 0;");
+                    setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 2; -fx-padding: 0; -fx-text-fill: black;");
                 } else {
                     setText(item != null ? item : "");
                     setGraphic(null);
@@ -664,8 +810,8 @@ public class TableDataView extends BorderPane {
         private void createTextField() {
             textField = new TextField(getItem() != null ? getItem() : "");
             textField.setMinWidth(this.getWidth() - this.getGraphicTextGap() * 2);
-            // 无边框、无背景、无内边距，看起来就是cell本身在编辑
-            textField.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0 4; -fx-focus-color: transparent; -fx-faint-focus-color: transparent;");
+            // 白色背景，无边框，看起来是cell本身在编辑
+            textField.setStyle("-fx-background-color: white; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0 4; -fx-focus-color: transparent; -fx-faint-focus-color: transparent; -fx-text-fill: black;");
             textField.setOnAction(e -> commitEdit(textField.getText()));
             textField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
                 if (!isNowFocused) {
