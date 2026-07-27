@@ -4,6 +4,8 @@ import javafx.application.Platform;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
+import javafx.scene.Parent;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
@@ -665,9 +667,15 @@ public class SqlEditorView extends BorderPane {
      */
     private TableView<ObservableList<String>> createTableView(TableRowData result, String sourceTableName) {
         TableView<ObservableList<String>> tableView = new TableView<>();
-        tableView.setStyle("-fx-font-size: 12px;");
+        tableView.setStyle("-fx-font-size: 12px; -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0;");
         tableView.setPlaceholder(new Label("无数据"));
         tableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+        // 布局后移除内部节点的默认padding/border，消除左侧间隔
+        tableView.skinProperty().addListener((obs, oldSkin, newSkin) -> {
+            if (newSkin != null) {
+                stripPaddingRecursive(tableView);
+            }
+        });
 
         List<String> columns = result.getColumnNames();
         for (int i = 0; i < columns.size(); i++) {
@@ -1063,6 +1071,21 @@ public class SqlEditorView extends BorderPane {
         @Override
         public String getSelectedText() {
             return textArea.getSelectedText();
+        }
+    }
+
+    private void stripPaddingRecursive(Node node) {
+        if (node instanceof Region region) {
+            if (!region.getStyleClass().contains("table-cell")
+                    && !region.getStyleClass().contains("column-header")
+                    && !region.getStyleClass().contains("table-row-cell")) {
+                region.setPadding(Insets.EMPTY);
+            }
+        }
+        if (node instanceof Parent parent) {
+            for (Node child : parent.getChildrenUnmodifiable()) {
+                stripPaddingRecursive(child);
+            }
         }
     }
 }

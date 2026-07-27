@@ -5,11 +5,14 @@ import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
+import javafx.scene.Parent;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Polygon;
@@ -153,16 +156,23 @@ public class TableDataView extends BorderPane {
     private void initializeUI() {
         // TableView
         tableView = new TableView<>();
-        tableView.setStyle("-fx-font-size: 12px;");
+        tableView.setStyle("-fx-font-size: 12px; -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0;");
         tableView.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
         tableView.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         tableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+        // 布局后移除内部节点的默认padding/border，消除左侧间隔
+        tableView.skinProperty().addListener((obs, oldSkin, newSkin) -> {
+            if (newSkin != null) {
+                stripPaddingRecursive(tableView);
+            }
+        });
 
         // 加载指示器
         loadingIndicator = new ProgressIndicator();
         loadingIndicator.setMaxSize(40, 40);
 
         centerPane = new StackPane(tableView, loadingIndicator);
+        centerPane.setPadding(Insets.EMPTY);
         loadingIndicator.setVisible(false);
 
         // 分页状态栏
@@ -216,6 +226,26 @@ public class TableDataView extends BorderPane {
 
         this.setCenter(centerPane);
         this.setBottom(statusBar);
+        this.setPadding(Insets.EMPTY);
+    }
+
+    /**
+     * 递归移除 TableView 内部节点的默认 padding，消除左侧间隔
+     */
+    private void stripPaddingRecursive(Node node) {
+        if (node instanceof Region region) {
+            // 不修改 table-cell 和 column-header 的 padding（它们需要内容间距）
+            if (!region.getStyleClass().contains("table-cell")
+                    && !region.getStyleClass().contains("column-header")
+                    && !region.getStyleClass().contains("table-row-cell")) {
+                region.setPadding(Insets.EMPTY);
+            }
+        }
+        if (node instanceof Parent parent) {
+            for (Node child : parent.getChildrenUnmodifiable()) {
+                stripPaddingRecursive(child);
+            }
+        }
     }
 
     private void loadData(int page) {

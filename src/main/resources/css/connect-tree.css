@@ -118,6 +118,7 @@
 .tab-pane .tab-content-area {
     -fx-background-color: #f7f7f7;
     -fx-border-color: transparent;
+    -fx-padding: 0;
 }
 
 .combo-box, .combo-box-base {
@@ -333,6 +334,84 @@
 .table-view {
     -fx-focus-color: transparent;
     -fx-faint-focus-color: transparent;
+    -fx-border-color: transparent;
+    -fx-background-insets: 0, 0, 0, 0;
+    -fx-padding: 0;
+    -fx-background-radius: 0, 0, 0, 0;
+    -fx-background-color: transparent, transparent, transparent, transparent;
+}
+
+.table-view:focused {
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+    -fx-border-color: transparent;
+    -fx-background-color: transparent, transparent, transparent, transparent;
+}
+
+.table-view .virtual-flow {
+    -fx-border-color: transparent;
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+    -fx-background-insets: 0;
+}
+
+.table-view .virtual-flow .clipped-container {
+    -fx-padding: 0;
+}
+
+.table-view .virtual-flow .scroll-bar:vertical {
+    -fx-padding: 0;
+}
+
+.table-view .virtual-flow .scroll-bar:horizontal {
+    -fx-padding: 0;
+}
+
+.table-view .corner {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+
+/* 去掉表头区域左侧padding */
+.table-view .column-header-background {
+    -fx-padding: 0;
+    -fx-background-insets: 0;
+    -fx-border-color: transparent transparent #cccccc transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.table-view .column-header {
+    -fx-padding: 0;
+    -fx-background-insets: 0;
+    -fx-border-color: transparent;
+}
+
+.table-view .column-header-background .filler {
+    -fx-padding: 0;
+    -fx-background-insets: 0;
+}
+
+.table-view .column-header-background .nested-column-header {
+    -fx-padding: 0;
+    -fx-background-insets: 0;
+}
+
+.table-view .table-row-cell:odd {
+    -fx-background-insets: 0, 0, 0, 0;
+}
+
+.table-view .table-row-cell:filled:hover {
+    -fx-background-insets: 0, 0, 0, 0;
+}
+
+.table-view .table-row-cell:selected {
+    -fx-background-insets: 0, 0, 0, 0;
+    -fx-background-color: #3592CB;
+    -fx-text-fill: white;
+}
+
+.table-view .table-row-cell:selected .table-cell {
+    -fx-text-fill: white;
 }
 
 .table-view .table-cell {
@@ -344,6 +423,8 @@
 .table-view .table-row-cell {
     -fx-border-color: transparent transparent #e0e0e0 transparent;
     -fx-border-width: 0 0 1 0;
+    -fx-background-insets: 0, 0, 0, 0;
+    -fx-padding: 0;
 }
 
 .table-view .table-row-cell:empty {
@@ -351,16 +432,7 @@
     -fx-border-color: transparent;
 }
 
-.table-view .table-row-cell:selected {
-    -fx-background-color: #3592CB;
-    -fx-text-fill: white;
-}
-
-.table-view .table-row-cell:selected .table-cell {
-    -fx-text-fill: white;
-}
-
-.table-view .column-header-background {
-    -fx-border-color: transparent transparent #cccccc transparent;
-    -fx-border-width: 0 0 1 0;
+.table-view .table-row-cell:empty .table-cell {
+    -fx-border-color: transparent;
+    -fx-padding: 0;
 }
