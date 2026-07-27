@@ -56,6 +56,8 @@ public class TableDataView extends BorderPane {
     // 排序状态
     private String sortColumn;
     private boolean sortDescending = false;
+    // 表头事件过滤器是否已安装
+    private boolean headerEventFilterInstalled = false;
 
     // 主键列名缓存
     private List<String> primaryKeyColumns;
@@ -103,12 +105,25 @@ public class TableDataView extends BorderPane {
         deleteItem.setOnAction(e -> handleDeleteSelectedRows());
         contextMenu.getItems().add(deleteItem);
 
-        tableView.setContextMenu(contextMenu);
-
-        // 右键时根据选中行数动态更新菜单文字
+        // 只在数据行区域显示右键菜单，表头区域不显示
         tableView.setOnContextMenuRequested(event -> {
+            // 检查右键是否在表头区域
+            Node target = event.getPickResult().getIntersectedNode();
+            while (target != null && target != tableView) {
+                if (target.getStyleClass().contains("column-header") ||
+                    target.getStyleClass().contains("column-header-background") ||
+                    target.getStyleClass().contains("filler") ||
+                    target.getStyleClass().contains("nested-column-header")) {
+                    // 在表头区域，不显示行右键菜单
+                    event.consume();
+                    return;
+                }
+                target = target.getParent();
+            }
             int count = (int) tableView.getSelectionModel().getSelectedItems().stream().distinct().count();
             deleteItem.setText("删除" + (count > 0 ? count : 1) + "条数据");
+            contextMenu.show(tableView, event.getScreenX(), event.getScreenY());
+            event.consume();
         });
     }
 
@@ -181,6 +196,8 @@ public class TableDataView extends BorderPane {
         // TableView
         tableView = new TableView<>();
         tableView.setEditable(true);
+        // 禁用默认排序，排序由右键菜单控制
+        tableView.setSortPolicy(param -> false);
         GlobalConfig globalConfig = GlobalConfig.getInstance();
         String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
                 globalConfig.getTableFontName(), globalConfig.getTableFontSize());
@@ -560,17 +577,11 @@ public class TableDataView extends BorderPane {
                 commitCellUpdate(row, colIndex, oldValue, newValue);
             });
 
-            // 排序状态图标
-            if (colName.equals(sortColumn)) {
-                col.setGraphic(createSortArrow(sortDescending));
-                col.setStyle("-fx-alignment: CENTER-LEFT;");
-            }
-
             tableView.getColumns().add(col);
         }
 
         tableView.setItems(data.getRows());
-        // 布局完成后绑定表头点击事件
+        // 布局完成后绑定表头点击事件和排序箭头
         bindColumnHeaderEvents();
     }
 
@@ -579,10 +590,28 @@ public class TableDataView extends BorderPane {
      */
     private void bindColumnHeaderEvents() {
         Platform.runLater(() -> {
-            tableView.lookupAll(".column-header").forEach(headerNode -> {
-                if (headerNode instanceof TableColumnHeader header) {
+            // 只安装一次事件过滤器
+            if (!headerEventFilterInstalled) {
+                headerEventFilterInstalled = true;
+                // 使用事件过滤器在捕获阶段处理，避免被子节点拦截
+                tableView.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
+                    if (event.getButton() != MouseButton.PRIMARY && event.getButton() != MouseButton.SECONDARY) return;
+
+                    // 查找点击的表头
+                    Node target = event.getPickResult().getIntersectedNode();
+                    TableColumnHeader header = null;
+                    while (target != null && target != tableView) {
+                        if (target instanceof TableColumnHeader tch) {
+                            header = tch;
+                            break;
+                        }
+                        target = target.getParent();
+                    }
+                    if (header == null) return;
+
                     var colBase = header.getTableColumn();
                     if (colBase == null) return;
+
                     // 查找匹配的TableColumn
                     @SuppressWarnings("unchecked")
                     TableColumn<ObservableList<String>, ?> matchedCol = null;
@@ -598,27 +627,59 @@ public class TableDataView extends BorderPane {
                     if (matchedCol == null || ROW_SELECTOR_COL.equals(matchedCol.getUserData())) return;
 
                     String colName = matchedCol.getText();
-                    final int tci = tableColIndex;
-                    // 拦截所有鼠标事件，阻止默认排序/选中行为
-                    header.setOnMousePressed(event -> {
-                        event.consume();
-                        if (event.getButton() == MouseButton.PRIMARY) {
-                            double clickX = event.getX();
-                            double headerWidth = header.getWidth();
-                            if (clickX > headerWidth - 20) {
-                                showSortMenu(header, colName);
-                            } else {
-                                selectColumnByTableIndex(tci);
-                            }
-                        } else if (event.getButton() == MouseButton.SECONDARY) {
-                            showSortMenu(header, colName);
+                    event.consume();
+
+                    if (event.getButton() == MouseButton.SECONDARY) {
+                        showSortMenu(header, colName);
+                    } else if (event.getButton() == MouseButton.PRIMARY) {
+                        selectColumnByTableIndex(tableColIndex);
+                    }
+                });
+            }
+
+            // 每次数据刷新后更新排序箭头
+            tableView.lookupAll(".column-header").forEach(headerNode -> {
+                if (headerNode instanceof TableColumnHeader header) {
+                    var colBase = header.getTableColumn();
+                    if (colBase == null) return;
+                    @SuppressWarnings("unchecked")
+                    TableColumn<ObservableList<String>, ?> matchedCol = null;
+                    for (int i = 0; i < tableView.getColumns().size(); i++) {
+                        if (tableView.getColumns().get(i) == colBase) {
+                            matchedCol = tableView.getColumns().get(i);
+                            break;
                         }
-                    });
-                    header.setOnMouseClicked(event -> event.consume());
-                    header.setOnMouseReleased(event -> event.consume());
+                    }
+                    if (matchedCol != null && !ROW_SELECTOR_COL.equals(matchedCol.getUserData())) {
+                        updateSortArrow(header, matchedCol.getText());
+                    }
                 }
             });
         });
+    }
+
+    /**
+     * 在表头节点中显示/隐藏排序箭头
+     */
+    private void updateSortArrow(TableColumnHeader header, String colName) {
+        // 查找表头中的label
+        Label headerLabel = null;
+        for (Node child : header.getChildrenUnmodifiable()) {
+            if (child instanceof Label) {
+                headerLabel = (Label) child;
+                break;
+            }
+        }
+        if (headerLabel == null) return;
+
+        if (colName.equals(sortColumn)) {
+            Node arrow = createSortArrow(sortDescending);
+            // 设置为label的graphic
+            headerLabel.setGraphic(arrow);
+            headerLabel.setContentDisplay(ContentDisplay.RIGHT);
+        } else {
+            headerLabel.setGraphic(null);
+        }
     }
 
     /**
@@ -675,11 +736,11 @@ public class TableDataView extends BorderPane {
     private Node createSortArrow(boolean descending) {
         Polygon arrow = new Polygon();
         if (descending) {
-            // 下箭头
-            arrow.getPoints().addAll(4.0, 0.0, 8.0, 0.0, 6.0, 4.0);
+            // 下箭头（放大）
+            arrow.getPoints().addAll(2.0, 0.0, 10.0, 0.0, 6.0, 7.0);
         } else {
-            // 上箭头
-            arrow.getPoints().addAll(6.0, 0.0, 8.0, 4.0, 4.0, 4.0);
+            // 上箭头（放大）
+            arrow.getPoints().addAll(6.0, 0.0, 10.0, 7.0, 2.0, 7.0);
         }
         arrow.setFill(Color.valueOf("#3592CB"));
         return arrow;
