@@ -1188,6 +1188,16 @@ public class DatabaseService {
     }
 
     /**
+     * 获取数据库产品版本字符串
+     * @param config 连接配置
+     * @return 版本字符串，如 "8.0.32"、"15.2"、"19c"
+     */
+    public static String getDatabaseProductVersion(ConnectionConfig config) throws Exception {
+        Connection conn = getConnection(config);
+        return conn.getMetaData().getDatabaseProductVersion();
+    }
+
+    /**
      * 构建JDBC URL
      */
     private static String buildJdbcUrl(ConnectionConfig config, String host, int port, String database) {

@@ -52,6 +52,12 @@ public class TerminalEmulator {
     // 自动交替缓冲区标志：当检测到全屏程序（如top）未发送标准交替缓冲区序列时，
     // 通过CSI 2J+应用光标键模式自动切换到交替缓冲区
     private boolean autoAltBuffer = false;
+    // 交替缓冲区专用光标保存（不受DECSC/DECRC即ESC 7/8影响）
+    private int altBufferSavedCursorX = 0;
+    private int altBufferSavedCursorY = 0;
+    // 抑制清屏标志：从自动交替缓冲区切回主缓冲区后，top退出时可能发送CSI 2J，
+    // 该标志用于抑制这种清屏命令，直到收到新的可打印字符为止
+    private boolean suppressClearScreen = false;
 
     // 回滚历史缓冲区
     private java.util.LinkedList<char[]> scrollbackLines = new java.util.LinkedList<>();
@@ -395,6 +401,11 @@ public class TerminalEmulator {
             // 忽略响铃
         } else if (ch >= 0x20 || Character.isISOControl(ch) == false) {
             // 可打印字符（包括CJK等Unicode字符）
+            // 收到可打印字符时重置抑制清屏标志（说明shell已开始输出新内容）
+            if (suppressClearScreen) {
+                suppressClearScreen = false;
+                System.err.println("[Terminal] Printable char received, suppressClearScreen=false");
+            }
             boolean wideChar = isWideChar(ch);
             int charWidth = wideChar ? 2 : 1;
 
@@ -607,7 +618,12 @@ public class TerminalEmulator {
                 break;
             case 'J': // 清屏
                 int clearMode = params.length > 0 ? params[0] : 0;
-                System.err.println("[Terminal] CSI " + clearMode + "J (clear screen) altBuf=" + usingAltBuffer + " autoAlt=" + autoAltBuffer + " appCursor=" + applicationCursorKeys);
+                System.err.println("[Terminal] CSI " + clearMode + "J (clear screen) altBuf=" + usingAltBuffer + " autoAlt=" + autoAltBuffer + " appCursor=" + applicationCursorKeys + " suppress=" + suppressClearScreen);
+                if (suppressClearScreen) {
+                    // 从自动交替缓冲区切回后抑制所有清屏命令（top退出时的清理序列）
+                    System.err.println("[Terminal] SUPPRESS CSI " + clearMode + "J after auto-alt buffer switch back");
+                    break;
+                }
                 if (clearMode == 2 && !usingAltBuffer) {
                     // CSI 2J: 清除整个屏幕
                     // 如果当前处于应用光标键模式（全屏程序如top的标志），
@@ -615,7 +631,14 @@ public class TerminalEmulator {
                     // 自动切换到交替缓冲区以保护主缓冲区内容
                     if (applicationCursorKeys) {
                         System.err.println("[Terminal] AUTO SWITCH TO ALT BUFFER (detected CSI 2J + appCursorKeys)");
+                        // 保存CSI ?1h时记录的光标位置，防止被switchToAltBuffer()覆盖
+                        // 因为在CSI ?1h和CSI 2J之间，top可能已经移动了光标（如CSI H）
+                        int savedX = altBufferSavedCursorX;
+                        int savedY = altBufferSavedCursorY;
                         switchToAltBuffer();
+                        // 恢复CSI ?1h时保存的正确光标位置
+                        altBufferSavedCursorX = savedX;
+                        altBufferSavedCursorY = savedY;
                         autoAltBuffer = true;
                     }
                 }
@@ -642,7 +665,13 @@ public class TerminalEmulator {
                             case 25: cursorVisible = true; break;
                             case 1:
                                 applicationCursorKeys = true;
-                                System.err.println("[Terminal] CSI ?1h (appCursorKeys ON) altBuf=" + usingAltBuffer + " autoAlt=" + autoAltBuffer);
+                                // 保存当前光标位置到专用字段，用于自动交替缓冲区恢复
+                                // 注意：不能用savedCursorX/Y，因为top运行期间ESC 7/8会覆盖它
+                                if (!usingAltBuffer && !autoAltBuffer) {
+                                    altBufferSavedCursorX = cursorX;
+                                    altBufferSavedCursorY = cursorY;
+                                }
+                                System.err.println("[Terminal] CSI ?1h (appCursorKeys ON) altBuf=" + usingAltBuffer + " autoAlt=" + autoAltBuffer + " savedCursor=(" + altBufferSavedCursorX + "," + altBufferSavedCursorY + ")");
                                 break;
                             case 6: originMode = true; break;
                             case 1049: // 切换到交替屏幕缓冲区
@@ -774,11 +803,12 @@ public class TerminalEmulator {
         attrs = altAttrs;
         altBuffer = tmpBuf;
         altAttrs = tmpAttrs;
-        // 保存光标
+        // 保存DECSC光标位置（ESC 7/8使用的savedCursorX/Y）
         altSavedCursorX = savedCursorX;
         altSavedCursorY = savedCursorY;
-        savedCursorX = cursorX;
-        savedCursorY = cursorY;
+        // 保存光标到专用字段（用于切回时恢复，不被ESC 7/8覆盖）
+        altBufferSavedCursorX = cursorX;
+        altBufferSavedCursorY = cursorY;
         // 保存主缓冲区的滚动偏移，重置为0
         mainBufferScrollOffset = scrollOffset;
         scrollOffset = 0;
@@ -804,11 +834,24 @@ public class TerminalEmulator {
         attrs = altAttrs;
         altBuffer = tmpBuf;
         altAttrs = tmpAttrs;
-        // 恢复光标
-        cursorX = savedCursorX;
-        cursorY = savedCursorY;
+        // 恢复DECSC保存的光标位置
         savedCursorX = altSavedCursorX;
         savedCursorY = altSavedCursorY;
+
+        if (autoAltBuffer) {
+            // 自动交替缓冲区模式：恢复到top启动前的光标位置
+            // 使用CSI ?1h时保存的altBufferSavedCursorX/Y（已防止被switchToAltBuffer覆盖）
+            cursorX = altBufferSavedCursorX;
+            cursorY = altBufferSavedCursorY;
+            // 设置抑制清屏标志：top退出时可能发送CSI J，需要抑制
+            suppressClearScreen = true;
+            System.err.println("[Terminal] AUTO ALT: cursor restored to (" + cursorX + "," + cursorY + ") suppressClearScreen=true");
+        } else {
+            // 标准交替缓冲区模式：使用保存的光标位置
+            cursorX = altBufferSavedCursorX;
+            cursorY = altBufferSavedCursorY;
+        }
+
         // 恢复主缓冲区的滚动偏移
         scrollOffset = mainBufferScrollOffset;
         mainBufferScrollOffset = 0;
@@ -816,6 +859,21 @@ public class TerminalEmulator {
         autoAltBuffer = false;
         scrollTop = 0;
         scrollBottom = 0;
+    }
+
+    /**
+     * 查找当前缓冲区中最后一个有非空格内容的行
+     * @return 最后一个有内容的行号，如果全部为空则返回-1
+     */
+    private int findLastContentRow() {
+        for (int y = rows - 1; y >= 0; y--) {
+            for (int x = 0; x < cols; x++) {
+                if (buffer[y][x] != ' ' && buffer[y][x] != '\0') {
+                    return y;
+                }
+            }
+        }
+        return -1;
     }
 
     private int[] parseParams(String seq) {

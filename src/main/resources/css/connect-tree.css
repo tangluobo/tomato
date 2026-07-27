@@ -212,6 +212,8 @@
     -fx-border-color: transparent;
     -fx-effect: none;
     -fx-background-radius: 0;
+    -fx-min-height: 200px;
+    -fx-pref-height: 400px;
 }
 
 .combo-box-popup .list-view .virtual-flow {
@@ -258,6 +260,40 @@
     -fx-background-position: 2px center;
     -fx-background-size: 16px 16px;
     -fx-padding: 0 0 0 20;
+}
+
+/* 表格内嵌ComboBox样式 - 更紧凑 */
+.combo-box-table-cell {
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-pref-height: 24px;
+    -fx-effect: none;
+    -fx-background-color: white;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
+.combo-box-table-cell .text-field {
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
+    -fx-border-color: transparent;
+    -fx-pref-height: 22px;
+    -fx-background-color: white;
+    -fx-background-insets: 0;
+    -fx-effect: none;
+    -fx-padding: 0 4;
+}
+
+.combo-box-table-cell .arrow-button {
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
+    -fx-pref-height: 22px;
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-effect: none;
 }
 
 .toolbar-button {
