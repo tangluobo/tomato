@@ -155,6 +155,7 @@ public class TableDataView extends BorderPane {
         tableView = new TableView<>();
         tableView.setStyle("-fx-font-size: 12px;");
         tableView.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        tableView.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         tableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
 
         // 加载指示器
@@ -253,16 +254,16 @@ public class TableDataView extends BorderPane {
 
         // 创建行选择器列：选中行显示黑色实心三角箭头
         TableColumn<ObservableList<String>, String> selectorCol = new TableColumn<>();
-        selectorCol.setPrefWidth(30);
-        selectorCol.setMaxWidth(30);
-        selectorCol.setMinWidth(30);
+        selectorCol.setPrefWidth(15);
+        selectorCol.setMaxWidth(15);
+        selectorCol.setMinWidth(15);
         selectorCol.setSortable(false);
         selectorCol.setReorderable(false);
         selectorCol.setStyle("-fx-alignment: CENTER;");
         // 用userData标记此列，删除时跳过
         selectorCol.setUserData(ROW_SELECTOR_COL);
         selectorCol.setCellFactory(col -> new TableCell<>() {
-            private final Polygon arrow = new Polygon(0, 0, 8, 4.5, 0, 9);
+            private final Polygon arrow = new Polygon(0, -0.5, 5, 4.5, 0, 9.5);
             private javafx.beans.value.ChangeListener<Boolean> selectionListener;
 
             {
@@ -271,6 +272,8 @@ public class TableDataView extends BorderPane {
                 setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
                 setAlignment(Pos.CENTER);
                 arrow.setVisible(false);
+                // 左侧加网格线
+                setStyle("-fx-border-color: transparent #e0e0e0 transparent #e0e0e0; -fx-border-width: 0 1 0 1;");
             }
 
             @Override
@@ -302,6 +305,9 @@ public class TableDataView extends BorderPane {
         for (int i = 0; i < columnNames.size(); i++) {
             final int colIndex = i;
             TableColumn<ObservableList<String>, String> col = new TableColumn<>(columnNames.get(i));
+            // 根据表头文字长度动态设置列宽（每个字符约8px，加padding）
+            int headerLen = columnNames.get(i).length();
+            col.setPrefWidth(Math.max(headerLen * 8 + 16, 60));
             col.setCellValueFactory(param -> {
                 ObservableList<String> row = param.getValue();
                 if (colIndex < row.size()) {

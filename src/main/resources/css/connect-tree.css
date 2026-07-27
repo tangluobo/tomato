@@ -328,3 +328,39 @@
 .check-box:hover .box {
     -fx-border-color: #333333;
 }
+
+/* 表格数据视图：去掉单元格边框线 */
+.table-view {
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+}
+
+.table-view .table-cell {
+    -fx-border-color: transparent #e0e0e0 transparent transparent;
+    -fx-border-width: 0 1 0 0;
+    -fx-padding: 4 6;
+}
+
+.table-view .table-row-cell {
+    -fx-border-color: transparent transparent #e0e0e0 transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.table-view .table-row-cell:empty {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+
+.table-view .table-row-cell:selected {
+    -fx-background-color: #3592CB;
+    -fx-text-fill: white;
+}
+
+.table-view .table-row-cell:selected .table-cell {
+    -fx-text-fill: white;
+}
+
+.table-view .column-header-background {
+    -fx-border-color: transparent transparent #cccccc transparent;
+    -fx-border-width: 0 0 1 0;
+}
