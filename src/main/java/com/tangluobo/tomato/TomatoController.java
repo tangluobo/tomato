@@ -314,9 +314,6 @@ public class TomatoController {
             return;
         }
 
-        windowManagementActive = true;
-        draggingFromMaximized = false;
-
         double sceneX = event.getSceneX();
         double sceneY = event.getSceneY();
         double width = stage.getWidth();
@@ -328,15 +325,21 @@ public class TomatoController {
         resizingBottom = sceneY >= height - EDGE_THRESHOLD;
 
         if (resizingLeft || resizingRight || resizingTop || resizingBottom) {
+            windowManagementActive = true;
+            draggingFromMaximized = false;
             startWidth = width;
             startHeight = height;
             startX = event.getScreenX();
             startY = event.getScreenY();
             startWindowX = stage.getX();
             startWindowY = stage.getY();
-        } else {
+        } else if (isInTitleBar(event)) {
+            windowManagementActive = true;
+            draggingFromMaximized = false;
             xOffset = event.getSceneX();
             yOffset = event.getSceneY();
+        } else {
+            windowManagementActive = false;
         }
     }
 

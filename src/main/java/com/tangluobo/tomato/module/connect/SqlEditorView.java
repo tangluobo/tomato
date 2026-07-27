@@ -632,7 +632,7 @@ public class SqlEditorView extends BorderPane {
                 sqlLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666; -fx-padding: 2 0;");
                 vbox.getChildren().add(sqlLabel);
 
-                TableView<ObservableList<String>> tableView = createTableView(explainResults.get(i));
+                ScrollPane tableView = createTableView(explainResults.get(i));
                 VBox.setVgrow(tableView, Priority.ALWAYS);
                 vbox.getChildren().add(tableView);
             }
@@ -656,7 +656,7 @@ public class SqlEditorView extends BorderPane {
     /**
      * 从TableRowData创建TableView（复用逻辑）
      */
-    private TableView<ObservableList<String>> createTableView(TableRowData result) {
+    private ScrollPane createTableView(TableRowData result) {
         return createTableView(result, null);
     }
 
@@ -665,9 +665,12 @@ public class SqlEditorView extends BorderPane {
      * @param result 表格数据
      * @param sourceTableName 源表名，若非null且有主键则启用右键删除
      */
-    private TableView<ObservableList<String>> createTableView(TableRowData result, String sourceTableName) {
+    private ScrollPane createTableView(TableRowData result, String sourceTableName) {
         TableView<ObservableList<String>> tableView = new TableView<>();
-        tableView.setStyle("-fx-font-size: 12px; -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0;");
+        GlobalConfig globalConfig = GlobalConfig.getInstance();
+        String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
+                globalConfig.getTableFontName(), globalConfig.getTableFontSize());
+        tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0;");
         tableView.setPlaceholder(new Label("无数据"));
         tableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         // 布局后移除内部节点的默认padding/border，消除左侧间隔
@@ -681,7 +684,9 @@ public class SqlEditorView extends BorderPane {
         for (int i = 0; i < columns.size(); i++) {
             final int colIndex = i;
             TableColumn<ObservableList<String>, String> col = new TableColumn<>(columns.get(i));
-            col.setPrefWidth(120);
+            // 根据表头文字长度动态设置列宽
+            int headerLen = columns.get(i).length();
+            col.setPrefWidth(Math.max(headerLen * 8 + 16, 60));
             col.setCellValueFactory(param -> {
                 ObservableList<String> row = param.getValue();
                 return new javafx.beans.property.SimpleStringProperty(colIndex < row.size() ? row.get(colIndex) : "");
@@ -697,7 +702,14 @@ public class SqlEditorView extends BorderPane {
             setupQueryResultDeleteMenu(tableView, sourceTableName, columns);
         }
 
-        return tableView;
+        // ScrollPane包裹TableView，支持横向滚动
+        ScrollPane scrollPane = new ScrollPane(tableView);
+        scrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
+        scrollPane.setFitToHeight(true);
+        scrollPane.setFitToWidth(false);
+        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        return scrollPane;
     }
 
     /**

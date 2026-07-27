@@ -1,3 +1,7 @@
+.root {
+    -fx-font-smoothing-type: lcd;
+}
+
 .tree-cell {
     -fx-cell-size: 35px;
     -fx-padding: 0 8;
@@ -383,7 +387,8 @@
 .table-view .column-header {
     -fx-padding: 0;
     -fx-background-insets: 0;
-    -fx-border-color: transparent;
+    -fx-border-color: transparent #DADAD8 transparent transparent;
+    -fx-border-width: 0 1 0 0;
 }
 
 .table-view .column-header-background .filler {

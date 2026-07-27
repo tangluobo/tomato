@@ -156,8 +156,10 @@ public class TableDataView extends BorderPane {
     private void initializeUI() {
         // TableView
         tableView = new TableView<>();
-        tableView.setStyle("-fx-font-size: 12px; -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0;");
-        tableView.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        GlobalConfig globalConfig = GlobalConfig.getInstance();
+        String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
+                globalConfig.getTableFontName(), globalConfig.getTableFontSize());
+        tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0;");
         tableView.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         tableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         // 布局后移除内部节点的默认padding/border，消除左侧间隔
@@ -171,7 +173,15 @@ public class TableDataView extends BorderPane {
         loadingIndicator = new ProgressIndicator();
         loadingIndicator.setMaxSize(40, 40);
 
-        centerPane = new StackPane(tableView, loadingIndicator);
+        // ScrollPane包裹TableView，支持横向滚动
+        ScrollPane tableScrollPane = new ScrollPane(tableView);
+        tableScrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
+        tableScrollPane.setFitToHeight(true);
+        tableScrollPane.setFitToWidth(false);
+        tableScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        tableScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+
+        centerPane = new StackPane(tableScrollPane, loadingIndicator);
         centerPane.setPadding(Insets.EMPTY);
         loadingIndicator.setVisible(false);
 
@@ -303,7 +313,7 @@ public class TableDataView extends BorderPane {
                 setAlignment(Pos.CENTER);
                 arrow.setVisible(false);
                 // 左侧加网格线
-                setStyle("-fx-border-color: transparent #e0e0e0 transparent #e0e0e0; -fx-border-width: 0 1 0 1;");
+                setStyle("-fx-border-color: transparent #BEBEBC transparent #BEBEBC; -fx-border-width: 0 1 0 1;");
             }
 
             @Override

@@ -19,12 +19,31 @@ public class GlobalConfig {
 
     private int scrollbackLines = 1000;
 
+    private String tableFontName = "Sans Serif";
+    private int tableFontSize = 10;
+
     public int getScrollbackLines() {
         return scrollbackLines;
     }
 
     public void setScrollbackLines(int scrollbackLines) {
         this.scrollbackLines = scrollbackLines;
+    }
+
+    public String getTableFontName() {
+        return tableFontName;
+    }
+
+    public void setTableFontName(String tableFontName) {
+        this.tableFontName = tableFontName;
+    }
+
+    public int getTableFontSize() {
+        return tableFontSize;
+    }
+
+    public void setTableFontSize(int tableFontSize) {
+        this.tableFontSize = tableFontSize;
     }
 
     private static GlobalConfig instance;
