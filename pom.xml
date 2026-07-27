@@ -95,6 +95,11 @@
             <artifactId>commons-io</artifactId>
             <version>2.16.1</version>
         </dependency>
+        <dependency>
+            <groupId>com.sshtools</groupId>
+            <artifactId>rdp</artifactId>
+            <version>3.0.0</version>
+        </dependency>
     </dependencies>
 
     <build>

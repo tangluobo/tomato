@@ -20,6 +20,12 @@ public class ConnectionConfig {
     private String description;
     private Integer scrollbackLines;
 
+    // RDP专属配置
+    private String domain;
+    private int screenWidth = 1024;
+    private int screenHeight = 768;
+    private int colorDepth = 24;
+
     // SSH通道配置
     private boolean useSshTunnel = false;
     private String sshTunnelHost;
@@ -85,6 +91,18 @@ public class ConnectionConfig {
 
     public Integer getScrollbackLines() { return scrollbackLines; }
     public void setScrollbackLines(Integer scrollbackLines) { this.scrollbackLines = scrollbackLines; }
+
+    public String getDomain() { return domain; }
+    public void setDomain(String domain) { this.domain = domain; }
+
+    public int getScreenWidth() { return screenWidth; }
+    public void setScreenWidth(int screenWidth) { this.screenWidth = screenWidth; }
+
+    public int getScreenHeight() { return screenHeight; }
+    public void setScreenHeight(int screenHeight) { this.screenHeight = screenHeight; }
+
+    public int getColorDepth() { return colorDepth; }
+    public void setColorDepth(int colorDepth) { this.colorDepth = colorDepth; }
 
     public boolean isUseSshTunnel() { return useSshTunnel; }
     public void setUseSshTunnel(boolean useSshTunnel) { this.useSshTunnel = useSshTunnel; }

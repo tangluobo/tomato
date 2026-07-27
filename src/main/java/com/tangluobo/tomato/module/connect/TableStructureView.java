@@ -326,10 +326,12 @@ public class TableStructureView extends BorderPane {
                     String lowerInput = input.toLowerCase();
                     filteredItems.setPredicate(t -> t.toLowerCase().contains(lowerInput));
                 }
-                // 输入时自动显示下拉列表
-                if (!comboBox.isShowing()) {
-                    comboBox.show();
-                }
+                // 延迟确保过滤后下拉列表保持显示
+                Platform.runLater(() -> {
+                    if (comboBox.getEditor().isFocused() && !comboBox.isShowing()) {
+                        comboBox.show();
+                    }
+                });
             });
 
             // 记录Escape按键，用于区分用户主动取消和失焦导致的取消
@@ -344,9 +346,9 @@ public class TableStructureView extends BorderPane {
                 }
             });
 
-            // 失焦时提交编辑
+            // 失焦时提交编辑（弹窗显示时不提交，用户可能在选择项）
             comboBox.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
-                if (!isNowFocused && !escapePressed) {
+                if (!isNowFocused && !escapePressed && !comboBox.isShowing()) {
                     commitEdit(comboBox.getValue() != null ? comboBox.getValue() : "");
                 }
             });
