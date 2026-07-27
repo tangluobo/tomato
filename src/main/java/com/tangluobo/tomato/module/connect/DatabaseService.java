@@ -1146,6 +1146,48 @@ public class DatabaseService {
     }
 
     /**
+     * 获取表的列信息列表
+     * @param config 连接配置
+     * @param databaseName 数据库名
+     * @param tableName 表名
+     * @return 列信息列表，每个元素为一个列的属性Map
+     */
+    public static List<Map<String, String>> getTableColumns(ConnectionConfig config, String databaseName, String tableName) throws Exception {
+        Connection conn = getConnection(config, databaseName);
+        List<Map<String, String>> columns = new ArrayList<>();
+
+        // 获取主键列表
+        List<String> primaryKeys = new ArrayList<>();
+        try (ResultSet pkRs = conn.getMetaData().getPrimaryKeys(databaseName, null, tableName)) {
+            while (pkRs.next()) {
+                primaryKeys.add(pkRs.getString("COLUMN_NAME"));
+            }
+        }
+
+        // 获取列信息
+        try (ResultSet rs = conn.getMetaData().getColumns(databaseName, null, tableName, null)) {
+            while (rs.next()) {
+                Map<String, String> col = new LinkedHashMap<>();
+                String colName = rs.getString("COLUMN_NAME");
+                col.put("字段名", colName);
+                col.put("类型", rs.getString("TYPE_NAME"));
+                col.put("长度", rs.getString("COLUMN_SIZE"));
+                col.put("可为空", "YES".equalsIgnoreCase(rs.getString("IS_NULLABLE")) ? "是" : "否");
+                col.put("主键", primaryKeys.contains(colName) ? "是" : "否");
+                String autoIncrement = rs.getString("IS_AUTOINCREMENT");
+                col.put("自增", "YES".equalsIgnoreCase(autoIncrement) ? "是" : "否");
+                String defaultValue = rs.getString("COLUMN_DEF");
+                col.put("默认值", defaultValue != null ? defaultValue : "");
+                String remarks = rs.getString("REMARKS");
+                col.put("注释", remarks != null ? remarks : "");
+                columns.add(col);
+            }
+        }
+
+        return columns;
+    }
+
+    /**
      * 构建JDBC URL
      */
     private static String buildJdbcUrl(ConnectionConfig config, String host, int port, String database) {

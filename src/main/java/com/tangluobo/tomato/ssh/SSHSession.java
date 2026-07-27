@@ -82,7 +82,7 @@ public class SSHSession {
         session.connect(30000);
 
         channel = (ChannelShell) session.openChannel("shell");
-        channel.setPtyType("xterm", 80, 24, 640, 480);
+        channel.setPtyType("xterm-256color", 80, 24, 640, 480);
         inputStream = channel.getInputStream();
         outputStream = channel.getOutputStream();
         channel.connect(30000);

@@ -288,7 +288,8 @@ public class TerminalView extends Canvas {
         int cols = emulator.getCols();
         int rows = emulator.getRows();
         int scrollOffset = emulator.getScrollOffset();
-        int scrollbackSize = emulator.getScrollbackSize();
+        // 交替屏幕缓冲区模式下不显示主缓冲区的scrollback
+        int scrollbackSize = emulator.isUsingAltBuffer() ? 0 : emulator.getScrollbackSize();
         double x0 = 2;
         double y0 = 2;
 
@@ -509,6 +510,9 @@ public class TerminalView extends Canvas {
      * 鼠标滚轮滚动回滚历史
      */
     private void handleScroll(ScrollEvent e) {
+        // 交替屏幕缓冲区模式下不允许滚动scrollback
+        if (emulator.isUsingAltBuffer()) return;
+
         int scrollbackSize = emulator.getScrollbackSize();
         if (scrollbackSize == 0) return;
 
@@ -536,8 +540,9 @@ public class TerminalView extends Canvas {
 
     private void notifyScrollbar() {
         if (scrollbarHandler != null) {
-            int sbSize = emulator.getScrollbackSize();
-            int sbOffset = emulator.getScrollOffset();
+            // 交替屏幕缓冲区模式下报告scrollback为0，使滚动条隐藏
+            int sbSize = emulator.isUsingAltBuffer() ? 0 : emulator.getScrollbackSize();
+            int sbOffset = emulator.isUsingAltBuffer() ? 0 : emulator.getScrollOffset();
             // 只在值变化时通知，避免循环
             if (sbSize != lastNotifiedScrollbackSize || sbOffset != lastNotifiedScrollOffset) {
                 lastNotifiedScrollbackSize = sbSize;

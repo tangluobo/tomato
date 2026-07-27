@@ -393,9 +393,13 @@ public class ConnectModule implements Module {
                             contextMenu.getItems().addAll(newBackupItem, new SeparatorMenuItem(), refreshItem);
                         }
                         case TABLE, VIEW -> {
+                            MenuItem designItem = new MenuItem("设计表");
+                            designItem.setOnAction(e -> handleTableStructureDoubleClick(targetItem, dbData));
+                            MenuItem openDataItem = new MenuItem("打开数据");
+                            openDataItem.setOnAction(e -> handleTableDataDoubleClick(targetItem, dbData));
                             MenuItem deleteItem = new MenuItem("删除");
                             deleteItem.setOnAction(e -> handleDeleteDbNodes());
-                            contextMenu.getItems().add(deleteItem);
+                            contextMenu.getItems().addAll(designItem, openDataItem, new SeparatorMenuItem(), deleteItem);
                         }
                         case QUERY -> {
                             MenuItem openQueryItem = new MenuItem("打开");
@@ -460,13 +464,15 @@ public class ConnectModule implements Module {
 
         treeView.setOnMousePressed(event -> contextMenu.hide());
 
-        treeView.setOnMouseClicked(event -> {
+        // 使用EventFilter在捕获阶段拦截双击事件，阻止TreeView默认的展开/折叠行为
+        treeView.addEventFilter(MouseEvent.MOUSE_CLICKED, event -> {
             if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 2) {
                 TreeItem<String> selectedItem = treeView.getSelectionModel().getSelectedItem();
                 if (selectedItem != null) {
                     // 检查是否为数据库动态节点
                     DatabaseNodeData dbData = dbNodeDataMap.get(selectedItem);
                     if (dbData != null) {
+                        event.consume(); // 捕获阶段消费事件，阻止TreeView默认双击展开
                         handleDbNodeDoubleClick(selectedItem, dbData);
                         return;
                     }
@@ -847,8 +853,8 @@ public class ConnectModule implements Module {
         dbItem.setExpanded(true);
 
         // 自动加载表和视图（默认不展开子节点）
-        loadTablesForFolder(tablesFolder, config, data.getDatabaseName());
-        loadViewsForFolder(viewsFolder, config, data.getDatabaseName());
+        loadTablesForFolder(tablesFolder, config, data.getDatabaseName(), false);
+        loadViewsForFolder(viewsFolder, config, data.getDatabaseName(), false);
     }
 
     /**
@@ -863,25 +869,25 @@ public class ConnectModule implements Module {
     }
 
     /**
-     * 双击"表"文件夹节点：加载表列表
+     * 双击"表"文件夹节点：加载表列表并展开
      */
     private void handleTablesFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
         if (!folderItem.getChildren().isEmpty()) {
             folderItem.setExpanded(!folderItem.isExpanded());
             return;
         }
-        loadTablesForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName());
+        loadTablesForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName(), true);
     }
 
     /**
-     * 双击"视图"文件夹节点：加载视图列表
+     * 双击"视图"文件夹节点：加载视图列表并展开
      */
     private void handleViewsFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
         if (!folderItem.getChildren().isEmpty()) {
             folderItem.setExpanded(!folderItem.isExpanded());
             return;
         }
-        loadViewsForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName());
+        loadViewsForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName(), true);
     }
 
     /**
@@ -900,8 +906,9 @@ public class ConnectModule implements Module {
 
     /**
      * 异步加载表列表到指定文件夹节点
+     * @param autoExpand 加载完成后是否自动展开
      */
-    private void loadTablesForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName) {
+    private void loadTablesForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName, boolean autoExpand) {
         new Thread(() -> {
             try {
                 List<String> tables = DatabaseService.getTables(config, dbName);
@@ -913,7 +920,7 @@ public class ConnectModule implements Module {
                         dbNodeDataMap.put(tableItem, new DatabaseNodeData(DatabaseNodeData.NodeType.TABLE, tableName, config, dbName));
                         folderItem.getChildren().add(tableItem);
                     }
-                    folderItem.setExpanded(false);
+                    folderItem.setExpanded(autoExpand);
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> {
@@ -930,8 +937,9 @@ public class ConnectModule implements Module {
 
     /**
      * 异步加载视图列表到指定文件夹节点
+     * @param autoExpand 加载完成后是否自动展开
      */
-    private void loadViewsForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName) {
+    private void loadViewsForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName, boolean autoExpand) {
         new Thread(() -> {
             try {
                 List<String> views = DatabaseService.getViews(config, dbName);
@@ -943,7 +951,7 @@ public class ConnectModule implements Module {
                         dbNodeDataMap.put(viewItem, new DatabaseNodeData(DatabaseNodeData.NodeType.VIEW, viewName, config, dbName));
                         folderItem.getChildren().add(viewItem);
                     }
-                    folderItem.setExpanded(false);
+                    folderItem.setExpanded(autoExpand);
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> {
@@ -956,6 +964,123 @@ public class ConnectModule implements Module {
                 e.printStackTrace();
             }
         }, "DB-LoadViews").start();
+    }
+
+    /**
+     * 双击表/视图节点：在树中展开显示列名
+     */
+    private void handleTableNodeDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
+        if (!item.getChildren().isEmpty()) {
+            item.setExpanded(!item.isExpanded());
+            return;
+        }
+        loadColumnsForTable(item, data.getConnectionConfig(), data.getDatabaseName(), data.getName());
+    }
+
+    /**
+     * 异步加载表的列名作为子节点
+     */
+    private void loadColumnsForTable(TreeItem<String> tableItem, ConnectionConfig config, String dbName, String tableName) {
+        new Thread(() -> {
+            try {
+                List<Map<String, String>> columns = DatabaseService.getTableColumns(config, dbName, tableName);
+                Platform.runLater(() -> {
+                    tableItem.getChildren().clear();
+                    for (Map<String, String> col : columns) {
+                        String colName = col.get("字段名");
+                        String typeInfo = col.get("类型");
+                        String displayText = colName + "  " + typeInfo;
+                        TreeItem<String> colItem = new TreeItem<>(displayText);
+                        // 列节点图标：小矩形
+                        boolean isPk = "是".equals(col.get("主键"));
+                        ImageView iv = new ImageView();
+                        iv.setFitWidth(16);
+                        iv.setFitHeight(16);
+                        // 用代码生成列图标
+                        javafx.scene.shape.Rectangle rect = new javafx.scene.shape.Rectangle(10, 10);
+                        rect.setFill(isPk ? javafx.scene.paint.Color.valueOf("#1E88E5") : javafx.scene.paint.Color.valueOf("#999999"));
+                        rect.setArcWidth(2);
+                        rect.setArcHeight(2);
+                        javafx.scene.SnapshotParameters sp = new javafx.scene.SnapshotParameters();
+                        sp.setFill(javafx.scene.paint.Color.TRANSPARENT);
+                        Image colIcon = rect.snapshot(sp, null);
+                        iv.setImage(colIcon);
+                        colItem.setGraphic(iv);
+                        tableItem.getChildren().add(colItem);
+                    }
+                    tableItem.setExpanded(true);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("加载失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法加载列信息: " + e.getMessage());
+                    alert.showAndWait();
+                });
+                e.printStackTrace();
+            }
+        }, "DB-LoadColumns").start();
+    }
+
+    /**
+     * 右键"设计表"：以Tab形式打开表结构视图
+     */
+    private void handleTableStructureDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
+        if (contentArea == null || terminalTabPane == null) return;
+        if (!ensureTabPaneInstalled()) return;
+
+        String tabId = "struct_" + data.getConnectionConfig().getId() + "_" + data.getDatabaseName() + "_" + data.getName();
+        // 同一个表/视图只允许一个标签，再次双击定位到已有标签
+        for (Tab tab : terminalTabPane.getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                terminalTabPane.getSelectionModel().select(tab);
+                showDataView();
+                return;
+            }
+        }
+
+        TableStructureView structView = new TableStructureView(data.getConnectionConfig(), data.getDatabaseName(), data.getName());
+
+        ConnectionConfig config = data.getConnectionConfig();
+        String typeLabel = data.getType() == DatabaseNodeData.NodeType.VIEW ? "视图" : "表";
+        String tabTitle = data.getName() + "@" + data.getDatabaseName() + "(" + config.getHost() + ":" + config.getPort() + ")-" + typeLabel + "结构";
+        Tab tab = new Tab(tabTitle);
+        // 设置标签头图标：表或视图
+        Image tabIcon = data.getType() == DatabaseNodeData.NodeType.VIEW ? viewIcon : tableIcon;
+        if (tabIcon != null) {
+            ImageView tabIconView = new ImageView(tabIcon);
+            tabIconView.setFitWidth(18);
+            tabIconView.setFitHeight(18);
+            tab.setGraphic(tabIconView);
+        }
+        tab.setContent(structView);
+        tab.setUserData(tabId);
+
+        ContextMenu structTabContextMenu = new ContextMenu();
+        MenuItem structConfigItem = new MenuItem("表格配置");
+        structConfigItem.setOnAction(e -> {
+            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
+            GlobalConfigDialog.show(stage, GlobalConfigDialog.ConfigMode.TABLE);
+            GlobalConfig globalConfig = GlobalConfig.getInstance();
+            structView.applyTableConfig(globalConfig);
+        });
+        MenuItem structRefreshItem = new MenuItem("刷新结构");
+        structRefreshItem.setOnAction(e -> {
+            structView.loadStructure();
+        });
+        structTabContextMenu.getItems().addAll(structConfigItem, structRefreshItem);
+        tab.setContextMenu(structTabContextMenu);
+
+        tab.setOnClosed(e -> {
+            if (terminalTabPane.getTabs().isEmpty()) {
+                showWelcomeView();
+            }
+        });
+
+        terminalTabPane.getTabs().add(tab);
+        terminalTabPane.getSelectionModel().select(tab);
+        showDataView();
     }
 
     /**
@@ -1634,11 +1759,11 @@ public class ConnectModule implements Module {
             }
             case TABLES_FOLDER -> {
                 item.getChildren().clear();
-                loadTablesForFolder(item, config, data.getDatabaseName());
+                loadTablesForFolder(item, config, data.getDatabaseName(), false);
             }
             case VIEWS_FOLDER -> {
                 item.getChildren().clear();
-                loadViewsForFolder(item, config, data.getDatabaseName());
+                loadViewsForFolder(item, config, data.getDatabaseName(), false);
             }
             case QUERY_FOLDER -> {
                 loadQueriesForFolder(item, config, data.getDatabaseName());

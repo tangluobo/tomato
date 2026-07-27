@@ -95,6 +95,9 @@ public class SSHTerminalPane extends BorderPane {
     // 防止scrollbar↔render循环
     private boolean updatingScrollbar = false;
 
+    // 交替缓冲区状态跟踪
+    private boolean lastAltBufferState = false;
+
     // 连接信息
     private String host;
     private int port;
@@ -155,6 +158,8 @@ public class SSHTerminalPane extends BorderPane {
         scrollBar.setVisible(false);
         scrollBar.valueProperty().addListener((obs, oldVal, newVal) -> {
             if (updatingScrollbar) return;
+            // 交替屏幕缓冲区模式下禁止滚动条操作scrollback
+            if (emulator.isUsingAltBuffer()) return;
             double visibleAmt = scrollBar.getVisibleAmount();
             int scrollbackSize = emulator.getScrollbackSize();
             double val = newVal.doubleValue();
@@ -715,6 +720,7 @@ public class SSHTerminalPane extends BorderPane {
             lastRenderTime = now;
             terminalView.render();
             renderPending = false;
+            checkAltBufferState();
         } else if (!renderPending) {
             renderPending = true;
             // 延迟渲染
@@ -724,8 +730,26 @@ public class SSHTerminalPane extends BorderPane {
                 lastRenderTime = System.currentTimeMillis();
                 terminalView.render();
                 renderPending = false;
+                checkAltBufferState();
             });
             delay.play();
+        }
+    }
+
+    /**
+     * 检测交替缓冲区状态变化，更新状态栏显示
+     */
+    private void checkAltBufferState() {
+        boolean altBuffer = emulator.isUsingAltBuffer();
+        if (altBuffer != lastAltBufferState) {
+            lastAltBufferState = altBuffer;
+            if (altBuffer) {
+                stateLabel.setText("已连接 [ALT]");
+                System.err.println("[Terminal] Status bar: ALT buffer active");
+            } else {
+                stateLabel.setText("已连接");
+                System.err.println("[Terminal] Status bar: MAIN buffer active");
+            }
         }
     }
 
