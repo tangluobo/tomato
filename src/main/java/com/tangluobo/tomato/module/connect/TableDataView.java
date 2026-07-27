@@ -374,4 +374,14 @@ public class TableDataView extends BorderPane {
         lastPageBtn.setDisable(currentPage >= totalPages);
         jumpBtn.setDisable(totalPages <= 1);
     }
+
+    public void applyTableConfig(GlobalConfig config) {
+        String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
+                config.getTableFontName(), config.getTableFontSize());
+        tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0;");
+    }
+
+    public void refreshData() {
+        loadData(currentPage);
+    }
 }

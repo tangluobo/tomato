@@ -992,6 +992,21 @@ public class ConnectModule implements Module {
         tab.setContent(dataView);
         tab.setUserData(tabId);
 
+        ContextMenu tableTabContextMenu = new ContextMenu();
+        MenuItem tableConfigItem = new MenuItem("表格配置");
+        tableConfigItem.setOnAction(e -> {
+            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
+            GlobalConfigDialog.show(stage, GlobalConfigDialog.ConfigMode.TABLE);
+            GlobalConfig globalConfig = GlobalConfig.getInstance();
+            dataView.applyTableConfig(globalConfig);
+        });
+        MenuItem tableRefreshItem = new MenuItem("刷新数据");
+        tableRefreshItem.setOnAction(e -> {
+            dataView.refreshData();
+        });
+        tableTabContextMenu.getItems().addAll(tableConfigItem, tableRefreshItem);
+        tab.setContextMenu(tableTabContextMenu);
+
         tab.setOnClosed(e -> {
             if (terminalTabPane.getTabs().isEmpty()) {
                 showWelcomeView();
@@ -1824,11 +1839,10 @@ public class ConnectModule implements Module {
             ConfigManager.saveConnections(connections);
         });
 
-        MenuItem globalConfigItem = new MenuItem("全局配置");
+        MenuItem globalConfigItem = new MenuItem("终端配置");
         globalConfigItem.setOnAction(e -> {
             Stage stage = (Stage) terminalTabPane.getScene().getWindow();
-            GlobalConfigDialog.show(stage);
-            // 如果会话使用全局配置，同步更新
+            GlobalConfigDialog.show(stage, GlobalConfigDialog.ConfigMode.SSH);
             if (config.getScrollbackLines() == null) {
                 terminalPane.setScrollbackLines(GlobalConfig.getInstance().getScrollbackLines());
             }
