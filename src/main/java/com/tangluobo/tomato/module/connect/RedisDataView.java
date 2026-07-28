@@ -138,13 +138,12 @@ public class RedisDataView extends BorderPane {
     private void createKeyTree() {
         keyTreeView = new TreeView<>();
         keyTreeView.setStyle("-fx-background-color: transparent;");
-        keyTreeView.setFixedCellSize(30);
         keyTreeRoot = new TreeItem<>("Keys");
         keyTreeRoot.setExpanded(true);
         keyTreeView.setRoot(keyTreeRoot);
         keyTreeView.setShowRoot(false);
 
-        // 自定义CellFactory：使节点内容垂直居中
+        // 自定义CellFactory：使节点内容和箭头垂直居中
         keyTreeView.setCellFactory(tree -> new TreeCell<>() {
             @Override
             protected void updateItem(String item, boolean empty) {
@@ -165,10 +164,29 @@ public class RedisDataView extends BorderPane {
                     } else {
                         setGraphic(null);
                     }
+                    // 内容垂直居中
                     setAlignment(Pos.CENTER_LEFT);
                 }
             }
+
+            @Override
+            protected void layoutChildren() {
+                super.layoutChildren();
+                // 将disclosure arrow垂直居中
+                lookupAll(".tree-disclosure-node").forEach(node -> {
+                    if (node instanceof StackPane disclosureNode) {
+                        double cellHeight = getHeight();
+                        double arrowHeight = disclosureNode.prefHeight(-1);
+                        if (cellHeight > 0 && arrowHeight > 0) {
+                            double newY = (cellHeight - arrowHeight) / 2.0;
+                            disclosureNode.setLayoutY(newY);
+                        }
+                    }
+                });
+            }
         });
+
+        keyTreeView.setFixedCellSize(30);
 
         keyTreeView.setOnMouseClicked(e -> {
             if (e.getButton() == MouseButton.PRIMARY && e.getClickCount() == 1) {
