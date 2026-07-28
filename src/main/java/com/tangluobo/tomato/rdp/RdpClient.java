@@ -255,11 +255,17 @@ public class RdpClient {
         // 创建RDP层（使用RdpPatch修复rdp5_process加密bug）
         rdpLayer = new RdpPatch(context, state, channels);
 
-        // 核心修复：通过反射替换Transport为RdpTransport
+        // 核心修复1：通过反射替换Transport为RdpTransport
         // RdpTransport覆盖negotiateSSL()方法，强制使用TLS 1.2协议
         // 这解决了Transport.negotiateSSL()未调用setEnabledProtocols()
         // 导致SSLSocket尝试TLS 1.3而被Windows RDP服务器Connection Reset的问题
         RdpTlsFix.injectRdpTransport(rdpLayer);
+
+        // 核心修复2：通过反射替换ISO为RdpIso
+        // RdpIso修复ISO层的fast-path包检测条件：(version & 3) == 0 → (version & 1) == 0
+        // 原始条件在fast-path包加密标志位为1时（首字节0x02）无法识别fast-path包，
+        // 导致fast-path包（包含位图更新数据）被错误当作slow-path处理，画面黑屏。
+        RdpIsoFix.injectRdpIso(rdpLayer);
 
         // 在新线程中执行RDP连接（connect+mainLoop是阻塞调用）
         rdpThread = new Thread(() -> {
@@ -267,15 +273,15 @@ public class RdpClient {
                 logger.info("开始RDP连接: " + host + ":" + port + " useSsl=" + useSsl);
                 rdpLayer.connect(new DefaultIO(InetAddress.getByName(host), port),
                         dcp, options.getCommand(), options.getDirectory());
-                // 核心修复：SSL模式下强制设置licenceIssued=true
-                // 根本原因：Secure.receive()在licenceIssued=false时会读取4字节sec_flags header，
-                // 但SSL模式下数据已被TLS层加密，不存在Secure层header。
+                // 核心修复：SSL模式下在connect()之后强制设置licenceIssued=true
+                // 原因：Secure.receive()在licenceIssued=false时会读取4字节sec_flags header，
+                // 但SSL模式下接收的数据已被TLS层加密，不存在Secure层header。
                 // 这导致4字节RDP有效数据被错误消费，后续所有PDU解析失败（bitmapUpdates=0）。
-                // 同样，Secure.init()/send_to_channel()在licenceIssued=false时会添加/写入4字节header，
-                // 导致发送的PDU也被服务器误读，服务器不推送画面数据。
-                // 设置licenceIssued=true后，SSL模式下Secure层跳过所有header处理，行为正确。
+                // 必须在connect()之后设置：connect()期间Secure层发送PDUs时需要sec_flags header
+                // （服务器在SSL模式下仍期望看到sec_flags来识别PDU类型如SEC_LOGON_INFO），
+                // 但connect()之后接收PDUs时不应再读sec_flags（SSL模式下接收侧无此header）。
                 if (useSsl && !state.isLicenceIssued()) {
-                    logger.info("SSL模式：强制设置licenceIssued=true（SSL模式下无Secure层header）");
+                    logger.info("SSL模式：在connect()后强制设置licenceIssued=true（接收侧无Secure层header）");
                     state.setLicenceIssued(true);
                 }
                 logger.info("RDP协议握手完成，进入主循环: " + host + ":" + port);
@@ -402,6 +408,9 @@ public class RdpClient {
 
             // 注入RdpTransport（仅当服务器支持SSL时才需要）
             RdpTlsFix.injectRdpTransport(rdpLayer);
+
+            // 注入RdpIso（修复fast-path检测）
+            RdpIsoFix.injectRdpIso(rdpLayer);
 
             logger.info("回退重连: " + host + ":" + port + " securityType=STANDARD");
             rdpLayer.connect(new DefaultIO(InetAddress.getByName(host), port),
