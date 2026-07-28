@@ -122,34 +122,45 @@ public class RdpPane extends BorderPane {
         connLabel.setText(username + "@" + host + ":" + port);
         resolutionLabel.setText(screenWidth + "x" + screenHeight + " @" + colorDepth);
 
-        // 先显示加载占位面板
+        // 先显示加载占位面板（Swing组件在EDT创建，SwingNode.setContent在JavaFX线程）
         SwingUtilities.invokeLater(() -> {
             JPanel loadingPanel = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER));
             loadingPanel.setBackground(java.awt.Color.WHITE);
             JLabel loadingLabel = new JLabel("正在连接到 " + host + " ...");
             loadingLabel.setFont(loadingLabel.getFont().deriveFont(java.awt.Font.PLAIN, 14));
             loadingPanel.add(loadingLabel);
-            swingNode.setContent(loadingPanel);
+            Platform.runLater(() -> swingNode.setContent(loadingPanel));
         });
 
         // 设置连接就绪回调 - 连接成功后才设置画布到SwingNode
         rdpClient.setOnConnected(v -> {
+            final javax.swing.JComponent displayComponent = rdpClient.getDisplayComponent();
+            if (displayComponent == null) {
+                logger.warning("RDP显示组件为null，无法显示");
+                Platform.runLater(() -> updateStatus(ConnectionState.ERROR));
+                return;
+            }
+            logger.info("RDP显示组件: " + displayComponent.getClass().getSimpleName()
+                    + " size=" + displayComponent.getSize()
+                    + " prefSize=" + displayComponent.getPreferredSize());
+            // 在EDT上用JScrollPane包装显示组件（WrappedImage实现了Scrollable）
             SwingUtilities.invokeLater(() -> {
-                javax.swing.JComponent displayComponent = rdpClient.getDisplayComponent();
-                if (displayComponent != null) {
-                    logger.info("RDP显示组件: " + displayComponent.getClass().getSimpleName()
-                            + " size=" + displayComponent.getSize()
-                            + " prefSize=" + displayComponent.getPreferredSize());
-                    swingNode.setContent(displayComponent);
-                    displayComponent.setSize(displayComponent.getPreferredSize());
-                    displayComponent.revalidate();
-                    displayComponent.repaint();
-                    displayComponent.requestFocusInWindow();
-                } else {
-                    logger.warning("RDP显示组件为null，无法显示");
-                }
+                displayComponent.setSize(displayComponent.getPreferredSize());
+                javax.swing.JScrollPane scrollPane = new javax.swing.JScrollPane(displayComponent);
+                scrollPane.setBackground(java.awt.Color.BLACK);
+                scrollPane.getViewport().setBackground(java.awt.Color.BLACK);
+                scrollPane.setDoubleBuffered(true);
+                // 在JavaFX Application Thread上设置SwingNode内容
+                Platform.runLater(() -> {
+                    swingNode.setContent(scrollPane);
+                    SwingUtilities.invokeLater(() -> {
+                        displayComponent.revalidate();
+                        displayComponent.repaint();
+                        displayComponent.requestFocusInWindow();
+                    });
+                    updateStatus(ConnectionState.CONNECTED);
+                });
             });
-            Platform.runLater(() -> updateStatus(ConnectionState.CONNECTED));
         });
 
         // 设置断开回调
