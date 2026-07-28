@@ -447,21 +447,10 @@ public class Secure implements Layer<Rdp> {
 	public Packet init(int flags, int length) throws RdesktopException {
 		int headerlength = 0;
 		Packet buffer;
-		// Fix: In SSL/HYBRID mode, the Secure layer header is not present
-		// because data is already encrypted by the TLS layer.
-		// The original code only checked licenceIssued to decide header length,
-		// which incorrectly added 4 bytes of header when licenceIssued was false
-		// even in SSL mode, corrupting outgoing packets.
-		boolean isSSL = state.getSecurityType() == SecurityType.SSL
-				|| state.getSecurityType() == SecurityType.HYBRID;
-		if (isSSL) {
-			// SSL mode: no Secure layer header needed regardless of licenceIssued state
-			headerlength = 0;
-		} else if (!state.isLicenceIssued()) {
+		if (!state.isLicenceIssued())
 			headerlength = ((flags & SEC_ENCRYPT) != 0) ? 12 : 4;
-		} else {
+		else
 			headerlength = ((flags & SEC_ENCRYPT) != 0) ? 12 : 0;
-		}
 		buffer = mcsLayer.init(length + headerlength);
 		buffer.pushLayer(Packet.SECURE_HEADER, headerlength);
 		// buffer.setHeader(Packet.SECURE_HEADER);
@@ -732,43 +721,21 @@ public class Secure implements Layer<Rdp> {
 			if (buffer == null)
 				return null;
 			buffer.setHeader(Packet.SECURE_HEADER);
-			// Fix: In SSL/HYBRID mode, data is already decrypted by the TLS layer.
-			// There is NO Secure layer header (sec_flags) in the packet.
-			// The original code checked !state.isLicenceIssued() which incorrectly
-			// caused it to read 4 bytes of actual RDP data as sec_flags header
-			// when licenceIssued was false, corrupting all subsequent packet parsing.
-			// Only STANDARD security type has the Secure layer header with sec_flags.
-			boolean isSSL = state.getSecurityType() == SecurityType.SSL
-					|| state.getSecurityType() == SecurityType.HYBRID;
-			if (state.getSecurityType() == SecurityType.STANDARD) {
+			if (state.getSecurityType() == SecurityType.STANDARD || (!state.isLicenceIssued())) {
 				sec_flags = buffer.getLittleEndian32();
 				if (!state.isLicenceIssued() && (sec_flags & SEC_LICENCE_NEG) != 0) {
 					licence.process(buffer);
 					continue;
 				}
-				if ((sec_flags & SEC_ENCRYPT) != 0) {
+				if (state.getSecurityType() == SecurityType.STANDARD && (sec_flags & SEC_ENCRYPT) != 0) {
 					buffer.incrementPosition(8); // signature
 					byte[] data = new byte[buffer.size() - buffer.getPosition()];
 					buffer.copyToByteArray(data, 0, buffer.getPosition(), data.length);
 					byte[] packet = this.decrypt(data);
 					buffer.copyFromByteArray(packet, 0, buffer.getPosition(), packet.length);
+					// buffer.setStart(buffer.getPosition());
+					// return buffer;
 				}
-			} else if (isSSL && !state.isLicenceIssued()) {
-				// In SSL mode, licence negotiation may still happen over the
-				// secure channel. The server sends a licence PDU with a
-				// SEC_LICENCE_NEG header that we need to process.
-				// However, in SSL mode, we need to peek at the data to check
-				// if it's a licence PDU without consuming it if it's not.
-				// Peek at the first 4 bytes without advancing position
-				int savedPos = buffer.getPosition();
-				sec_flags = buffer.getLittleEndian32();
-				if ((sec_flags & SEC_LICENCE_NEG) != 0) {
-					// This is a licence negotiation PDU, process it
-					licence.process(buffer);
-					continue;
-				}
-				// Not a licence PDU, restore position so the 4 bytes aren't lost
-				buffer.setPosition(savedPos);
 			}
 			if (channel[0] != MCS.MCS_GLOBAL_CHANNEL) {
 				channels.channel_process(buffer, channel[0]);
@@ -884,13 +851,7 @@ public class Secure implements Layer<Rdp> {
 		byte[] data;
 		byte[] buffer;
 		sec_data.setPosition(sec_data.getHeader(Packet.SECURE_HEADER));
-		// Fix: In SSL/HYBRID mode, the Secure layer header should not be written
-		// because the TLS layer handles encryption. The original code checked
-		// !licenceIssued which incorrectly wrote flags header in SSL mode
-		// when licence had not been issued yet.
-		boolean isSSL = state.getSecurityType() == SecurityType.SSL
-				|| state.getSecurityType() == SecurityType.HYBRID;
-		if (!isSSL && (!state.isLicenceIssued() || (flags & SEC_ENCRYPT) != 0)) {
+		if (!state.isLicenceIssued() || (flags & SEC_ENCRYPT) != 0) {
 			sec_data.setLittleEndian32(flags);
 		}
 		if ((flags & SEC_ENCRYPT) != 0) {

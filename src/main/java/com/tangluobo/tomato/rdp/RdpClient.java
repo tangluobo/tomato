@@ -163,6 +163,9 @@ public class RdpClient {
         options.setMapClipboard(true);
         options.setLowLatency(true);
 
+        // 调试：启用hex dump查看所有收发数据
+        options.setDebugHexdump(true);
+
         // 配置安全类型
         // State构造函数取securityTypes列表的最后一个元素作为初始securityType，
         // 所以列表最后一个元素决定了优先选择的安全类型。
@@ -264,6 +267,17 @@ public class RdpClient {
                 logger.info("开始RDP连接: " + host + ":" + port + " useSsl=" + useSsl);
                 rdpLayer.connect(new DefaultIO(InetAddress.getByName(host), port),
                         dcp, options.getCommand(), options.getDirectory());
+                // 核心修复：SSL模式下强制设置licenceIssued=true
+                // 根本原因：Secure.receive()在licenceIssued=false时会读取4字节sec_flags header，
+                // 但SSL模式下数据已被TLS层加密，不存在Secure层header。
+                // 这导致4字节RDP有效数据被错误消费，后续所有PDU解析失败（bitmapUpdates=0）。
+                // 同样，Secure.init()/send_to_channel()在licenceIssued=false时会添加/写入4字节header，
+                // 导致发送的PDU也被服务器误读，服务器不推送画面数据。
+                // 设置licenceIssued=true后，SSL模式下Secure层跳过所有header处理，行为正确。
+                if (useSsl && !state.isLicenceIssued()) {
+                    logger.info("SSL模式：强制设置licenceIssued=true（SSL模式下无Secure层header）");
+                    state.setLicenceIssued(true);
+                }
                 logger.info("RDP协议握手完成，进入主循环: " + host + ":" + port);
                 rdpLayer.mainLoop();
                 logger.info("RDP主循环正常退出");

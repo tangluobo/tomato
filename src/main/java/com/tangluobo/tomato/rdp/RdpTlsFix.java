@@ -1,15 +1,13 @@
 package com.tangluobo.tomato.rdp;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
+import java.io.*;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -108,6 +106,32 @@ public class RdpTlsFix {
 
         public RdpTransport(State state, ISO iso) {
             super(state, iso);
+        }
+
+        private static final AtomicInteger recvPktCount = new AtomicInteger(0);
+
+        @Override
+        public com.sshtools.javardp.Packet receivePacket(com.sshtools.javardp.Packet p, int length) throws IOException {
+            com.sshtools.javardp.Packet result = super.receivePacket(p, length);
+            int count = recvPktCount.incrementAndGet();
+            // 诊断：记录Transport层收到的原始数据（前8字节用于判断是否为RDP5 fast-path）
+            if (result != null) {
+                int savePos = result.getPosition();
+                int avail = result.getEnd() - savePos;
+                int dumpLen = Math.min(avail, 8);
+                StringBuilder hexSb = new StringBuilder("[RECV #" + count + "] len=" + length + " totalAvail=" + avail + " hex:");
+                for (int i = 0; i < dumpLen; i++) {
+                    hexSb.append(String.format(" %02x", result.get8()));
+                }
+                result.setPosition(savePos);
+                // 检查第一个字节是否为RDP5 fast-path (低2位为0)
+                int firstByte = result.get8();
+                result.setPosition(savePos);
+                boolean isFastPath = (firstByte & 0x03) == 0;
+                hexSb.append(String.format(" firstByte=0x%02x fastPath=%b", firstByte, isFastPath));
+                logger.info(hexSb.toString());
+            }
+            return result;
         }
 
         @Override

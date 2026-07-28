@@ -2,6 +2,7 @@ package com.tangluobo.tomato.rdp;
 
 import java.io.EOFException;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
@@ -28,26 +29,35 @@ public class RdpPatch extends Rdp {
     private final AtomicInteger rdp5PacketCount = new AtomicInteger(0);
     private final AtomicInteger totalPduCount = new AtomicInteger(0);
 
-    // 反射访问Rdp的private方法
+    // 反射访问Rdp的private方法/字段
     private final Method receiveMethod;
     private final Method processPacketMethod;
+    private final Field streamField;
+    private final Field nextPacketField;
 
     public RdpPatch(IContext context, State state, VChannels channels) {
         super(context, state, channels);
         this.stateRef = state;
 
-        // 反射获取private方法
+        // 反射获取private方法和字段
         Method rm = null, pm = null;
+        Field sf = null, npf = null;
         try {
             rm = Rdp.class.getDeclaredMethod("receive", int[].class);
             rm.setAccessible(true);
             pm = Rdp.class.getDeclaredMethod("processPacket", int[].class, com.sshtools.javardp.Packet.class);
             pm.setAccessible(true);
+            sf = Rdp.class.getDeclaredField("stream");
+            sf.setAccessible(true);
+            npf = Rdp.class.getDeclaredField("next_packet");
+            npf.setAccessible(true);
         } catch (Exception e) {
-            logger.log(Level.SEVERE, "反射获取Rdp私有方法失败: " + e.getMessage(), e);
+            logger.log(Level.SEVERE, "反射获取Rdp私有方法/字段失败: " + e.getMessage(), e);
         }
         receiveMethod = rm;
         processPacketMethod = pm;
+        streamField = sf;
+        nextPacketField = npf;
     }
 
     @Override
@@ -170,6 +180,7 @@ public class RdpPatch extends Rdp {
             // 调用private receive()
             data = null;
             try {
+                logger.info("[MAINLOOP] 等待下一个PDU...");
                 data = (com.sshtools.javardp.Packet) receiveMethod.invoke(this, (Object) type);
                 if (data == null) {
                     logger.info("[MAINLOOP] receive() returned null, exiting");
@@ -198,7 +209,7 @@ public class RdpPatch extends Rdp {
             int pduCount = totalPduCount.incrementAndGet();
             int pduType = type[0];
 
-            // 所有PDU都记录（调试阶段）
+            // 诊断：输出PDU数据和stream状态
             String pduName;
             switch (pduType) {
             case 1: pduName = "DEMAND_ACTIVE"; break;
@@ -207,8 +218,21 @@ public class RdpPatch extends Rdp {
             case 0: pduName = "KEEPALIVE"; break;
             default: pduName = "UNKNOWN(" + pduType + ")"; break;
             }
-            logger.info(String.format("[MAINLOOP] PDU #%d: type=%s(%d), dataSize=%d",
-                    pduCount, pduName, pduType, data.getEnd() - data.getPosition()));
+            int dataAvail = data.getEnd() - data.getPosition();
+            logger.info(String.format("[MAINLOOP] PDU #%d: type=%s(%d), dataSize=%d, pos=%d, end=%d",
+                    pduCount, pduName, pduType, dataAvail, data.getPosition(), data.getEnd()));
+
+            // 诊断：输出data的前16字节hex
+            if (dataAvail > 0) {
+                int savePos = data.getPosition();
+                int dumpLen = Math.min(dataAvail, 32);
+                StringBuilder hexSb = new StringBuilder("[MAINLOOP] PDU #" + pduCount + " hex:");
+                for (int i = 0; i < dumpLen; i++) {
+                    hexSb.append(String.format(" %02x", data.get8()));
+                }
+                data.setPosition(savePos);
+                logger.info(hexSb.toString());
+            }
 
             // 调用private processPacket()
             try {
@@ -227,15 +251,26 @@ public class RdpPatch extends Rdp {
                 throw new RdesktopException("reflective processPacket failed: " + e.getMessage(), e);
             }
 
+            // 诊断：processPacket后stream状态
+            try {
+                if (streamField != null && nextPacketField != null) {
+                    Object stream = streamField.get(this);
+                    int nextPkt = nextPacketField.getInt(this);
+                    if (stream != null) {
+                        com.sshtools.javardp.Packet p = (com.sshtools.javardp.Packet) stream;
+                        logger.info(String.format("[MAINLOOP] After PDU #%d: stream pos=%d end=%d, next_packet=%d, remaining=%d",
+                                pduCount, p.getPosition(), p.getEnd(), nextPkt, p.getEnd() - nextPkt));
+                    }
+                }
+            } catch (Exception e) {
+                // 忽略诊断错误
+            }
+
             // 在DEMAND_ACTIVE（PDU type=1）处理完毕后发送Input Synchronize Event
-            // 这是RDP协议要求的关键步骤：rdesktop原版在processDemandActive后
-            // 发送rdp_send_input(time, RDP_INPUT_SYNCHRONIZE, 0, 0, 0)，
-            // javardp库遗漏了这一步，导致Windows服务器不推送画面数据。
             if (!inputSyncSent && pduType == 1) {
                 inputSyncSent = true;
                 try {
                     logger.info("[MAINLOOP] ===== 准备发送Input Synchronize Event =====");
-                    // RDP_INPUT_SYNCHRONIZE = 0x0000
                     this.sendInput(0, 0x0000, 0, 0, 0);
                     logger.info("[MAINLOOP] ===== Input Synchronize Event已发送 =====");
                 } catch (Exception e) {

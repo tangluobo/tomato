@@ -22,6 +22,8 @@ module tomato {
     requires software.amazon.awssdk.core;
     requires aliyun.sdk.oss;
     requires redis.clients.jedis;
+    requires org.apache.commons.lang3;
+    requires slf4j.api;
 
     opens com.tangluobo.tomato to javafx.fxml;
     exports com.tangluobo.tomato;

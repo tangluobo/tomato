@@ -156,6 +156,28 @@ public class LocalTerminalPane extends BorderPane {
             });
         });
 
+        // 终端大小变化时通知本地Shell进程（Linux/macOS）
+        // 更新PTY窗口大小，使top/vim等全屏程序能正确响应窗口调整
+        terminalView.setResizeHandler((cols, rows, width, height) -> {
+            if (shellProcess != null && running.get()) {
+                String os = System.getProperty("os.name", "").toLowerCase();
+                if (!os.contains("win")) {
+                    // Linux/macOS: 向script进程及其子进程发送SIGWINCH信号
+                    // 信号28 = SIGWINCH，通知进程终端窗口大小已改变
+                    try {
+                        long pid = shellProcess.pid();
+                        // 使用ProcessHandle遍历子进程并发送SIGWINCH
+                        ProcessHandle.of(pid).ifPresent(ph -> {
+                            // 向script进程发送SIGWINCH
+                            sendSignalToProcessTree(ph, 28);
+                        });
+                    } catch (Exception e) {
+                        // 非关键功能，忽略错误
+                    }
+                }
+            }
+        });
+
         setCenter(terminalPane);
         setBottom(statusBar);
         setStyle("-fx-background-color: #1e1e1e;");
@@ -299,9 +321,14 @@ public class LocalTerminalPane extends BorderPane {
                     // 没有 script 命令，回退到直接启动 shell（可能没有提示符）
                     pb = new ProcessBuilder(shell, "-il");
                 }
+
+                // 设置TERM环境变量，使top/vim等程序能正确识别终端类型并使用交替屏幕缓冲区
+                // 与SSH终端保持一致，使用xterm-256color
+                pb.environment().put("TERM", "xterm-256color");
+
+                // Linux/macOS通过script分配PTY，stderr已通过PTY合并，无需redirectErrorStream
             }
 
-            pb.redirectErrorStream(true);
             shellProcess = pb.start();
             processOutput = shellProcess.getOutputStream();
             running.set(true);
@@ -466,6 +493,24 @@ public class LocalTerminalPane extends BorderPane {
             } else {
                 stateLabel.setText("已连接");
             }
+        }
+    }
+
+    /**
+     * 向进程及其子进程树发送信号（Linux/macOS）
+     * 使用kill命令发送信号，因为Java Process API不支持发送自定义信号
+     * @param ph 进程句柄
+     * @param signal 信号编号（28=SIGWINCH）
+     */
+    private void sendSignalToProcessTree(ProcessHandle ph, int signal) {
+        try {
+            long pid = ph.pid();
+            // 使用kill命令发送信号
+            new ProcessBuilder("kill", "-" + signal, String.valueOf(pid)).start();
+            // 递归发送给子进程
+            ph.children().forEach(child -> sendSignalToProcessTree(child, signal));
+        } catch (Exception e) {
+            // 非关键功能，忽略错误
         }
     }
 
