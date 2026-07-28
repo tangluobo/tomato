@@ -25,6 +25,7 @@ public class ConnectionConfig {
     private int screenWidth = 1024;
     private int screenHeight = 768;
     private int colorDepth = 24;
+    private boolean useSsl = true; // 是否使用SSL/TLS加密（无TLS服务器需设为false）
 
     // 本地终端配置
     private String terminalType; // Windows: "cmd" 或 "powershell"; Linux/macOS: "system"
@@ -33,6 +34,11 @@ public class ConnectionConfig {
     private String region;
     private boolean pathStyleAccess = false; // S3路径风格访问（MinIO需要）
     private String endpoint; // 自定义端点URL（MinIO等S3兼容服务）
+
+    // Redis专属配置
+    private boolean redisCluster = false; // 是否集群模式
+    private String redisClusterNodes; // 集群节点，格式: host1:port1,host2:port2,...
+    private int redisDatabase = 0; // 默认数据库编号
 
     // SSH通道配置
     private boolean useSshTunnel = false;
@@ -112,6 +118,9 @@ public class ConnectionConfig {
     public int getColorDepth() { return colorDepth; }
     public void setColorDepth(int colorDepth) { this.colorDepth = colorDepth; }
 
+    public boolean isUseSsl() { return useSsl; }
+    public void setUseSsl(boolean useSsl) { this.useSsl = useSsl; }
+
     public String getTerminalType() { return terminalType; }
     public void setTerminalType(String terminalType) { this.terminalType = terminalType; }
 
@@ -123,6 +132,15 @@ public class ConnectionConfig {
 
     public String getEndpoint() { return endpoint; }
     public void setEndpoint(String endpoint) { this.endpoint = endpoint; }
+
+    public boolean isRedisCluster() { return redisCluster; }
+    public void setRedisCluster(boolean redisCluster) { this.redisCluster = redisCluster; }
+
+    public String getRedisClusterNodes() { return redisClusterNodes; }
+    public void setRedisClusterNodes(String redisClusterNodes) { this.redisClusterNodes = redisClusterNodes; }
+
+    public int getRedisDatabase() { return redisDatabase; }
+    public void setRedisDatabase(int redisDatabase) { this.redisDatabase = redisDatabase; }
 
     public boolean isUseSshTunnel() { return useSshTunnel; }
     public void setUseSshTunnel(boolean useSshTunnel) { this.useSshTunnel = useSshTunnel; }

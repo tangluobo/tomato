@@ -141,6 +141,7 @@ public class ConnectModule implements Module {
         iv.setFitHeight(20);
         Image icon = switch (data.getType()) {
             case DATABASE -> data.isOpened() ? dbIcon : dbIconGray;
+            case REDIS_DB -> data.isOpened() ? dbIcon : dbIconGray;
             case TABLES_FOLDER -> tableIcon;
             case VIEWS_FOLDER -> viewIcon;
             case QUERY_FOLDER -> queryIcon;
@@ -264,6 +265,15 @@ public class ConnectModule implements Module {
             });
         }
 
+        if (config.getType() == ConnectType.REDIS) {
+            item.expandedProperty().addListener((obs, wasExpanded, isExpanded) -> {
+                Boolean connected = connectionStateMap.get(item);
+                if (connected != null && connected) {
+                    updateHostIcon(item, config, true);
+                }
+            });
+        }
+
         return item;
     }
 
@@ -363,6 +373,11 @@ public class ConnectModule implements Module {
                             refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
                             contextMenu.getItems().addAll(new SeparatorMenuItem(), editDbItem, deleteDbItem, new SeparatorMenuItem(), refreshItem);
                         }
+                        case REDIS_DB -> {
+                            MenuItem openItem = new MenuItem("打开");
+                            openItem.setOnAction(e -> handleRedisDbDoubleClick(targetItem, dbData));
+                            contextMenu.getItems().add(openItem);
+                        }
                         case TABLES_FOLDER, VIEWS_FOLDER -> {
                             MenuItem refreshItem = new MenuItem("刷新");
                             refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
@@ -418,11 +433,20 @@ public class ConnectModule implements Module {
                     boolean isDatabase = targetConfig.getType() == ConnectType.MYSQL
                         || targetConfig.getType() == ConnectType.POSTGRESQL
                         || targetConfig.getType() == ConnectType.ORACLE;
+                    boolean isRedis = targetConfig.getType() == ConnectType.REDIS;
                     // 数据库类型连接节点：新建数据库、刷新
                     if (isDatabase) {
                         MenuItem createDbItem = new MenuItem("新建数据库");
                         createDbItem.setOnAction(e -> handleCreateDatabase(targetItem, targetConfig));
                         contextMenu.getItems().add(createDbItem);
+                        if (!targetItem.getChildren().isEmpty()) {
+                            MenuItem refreshItem = new MenuItem("刷新");
+                            refreshItem.setOnAction(e -> handleRefreshDbHost(targetItem, targetConfig));
+                            contextMenu.getItems().add(refreshItem);
+                        }
+                    }
+                    // Redis类型连接节点：刷新
+                    if (isRedis) {
                         if (!targetItem.getChildren().isEmpty()) {
                             MenuItem refreshItem = new MenuItem("刷新");
                             refreshItem.setOnAction(e -> handleRefreshDbHost(targetItem, targetConfig));
@@ -531,8 +555,11 @@ public class ConnectModule implements Module {
                     boolean isDatabase = config.getType() == ConnectType.MYSQL
                         || config.getType() == ConnectType.POSTGRESQL
                         || config.getType() == ConnectType.ORACLE;
+                    boolean isRedis = config.getType() == ConnectType.REDIS;
                     if (isDatabase) {
                         handleDbHostDoubleClick(selectedItem, config);
+                    } else if (isRedis) {
+                        handleRedisHostDoubleClick(selectedItem, config);
                     } else {
                         handleConnect(config);
                     }
@@ -604,7 +631,12 @@ public class ConnectModule implements Module {
                     });
 
                     setText(null);
-                    setGraphic(editField);
+                    // 保留图标，将图标和编辑框放在HBox中
+                    Node icon = treeItem.getGraphic();
+                    HBox editBox = new HBox(icon, editField);
+                    editBox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+                    editBox.setSpacing(4);
+                    setGraphic(editBox);
                     editField.selectAll();
                     Platform.runLater(() -> editField.requestFocus());
                 }
@@ -921,11 +953,85 @@ public class ConnectModule implements Module {
     }
 
     /**
+     * 双击Redis主机节点：连接Redis并加载数据库列表
+     */
+    private void handleRedisHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
+        // 如果已连接且已展开，则折叠
+        if (!hostItem.getChildren().isEmpty()) {
+            hostItem.setExpanded(!hostItem.isExpanded());
+            return;
+        }
+
+        // 如果需要密码但未保存，弹出密码输入框
+        if (config.getPassword() == null) {
+            Dialog<String> pwdDialog = new Dialog<>();
+            pwdDialog.setTitle("输入密码");
+            pwdDialog.setHeaderText(config.getName() + " (" + config.getHost() + ":" + config.getPort() + ")");
+            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+            GridPane grid = new GridPane();
+            grid.setHgap(10);
+            grid.setVgap(10);
+            grid.setPadding(new Insets(20, 10, 10, 10));
+            PasswordField pf = new PasswordField();
+            pf.setPrefWidth(250);
+            grid.add(new Label("密码："), 0, 0);
+            grid.add(pf, 1, 0);
+            pwdDialog.getDialogPane().setContent(grid);
+            pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
+            final String[] passwordHolder = new String[1];
+            pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
+            if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
+            config.setPassword(passwordHolder[0]);
+        }
+
+        // 显示加载转圈效果
+        ProgressIndicator loadingIndicator = new ProgressIndicator();
+        loadingIndicator.setPrefSize(16, 16);
+        loadingIndicator.setMaxSize(16, 16);
+        loadingIndicator.setStyle("-fx-progress-color: #4CAF50;");
+        hostItem.setGraphic(loadingIndicator);
+
+        // 异步连接并加载数据库列表
+        new Thread(() -> {
+            try {
+                List<String> databases = RedisService.getDatabases(config);
+                Platform.runLater(() -> {
+                    // 更新主机节点图标为已连接状态
+                    updateHostIcon(hostItem, config, true);
+
+                    hostItem.getChildren().clear();
+                    for (String dbIndex : databases) {
+                        String dbName = "db" + dbIndex;
+                        TreeItem<String> dbItem = new TreeItem<>(dbName);
+                        // 使用数据库图标（灰色，未打开状态）
+                        dbItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.REDIS_DB, dbName, config, dbName)));
+                        dbNodeDataMap.put(dbItem, new DatabaseNodeData(DatabaseNodeData.NodeType.REDIS_DB, dbName, config, dbName));
+                        hostItem.getChildren().add(dbItem);
+                    }
+                    hostItem.setExpanded(true);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    // 恢复原图标
+                    hostItem.setGraphic(getIconForConfig(config));
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("连接失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法连接到Redis " + config.getName() + ": " + e.getMessage());
+                    alert.showAndWait();
+                });
+                e.printStackTrace();
+            }
+        }, "Redis-LoadDatabases").start();
+    }
+
+    /**
      * 双击数据库动态节点：根据节点类型加载子节点
      */
     private void handleDbNodeDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
         switch (data.getType()) {
             case DATABASE -> handleDatabaseDoubleClick(item, data);
+            case REDIS_DB -> handleRedisDbDoubleClick(item, data);
             case TABLES_FOLDER -> handleTablesFolderDoubleClick(item, data);
             case VIEWS_FOLDER -> handleViewsFolderDoubleClick(item, data);
             case TABLE, VIEW -> handleTableDataDoubleClick(item, data);
@@ -951,6 +1057,67 @@ public class ConnectModule implements Module {
 
         // 打开数据库：加载表和视图
         openDatabase(dbItem, data);
+    }
+
+    /**
+     * 双击Redis数据库节点：以Tab形式打开Redis数据视图
+     */
+    private void handleRedisDbDoubleClick(TreeItem<String> dbItem, DatabaseNodeData data) {
+        if (contentArea == null || terminalTabPane == null) return;
+        if (!ensureTabPaneInstalled()) return;
+
+        // 解析数据库编号（格式为 "db0", "db1" 等）
+        String dbName = data.getDatabaseName();
+        int dbIndex = 0;
+        if (dbName.startsWith("db")) {
+            try {
+                dbIndex = Integer.parseInt(dbName.substring(2));
+            } catch (NumberFormatException ignored) {}
+        }
+
+        String tabId = "redis_" + data.getConnectionConfig().getId() + "_" + dbName;
+        // 同一个数据库只允许一个标签
+        for (Tab tab : terminalTabPane.getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                terminalTabPane.getSelectionModel().select(tab);
+                showDataView();
+                return;
+            }
+        }
+
+        RedisDataView dataView = new RedisDataView(data.getConnectionConfig(), dbIndex);
+
+        ConnectionConfig config = data.getConnectionConfig();
+        String tabTitle = dbName + "(" + config.getHost() + ":" + config.getPort() + ")-Redis";
+        Tab tab = new Tab(tabTitle);
+
+        // 设置标签头图标
+        try {
+            Image redisIcon = new Image(getClass().getResourceAsStream("/images/connect/redis.png"));
+            ImageView tabIconView = new ImageView(redisIcon);
+            tabIconView.setFitWidth(18);
+            tabIconView.setFitHeight(18);
+            tab.setGraphic(tabIconView);
+        } catch (Exception ignored) {}
+
+        tab.setContent(dataView);
+        tab.setUserData(tabId);
+
+        ContextMenu redisTabContextMenu = new ContextMenu();
+        MenuItem refreshItem = new MenuItem("刷新");
+        refreshItem.setOnAction(e -> dataView.loadKeyTree());
+        redisTabContextMenu.getItems().add(refreshItem);
+        tab.setContextMenu(redisTabContextMenu);
+
+        tab.setOnClosed(e -> {
+            if (terminalTabPane.getTabs().isEmpty()) {
+                showWelcomeView();
+            }
+        });
+
+        terminalTabPane.getTabs().add(tab);
+        terminalTabPane.getSelectionModel().select(tab);
+        showDataView();
     }
 
     /**
@@ -2119,12 +2286,21 @@ public class ConnectModule implements Module {
         boolean isDatabase = config.getType() == ConnectType.MYSQL
             || config.getType() == ConnectType.POSTGRESQL
             || config.getType() == ConnectType.ORACLE;
+        boolean isRedis = config.getType() == ConnectType.REDIS;
 
         if (isDatabase) {
             // 找到对应的主机树节点并触发展开
             TreeItem<String> hostItem = findItemById(root, config.getId());
             if (hostItem != null) {
                 handleDbHostDoubleClick(hostItem, config);
+            }
+            return;
+        }
+
+        if (isRedis) {
+            TreeItem<String> hostItem = findItemById(root, config.getId());
+            if (hostItem != null) {
+                handleRedisHostDoubleClick(hostItem, config);
             }
             return;
         }
@@ -2671,7 +2847,7 @@ public class ConnectModule implements Module {
 
         // 执行RDP连接
         rdpPane.connect(config.getHost(), rdpPort, config.getUsername(), password,
-                domain, width, height, bpp);
+                domain, width, height, bpp, config.isUseSsl());
     }
 
     private void handleAddFolder(TreeItem<String> parent) {

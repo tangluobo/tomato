@@ -89,6 +89,7 @@ public class ConnectionConfigDialog {
     private TextField rdpDomainField;
     private ComboBox<String> rdpResolutionCombo;
     private ComboBox<String> rdpColorDepthCombo;
+    private CheckBox rdpUseSslCheck;
 
     // ===== 本地终端专属字段 =====
     private VBox localTerminalConfigContent;
@@ -107,6 +108,20 @@ public class ConnectionConfigDialog {
     private CheckBox s3SaveSecretKeyCheckBox;
     private CheckBox s3PathStyleAccessCheckBox;
     private TextField s3DescriptionField;
+
+    // ===== Redis专属字段 =====
+    private VBox redisConfigContent;
+    private TextField redisNameField;
+    private TextField redisHostField;
+    private TextField redisPortField;
+    private TextField redisUsernameField;
+    private PasswordField redisPasswordField;
+    private CheckBox redisSavePasswordCheckBox;
+    private CheckBox redisClusterCheckBox;
+    private VBox redisClusterContent;
+    private TextField redisClusterNodesField;
+    private TextField redisDatabaseField;
+    private TextField redisDescriptionField;
 
     /**
      * 密钥条目：每行一个密钥文件（复选框 + 路径 + 浏览 + 删除）
@@ -248,6 +263,9 @@ public class ConnectionConfigDialog {
         // ---- 构建S3/阿里云OSS类型的配置 ----
         buildS3ConfigContent();
 
+        // ---- 构建Redis类型的配置 ----
+        buildRedisConfigContent();
+
         // 按钮区域
         HBox configButtons = new HBox(10);
         configButtons.setAlignment(Pos.CENTER_RIGHT);
@@ -266,7 +284,7 @@ public class ConnectionConfigDialog {
 
         configButtons.getChildren().addAll(backBtn, cancelBtn2, okBtn);
 
-        configPage.getChildren().addAll(configTitle, dbTabPane, sshConfigContent, simpleConfigContent, localTerminalConfigContent, s3ConfigContent, configButtons);
+        configPage.getChildren().addAll(configTitle, dbTabPane, sshConfigContent, simpleConfigContent, localTerminalConfigContent, s3ConfigContent, redisConfigContent, configButtons);
 
         // 编辑已有连接时直接显示配置页
         if (existingConfig != null) {
@@ -658,6 +676,12 @@ public class ConnectionConfigDialog {
         rdpColorDepthCombo.setValue("24位");
         grid.add(rdpColorDepthCombo, 1, row++);
 
+        // RDP专属字段：SSL/TLS加密
+        rdpUseSslCheck = new CheckBox("使用SSL/TLS加密");
+        rdpUseSslCheck.setSelected(true);
+        rdpUseSslCheck.setTooltip(new Tooltip("关闭后使用Standard RDP Security（无TLS），适用于未启用TLS的RDP服务器"));
+        grid.add(rdpUseSslCheck, 1, row++);
+
         grid.add(new Label("备注："), 0, row);
         simpleDescriptionField = new TextField();
         simpleDescriptionField.setPromptText("备注信息");
@@ -799,6 +823,115 @@ public class ConnectionConfigDialog {
         s3ConfigContent.getChildren().addAll(grid, hint);
     }
 
+    /**
+     * 构建Redis类型的配置内容
+     */
+    private void buildRedisConfigContent() {
+        redisConfigContent = new VBox(15);
+        redisConfigContent.setVisible(false);
+        redisConfigContent.setManaged(false);
+
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(10);
+        grid.setPadding(new Insets(10, 0, 0, 0));
+
+        int row = 0;
+
+        grid.add(new Label("名称："), 0, row);
+        redisNameField = new TextField();
+        redisNameField.setPromptText("连接名称");
+        redisNameField.setPrefWidth(280);
+        grid.add(redisNameField, 1, row++);
+
+        grid.add(new Label("主机："), 0, row);
+        redisHostField = new TextField();
+        redisHostField.setPromptText("Redis服务器地址");
+        redisHostField.setPrefWidth(280);
+        grid.add(redisHostField, 1, row++);
+
+        grid.add(new Label("端口："), 0, row);
+        redisPortField = new TextField();
+        redisPortField.setPromptText("6379");
+        redisPortField.setPrefWidth(100);
+        grid.add(redisPortField, 1, row++);
+
+        grid.add(new Label("用户名："), 0, row);
+        redisUsernameField = new TextField();
+        redisUsernameField.setPromptText("ACL用户名（可选，留空使用默认）");
+        redisUsernameField.setPrefWidth(280);
+        grid.add(redisUsernameField, 1, row++);
+
+        // 密码
+        grid.add(new Label("密码："), 0, row);
+        VBox redisPwdBox = new VBox(4);
+        redisPasswordField = new PasswordField();
+        redisPasswordField.setPromptText("Redis密码");
+        redisPasswordField.setPrefWidth(260);
+        redisSavePasswordCheckBox = new CheckBox("保存密码");
+        redisSavePasswordCheckBox.setSelected(true);
+        redisSavePasswordCheckBox.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+        redisPwdBox.getChildren().addAll(redisPasswordField, redisSavePasswordCheckBox);
+        grid.add(redisPwdBox, 1, row++);
+
+        // 集群模式
+        redisClusterCheckBox = new CheckBox("集群模式（Cluster）");
+        redisClusterCheckBox.setStyle("-fx-font-weight: bold;");
+
+        // 集群节点内容（勾选后显示）
+        redisClusterContent = new VBox(8);
+        redisClusterContent.setPadding(new Insets(5, 0, 0, 24));
+        redisClusterContent.setVisible(false);
+        redisClusterContent.setManaged(false);
+
+        Label clusterNodesLabel = new Label("集群节点：");
+        clusterNodesLabel.setStyle("-fx-font-size: 12px;");
+        redisClusterNodesField = new TextField();
+        redisClusterNodesField.setPromptText("host1:port1,host2:port2,host3:port3");
+        redisClusterNodesField.setPrefWidth(280);
+        Label clusterNodesHint = new Label("格式: host1:port1,host2:port2,... 多个节点用逗号分隔");
+        clusterNodesHint.setStyle("-fx-font-size: 10px; -fx-text-fill: #999;");
+        clusterNodesHint.setWrapText(true);
+        redisClusterContent.getChildren().addAll(clusterNodesLabel, redisClusterNodesField, clusterNodesHint);
+
+        redisClusterCheckBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
+            redisClusterContent.setVisible(newVal);
+            redisClusterContent.setManaged(newVal);
+            // 集群模式下禁用数据库选择
+            if (newVal) {
+                redisDatabaseField.setDisable(true);
+                redisDatabaseField.setText("0");
+            } else {
+                redisDatabaseField.setDisable(false);
+            }
+        });
+
+        VBox clusterBox = new VBox(6);
+        clusterBox.getChildren().addAll(redisClusterCheckBox, redisClusterContent);
+        grid.add(new Label("模式："), 0, row);
+        grid.add(clusterBox, 1, row++);
+
+        // 默认数据库编号
+        grid.add(new Label("数据库："), 0, row);
+        redisDatabaseField = new TextField();
+        redisDatabaseField.setPromptText("0");
+        redisDatabaseField.setPrefWidth(60);
+        grid.add(redisDatabaseField, 1, row++);
+
+        grid.add(new Label("备注："), 0, row);
+        redisDescriptionField = new TextField();
+        redisDescriptionField.setPromptText("备注信息");
+        redisDescriptionField.setPrefWidth(280);
+        grid.add(redisDescriptionField, 1, row);
+
+        // 提示信息
+        Label hint = new Label("集群模式下不支持选择数据库，默认使用0号数据库");
+        hint.setStyle("-fx-font-size: 10px; -fx-text-fill: #999;");
+        hint.setWrapText(true);
+
+        redisConfigContent.getChildren().addAll(grid, hint);
+    }
+
     // ==================== 密钥条目管理 ====================
 
     /**
@@ -921,6 +1054,7 @@ public class ConnectionConfigDialog {
         boolean isSSH = selectedType == ConnectType.SSH || selectedType == ConnectType.SFTP;
         boolean isLocalTerminal = selectedType == ConnectType.LOCAL_TERMINAL;
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
+        boolean isRedis = selectedType == ConnectType.REDIS;
 
         // 数据库类型TabPane已有标签标题，隐藏顶部标题避免重复
         configTitle.setVisible(!isDatabase);
@@ -936,12 +1070,14 @@ public class ConnectionConfigDialog {
         dbTabPane.setManaged(isDatabase);
         sshConfigContent.setVisible(isSSH);
         sshConfigContent.setManaged(isSSH);
-        simpleConfigContent.setVisible(!isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS);
-        simpleConfigContent.setManaged(!isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS);
+        simpleConfigContent.setVisible(!isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis);
+        simpleConfigContent.setManaged(!isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis);
         localTerminalConfigContent.setVisible(isLocalTerminal);
         localTerminalConfigContent.setManaged(isLocalTerminal);
         s3ConfigContent.setVisible(isS3orOSS);
         s3ConfigContent.setManaged(isS3orOSS);
+        redisConfigContent.setVisible(isRedis);
+        redisConfigContent.setManaged(isRedis);
 
         if (isDatabase) {
             // 设置默认端口
@@ -966,6 +1102,13 @@ public class ConnectionConfigDialog {
             if (selectedType == ConnectType.S3 && !s3PathStyleAccessCheckBox.isSelected()) {
                 // 不自动勾选，让用户根据实际情况选择
             }
+        } else if (isRedis) {
+            if (redisPortField.getText().isEmpty()) {
+                redisPortField.setText(String.valueOf(getDefaultPort(selectedType)));
+            }
+            if (redisDatabaseField.getText().isEmpty()) {
+                redisDatabaseField.setText("0");
+            }
         } else {
             if (simplePortField.getText().isEmpty()) {
                 simplePortField.setText(String.valueOf(getDefaultPort(selectedType)));
@@ -986,6 +1129,7 @@ public class ConnectionConfigDialog {
         boolean isSSH = selectedType == ConnectType.SSH || selectedType == ConnectType.SFTP;
         boolean isLocalTerminal = selectedType == ConnectType.LOCAL_TERMINAL;
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
+        boolean isRedis = selectedType == ConnectType.REDIS;
 
         if (isLocalTerminal) {
             localTerminalNameField.setText(existingConfig.getName());
@@ -1078,6 +1222,26 @@ public class ConnectionConfigDialog {
             s3SaveSecretKeyCheckBox.setSelected(existingConfig.isSavePassword());
             s3PathStyleAccessCheckBox.setSelected(existingConfig.isPathStyleAccess());
             s3DescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
+        } else if (isRedis) {
+            redisNameField.setText(existingConfig.getName());
+            redisHostField.setText(existingConfig.getHost());
+            redisPortField.setText(String.valueOf(existingConfig.getPort()));
+            redisUsernameField.setText(existingConfig.getUsername() != null ? existingConfig.getUsername() : "");
+            if (existingConfig.getPassword() != null) {
+                redisPasswordField.setText(existingConfig.getPassword());
+            }
+            redisSavePasswordCheckBox.setSelected(existingConfig.isSavePassword());
+            redisClusterCheckBox.setSelected(existingConfig.isRedisCluster());
+            if (existingConfig.isRedisCluster()) {
+                redisClusterContent.setVisible(true);
+                redisClusterContent.setManaged(true);
+                redisDatabaseField.setDisable(true);
+            }
+            if (existingConfig.getRedisClusterNodes() != null) {
+                redisClusterNodesField.setText(existingConfig.getRedisClusterNodes());
+            }
+            redisDatabaseField.setText(String.valueOf(existingConfig.getRedisDatabase()));
+            redisDescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
         } else {
             simpleNameField.setText(existingConfig.getName());
             simpleHostField.setText(existingConfig.getHost());
@@ -1104,6 +1268,7 @@ public class ConnectionConfigDialog {
                 if (bpp > 0) {
                     rdpColorDepthCombo.setValue(bpp + "位");
                 }
+                rdpUseSslCheck.setSelected(existingConfig.isUseSsl());
             }
         }
     }
@@ -1126,6 +1291,7 @@ public class ConnectionConfigDialog {
         config.setType(selectedType);
 
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
+        boolean isRedis = selectedType == ConnectType.REDIS;
 
         if (isLocalTerminal) {
             config.setName(localTerminalNameField.getText().trim());
@@ -1241,6 +1407,24 @@ public class ConnectionConfigDialog {
             }
             config.setDescription(s3DescriptionField.getText().trim());
 
+        } else if (isRedis) {
+            config.setName(redisNameField.getText().trim());
+            config.setHost(redisHostField.getText().trim());
+            config.setPort(Integer.parseInt(redisPortField.getText().trim()));
+            config.setUsername(redisUsernameField.getText().trim().isEmpty() ? null : redisUsernameField.getText().trim());
+            config.setUsePassword(true);
+            config.setUseKey(false);
+            config.setSavePassword(redisSavePasswordCheckBox.isSelected());
+            if (redisSavePasswordCheckBox.isSelected()) {
+                config.setPassword(redisPasswordField.getText());
+            } else {
+                config.setPassword(null);
+            }
+            config.setRedisCluster(redisClusterCheckBox.isSelected());
+            config.setRedisClusterNodes(redisClusterNodesField.getText().trim());
+            config.setRedisDatabase(Integer.parseInt(redisDatabaseField.getText().trim()));
+            config.setDescription(redisDescriptionField.getText().trim());
+
         } else {
             config.setName(simpleNameField.getText().trim());
             config.setHost(simpleHostField.getText().trim());
@@ -1273,6 +1457,8 @@ public class ConnectionConfigDialog {
                 if (colorDepth != null) {
                     config.setColorDepth(Integer.parseInt(colorDepth.replace("位", "").trim()));
                 }
+                // SSL/TLS加密
+                config.setUseSsl(rdpUseSslCheck.isSelected());
             }
         }
 
@@ -1287,6 +1473,7 @@ public class ConnectionConfigDialog {
         boolean isSSH = selectedType == ConnectType.SSH || selectedType == ConnectType.SFTP;
         boolean isLocalTerminal = selectedType == ConnectType.LOCAL_TERMINAL;
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
+        boolean isRedis = selectedType == ConnectType.REDIS;
 
         if (isLocalTerminal) {
             return validateLocalTerminalInput();
@@ -1296,6 +1483,8 @@ public class ConnectionConfigDialog {
             return validateSshInput();
         } else if (isS3orOSS) {
             return validateS3Input();
+        } else if (isRedis) {
+            return validateRedisInput();
         } else {
             return validateSimpleInput();
         }
@@ -1452,6 +1641,40 @@ public class ConnectionConfigDialog {
         return true;
     }
 
+    private boolean validateRedisInput() {
+        if (redisNameField.getText().trim().isEmpty()) {
+            showAlert("请输入连接名称");
+            return false;
+        }
+        if (redisHostField.getText().trim().isEmpty()) {
+            showAlert("请输入主机地址");
+            return false;
+        }
+        try {
+            Integer.parseInt(redisPortField.getText().trim());
+        } catch (NumberFormatException e) {
+            showAlert("端口号必须是数字");
+            return false;
+        }
+        try {
+            int db = Integer.parseInt(redisDatabaseField.getText().trim());
+            if (db < 0 || db > 15) {
+                showAlert("数据库编号必须在0-15之间");
+                return false;
+            }
+        } catch (NumberFormatException e) {
+            showAlert("数据库编号必须是数字");
+            return false;
+        }
+        if (redisClusterCheckBox.isSelected()) {
+            if (redisClusterNodesField.getText().trim().isEmpty()) {
+                showAlert("集群模式下请输入集群节点");
+                return false;
+            }
+        }
+        return true;
+    }
+
     private boolean validateSimpleInput() {
         if (simpleNameField.getText().trim().isEmpty()) {
             showAlert("请输入连接名称");
@@ -1488,6 +1711,7 @@ public class ConnectionConfigDialog {
             case ORACLE -> 1521;
             case S3 -> 9000;
             case ALIYUN_OSS -> 443;
+            case REDIS -> 6379;
             case LOCAL_TERMINAL -> 0;
         };
     }

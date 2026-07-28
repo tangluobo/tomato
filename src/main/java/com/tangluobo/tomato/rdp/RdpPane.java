@@ -107,7 +107,8 @@ public class RdpPane extends BorderPane {
      * 连接到RDP服务器
      */
     public void connect(String host, int port, String username, String password,
-                        String domain, int screenWidth, int screenHeight, int colorDepth) {
+                        String domain, int screenWidth, int screenHeight, int colorDepth,
+                        boolean useSsl) {
         this.host = host;
         this.port = port;
         this.username = username;
@@ -176,7 +177,7 @@ public class RdpPane extends BorderPane {
         SwingUtilities.invokeLater(() -> {
             try {
                 rdpClient.connect(host, port, username, password, domain,
-                        screenWidth, screenHeight, colorDepth);
+                        screenWidth, screenHeight, colorDepth, useSsl);
             } catch (Exception e) {
                 logger.log(Level.SEVERE, "RDP连接失败: " + e.getMessage(), e);
                 Platform.runLater(() -> {

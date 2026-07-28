@@ -6,6 +6,7 @@ package com.tangluobo.tomato.module.connect;
 public class DatabaseNodeData {
     public enum NodeType {
         DATABASE,       // 数据库节点
+        REDIS_DB,       // Redis数据库节点
         TABLES_FOLDER,  // "表"文件夹节点
         VIEWS_FOLDER,   // "视图"文件夹节点
         QUERY_FOLDER,   // "查询"文件夹节点

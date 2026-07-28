@@ -136,9 +136,10 @@ public class RdpClient {
      * @param width    桌面宽度
      * @param height   桌面高度
      * @param bpp      色深（16/24）
+     * @param useSsl   是否使用SSL/TLS加密（无TLS服务器需设为false）
      */
     public void connect(String host, int port, String username, String password,
-                         String domain, int width, int height, int bpp) {
+                         String domain, int width, int height, int bpp, boolean useSsl) {
         if (connected) {
             throw new IllegalStateException("RDP客户端已连接，请先断开当前连接");
         }
@@ -162,12 +163,16 @@ public class RdpClient {
         options.setMapClipboard(true);
         options.setLowLatency(true);
 
-        // 配置安全类型：提供STANDARD和SSL（不含HYBRID/NLA）
-        // Windows即使去掉NLA勾选仍要求SSL（SSL_REQUIRED_BY_SERVER），
-        // 但不需要HYBRID(NLA/CredSSP)。首选SSL（列表末尾），STANDARD作为备选。
+        // 配置安全类型
+        // State构造函数取securityTypes列表的最后一个元素作为初始securityType，
+        // 所以列表最后一个元素决定了优先选择的安全类型。
+        // 详见State.java: securityType = options.getSecurityTypes().get(size - 1)
         options.getSecurityTypes().clear();
         options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.STANDARD);
-        options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.SSL);
+        if (useSsl) {
+            // SSL在列表末尾会被优先选择；服务器不支持SSL时ISO协商会自动降级
+            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.SSL);
+        }
 
         // 设置宽松的TrustManager：接受RDP服务器自签名证书
         X509TrustManager permissiveTrustManager = new X509TrustManager() {
@@ -247,10 +252,16 @@ public class RdpClient {
         // 创建RDP层（使用RdpPatch修复rdp5_process加密bug）
         rdpLayer = new RdpPatch(context, state, channels);
 
+        // 核心修复：通过反射替换Transport为RdpTransport
+        // RdpTransport覆盖negotiateSSL()方法，强制使用TLS 1.2协议
+        // 这解决了Transport.negotiateSSL()未调用setEnabledProtocols()
+        // 导致SSLSocket尝试TLS 1.3而被Windows RDP服务器Connection Reset的问题
+        RdpTlsFix.injectRdpTransport(rdpLayer);
+
         // 在新线程中执行RDP连接（connect+mainLoop是阻塞调用）
         rdpThread = new Thread(() -> {
             try {
-                logger.info("开始RDP连接: " + host + ":" + port);
+                logger.info("开始RDP连接: " + host + ":" + port + " useSsl=" + useSsl);
                 rdpLayer.connect(new DefaultIO(InetAddress.getByName(host), port),
                         dcp, options.getCommand(), options.getDirectory());
                 logger.info("RDP协议握手完成，进入主循环: " + host + ":" + port);
@@ -263,6 +274,12 @@ public class RdpClient {
                 logger.log(Level.SEVERE, "RDP许可证错误: " + e.getMessage());
                 notifyDisconnected("许可证错误: " + e.getMessage());
             } catch (RdesktopException e) {
+                // SSL协商失败且当前使用SSL时，自动回退到STANDARD重试
+                if (useSsl && e.getMessage() != null && e.getMessage().contains("SSL negotiation failed")) {
+                    logger.warning("SSL协商失败，尝试回退到Standard RDP Security（无TLS）重连...");
+                    retryWithStandardSecurity(host, port, dcp);
+                    return;
+                }
                 logger.log(Level.SEVERE, "RDP异常: " + e.getMessage(), e);
                 notifyDisconnected("连接异常: " + e.getMessage());
             } catch (java.net.UnknownHostException e) {
@@ -277,6 +294,12 @@ public class RdpClient {
                     notifyDisconnected("连接中断: " + e.getMessage());
                 }
             } catch (java.io.IOException e) {
+                // SSL_NOT_ALLOWED_BY_SERVER错误：服务器不支持SSL
+                if (useSsl && e.getMessage() != null && e.getMessage().contains("SSL_NOT_ALLOWED_BY_SERVER")) {
+                    logger.warning("服务器不支持SSL，回退到Standard RDP Security重连...");
+                    retryWithStandardSecurity(host, port, dcp);
+                    return;
+                }
                 logger.log(Level.SEVERE, "IO错误: " + e.getMessage());
                 notifyDisconnected("IO错误: " + e.getMessage());
             } catch (Exception e) {
@@ -329,6 +352,57 @@ public class RdpClient {
             }
         } catch (Exception e) {
             logger.log(Level.WARNING, "断开RDP连接时出错: " + e.getMessage());
+        }
+    }
+
+    /**
+     * SSL协商失败后，回退到Standard RDP Security（无TLS）重试连接。
+     * 重新创建所有RDP层对象，仅使用STANDARD安全类型。
+     */
+    private void retryWithStandardSecurity(String host, int port, CredentialProvider dcp) {
+        try {
+            // 断开之前的连接
+            if (rdpLayer != null && rdpLayer.isConnected()) {
+                try { rdpLayer.disconnect(); } catch (Exception ignored) {}
+            }
+
+            // 重新配置：仅STANDARD安全类型
+            options.getSecurityTypes().clear();
+            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.SSL);
+            // 注意：STANDARD放在最后，这样State构造函数会选择STANDARD
+            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.STANDARD);
+
+            // 重新创建状态
+            RdpState rdpState = new RdpState(options);
+            rdpState.lockRdp5();
+            state = rdpState;
+
+            // 重新创建画布
+            EmbeddedContext context = new EmbeddedContext();
+            canvas = new RdesktopCanvas(context, state);
+            state.setCanvas(canvas);
+
+            // 重新创建RDP层
+            VChannels channels = new VChannels(state);
+            rdpLayer = new RdpPatch(context, state, channels);
+
+            // 注入RdpTransport（仅当服务器支持SSL时才需要）
+            RdpTlsFix.injectRdpTransport(rdpLayer);
+
+            logger.info("回退重连: " + host + ":" + port + " securityType=STANDARD");
+            rdpLayer.connect(new DefaultIO(InetAddress.getByName(host), port),
+                    dcp, options.getCommand(), options.getDirectory());
+            logger.info("Standard RDP Security连接成功，进入主循环");
+            rdpLayer.mainLoop();
+            logger.info("RDP主循环正常退出");
+        } catch (RdesktopDisconnectException e) {
+            logger.info("RDP连接断开: " + e.getMessage());
+            notifyDisconnected(e.getMessage() != null ? e.getMessage() : "连接已断开");
+        } catch (Exception e) {
+            logger.log(Level.SEVERE, "Standard RDP Security重连也失败: " + e.getMessage(), e);
+            notifyDisconnected("连接失败（SSL和Standard均不可用）: " + e.getMessage());
+        } finally {
+            connected = false;
         }
     }
 
