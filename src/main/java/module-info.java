@@ -16,6 +16,11 @@ module tomato {
     requires org.apache.commons.codec;
     requires org.apache.commons.io;
     requires rdp;
+    requires software.amazon.awssdk.services.s3;
+    requires software.amazon.awssdk.auth;
+    requires software.amazon.awssdk.regions;
+    requires software.amazon.awssdk.core;
+    requires aliyun.sdk.oss;
 
     opens com.tangluobo.tomato to javafx.fxml;
     exports com.tangluobo.tomato;

@@ -1,12 +1,15 @@
 package com.tangluobo.tomato.rdp;
 
+import java.io.EOFException;
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import com.sshtools.javardp.IContext;
 import com.sshtools.javardp.OrderException;
+import com.sshtools.javardp.RdesktopDisconnectException;
 import com.sshtools.javardp.RdesktopException;
 import com.sshtools.javardp.SecurityType;
 import com.sshtools.javardp.State;
@@ -14,12 +17,7 @@ import com.sshtools.javardp.layers.Rdp;
 import com.sshtools.javardp.rdp5.VChannels;
 
 /**
- * 修复版RDP层，覆盖rdp5_process方法并添加诊断日志。
- *
- * 修复：
- * - SSL/HYBRID模式下忽略encryption标志（TLS已处理加密）
- * - STANDARD模式下将解密后的数据正确写回Packet缓冲区
- * - 诊断日志追踪bitmap更新处理
+ * 修复版RDP层，覆盖关键方法添加修复和诊断日志。
  */
 public class RdpPatch extends Rdp {
 
@@ -28,10 +26,28 @@ public class RdpPatch extends Rdp {
     private final State stateRef;
     private final AtomicInteger bitmapUpdateCount = new AtomicInteger(0);
     private final AtomicInteger rdp5PacketCount = new AtomicInteger(0);
+    private final AtomicInteger totalPduCount = new AtomicInteger(0);
+
+    // 反射访问Rdp的private方法
+    private final Method receiveMethod;
+    private final Method processPacketMethod;
 
     public RdpPatch(IContext context, State state, VChannels channels) {
         super(context, state, channels);
         this.stateRef = state;
+
+        // 反射获取private方法
+        Method rm = null, pm = null;
+        try {
+            rm = Rdp.class.getDeclaredMethod("receive", int[].class);
+            rm.setAccessible(true);
+            pm = Rdp.class.getDeclaredMethod("processPacket", int[].class, com.sshtools.javardp.Packet.class);
+            pm.setAccessible(true);
+        } catch (Exception e) {
+            logger.log(Level.SEVERE, "反射获取Rdp私有方法失败: " + e.getMessage(), e);
+        }
+        receiveMethod = rm;
+        processPacketMethod = pm;
     }
 
     @Override
@@ -41,12 +57,11 @@ public class RdpPatch extends Rdp {
         boolean isSSL = stateRef.getSecurityType() == SecurityType.SSL
                 || stateRef.getSecurityType() == SecurityType.HYBRID;
 
-        logger.info(String.format("[RDP5 #%d] encryption=%b, shortform=%b, securityType=%s, packetSize=%d",
+        logger.info(String.format("[RDP5 #%d] encryption=%b, shortform=%b, securityType=%s, dataSize=%d",
                 pktNum, encryption, shortform, stateRef.getSecurityType(), s.getEnd() - s.getPosition()));
 
-        // 修复：对于SSL/HYBRID安全类型，忽略RDP5包头中的encryption标志
         if (encryption && isSSL) {
-            logger.info("[RDP5] Ignoring encryption flag for SSL/HYBRID security type");
+            logger.info("[RDP5] Ignoring encryption flag for SSL/HYBRID");
             encryption = false;
         }
 
@@ -55,11 +70,10 @@ public class RdpPatch extends Rdp {
         int next;
 
         if (encryption) {
-            s.incrementPosition(shortform ? 6 : 7); // signature
+            s.incrementPosition(shortform ? 6 : 7);
             byte[] data = new byte[s.size() - s.getPosition()];
             s.copyToByteArray(data, 0, s.getPosition(), data.length);
             byte[] packet = secureLayer.decrypt(data);
-            // 修复：将解密后的数据写回Packet缓冲区（原始代码缺少这一步）
             if (packet != null) {
                 s.copyFromByteArray(packet, 0, s.getPosition(), packet.length);
             }
@@ -76,26 +90,18 @@ public class RdpPatch extends Rdp {
                 orders.processOrders(s, next, count);
                 break;
             case 1: // bitmap update
-                s.incrementPosition(2); // part length
+                s.incrementPosition(2);
                 processBitmapUpdates(s);
                 break;
             case 2: // palette
                 s.incrementPosition(2);
                 processPalette(s);
                 break;
-            case 3: // palette with offset
-                break;
-            case 5:
-                process_null_system_pointer_pdu(s);
-                break;
-            case 6: // default pointer
-                break;
-            case 9:
-                process_colour_pointer_pdu(s);
-                break;
-            case 10:
-                process_cached_pointer_pdu(s);
-                break;
+            case 3: break;
+            case 5: process_null_system_pointer_pdu(s); break;
+            case 6: break;
+            case 9: process_colour_pointer_pdu(s); break;
+            case 10: process_cached_pointer_pdu(s); break;
             default:
                 logger.warning("Unimplemented RDP5 opcode " + type);
             }
@@ -114,20 +120,17 @@ public class RdpPatch extends Rdp {
         int count = bitmapUpdateCount.incrementAndGet();
         int pos = data.getPosition();
         int n_updates = data.getLittleEndian16();
-        logger.info(String.format("[BITMAP UPDATE #%d] n_updates=%d, remainingBytes=%d",
-                count, n_updates, data.getEnd() - data.getPosition()));
-        // 调用父类处理
+        logger.info(String.format("[BITMAP UPDATE #%d] n_updates=%d", count, n_updates));
         data.setPosition(pos);
         super.processBitmapUpdates(data);
 
-        // 诊断：采样BufferedImage确认是否写入
         try {
             java.awt.image.BufferedImage bi = stateRef.getCanvas().getDisplay().getBufferedImage();
             if (bi != null) {
                 int w = bi.getWidth(), h = bi.getHeight();
                 int[] xs = {0, w / 2, w - 1};
                 int[] ys = {0, h / 2, h - 1};
-                StringBuilder sb = new StringBuilder("[BITMAP #" + count + "] BufferedImage(" + w + "x" + h + "):");
+                StringBuilder sb = new StringBuilder("[BITMAP #" + count + "] pixels(" + w + "x" + h + "):");
                 for (int x : xs) for (int y : ys) {
                     sb.append(String.format(" (%d,%d)=%06x", x, y, bi.getRGB(x, y) & 0xFFFFFF));
                 }
@@ -141,38 +144,108 @@ public class RdpPatch extends Rdp {
     @Override
     public void connect(com.sshtools.javardp.io.IO io, com.sshtools.javardp.CredentialProvider credentialProvider,
             String command, String directory) throws IOException, RdesktopException {
-        logger.info("[CONNECT] Starting RDP connection, securityType=" + stateRef.getSecurityType());
+        logger.info("[CONNECT] Starting, securityType=" + stateRef.getSecurityType()
+                + ", rdp5=" + stateRef.isRDP5() + ", bpp=" + stateRef.getServerBpp()
+                + ", size=" + stateRef.getWidth() + "x" + stateRef.getHeight());
         super.connect(io, credentialProvider, command, directory);
-        logger.info("[CONNECT] RDP connect completed, securityType=" + stateRef.getSecurityType()
-                + ", licenceIssued=" + stateRef.isLicenceIssued()
+        logger.info("[CONNECT] Done, securityType=" + stateRef.getSecurityType()
+                + ", rdp5=" + stateRef.isRDP5() + ", licenceIssued=" + stateRef.isLicenceIssued()
                 + ", serverBpp=" + stateRef.getServerBpp());
     }
 
     @Override
     public void mainLoop() throws IOException, RdesktopException {
-        logger.info("[MAINLOOP] Entering main loop");
-        try {
+        logger.info("[MAINLOOP] Entering main loop, rdp5=" + stateRef.isRDP5());
+
+        if (receiveMethod == null || processPacketMethod == null) {
+            logger.warning("[MAINLOOP] 反射方法不可用，使用父类mainLoop");
             super.mainLoop();
-        } catch (Exception e) {
-            logger.log(Level.SEVERE, String.format("[MAINLOOP] Error after %d bitmap updates, %d rdp5 packets: %s",
-                    bitmapUpdateCount.get(), rdp5PacketCount.get(), e.getMessage()));
-            throw e;
+            return;
         }
-        logger.info(String.format("[MAINLOOP] Exited normally. Total: %d bitmap updates, %d rdp5 packets",
-                bitmapUpdateCount.get(), rdp5PacketCount.get()));
+
+        boolean demandActiveProcessed = false;
+        int[] type = new int[1];
+        com.sshtools.javardp.Packet data;
+        while (true) {
+            // 调用private receive()
+            data = null;
+            try {
+                data = (com.sshtools.javardp.Packet) receiveMethod.invoke(this, (Object) type);
+                if (data == null) {
+                    logger.info("[MAINLOOP] receive() returned null, exiting");
+                    return;
+                }
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof EOFException) {
+                    logger.info("[MAINLOOP] EOF, exiting");
+                    return;
+                }
+                if (cause instanceof IOException) {
+                    logger.log(Level.SEVERE, "[MAINLOOP] IO error after " + totalPduCount.get() + " PDUs: " + cause.getMessage());
+                    if (stateRef.getLastReason() > 0)
+                        throw new RdesktopDisconnectException(stateRef.getLastReason());
+                    else
+                        throw new RdesktopDisconnectException(0, (IOException) cause);
+                }
+                if (cause instanceof RdesktopException) throw (RdesktopException) cause;
+                if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+                throw new RdesktopException("receive failed: " + cause.getMessage(), cause);
+            } catch (Exception e) {
+                throw new RdesktopException("reflective receive failed: " + e.getMessage(), e);
+            }
+
+            int pduCount = totalPduCount.incrementAndGet();
+            int pduType = type[0];
+
+            // 前20个PDU详细记录
+            if (pduCount <= 20 || pduCount % 50 == 0) {
+                String pduName;
+                switch (pduType) {
+                case 1: pduName = "DEMAND_ACTIVE"; break;
+                case 6: pduName = "DEACTIVATE_ALL"; break;
+                case 7: pduName = "DATA"; break;
+                case 0: pduName = "KEEPALIVE"; break;
+                default: pduName = "UNKNOWN(" + pduType + ")"; break;
+                }
+                logger.info(String.format("[MAINLOOP] PDU #%d: type=%s(%d), dataSize=%d",
+                        pduCount, pduName, pduType, data.getEnd() - data.getPosition()));
+            }
+
+            // 调用private processPacket()
+            try {
+                processPacketMethod.invoke(this, (Object) type, data);
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof RdesktopException) {
+                    logger.log(Level.SEVERE, String.format("[MAINLOOP] processPacket error at PDU #%d: %s", pduCount, cause.getMessage()));
+                    throw (RdesktopException) cause;
+                }
+                if (cause instanceof IOException) throw (IOException) cause;
+                if (cause instanceof OrderException) throw new RdesktopException(cause.getMessage(), cause);
+                if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+                throw new RdesktopException("processPacket failed: " + cause.getMessage(), cause);
+            } catch (Exception e) {
+                throw new RdesktopException("reflective processPacket failed: " + e.getMessage(), e);
+            }
+
+            // 在DEMAND_ACTIVE处理完毕后发送Input Synchronize Event
+            // 必须在processPacket完成后发送（不在回调内部），避免SSL socket阻塞
+            if (!demandActiveProcessed && pduType == 1) { // DEMAND_ACTIVE
+                demandActiveProcessed = true;
+                try {
+                    logger.info("[MAINLOOP] 发送Input Synchronize Event (在processPacket之后)");
+                    // RDP_INPUT_SYNCHRONIZE = 0x0000
+                    this.sendInput(0, 0x0000, 0, 0, 0);
+                    logger.info("[MAINLOOP] Input Synchronize Event已发送");
+                } catch (Exception e) {
+                    logger.warning("[MAINLOOP] 发送Input Synchronize Event失败: " + e.getMessage());
+                }
+            }
+        }
     }
 
-    /**
-     * 获取已处理的bitmap更新数量（用于诊断）
-     */
-    public int getBitmapUpdateCount() {
-        return bitmapUpdateCount.get();
-    }
-
-    /**
-     * 获取已处理的RDP5包数量（用于诊断）
-     */
-    public int getRdp5PacketCount() {
-        return rdp5PacketCount.get();
-    }
+    public int getBitmapUpdateCount() { return bitmapUpdateCount.get(); }
+    public int getRdp5PacketCount() { return rdp5PacketCount.get(); }
+    public int getTotalPduCount() { return totalPduCount.get(); }
 }

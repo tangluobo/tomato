@@ -90,6 +90,24 @@ public class ConnectionConfigDialog {
     private ComboBox<String> rdpResolutionCombo;
     private ComboBox<String> rdpColorDepthCombo;
 
+    // ===== 本地终端专属字段 =====
+    private VBox localTerminalConfigContent;
+    private TextField localTerminalNameField;
+    private ComboBox<String> localTerminalTypeCombo;
+    private TextField localTerminalDescriptionField;
+
+    // ===== S3/阿里云OSS专属字段 =====
+    private VBox s3ConfigContent;
+    private TextField s3NameField;
+    private TextField s3EndpointField;
+    private TextField s3RegionField;
+    private TextField s3PortField;
+    private TextField s3AccessKeyField;
+    private PasswordField s3SecretKeyField;
+    private CheckBox s3SaveSecretKeyCheckBox;
+    private CheckBox s3PathStyleAccessCheckBox;
+    private TextField s3DescriptionField;
+
     /**
      * 密钥条目：每行一个密钥文件（复选框 + 路径 + 浏览 + 删除）
      */
@@ -224,6 +242,12 @@ public class ConnectionConfigDialog {
         // ---- 构建其他类型的简单配置 ----
         buildSimpleConfigContent();
 
+        // ---- 构建本地终端类型的配置 ----
+        buildLocalTerminalConfigContent();
+
+        // ---- 构建S3/阿里云OSS类型的配置 ----
+        buildS3ConfigContent();
+
         // 按钮区域
         HBox configButtons = new HBox(10);
         configButtons.setAlignment(Pos.CENTER_RIGHT);
@@ -242,7 +266,7 @@ public class ConnectionConfigDialog {
 
         configButtons.getChildren().addAll(backBtn, cancelBtn2, okBtn);
 
-        configPage.getChildren().addAll(configTitle, dbTabPane, sshConfigContent, simpleConfigContent, configButtons);
+        configPage.getChildren().addAll(configTitle, dbTabPane, sshConfigContent, simpleConfigContent, localTerminalConfigContent, s3ConfigContent, configButtons);
 
         // 编辑已有连接时直接显示配置页
         if (existingConfig != null) {
@@ -643,6 +667,138 @@ public class ConnectionConfigDialog {
         simpleConfigContent.getChildren().add(grid);
     }
 
+    /**
+     * 构建本地终端类型的配置内容
+     */
+    private void buildLocalTerminalConfigContent() {
+        localTerminalConfigContent = new VBox(15);
+        localTerminalConfigContent.setVisible(false);
+        localTerminalConfigContent.setManaged(false);
+
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(10);
+        grid.setPadding(new Insets(10, 0, 0, 0));
+
+        int row = 0;
+
+        grid.add(new Label("名称："), 0, row);
+        localTerminalNameField = new TextField();
+        localTerminalNameField.setPromptText("终端名称");
+        localTerminalNameField.setPrefWidth(280);
+        grid.add(localTerminalNameField, 1, row++);
+
+        grid.add(new Label("终端类型："), 0, row);
+        localTerminalTypeCombo = new ComboBox<>();
+        String os = System.getProperty("os.name", "").toLowerCase();
+        if (os.contains("win")) {
+            localTerminalTypeCombo.getItems().addAll("cmd", "powershell");
+            localTerminalTypeCombo.setValue("cmd");
+        } else {
+            localTerminalTypeCombo.getItems().addAll("系统默认终端");
+            localTerminalTypeCombo.setValue("系统默认终端");
+            localTerminalTypeCombo.setDisable(true);
+        }
+        localTerminalTypeCombo.setPrefWidth(150);
+        grid.add(localTerminalTypeCombo, 1, row++);
+
+        grid.add(new Label("备注："), 0, row);
+        localTerminalDescriptionField = new TextField();
+        localTerminalDescriptionField.setPromptText("备注信息");
+        localTerminalDescriptionField.setPrefWidth(280);
+        grid.add(localTerminalDescriptionField, 1, row);
+
+        // 提示信息
+        Label hint;
+        if (os.contains("win")) {
+            hint = new Label("双击时将打开本地命令行窗口，可选择CMD或PowerShell");
+        } else if (os.contains("mac")) {
+            hint = new Label("双击时将打开Terminal.app");
+        } else {
+            hint = new Label("双击时将打开系统默认终端");
+        }
+        hint.setStyle("-fx-font-size: 10px; -fx-text-fill: #999;");
+        hint.setWrapText(true);
+
+        localTerminalConfigContent.getChildren().addAll(grid, hint);
+    }
+
+    /**
+     * 构建S3/阿里云OSS类型的配置内容
+     */
+    private void buildS3ConfigContent() {
+        s3ConfigContent = new VBox(15);
+        s3ConfigContent.setVisible(false);
+        s3ConfigContent.setManaged(false);
+
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(10);
+        grid.setPadding(new Insets(10, 0, 0, 0));
+
+        int row = 0;
+
+        grid.add(new Label("名称："), 0, row);
+        s3NameField = new TextField();
+        s3NameField.setPromptText("连接名称");
+        s3NameField.setPrefWidth(280);
+        grid.add(s3NameField, 1, row++);
+
+        grid.add(new Label("端点："), 0, row);
+        s3EndpointField = new TextField();
+        s3EndpointField.setPromptText("S3端点URL，如 https://s3.amazonaws.com 或 http://127.0.0.1:9000");
+        s3EndpointField.setPrefWidth(280);
+        grid.add(s3EndpointField, 1, row++);
+
+        grid.add(new Label("区域："), 0, row);
+        s3RegionField = new TextField();
+        s3RegionField.setPromptText("区域，如 us-east-1、cn-hangzhou");
+        s3RegionField.setPrefWidth(280);
+        grid.add(s3RegionField, 1, row++);
+
+        grid.add(new Label("端口："), 0, row);
+        s3PortField = new TextField();
+        s3PortField.setPrefWidth(100);
+        s3PortField.setPromptText("留空则使用默认端口");
+        grid.add(s3PortField, 1, row++);
+
+        grid.add(new Label("Access Key："), 0, row);
+        s3AccessKeyField = new TextField();
+        s3AccessKeyField.setPromptText("访问密钥ID");
+        s3AccessKeyField.setPrefWidth(280);
+        grid.add(s3AccessKeyField, 1, row++);
+
+        grid.add(new Label("Secret Key："), 0, row);
+        VBox s3SecretBox = new VBox(4);
+        s3SecretKeyField = new PasswordField();
+        s3SecretKeyField.setPromptText("访问密钥密码");
+        s3SecretKeyField.setPrefWidth(260);
+        s3SaveSecretKeyCheckBox = new CheckBox("保存密钥");
+        s3SaveSecretKeyCheckBox.setSelected(true);
+        s3SaveSecretKeyCheckBox.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+        s3SecretBox.getChildren().addAll(s3SecretKeyField, s3SaveSecretKeyCheckBox);
+        grid.add(s3SecretBox, 1, row++);
+
+        // 路径风格访问选项（MinIO等需要）
+        s3PathStyleAccessCheckBox = new CheckBox("路径风格访问（Path-Style Access）");
+        s3PathStyleAccessCheckBox.setStyle("-fx-font-size: 11px;");
+        grid.add(new Label(""), 0, row);
+        grid.add(s3PathStyleAccessCheckBox, 1, row++);
+
+        grid.add(new Label("备注："), 0, row);
+        s3DescriptionField = new TextField();
+        s3DescriptionField.setPromptText("备注信息");
+        s3DescriptionField.setPrefWidth(280);
+        grid.add(s3DescriptionField, 1, row);
+
+        // 提示信息
+        Label hint = new Label("S3类型支持AWS S3、MinIO等S3兼容存储；阿里云OSS使用专用连接类型");
+        hint.setStyle("-fx-font-size: 10px; -fx-text-fill: #999;");
+        hint.setWrapText(true);
+
+        s3ConfigContent.getChildren().addAll(grid, hint);
+    }
+
     // ==================== 密钥条目管理 ====================
 
     /**
@@ -763,6 +919,8 @@ public class ConnectionConfigDialog {
         // 根据类型切换布局
         boolean isDatabase = isDatabaseType(selectedType);
         boolean isSSH = selectedType == ConnectType.SSH || selectedType == ConnectType.SFTP;
+        boolean isLocalTerminal = selectedType == ConnectType.LOCAL_TERMINAL;
+        boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
 
         // 数据库类型TabPane已有标签标题，隐藏顶部标题避免重复
         configTitle.setVisible(!isDatabase);
@@ -778,8 +936,12 @@ public class ConnectionConfigDialog {
         dbTabPane.setManaged(isDatabase);
         sshConfigContent.setVisible(isSSH);
         sshConfigContent.setManaged(isSSH);
-        simpleConfigContent.setVisible(!isDatabase && !isSSH);
-        simpleConfigContent.setManaged(!isDatabase && !isSSH);
+        simpleConfigContent.setVisible(!isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS);
+        simpleConfigContent.setManaged(!isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS);
+        localTerminalConfigContent.setVisible(isLocalTerminal);
+        localTerminalConfigContent.setManaged(isLocalTerminal);
+        s3ConfigContent.setVisible(isS3orOSS);
+        s3ConfigContent.setManaged(isS3orOSS);
 
         if (isDatabase) {
             // 设置默认端口
@@ -792,6 +954,17 @@ public class ConnectionConfigDialog {
         } else if (isSSH) {
             if (sshPortField.getText().isEmpty()) {
                 sshPortField.setText("22");
+            }
+        } else if (isS3orOSS) {
+            if (s3RegionField.getText().isEmpty()) {
+                s3RegionField.setText(selectedType == ConnectType.ALIYUN_OSS ? "cn-hangzhou" : "us-east-1");
+            }
+            if (s3PortField.getText().isEmpty()) {
+                s3PortField.setText(String.valueOf(getDefaultPort(selectedType)));
+            }
+            // S3类型默认勾选路径风格访问
+            if (selectedType == ConnectType.S3 && !s3PathStyleAccessCheckBox.isSelected()) {
+                // 不自动勾选，让用户根据实际情况选择
             }
         } else {
             if (simplePortField.getText().isEmpty()) {
@@ -811,8 +984,19 @@ public class ConnectionConfigDialog {
 
         boolean isDatabase = isDatabaseType(selectedType);
         boolean isSSH = selectedType == ConnectType.SSH || selectedType == ConnectType.SFTP;
+        boolean isLocalTerminal = selectedType == ConnectType.LOCAL_TERMINAL;
+        boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
 
-        if (isDatabase) {
+        if (isLocalTerminal) {
+            localTerminalNameField.setText(existingConfig.getName());
+            if (existingConfig.getTerminalType() != null) {
+                String os = System.getProperty("os.name", "").toLowerCase();
+                if (os.contains("win")) {
+                    localTerminalTypeCombo.setValue(existingConfig.getTerminalType());
+                }
+            }
+            localTerminalDescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
+        } else if (isDatabase) {
             nameField.setText(existingConfig.getName());
             hostField.setText(existingConfig.getHost());
             portField.setText(String.valueOf(existingConfig.getPort()));
@@ -878,6 +1062,22 @@ public class ConnectionConfigDialog {
 
             sshDescriptionField.setText(existingConfig.getDescription());
 
+        } else if (isS3orOSS) {
+            s3NameField.setText(existingConfig.getName());
+            if (existingConfig.getEndpoint() != null) {
+                s3EndpointField.setText(existingConfig.getEndpoint());
+            }
+            if (existingConfig.getRegion() != null) {
+                s3RegionField.setText(existingConfig.getRegion());
+            }
+            s3PortField.setText(String.valueOf(existingConfig.getPort()));
+            s3AccessKeyField.setText(existingConfig.getUsername() != null ? existingConfig.getUsername() : "");
+            if (existingConfig.getPassword() != null) {
+                s3SecretKeyField.setText(existingConfig.getPassword());
+            }
+            s3SaveSecretKeyCheckBox.setSelected(existingConfig.isSavePassword());
+            s3PathStyleAccessCheckBox.setSelected(existingConfig.isPathStyleAccess());
+            s3DescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
         } else {
             simpleNameField.setText(existingConfig.getName());
             simpleHostField.setText(existingConfig.getHost());
@@ -921,10 +1121,22 @@ public class ConnectionConfigDialog {
 
         boolean isDatabase = isDatabaseType(selectedType);
         boolean isSSH = selectedType == ConnectType.SSH || selectedType == ConnectType.SFTP;
+        boolean isLocalTerminal = selectedType == ConnectType.LOCAL_TERMINAL;
 
         config.setType(selectedType);
 
-        if (isDatabase) {
+        boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
+
+        if (isLocalTerminal) {
+            config.setName(localTerminalNameField.getText().trim());
+            String os = System.getProperty("os.name", "").toLowerCase();
+            if (os.contains("win")) {
+                config.setTerminalType(localTerminalTypeCombo.getValue());
+            } else {
+                config.setTerminalType("system");
+            }
+            config.setDescription(localTerminalDescriptionField.getText().trim());
+        } else if (isDatabase) {
             config.setName(nameField.getText().trim());
             config.setHost(hostField.getText().trim());
             config.setPort(Integer.parseInt(portField.getText().trim()));
@@ -1012,6 +1224,23 @@ public class ConnectionConfigDialog {
 
             config.setDescription(sshDescriptionField.getText().trim());
 
+        } else if (isS3orOSS) {
+            config.setName(s3NameField.getText().trim());
+            config.setEndpoint(s3EndpointField.getText().trim());
+            config.setRegion(s3RegionField.getText().trim());
+            config.setPort(s3PortField.getText().trim().isEmpty() ? getDefaultPort(selectedType) : Integer.parseInt(s3PortField.getText().trim()));
+            config.setUsername(s3AccessKeyField.getText().trim());
+            config.setUsePassword(true);
+            config.setUseKey(false);
+            config.setSavePassword(s3SaveSecretKeyCheckBox.isSelected());
+            config.setPathStyleAccess(s3PathStyleAccessCheckBox.isSelected());
+            if (s3SaveSecretKeyCheckBox.isSelected()) {
+                config.setPassword(s3SecretKeyField.getText());
+            } else {
+                config.setPassword(null);
+            }
+            config.setDescription(s3DescriptionField.getText().trim());
+
         } else {
             config.setName(simpleNameField.getText().trim());
             config.setHost(simpleHostField.getText().trim());
@@ -1056,14 +1285,28 @@ public class ConnectionConfigDialog {
     private boolean validateInput() {
         boolean isDatabase = isDatabaseType(selectedType);
         boolean isSSH = selectedType == ConnectType.SSH || selectedType == ConnectType.SFTP;
+        boolean isLocalTerminal = selectedType == ConnectType.LOCAL_TERMINAL;
+        boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
 
-        if (isDatabase) {
+        if (isLocalTerminal) {
+            return validateLocalTerminalInput();
+        } else if (isDatabase) {
             return validateDatabaseInput();
         } else if (isSSH) {
             return validateSshInput();
+        } else if (isS3orOSS) {
+            return validateS3Input();
         } else {
             return validateSimpleInput();
         }
+    }
+
+    private boolean validateLocalTerminalInput() {
+        if (localTerminalNameField.getText().trim().isEmpty()) {
+            showAlert("请输入终端名称");
+            return false;
+        }
+        return true;
     }
 
     private boolean validateDatabaseInput() {
@@ -1177,6 +1420,38 @@ public class ConnectionConfigDialog {
         return true;
     }
 
+    private boolean validateS3Input() {
+        if (s3NameField.getText().trim().isEmpty()) {
+            showAlert("请输入连接名称");
+            return false;
+        }
+        if (s3EndpointField.getText().trim().isEmpty()) {
+            showAlert("请输入端点URL");
+            return false;
+        }
+        if (s3RegionField.getText().trim().isEmpty()) {
+            showAlert("请输入区域");
+            return false;
+        }
+        if (!s3PortField.getText().trim().isEmpty()) {
+            try {
+                Integer.parseInt(s3PortField.getText().trim());
+            } catch (NumberFormatException e) {
+                showAlert("端口号必须是数字");
+                return false;
+            }
+        }
+        if (s3AccessKeyField.getText().trim().isEmpty()) {
+            showAlert("请输入Access Key");
+            return false;
+        }
+        if (s3SecretKeyField.getText().trim().isEmpty()) {
+            showAlert("请输入Secret Key");
+            return false;
+        }
+        return true;
+    }
+
     private boolean validateSimpleInput() {
         if (simpleNameField.getText().trim().isEmpty()) {
             showAlert("请输入连接名称");
@@ -1211,6 +1486,9 @@ public class ConnectionConfigDialog {
             case POSTGRESQL -> 5432;
             case FTP -> 21;
             case ORACLE -> 1521;
+            case S3 -> 9000;
+            case ALIYUN_OSS -> 443;
+            case LOCAL_TERMINAL -> 0;
         };
     }
 

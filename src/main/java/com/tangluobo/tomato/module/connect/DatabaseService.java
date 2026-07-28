@@ -458,6 +458,38 @@ public class DatabaseService {
     }
 
     /**
+     * 重命名表
+     */
+    public static void renameTable(ConnectionConfig config, String databaseName, String oldTableName, String newTableName) throws Exception {
+        Connection conn = getConnection(config, databaseName);
+        String sql = switch (config.getType()) {
+            case MYSQL -> "RENAME TABLE `" + databaseName + "`.`" + oldTableName + "` TO `" + databaseName + "`.`" + newTableName + "`";
+            case POSTGRESQL -> "ALTER TABLE \"" + databaseName + "\".\"" + oldTableName + "\" RENAME TO \"" + newTableName + "\"";
+            case ORACLE -> "ALTER TABLE \"" + databaseName + "\".\"" + oldTableName + "\" RENAME TO \"" + newTableName + "\"";
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        };
+        try (Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(sql);
+        }
+    }
+
+    /**
+     * 重命名视图
+     */
+    public static void renameView(ConnectionConfig config, String databaseName, String oldViewName, String newViewName) throws Exception {
+        Connection conn = getConnection(config, databaseName);
+        String sql = switch (config.getType()) {
+            case MYSQL -> "RENAME TABLE `" + databaseName + "`.`" + oldViewName + "` TO `" + databaseName + "`.`" + newViewName + "`";
+            case POSTGRESQL -> "ALTER VIEW \"" + databaseName + "\".\"" + oldViewName + "\" RENAME TO \"" + newViewName + "\"";
+            case ORACLE -> "RENAME \"" + oldViewName + "\" TO \"" + newViewName + "\"";
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        };
+        try (Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(sql);
+        }
+    }
+
+    /**
      * 构建删除视图SQL
      */
     private static String buildDropViewSql(ConnectionConfig config, String databaseName, String viewName) {

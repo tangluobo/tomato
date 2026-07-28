@@ -7,7 +7,10 @@ public enum ConnectType {
     POSTGRESQL("PostgreSQL", "PostgreSQL数据库", "/images/connect/postgresql.png"),
     FTP("FTP", "FTP服务器", "/images/connect/ftp.png"),
     SFTP("SFTP", "SFTP服务器", "/images/connect/sftp.png"),
-    ORACLE("Oracle", "Oracle数据库", "/images/connect/oracle.png");
+    ORACLE("Oracle", "Oracle数据库", "/images/connect/oracle.png"),
+    S3("S3", "S3存储", "/images/connect/s3.png"),
+    ALIYUN_OSS("AliyunOSS", "阿里云OSS", "/images/connect/aliyun_oss.png"),
+    LOCAL_TERMINAL("LocalTerminal", "本地终端", "/images/connect/monitor.png");
 
     private final String code;
     private final String displayName;

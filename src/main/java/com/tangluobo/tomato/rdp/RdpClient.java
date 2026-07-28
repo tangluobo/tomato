@@ -106,15 +106,10 @@ public class RdpClient {
             if (readyType == ReadyType.DISPLAY) {
                 ready = true;
                 connected = true;
-                logger.info("RDP桌面就绪，触发onConnected回调");
+                logger.info("RDP桌面就绪，触发onConnected回调, rdp5=" + state.isRDP5());
                 if (onConnected != null) {
                     onConnected.accept(null);
                 }
-                // 注意：不能在Timer线程中调用sendInput！
-                // sendInput→initData→secureLayer.send不是线程安全的，
-                // 与mainLoop中的secureLayer.receive并发会导致数据损坏和连接断开。
-                // processDemandActive已正确发送Synchronize/Control/Fonts，
-                // 服务器应自动推送画面数据。
             }
         }
 
@@ -198,8 +193,10 @@ public class RdpClient {
         if (password != null) dcp.setPassword(password.toCharArray());
         if (domain != null && !domain.isEmpty()) dcp.setDomain(domain);
 
-        // 创建状态
-        state = new State(options);
+        // 创建状态（使用RdpState阻止processGeneralCaps错误禁用RDP5）
+        RdpState rdpState = new RdpState(options);
+        rdpState.lockRdp5(); // 在连接前锁定RDP5状态
+        state = rdpState;
 
         // 加载键盘映射（keymaps在rdp JAR的根目录下）
         String keyMapPath = "keymaps/";
@@ -304,9 +301,9 @@ public class RdpClient {
                 }
                 if (rdpLayer instanceof RdpPatch) {
                     RdpPatch patch = (RdpPatch) rdpLayer;
-                    logger.info(String.format("[DIAG #%d] bitmapUpdates=%d, rdp5Packets=%d, connected=%b, active=%b",
-                            count[0], patch.getBitmapUpdateCount(), patch.getRdp5PacketCount(),
-                            rdpLayer.isConnected(), state.isActive()));
+                    logger.info(String.format("[DIAG #%d] totalPDUs=%d, bitmapUpdates=%d, rdp5Packets=%d, connected=%b, active=%b, rdp5=%b",
+                            count[0], patch.getTotalPduCount(), patch.getBitmapUpdateCount(), patch.getRdp5PacketCount(),
+                            rdpLayer.isConnected(), state.isActive(), state.isRDP5()));
                 }
             }
         }, 3000, 3000);

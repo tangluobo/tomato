@@ -2,6 +2,7 @@ package com.tangluobo.tomato.module.connect;
 
 import com.tangluobo.tomato.module.Module;
 import com.tangluobo.tomato.rdp.RdpPane;
+import com.tangluobo.tomato.ssh.LocalTerminalPane;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
 import javafx.application.Platform;
 import javafx.collections.ObservableList;
@@ -47,6 +48,9 @@ public class ConnectModule implements Module {
     private Map<TreeItem<String>, ConnectionConfig> itemConfigMap;
     private Map<TreeItem<String>, DatabaseNodeData> dbNodeDataMap;
     private Map<TreeItem<String>, Boolean> connectionStateMap;
+    private TreeItem<String> editingItem;
+    private TreeItem<String> lastClickedTableItem;
+    private long lastClickedTableTime;
     private Image folderIcon;
     private Image dbIcon;
     private Image dbIconGray;
@@ -446,33 +450,58 @@ public class ConnectModule implements Module {
 
         treeView.setOnMousePressed(event -> contextMenu.hide());
 
-        // 使用EventFilter在捕获阶段拦截双击事件，阻止TreeView默认的展开/折叠行为
+        // 检测"再次点击已选中的表/视图节点"以进入编辑模式
         treeView.addEventFilter(MouseEvent.MOUSE_CLICKED, event -> {
-            if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 2) {
-                TreeItem<String> selectedItem = treeView.getSelectionModel().getSelectedItem();
-                if (selectedItem != null) {
-                    // 检查是否为数据库动态节点
-                    DatabaseNodeData dbData = dbNodeDataMap.get(selectedItem);
-                    if (dbData != null) {
-                        event.consume(); // 捕获阶段消费事件，阻止TreeView默认双击展开
-                        handleDbNodeDoubleClick(selectedItem, dbData);
+            if (event.getButton() != MouseButton.PRIMARY) return;
+
+            TreeItem<String> selectedItem = treeView.getSelectionModel().getSelectedItem();
+            if (selectedItem == null) return;
+
+            DatabaseNodeData dbData = dbNodeDataMap.get(selectedItem);
+            if (dbData != null) {
+                if (event.getClickCount() == 2) {
+                    event.consume(); // 捕获阶段消费事件，阻止TreeView默认双击展开
+                    handleDbNodeDoubleClick(selectedItem, dbData);
+                    lastClickedTableItem = null;
+                    // 双击时取消编辑状态
+                    if (editingItem != null) {
+                        editingItem = null;
+                        treeView.setEditable(false);
+                    }
+                    return;
+                }
+                // 检测"再次点击已选中的表/视图节点" -> 进入编辑模式
+                if (event.getClickCount() == 1 && editingItem == null
+                    && (dbData.getType() == DatabaseNodeData.NodeType.TABLE || dbData.getType() == DatabaseNodeData.NodeType.VIEW)) {
+                    long now = System.currentTimeMillis();
+                    if (selectedItem == lastClickedTableItem && now - lastClickedTableTime < 800) {
+                        event.consume();
+                        editingItem = selectedItem;
+                        // 临时开启编辑模式并触发编辑
+                        treeView.setEditable(true);
+                        treeView.edit(selectedItem);
+                        lastClickedTableItem = null;
                         return;
                     }
-                    // 检查是否为连接配置节点
-                    ConnectionConfig config = itemConfigMap.get(selectedItem);
-                    if (config != null && config.getType() != null) {
-                        boolean isDatabase = config.getType() == ConnectType.MYSQL
-                            || config.getType() == ConnectType.POSTGRESQL
-                            || config.getType() == ConnectType.ORACLE;
-                        if (isDatabase) {
-                            handleDbHostDoubleClick(selectedItem, config);
-                        } else {
-                            handleConnect(config);
-                        }
+                    lastClickedTableItem = selectedItem;
+                    lastClickedTableTime = now;
+                }
+            } else if (event.getClickCount() == 2) {
+                // 检查是否为连接配置节点
+                ConnectionConfig config = itemConfigMap.get(selectedItem);
+                if (config != null && config.getType() != null) {
+                    boolean isDatabase = config.getType() == ConnectType.MYSQL
+                        || config.getType() == ConnectType.POSTGRESQL
+                        || config.getType() == ConnectType.ORACLE;
+                    if (isDatabase) {
+                        handleDbHostDoubleClick(selectedItem, config);
+                    } else {
+                        handleConnect(config);
                     }
                 }
             }
         });
+
     }
 
     private static final String DRAG_PREFIX = "ConnectItem|";
@@ -484,6 +513,7 @@ public class ConnectModule implements Module {
                 private final StackPane disclosurePane;
                 private TreeItem<String> currentTreeItem;
                 private ChangeListener<Boolean> expandedListener;
+                private TextField editField;
 
                 {
                     // 创建自定义展开/折叠箭头
@@ -507,6 +537,78 @@ public class ConnectModule implements Module {
                 }
 
                 @Override
+                public void startEdit() {
+                    TreeItem<String> treeItem = getTreeItem();
+                    if (treeItem == null || editingItem != treeItem) {
+                        // 不是我们要编辑的项，忽略
+                        return;
+                    }
+                    super.startEdit();
+
+                    String currentName = treeItem.getValue();
+                    editField = new TextField(currentName);
+                    editField.setStyle("-fx-padding: 1 4; -fx-font-size: 13px; -fx-background-color: white; -fx-border-color: #07c160; -fx-border-radius: 3; -fx-background-radius: 3;");
+                    editField.setPrefWidth(getWidth() - 40);
+
+                    editField.setOnAction(e -> commitEdit(editField.getText()));
+
+                    editField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
+                        if (!isNowFocused && editingItem == treeItem) {
+                            commitEdit(editField.getText());
+                        }
+                    });
+
+                    editField.setOnKeyReleased(e -> {
+                        if (e.getCode() == javafx.scene.input.KeyCode.ESCAPE) {
+                            cancelEdit();
+                        }
+                    });
+
+                    setText(null);
+                    setGraphic(editField);
+                    editField.selectAll();
+                    Platform.runLater(() -> editField.requestFocus());
+                }
+
+                @Override
+                public void commitEdit(String newValue) {
+                    TreeItem<String> treeItem = getTreeItem();
+                    if (treeItem == null || editingItem != treeItem) return;
+
+                    String oldName = treeItem.getValue();
+                    String newName = newValue.trim();
+                    editingItem = null;
+                    editField = null;
+                    treeView.setEditable(false);
+
+                    // 恢复正常显示（暂不更新TreeItem值，等重命名成功后再更新）
+                    setText(oldName);
+                    setGraphic(treeItem.getGraphic());
+
+                    if (newName.isEmpty() || newName.equals(oldName)) return;
+
+                    // 执行重命名
+                    DatabaseNodeData dbData = dbNodeDataMap.get(treeItem);
+                    if (dbData != null) {
+                        commitTableNameRename(treeItem, dbData, oldName, newName);
+                    }
+                }
+
+                @Override
+                public void cancelEdit() {
+                    TreeItem<String> treeItem = getTreeItem();
+                    editingItem = null;
+                    editField = null;
+                    treeView.setEditable(false);
+
+                    super.cancelEdit();
+                    if (treeItem != null) {
+                        setText(treeItem.getValue());
+                        setGraphic(treeItem.getGraphic());
+                    }
+                }
+
+                @Override
                 protected void updateItem(String item, boolean empty) {
                     // 清理旧监听
                     if (currentTreeItem != null && expandedListener != null) {
@@ -520,10 +622,18 @@ public class ConnectModule implements Module {
                         setText(null);
                         setGraphic(null);
                     } else {
-                        setText(item);
                         TreeItem<String> treeItem = getTreeItem();
+                        // 如果正在编辑当前项，保持编辑状态
+                        if (editingItem == treeItem && editField != null) {
+                            setText(null);
+                            setGraphic(editField);
+                        } else {
+                            setText(item);
+                            if (treeItem != null) {
+                                setGraphic(treeItem.getGraphic());
+                            }
+                        }
                         if (treeItem != null) {
-                            setGraphic(treeItem.getGraphic());
                             // 更新箭头方向
                             arrowPath.setRotate(treeItem.isExpanded() ? 90 : 0);
                             currentTreeItem = treeItem;
@@ -1296,6 +1406,40 @@ public class ConnectModule implements Module {
         });
     }
 
+    /**
+     * 提交表/视图重命名（从行内编辑触发）
+     */
+    private void commitTableNameRename(TreeItem<String> item, DatabaseNodeData dbData, String oldName, String newName) {
+        ConnectionConfig config = dbData.getConnectionConfig();
+        String dbName = dbData.getDatabaseName();
+        new Thread(() -> {
+            try {
+                if (dbData.getType() == DatabaseNodeData.NodeType.TABLE) {
+                    DatabaseService.renameTable(config, dbName, oldName, newName);
+                } else {
+                    DatabaseService.renameView(config, dbName, oldName, newName);
+                }
+                Platform.runLater(() -> {
+                    // 更新树节点和元数据
+                    item.setValue(newName);
+                    dbNodeDataMap.put(item, new DatabaseNodeData(dbData.getType(), newName, config, dbName));
+                    // 清除列子节点，下次展开时重新加载
+                    item.getChildren().clear();
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    // 重命名失败，恢复旧名称
+                    item.setValue(oldName);
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("重命名失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("重命名失败: " + e.getMessage());
+                    alert.showAndWait();
+                });
+            }
+        }, "DB-RenameTable").start();
+    }
+
     private String sanitizeForFs(String name) {
         if (name == null || name.isEmpty()) return "unnamed";
         return name.replaceAll("[\\\\/:*?\"<>|]", "_")
@@ -1893,6 +2037,19 @@ public class ConnectModule implements Module {
         // 确保TabPane已安装到contentPaneVBox
         if (!ensureTabPaneInstalled()) return;
 
+        // 本地终端类型：打开本地命令行
+        if (config.getType() == ConnectType.LOCAL_TERMINAL) {
+            doLocalTerminalConnect(config);
+            return;
+        }
+
+        // S3/阿里云OSS类型：打开文件浏览器
+        boolean isS3orOSS = config.getType() == ConnectType.S3 || config.getType() == ConnectType.ALIYUN_OSS;
+        if (isS3orOSS) {
+            doS3Connect(config);
+            return;
+        }
+
         // RDP同一主机只允许一个标签，再次双击定位到已有标签
         if (config.getType() == ConnectType.RDP) {
             for (Tab tab : terminalTabPane.getTabs()) {
@@ -2238,6 +2395,153 @@ public class ConnectModule implements Module {
     }
 
     /**
+     * 处理本地终端连接
+     */
+    private void doLocalTerminalConnect(ConnectionConfig config) {
+        // 同一个本地终端配置只允许一个标签，再次双击定位到已有标签
+        for (Tab tab : terminalTabPane.getTabs()) {
+            if (config.getId().equals(tab.getUserData())) {
+                terminalTabPane.getSelectionModel().select(tab);
+                showTerminalView();
+                return;
+            }
+        }
+
+        LocalTerminalPane localTerminalPane = new LocalTerminalPane();
+
+        // 应用scrollback配置
+        int scrollback = config.getScrollbackLines() != null ?
+            config.getScrollbackLines() : GlobalConfig.getInstance().getScrollbackLines();
+        localTerminalPane.setScrollbackLines(scrollback);
+
+        Tab tab = new Tab(config.getName());
+        tab.setContent(localTerminalPane);
+        tab.setUserData(config.getId());
+
+        // 标签右键菜单
+        ContextMenu tabContextMenu = new ContextMenu();
+
+        MenuItem copySessionItem = new MenuItem("复制会话");
+        copySessionItem.setOnAction(e -> doLocalTerminalConnect(config));
+
+        MenuItem sessionConfigItem = new MenuItem("会话配置");
+        sessionConfigItem.setOnAction(e -> {
+            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
+            SessionConfigDialog.show(stage, config);
+            int newScrollback = config.getScrollbackLines() != null ?
+                config.getScrollbackLines() : GlobalConfig.getInstance().getScrollbackLines();
+            localTerminalPane.setScrollbackLines(newScrollback);
+            ConfigManager.saveConnections(connections);
+        });
+
+        MenuItem globalConfigItem = new MenuItem("终端配置");
+        globalConfigItem.setOnAction(e -> {
+            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
+            GlobalConfigDialog.show(stage, GlobalConfigDialog.ConfigMode.SSH);
+            if (config.getScrollbackLines() == null) {
+                localTerminalPane.setScrollbackLines(GlobalConfig.getInstance().getScrollbackLines());
+            }
+        });
+
+        tabContextMenu.getItems().addAll(copySessionItem, new SeparatorMenuItem(), sessionConfigItem, globalConfigItem);
+        tab.setContextMenu(tabContextMenu);
+
+        // 标签关闭时断开连接
+        tab.setOnClosed(e -> {
+            localTerminalPane.disconnect();
+            if (terminalTabPane.getTabs().isEmpty()) {
+                showWelcomeView();
+            }
+        });
+
+        terminalTabPane.getTabs().add(tab);
+        terminalTabPane.getSelectionModel().select(tab);
+        showTerminalView();
+
+        // 启动本地终端
+        String terminalType = config.getTerminalType() != null ? config.getTerminalType() : "cmd";
+        localTerminalPane.connect(terminalType);
+    }
+
+    /**
+     * 处理S3/阿里云OSS连接，打开文件浏览器标签
+     */
+    private void doS3Connect(ConnectionConfig config) {
+        // 同一个S3/OSS配置只允许一个标签，再次双击定位到已有标签
+        for (Tab tab : terminalTabPane.getTabs()) {
+            if (config.getId().equals(tab.getUserData())) {
+                terminalTabPane.getSelectionModel().select(tab);
+                showTerminalView();
+                return;
+            }
+        }
+
+        // 需要密钥但未保存时，弹出输入框
+        if (config.getPassword() == null || config.getPassword().isEmpty()) {
+            Dialog<String> pwdDialog = new Dialog<>();
+            pwdDialog.setTitle("输入Secret Key");
+            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + (config.getEndpoint() != null ? config.getEndpoint() : config.getRegion()) + ")");
+            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+            GridPane grid = new GridPane();
+            grid.setHgap(10);
+            grid.setVgap(10);
+            grid.setPadding(new Insets(20, 10, 10, 10));
+            PasswordField pf = new PasswordField();
+            pf.setPrefWidth(250);
+            pf.setPromptText("Secret Key");
+            grid.add(new Label("Secret Key："), 0, 0);
+            grid.add(pf, 1, 0);
+            pwdDialog.getDialogPane().setContent(grid);
+            pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
+            final String[] passwordHolder = new String[1];
+            pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
+            if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
+            config.setPassword(passwordHolder[0]);
+        }
+
+        S3FileBrowserPane fileBrowserPane = new S3FileBrowserPane(config);
+
+        Tab tab = new Tab(config.getName());
+        tab.setContent(fileBrowserPane);
+        tab.setUserData(config.getId());
+
+        // 设置标签图标
+        try {
+            Image tabIcon = new Image(getClass().getResourceAsStream(config.getType().getIconPath()));
+            if (tabIcon != null) {
+                ImageView tabIconView = new ImageView(tabIcon);
+                tabIconView.setFitWidth(16);
+                tabIconView.setFitHeight(16);
+                tab.setGraphic(tabIconView);
+            }
+        } catch (Exception e) {}
+
+        // 标签右键菜单
+        ContextMenu tabContextMenu = new ContextMenu();
+        MenuItem refreshItem = new MenuItem("刷新");
+        refreshItem.setOnAction(e -> fileBrowserPane.refresh());
+        MenuItem sessionConfigItem = new MenuItem("会话配置");
+        sessionConfigItem.setOnAction(e -> {
+            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
+            SessionConfigDialog.show(stage, config);
+            ConfigManager.saveConnections(connections);
+        });
+        tabContextMenu.getItems().addAll(refreshItem, new SeparatorMenuItem(), sessionConfigItem);
+        tab.setContextMenu(tabContextMenu);
+
+        // 标签关闭时
+        tab.setOnClosed(e -> {
+            if (terminalTabPane.getTabs().isEmpty()) {
+                showWelcomeView();
+            }
+        });
+
+        terminalTabPane.getTabs().add(tab);
+        terminalTabPane.getSelectionModel().select(tab);
+        showTerminalView();
+    }
+
+    /**
      * 处理RDP连接，使用Java原生RDP协议实现远程桌面
      */
     private void doRdpConnect(ConnectionConfig config) {
@@ -2515,7 +2819,7 @@ public class ConnectModule implements Module {
         welcomePane.setPadding(new Insets(30));
         Label title = new Label("连接管理");
         title.setStyle("-fx-font-size: 20px; -fx-font-weight: bold;");
-        Label hint = new Label("双击左侧SSH连接以打开终端");
+        Label hint = new Label("双击左侧连接以打开终端/文件浏览器");
         hint.setStyle("-fx-font-size: 13px; -fx-text-fill: #888888;");
         welcomePane.getChildren().addAll(title, hint);
 

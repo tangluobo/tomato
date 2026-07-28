@@ -26,6 +26,14 @@ public class ConnectionConfig {
     private int screenHeight = 768;
     private int colorDepth = 24;
 
+    // 本地终端配置
+    private String terminalType; // Windows: "cmd" 或 "powershell"; Linux/macOS: "system"
+
+    // S3/OSS专属配置
+    private String region;
+    private boolean pathStyleAccess = false; // S3路径风格访问（MinIO需要）
+    private String endpoint; // 自定义端点URL（MinIO等S3兼容服务）
+
     // SSH通道配置
     private boolean useSshTunnel = false;
     private String sshTunnelHost;
@@ -103,6 +111,18 @@ public class ConnectionConfig {
 
     public int getColorDepth() { return colorDepth; }
     public void setColorDepth(int colorDepth) { this.colorDepth = colorDepth; }
+
+    public String getTerminalType() { return terminalType; }
+    public void setTerminalType(String terminalType) { this.terminalType = terminalType; }
+
+    public String getRegion() { return region; }
+    public void setRegion(String region) { this.region = region; }
+
+    public boolean isPathStyleAccess() { return pathStyleAccess; }
+    public void setPathStyleAccess(boolean pathStyleAccess) { this.pathStyleAccess = pathStyleAccess; }
+
+    public String getEndpoint() { return endpoint; }
+    public void setEndpoint(String endpoint) { this.endpoint = endpoint; }
 
     public boolean isUseSshTunnel() { return useSshTunnel; }
     public void setUseSshTunnel(boolean useSshTunnel) { this.useSshTunnel = useSshTunnel; }
