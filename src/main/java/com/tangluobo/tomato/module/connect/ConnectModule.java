@@ -49,8 +49,8 @@ public class ConnectModule implements Module {
     private Map<TreeItem<String>, DatabaseNodeData> dbNodeDataMap;
     private Map<TreeItem<String>, Boolean> connectionStateMap;
     private TreeItem<String> editingItem;
-    private TreeItem<String> lastClickedTableItem;
-    private long lastClickedTableTime;
+    // 记录clickCount==1的MOUSE_PRESSED时的选中项，用于判断"再次点击已选中节点"
+    private TreeItem<String> selectedItemBeforeClick;
     private Image folderIcon;
     private Image dbIcon;
     private Image dbIconGray;
@@ -450,7 +450,19 @@ public class ConnectModule implements Module {
 
         treeView.setOnMousePressed(event -> contextMenu.hide());
 
+        // 在第一次MOUSE_PRESSED(clickCount==1)前记录当前选中项
+        // 用于判断"点击的节点是否本来就处于选中状态"
+        treeView.addEventFilter(MouseEvent.MOUSE_PRESSED, event -> {
+            if (event.getButton() != MouseButton.PRIMARY) return;
+            if (event.getClickCount() == 1) {
+                // 只在第一次按下时记录，避免双击的第二次按下覆盖
+                selectedItemBeforeClick = treeView.getSelectionModel().getSelectedItem();
+            }
+        });
+
         // 检测"再次点击已选中的表/视图节点"以进入编辑模式
+        // 核心判断：如果MOUSE_CLICKED时当前选中项 == selectedItemBeforeClick，
+        // 说明节点在点击前就已经选中，这次是"再次点击"
         treeView.addEventFilter(MouseEvent.MOUSE_CLICKED, event -> {
             if (event.getButton() != MouseButton.PRIMARY) return;
 
@@ -458,33 +470,44 @@ public class ConnectModule implements Module {
             if (selectedItem == null) return;
 
             DatabaseNodeData dbData = dbNodeDataMap.get(selectedItem);
+            boolean isTableOrView = dbData != null
+                && (dbData.getType() == DatabaseNodeData.NodeType.TABLE || dbData.getType() == DatabaseNodeData.NodeType.VIEW);
+
+            // 判断：点击的节点在点击前是否已选中
+            boolean wasAlreadySelected = selectedItem == selectedItemBeforeClick;
+
             if (dbData != null) {
                 if (event.getClickCount() == 2) {
                     event.consume(); // 捕获阶段消费事件，阻止TreeView默认双击展开
+
+                    // 快速双击已选中的表/视图 -> 进入编辑模式
+                    if (isTableOrView && wasAlreadySelected && editingItem == null) {
+                        editingItem = selectedItem;
+                        treeView.setEditable(true);
+                        treeView.edit(selectedItem);
+                        selectedItemBeforeClick = null;
+                        return;
+                    }
+
+                    // 首次双击未选中的节点 -> 执行双击打开
                     handleDbNodeDoubleClick(selectedItem, dbData);
-                    lastClickedTableItem = null;
-                    // 双击时取消编辑状态
+                    selectedItemBeforeClick = null;
                     if (editingItem != null) {
                         editingItem = null;
                         treeView.setEditable(false);
                     }
                     return;
                 }
-                // 检测"再次点击已选中的表/视图节点" -> 进入编辑模式
-                if (event.getClickCount() == 1 && editingItem == null
-                    && (dbData.getType() == DatabaseNodeData.NodeType.TABLE || dbData.getType() == DatabaseNodeData.NodeType.VIEW)) {
-                    long now = System.currentTimeMillis();
-                    if (selectedItem == lastClickedTableItem && now - lastClickedTableTime < 800) {
-                        event.consume();
+
+                if (event.getClickCount() == 1) {
+                    // 慢速再次单击已选中的表/视图 -> 进入编辑模式
+                    if (isTableOrView && wasAlreadySelected && editingItem == null) {
                         editingItem = selectedItem;
-                        // 临时开启编辑模式并触发编辑
                         treeView.setEditable(true);
                         treeView.edit(selectedItem);
-                        lastClickedTableItem = null;
+                        selectedItemBeforeClick = null;
                         return;
                     }
-                    lastClickedTableItem = selectedItem;
-                    lastClickedTableTime = now;
                 }
             } else if (event.getClickCount() == 2) {
                 // 检查是否为连接配置节点
@@ -499,6 +522,7 @@ public class ConnectModule implements Module {
                         handleConnect(config);
                     }
                 }
+                selectedItemBeforeClick = null;
             }
         });
 

@@ -97,6 +97,16 @@ public class OssService {
     }
 
     /**
+     * 获取对象输入流
+     */
+    public static java.io.InputStream getObjectStream(ConnectionConfig config, String bucketName, String key) throws Exception {
+        OSS client = createClient(config);
+        com.aliyun.oss.model.OSSObject ossObject = client.getObject(bucketName, key);
+        // 返回流后调用者负责关闭，但OSS客户端在流关闭时会自动shutdown
+        return ossObject.getObjectContent();
+    }
+
+    /**
      * 删除对象
      */
     public static void deleteObject(ConnectionConfig config, String bucketName, String key) throws Exception {

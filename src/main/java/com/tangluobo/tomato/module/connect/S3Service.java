@@ -113,6 +113,18 @@ public class S3Service {
     }
 
     /**
+     * 获取对象输入流
+     */
+    public static java.io.InputStream getObjectStream(ConnectionConfig config, String bucketName, String key) throws Exception {
+        S3Client client = createClient(config);
+        GetObjectRequest request = GetObjectRequest.builder()
+                .bucket(bucketName)
+                .key(key)
+                .build();
+        return client.getObject(request);
+    }
+
+    /**
      * 删除对象
      */
     public static void deleteObject(ConnectionConfig config, String bucketName, String key) throws Exception {

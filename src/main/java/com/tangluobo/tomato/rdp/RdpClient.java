@@ -95,13 +95,13 @@ public class RdpClient {
         @Override
         public void ready(ReadyType readyType) {
             logger.info("RDP ready回调: " + readyType);
-            if (readyType == ReadyType.INPUT) {
-                // 不在这里发送任何Input PDU！
-                // ready(INPUT)在sendConfirmActive()内部触发，此时processDemandActive()
-                // 还没发送sendSynchronize/sendControl/sendFonts，如果在此发送Input PDU
-                // 会违反RDP协议序列（Input PDU必须出现在Synchronize/Control/Fonts之后），
-                // 导致服务器断开连接。
-                // processDemandActive()已经发送了正确的Synchronize数据PDU，服务器会自动推送画面。
+            // 关键：必须调用canvas.triggerReady()！
+            // RdesktopFrame的标准实现会调用canvas.triggerReady(ready)，
+            // 这在INPUT阶段触发input.triggerReadyToSend()→doLockKeys()，
+            // 发送CapsLock/NumLock同步键事件，这是服务器开始推送画面的前提条件。
+            // 不调用triggerReady(INPUT)会导致服务器不推送画面数据（黑屏）。
+            if (canvas != null) {
+                canvas.triggerReady(readyType);
             }
             if (readyType == ReadyType.DISPLAY) {
                 ready = true;

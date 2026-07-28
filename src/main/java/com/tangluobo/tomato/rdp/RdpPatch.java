@@ -163,7 +163,7 @@ public class RdpPatch extends Rdp {
             return;
         }
 
-        boolean demandActiveProcessed = false;
+        boolean inputSyncSent = false;
         int[] type = new int[1];
         com.sshtools.javardp.Packet data;
         while (true) {
@@ -198,19 +198,17 @@ public class RdpPatch extends Rdp {
             int pduCount = totalPduCount.incrementAndGet();
             int pduType = type[0];
 
-            // 前20个PDU详细记录
-            if (pduCount <= 20 || pduCount % 50 == 0) {
-                String pduName;
-                switch (pduType) {
-                case 1: pduName = "DEMAND_ACTIVE"; break;
-                case 6: pduName = "DEACTIVATE_ALL"; break;
-                case 7: pduName = "DATA"; break;
-                case 0: pduName = "KEEPALIVE"; break;
-                default: pduName = "UNKNOWN(" + pduType + ")"; break;
-                }
-                logger.info(String.format("[MAINLOOP] PDU #%d: type=%s(%d), dataSize=%d",
-                        pduCount, pduName, pduType, data.getEnd() - data.getPosition()));
+            // 所有PDU都记录（调试阶段）
+            String pduName;
+            switch (pduType) {
+            case 1: pduName = "DEMAND_ACTIVE"; break;
+            case 6: pduName = "DEACTIVATE_ALL"; break;
+            case 7: pduName = "DATA"; break;
+            case 0: pduName = "KEEPALIVE"; break;
+            default: pduName = "UNKNOWN(" + pduType + ")"; break;
             }
+            logger.info(String.format("[MAINLOOP] PDU #%d: type=%s(%d), dataSize=%d",
+                    pduCount, pduName, pduType, data.getEnd() - data.getPosition()));
 
             // 调用private processPacket()
             try {
@@ -229,17 +227,19 @@ public class RdpPatch extends Rdp {
                 throw new RdesktopException("reflective processPacket failed: " + e.getMessage(), e);
             }
 
-            // 在DEMAND_ACTIVE处理完毕后发送Input Synchronize Event
-            // 必须在processPacket完成后发送（不在回调内部），避免SSL socket阻塞
-            if (!demandActiveProcessed && pduType == 1) { // DEMAND_ACTIVE
-                demandActiveProcessed = true;
+            // 在DEMAND_ACTIVE（PDU type=1）处理完毕后发送Input Synchronize Event
+            // 这是RDP协议要求的关键步骤：rdesktop原版在processDemandActive后
+            // 发送rdp_send_input(time, RDP_INPUT_SYNCHRONIZE, 0, 0, 0)，
+            // javardp库遗漏了这一步，导致Windows服务器不推送画面数据。
+            if (!inputSyncSent && pduType == 1) {
+                inputSyncSent = true;
                 try {
-                    logger.info("[MAINLOOP] 发送Input Synchronize Event (在processPacket之后)");
+                    logger.info("[MAINLOOP] ===== 准备发送Input Synchronize Event =====");
                     // RDP_INPUT_SYNCHRONIZE = 0x0000
                     this.sendInput(0, 0x0000, 0, 0, 0);
-                    logger.info("[MAINLOOP] Input Synchronize Event已发送");
+                    logger.info("[MAINLOOP] ===== Input Synchronize Event已发送 =====");
                 } catch (Exception e) {
-                    logger.warning("[MAINLOOP] 发送Input Synchronize Event失败: " + e.getMessage());
+                    logger.log(Level.SEVERE, "[MAINLOOP] ===== 发送Input Synchronize Event失败: " + e.getMessage(), e);
                 }
             }
         }
