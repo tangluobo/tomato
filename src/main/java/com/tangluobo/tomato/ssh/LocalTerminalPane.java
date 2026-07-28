@@ -17,6 +17,8 @@ import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
 
 import java.io.*;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -44,6 +46,9 @@ public class LocalTerminalPane extends BorderPane {
     // 右键菜单
     private final ContextMenu contextMenu;
 
+    // 编码标签
+    private final Label encodingLabel;
+
     // 渲染节流
     private long lastRenderTime = 0;
     private static final long RENDER_INTERVAL = 33;
@@ -58,6 +63,9 @@ public class LocalTerminalPane extends BorderPane {
     // Shell类型
     private String shellType;
     private OutputStream processOutput;
+
+    // 本地进程输出编码（Windows中文系统为GBK，Linux/macOS为UTF-8）
+    private Charset processCharset;
 
     public LocalTerminalPane() {
         emulator = new TerminalEmulator();
@@ -80,7 +88,7 @@ public class LocalTerminalPane extends BorderPane {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        Label encodingLabel = new Label("UTF-8");
+        encodingLabel = new Label("");
         encodingLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
 
         statusBar.getChildren().addAll(statusDot, stateLabel, shellLabel, encodingLabel, spacer);
@@ -238,8 +246,18 @@ public class LocalTerminalPane extends BorderPane {
                     this.shellType = "CMD";
                 }
                 pb.redirectErrorStream(true);
+                // Java 18+ Charset.defaultCharset() 固定返回 UTF-8 (JEP 400)
+                // 需要使用 sun.jnu.encoding 获取 Windows 系统真实编码（中文系统为 GBK）
+                String jnuEncoding = System.getProperty("sun.jnu.encoding");
+                if (jnuEncoding != null) {
+                    processCharset = Charset.forName(jnuEncoding);
+                } else {
+                    processCharset = Charset.forName("GBK");
+                }
             } else {
                 // Linux/macOS: 需要通过 script 命令分配 PTY，否则 bash/zsh 不会输出提示符
+                // Linux/macOS终端默认使用UTF-8，无需转码
+                processCharset = StandardCharsets.UTF_8;
                 String shell;
                 if (os.contains("mac")) {
                     shell = new File("/bin/zsh").exists() ? "/bin/zsh" : "/bin/bash";
@@ -310,6 +328,11 @@ public class LocalTerminalPane extends BorderPane {
             if (shellType != null) {
                 shellLabel.setText(shellType);
             }
+            if (processCharset != null) {
+                encodingLabel.setText(processCharset.name());
+            } else {
+                encodingLabel.setText("");
+            }
         });
     }
 
@@ -321,7 +344,9 @@ public class LocalTerminalPane extends BorderPane {
             if (text != null && !text.isEmpty()) {
                 text = text.replace("\r\n", "\r").replace("\n", "\r");
                 try {
-                    processOutput.write(text.getBytes());
+                    // 使用进程编码发送文本，让进程能正确接收中文
+                    Charset sendCharset = processCharset != null ? processCharset : StandardCharsets.UTF_8;
+                    processOutput.write(text.getBytes(sendCharset));
                     processOutput.flush();
                 } catch (IOException e) {
                     e.printStackTrace();
@@ -353,6 +378,7 @@ public class LocalTerminalPane extends BorderPane {
     private void startReadThread() {
         readThread = new Thread(() -> {
             byte[] buffer = new byte[4096];
+            Charset readCharset = processCharset != null ? processCharset : StandardCharsets.UTF_8;
 
             while (running.get() && shellProcess != null && shellProcess.isAlive()) {
                 try {
@@ -360,10 +386,20 @@ public class LocalTerminalPane extends BorderPane {
                     int len = is.read(buffer);
                     if (len == -1) break;
 
-                    final byte[] data = new byte[len];
-                    System.arraycopy(buffer, 0, data, 0, len);
+                    // 将进程输出的字节按进程编码解码，再转为UTF-8传给TerminalEmulator
+                    byte[] utf8Data;
+                    if (readCharset.equals(StandardCharsets.UTF_8)) {
+                        // UTF-8无需转码，直接使用
+                        utf8Data = new byte[len];
+                        System.arraycopy(buffer, 0, utf8Data, 0, len);
+                    } else {
+                        // GBK等编码 → String → UTF-8字节
+                        String text = new String(buffer, 0, len, readCharset);
+                        utf8Data = text.getBytes(StandardCharsets.UTF_8);
+                    }
+
                     Platform.runLater(() -> {
-                        emulator.process(data);
+                        emulator.process(utf8Data);
                         scheduleRender();
                     });
 
@@ -376,7 +412,7 @@ public class LocalTerminalPane extends BorderPane {
             }
             running.set(false);
             Platform.runLater(() -> {
-                emulator.process(("\r\n[本地终端已退出]\r\n").getBytes());
+                emulator.process(("\r\n[本地终端已退出]\r\n").getBytes(StandardCharsets.UTF_8));
                 scheduleRender();
                 updateStatusBar("已退出");
             });
