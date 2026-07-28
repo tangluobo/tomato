@@ -7,11 +7,19 @@ import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.input.KeyCode;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.Arc;
+import javafx.scene.shape.ArcType;
+import javafx.scene.shape.Line;
+import javafx.scene.shape.Polygon;
+import javafx.scene.shape.Rectangle;
 
 import java.util.*;
 
@@ -44,16 +52,40 @@ public class TableStructureView extends BorderPane {
     }
 
     private void initializeUI() {
-        // 工具栏
+        // 工具栏：保存、添加字段、插入字段、主键、上移、下移、刷新（图标+名称）
         HBox toolBar = new HBox(2);
         toolBar.setPadding(new Insets(4, 8, 4, 8));
         toolBar.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #ddd; -fx-border-width: 0 0 1 0;");
         toolBar.setAlignment(Pos.CENTER_LEFT);
 
-        Button refreshBtn = new Button("刷新");
-        refreshBtn.setStyle("-fx-font-size: 12px; -fx-padding: 4 8; -fx-content-display: LEFT;");
+        Button saveBtn = createToolBarButton("保存", createSaveIcon());
+        saveBtn.setOnAction(e -> handleSave());
+
+        Button addFieldBtn = createToolBarButton("添加字段", createAddIcon());
+        addFieldBtn.setOnAction(e -> handleAddField());
+
+        Button insertFieldBtn = createToolBarButton("插入字段", createInsertIcon());
+        insertFieldBtn.setOnAction(e -> handleInsertField());
+
+        Button primaryKeyBtn = createToolBarButton("主键", createPrimaryKeyIcon());
+        primaryKeyBtn.setOnAction(e -> handleTogglePrimaryKey());
+
+        Button moveUpBtn = createToolBarButton("上移", createMoveUpIcon());
+        moveUpBtn.setOnAction(e -> handleMoveUp());
+
+        Button moveDownBtn = createToolBarButton("下移", createMoveDownIcon());
+        moveDownBtn.setOnAction(e -> handleMoveDown());
+
+        Separator separator = new Separator();
+        separator.setOrientation(javafx.geometry.Orientation.VERTICAL);
+        separator.setPadding(new Insets(2, 4, 2, 4));
+
+        Button refreshBtn = createToolBarButton("刷新", createRefreshIcon());
         refreshBtn.setOnAction(e -> loadStructure());
-        toolBar.getChildren().add(refreshBtn);
+
+        toolBar.getChildren().addAll(
+                saveBtn, addFieldBtn, insertFieldBtn, primaryKeyBtn,
+                moveUpBtn, moveDownBtn, separator, refreshBtn);
 
         // TableView
         tableView = new TableView<>();
@@ -70,6 +102,38 @@ public class TableStructureView extends BorderPane {
         loadingIndicator.setMaxSize(40, 40);
         loadingIndicator.setVisible(false);
 
+        // 字段标签页内容：表格 + 加载指示器
+        StackPane fieldsPane = new StackPane(tableView, loadingIndicator);
+
+        // 多标签页：字段、索引、外键、触发器、选项、注释、SQL预览
+        TabPane tabPane = new TabPane();
+        tabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        tabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+
+        Tab fieldsTab = new Tab("字段");
+        fieldsTab.setContent(fieldsPane);
+
+        Tab indexesTab = new Tab("索引");
+        indexesTab.setContent(createPlaceholderPane("索引"));
+
+        Tab foreignKeysTab = new Tab("外键");
+        foreignKeysTab.setContent(createPlaceholderPane("外键"));
+
+        Tab triggersTab = new Tab("触发器");
+        triggersTab.setContent(createPlaceholderPane("触发器"));
+
+        Tab optionsTab = new Tab("选项");
+        optionsTab.setContent(createPlaceholderPane("选项"));
+
+        Tab commentTab = new Tab("注释");
+        commentTab.setContent(createCommentPane());
+
+        Tab sqlPreviewTab = new Tab("SQL预览");
+        sqlPreviewTab.setContent(createSqlPreviewPane());
+
+        tabPane.getTabs().addAll(fieldsTab, indexesTab, foreignKeysTab,
+                triggersTab, optionsTab, commentTab, sqlPreviewTab);
+
         // 状态栏
         statusLabel = new Label();
         statusLabel.setStyle("-fx-font-size: 12px;");
@@ -78,12 +142,290 @@ public class TableStructureView extends BorderPane {
         statusBar.setStyle("-fx-background-color: #f5f5f5; -fx-border-color: #ddd; -fx-border-width: 1 0 0 0;");
         statusBar.setAlignment(Pos.CENTER_LEFT);
 
-        StackPane centerPane = new StackPane(tableView, loadingIndicator);
-
         this.setTop(toolBar);
-        this.setCenter(centerPane);
+        this.setCenter(tabPane);
         this.setBottom(statusBar);
         this.setPadding(Insets.EMPTY);
+    }
+
+    /**
+     * 创建工具栏按钮（图标+文字）
+     */
+    private Button createToolBarButton(String text, Node icon) {
+        Button btn = new Button(text);
+        btn.getStyleClass().add("toolbar-button");
+        btn.setStyle("-fx-font-size: 12px; -fx-padding: 4 8; -fx-content-display: LEFT; -fx-graphic-text-gap: 4;");
+        if (icon != null) {
+            btn.setGraphic(icon);
+        }
+        return btn;
+    }
+
+    /** 保存图标：蓝色上箭头 */
+    private Node createSaveIcon() {
+        javafx.scene.Group g = new javafx.scene.Group();
+        Rectangle bg = new Rectangle(14, 14);
+        bg.setFill(Color.valueOf("#1E88E5"));
+        bg.setArcWidth(3);
+        bg.setArcHeight(3);
+        Polygon arrow = new Polygon(7, 2, 12, 8, 9, 8, 9, 12, 5, 12, 5, 8, 2, 8);
+        arrow.setFill(Color.WHITE);
+        g.getChildren().addAll(bg, arrow);
+        return g;
+    }
+
+    /** 添加字段图标：绿色加号 */
+    private Node createAddIcon() {
+        javafx.scene.Group g = new javafx.scene.Group();
+        Rectangle bg = new Rectangle(14, 14);
+        bg.setFill(Color.valueOf("#4CAF50"));
+        bg.setArcWidth(3);
+        bg.setArcHeight(3);
+        Line h = new Line(3, 7, 11, 7);
+        h.setStroke(Color.WHITE);
+        h.setStrokeWidth(2);
+        Line v = new Line(7, 3, 7, 11);
+        v.setStroke(Color.WHITE);
+        v.setStrokeWidth(2);
+        g.getChildren().addAll(bg, h, v);
+        return g;
+    }
+
+    /** 插入字段图标：蓝色向右插入箭头 */
+    private Node createInsertIcon() {
+        javafx.scene.Group g = new javafx.scene.Group();
+        Rectangle bg = new Rectangle(14, 14);
+        bg.setFill(Color.valueOf("#FB8C00"));
+        bg.setArcWidth(3);
+        bg.setArcHeight(3);
+        Polygon arrow = new Polygon(3, 7, 9, 3, 9, 11);
+        arrow.setFill(Color.WHITE);
+        Line bar = new Line(11, 3, 11, 11);
+        bar.setStroke(Color.WHITE);
+        bar.setStrokeWidth(2);
+        g.getChildren().addAll(bg, arrow, bar);
+        return g;
+    }
+
+    /** 主键图标：金黄色钥匙 */
+    private Node createPrimaryKeyIcon() {
+        javafx.scene.Group g = new javafx.scene.Group();
+        Rectangle bg = new Rectangle(14, 14);
+        bg.setFill(Color.valueOf("#FDD835"));
+        bg.setArcWidth(3);
+        bg.setArcHeight(3);
+        // 钥匙圆环
+        javafx.scene.shape.Circle ring = new javafx.scene.shape.Circle(5, 5, 2.2);
+        ring.setFill(null);
+        ring.setStroke(Color.valueOf("#5D4037"));
+        ring.setStrokeWidth(1.4);
+        // 钥匙杆
+        Line stem = new Line(6.2, 6.2, 11, 11);
+        stem.setStroke(Color.valueOf("#5D4037"));
+        stem.setStrokeWidth(1.4);
+        // 齿
+        Line tooth = new Line(9, 10, 11, 8);
+        tooth.setStroke(Color.valueOf("#5D4037"));
+        tooth.setStrokeWidth(1.4);
+        g.getChildren().addAll(bg, ring, stem, tooth);
+        return g;
+    }
+
+    /** 上移图标：蓝色向上箭头 */
+    private Node createMoveUpIcon() {
+        javafx.scene.Group g = new javafx.scene.Group();
+        Rectangle bg = new Rectangle(14, 14);
+        bg.setFill(Color.valueOf("#1E88E5"));
+        bg.setArcWidth(3);
+        bg.setArcHeight(3);
+        Polygon arrow = new Polygon(7, 2, 12, 9, 2, 9);
+        arrow.setFill(Color.WHITE);
+        g.getChildren().addAll(bg, arrow);
+        return g;
+    }
+
+    /** 下移图标：蓝色向下箭头 */
+    private Node createMoveDownIcon() {
+        javafx.scene.Group g = new javafx.scene.Group();
+        Rectangle bg = new Rectangle(14, 14);
+        bg.setFill(Color.valueOf("#1E88E5"));
+        bg.setArcWidth(3);
+        bg.setArcHeight(3);
+        Polygon arrow = new Polygon(7, 12, 2, 5, 12, 5);
+        arrow.setFill(Color.WHITE);
+        g.getChildren().addAll(bg, arrow);
+        return g;
+    }
+
+    /** 刷新图标：灰色环形箭头 */
+    private Node createRefreshIcon() {
+        javafx.scene.Group g = new javafx.scene.Group();
+        Arc arc = new Arc(7, 7, 6, 6, 45, 270);
+        arc.setType(ArcType.OPEN);
+        arc.setStroke(Color.valueOf("#666666"));
+        arc.setStrokeWidth(2);
+        arc.setFill(null);
+        Polygon arrowHead = new Polygon(12, 3, 14, 7, 10, 6);
+        arrowHead.setFill(Color.valueOf("#666666"));
+        g.getChildren().addAll(arc, arrowHead);
+        return g;
+    }
+
+    /**
+     * 创建占位面板（索引/外键/触发器/选项等待实现的标签页内容）
+     */
+    private VBox createPlaceholderPane(String featureName) {
+        VBox box = new VBox(8);
+        box.setPadding(new Insets(20));
+        box.setAlignment(Pos.CENTER);
+        Label label = new Label(featureName + "（待实现）");
+        label.setStyle("-fx-font-size: 14px; -fx-text-fill: #888;");
+        box.getChildren().add(label);
+        return box;
+    }
+
+    /**
+     * 注释标签页：可编辑文本区域
+     */
+    private VBox createCommentPane() {
+        VBox box = new VBox(8);
+        box.setPadding(new Insets(8));
+        box.setStyle("-fx-background-color: white;");
+        Label header = new Label("表注释：");
+        header.setStyle("-fx-font-size: 12px; -fx-text-fill: #333;");
+        TextArea textArea = new TextArea();
+        textArea.setPromptText("请输入表注释");
+        textArea.setWrapText(true);
+        textArea.setStyle("-fx-font-size: 13px;");
+        VBox.setVgrow(textArea, javafx.scene.layout.Priority.ALWAYS);
+        box.getChildren().addAll(header, textArea);
+        return box;
+    }
+
+    /**
+     * SQL预览标签页：展示生成SQL的只读文本区域
+     */
+    private VBox createSqlPreviewPane() {
+        VBox box = new VBox(8);
+        box.setPadding(new Insets(8));
+        box.setStyle("-fx-background-color: white;");
+        Label header = new Label("CREATE TABLE / ALTER TABLE 预览：");
+        header.setStyle("-fx-font-size: 12px; -fx-text-fill: #333;");
+        TextArea sqlArea = new TextArea();
+        sqlArea.setEditable(false);
+        sqlArea.setWrapText(true);
+        sqlArea.setStyle("-fx-font-family: monospace; -fx-font-size: 13px;");
+        sqlArea.setText("-- SQL预览将在字段修改后生成\n-- 待实现");
+        VBox.setVgrow(sqlArea, javafx.scene.layout.Priority.ALWAYS);
+        box.getChildren().addAll(header, sqlArea);
+        return box;
+    }
+
+    // ====== 工具栏动作处理（占位实现，后续对接业务逻辑） ======
+
+    private void handleSave() {
+        // TODO: 实现保存逻辑（生成ALTER TABLE等DDL并提交）
+        statusLabel.setText("保存功能待实现");
+    }
+
+    private void handleAddField() {
+        // 在表格末尾追加一个空字段行
+        ObservableList<ObservableList<String>> items = tableView.getItems();
+        if (items.isEmpty()) {
+            statusLabel.setText("请先加载表结构");
+            return;
+        }
+        ObservableList<String> newRow = FXCollections.observableArrayList();
+        int colCount = tableView.getColumns().size();
+        for (int i = 0; i < colCount; i++) {
+            newRow.add("");
+        }
+        items.add(newRow);
+        tableView.getSelectionModel().select(newRow);
+        statusLabel.setText("已添加字段行（未保存）");
+    }
+
+    private void handleInsertField() {
+        // 在选中行之前插入一个空字段行
+        ObservableList<ObservableList<String>> items = tableView.getItems();
+        if (items.isEmpty()) {
+            handleAddField();
+            return;
+        }
+        ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
+        int insertIndex = selected != null ? items.indexOf(selected) : items.size();
+        ObservableList<String> newRow = FXCollections.observableArrayList();
+        int colCount = tableView.getColumns().size();
+        for (int i = 0; i < colCount; i++) {
+            newRow.add("");
+        }
+        items.add(insertIndex, newRow);
+        tableView.getSelectionModel().select(newRow);
+        statusLabel.setText("已插入字段行（未保存）");
+    }
+
+    private void handleTogglePrimaryKey() {
+        ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            statusLabel.setText("请先选择一个字段");
+            return;
+        }
+        int pkColIndex = findColumnIndexByTitle("主键");
+        if (pkColIndex < 0 || pkColIndex >= selected.size()) {
+            statusLabel.setText("未找到主键列");
+            return;
+        }
+        String current = selected.get(pkColIndex);
+        selected.set(pkColIndex, "是".equals(current) ? "否" : "是");
+        tableView.refresh();
+        statusLabel.setText("已切换主键（未保存）");
+    }
+
+    private void handleMoveUp() {
+        ObservableList<ObservableList<String>> items = tableView.getItems();
+        ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            statusLabel.setText("请先选择一个字段");
+            return;
+        }
+        int index = items.indexOf(selected);
+        if (index <= 0) {
+            statusLabel.setText("已在顶部");
+            return;
+        }
+        items.remove(index);
+        items.add(index - 1, selected);
+        tableView.getSelectionModel().select(selected);
+        statusLabel.setText("已上移字段（未保存）");
+    }
+
+    private void handleMoveDown() {
+        ObservableList<ObservableList<String>> items = tableView.getItems();
+        ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            statusLabel.setText("请先选择一个字段");
+            return;
+        }
+        int index = items.indexOf(selected);
+        if (index < 0 || index >= items.size() - 1) {
+            statusLabel.setText("已在底部");
+            return;
+        }
+        items.remove(index);
+        items.add(index + 1, selected);
+        tableView.getSelectionModel().select(selected);
+        statusLabel.setText("已下移字段（未保存）");
+    }
+
+    /**
+     * 根据列标题查找列在TableView中的索引
+     */
+    private int findColumnIndexByTitle(String title) {
+        List<String> titles = new ArrayList<>();
+        for (TableColumn<ObservableList<String>, ?> col : tableView.getColumns()) {
+            titles.add(col.getText());
+        }
+        return titles.indexOf(title);
     }
 
     public void loadStructure() {

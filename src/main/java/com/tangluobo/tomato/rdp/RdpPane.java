@@ -137,8 +137,16 @@ public class RdpPane extends BorderPane {
             SwingUtilities.invokeLater(() -> {
                 javax.swing.JComponent displayComponent = rdpClient.getDisplayComponent();
                 if (displayComponent != null) {
+                    logger.info("RDP显示组件: " + displayComponent.getClass().getSimpleName()
+                            + " size=" + displayComponent.getSize()
+                            + " prefSize=" + displayComponent.getPreferredSize());
                     swingNode.setContent(displayComponent);
+                    displayComponent.setSize(displayComponent.getPreferredSize());
+                    displayComponent.revalidate();
+                    displayComponent.repaint();
                     displayComponent.requestFocusInWindow();
+                } else {
+                    logger.warning("RDP显示组件为null，无法显示");
                 }
             });
             Platform.runLater(() -> updateStatus(ConnectionState.CONNECTED));

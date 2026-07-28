@@ -146,8 +146,12 @@ public class RdpClient {
         options.setMapClipboard(true);
         options.setLowLatency(true);
 
-        // 配置安全类型：优先使用HYBRID(NLA+SSL)
-        // securityTypes通过Options构造函数默认设置，包含HYBRID/SSL/STANDARD
+        // 配置安全类型：提供STANDARD和SSL（不含HYBRID/NLA）
+        // Windows即使去掉NLA勾选仍要求SSL（SSL_REQUIRED_BY_SERVER），
+        // 但不需要HYBRID(NLA/CredSSP)。首选SSL（列表末尾），STANDARD作为备选。
+        options.getSecurityTypes().clear();
+        options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.STANDARD);
+        options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.SSL);
 
         // 设置宽松的TrustManager：接受RDP服务器自签名证书
         X509TrustManager permissiveTrustManager = new X509TrustManager() {
