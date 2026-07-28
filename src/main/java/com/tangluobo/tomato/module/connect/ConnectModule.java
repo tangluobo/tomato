@@ -4,6 +4,8 @@ import com.tangluobo.tomato.module.Module;
 import com.tangluobo.tomato.rdp.RdpPane;
 import com.tangluobo.tomato.ssh.LocalTerminalPane;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.collections.ObservableList;
 import javafx.scene.control.*;
@@ -51,6 +53,8 @@ public class ConnectModule implements Module {
     private TreeItem<String> editingItem;
     // 记录clickCount==1的MOUSE_PRESSED时的选中项，用于判断"再次点击已选中节点"
     private TreeItem<String> selectedItemBeforeClick;
+    // 单击编辑延迟定时器，用于区分单击和双击
+    private Timeline singleClickTimer;
     private Image folderIcon;
     private Image dbIcon;
     private Image dbIconGray;
@@ -463,6 +467,7 @@ public class ConnectModule implements Module {
         // 检测"再次点击已选中的表/视图节点"以进入编辑模式
         // 核心判断：如果MOUSE_CLICKED时当前选中项 == selectedItemBeforeClick，
         // 说明节点在点击前就已经选中，这次是"再次点击"
+        // 使用延迟区分单击和双击：单击延迟300ms触发编辑，双击取消延迟并执行打开
         treeView.addEventFilter(MouseEvent.MOUSE_CLICKED, event -> {
             if (event.getButton() != MouseButton.PRIMARY) return;
 
@@ -478,18 +483,15 @@ public class ConnectModule implements Module {
 
             if (dbData != null) {
                 if (event.getClickCount() == 2) {
-                    event.consume(); // 捕获阶段消费事件，阻止TreeView默认双击展开
-
-                    // 快速双击已选中的表/视图 -> 进入编辑模式
-                    if (isTableOrView && wasAlreadySelected && editingItem == null) {
-                        editingItem = selectedItem;
-                        treeView.setEditable(true);
-                        treeView.edit(selectedItem);
-                        selectedItemBeforeClick = null;
-                        return;
+                    // 双击时取消单击延迟定时器，避免同时触发编辑
+                    if (singleClickTimer != null) {
+                        singleClickTimer.stop();
+                        singleClickTimer = null;
                     }
 
-                    // 首次双击未选中的节点 -> 执行双击打开
+                    event.consume(); // 捕获阶段消费事件，阻止TreeView默认双击展开
+
+                    // 双击 -> 执行双击打开，不进入编辑
                     handleDbNodeDoubleClick(selectedItem, dbData);
                     selectedItemBeforeClick = null;
                     if (editingItem != null) {
@@ -500,11 +502,24 @@ public class ConnectModule implements Module {
                 }
 
                 if (event.getClickCount() == 1) {
-                    // 慢速再次单击已选中的表/视图 -> 进入编辑模式
+                    // 单击已选中的表/视图 -> 延迟进入编辑模式，等待判断是否为双击
                     if (isTableOrView && wasAlreadySelected && editingItem == null) {
-                        editingItem = selectedItem;
-                        treeView.setEditable(true);
-                        treeView.edit(selectedItem);
+                        TreeItem<String> itemToEdit = selectedItem;
+                        if (singleClickTimer != null) {
+                            singleClickTimer.stop();
+                        }
+                        singleClickTimer = new Timeline(new KeyFrame(
+                            javafx.util.Duration.millis(300),
+                            ae -> {
+                                if (editingItem == null && itemToEdit == treeView.getSelectionModel().getSelectedItem()) {
+                                    editingItem = itemToEdit;
+                                    treeView.setEditable(true);
+                                    treeView.edit(itemToEdit);
+                                }
+                                singleClickTimer = null;
+                            }
+                        ));
+                        singleClickTimer.play();
                         selectedItemBeforeClick = null;
                         return;
                     }
@@ -866,6 +881,13 @@ public class ConnectModule implements Module {
             config.setPassword(passwordHolder[0]);
         }
 
+        // 显示加载转圈效果
+        ProgressIndicator loadingIndicator = new ProgressIndicator();
+        loadingIndicator.setPrefSize(16, 16);
+        loadingIndicator.setMaxSize(16, 16);
+        loadingIndicator.setStyle("-fx-progress-color: #4CAF50;");
+        hostItem.setGraphic(loadingIndicator);
+
         // 异步连接并加载数据库列表
         new Thread(() -> {
             try {
@@ -885,6 +907,8 @@ public class ConnectModule implements Module {
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> {
+                    // 恢复原图标
+                    hostItem.setGraphic(getIconForConfig(config));
                     Alert alert = new Alert(Alert.AlertType.ERROR);
                     alert.setTitle("连接失败");
                     alert.setHeaderText(null);
