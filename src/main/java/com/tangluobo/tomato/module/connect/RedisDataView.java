@@ -126,7 +126,7 @@ public class RedisDataView extends BorderPane {
         
         Button deleteKeyBtn = new Button("删除Key");
         deleteKeyBtn.setStyle("-fx-border-radius: 4px; -fx-background-radius: 4px; -fx-padding: 4 12;");
-        deleteKeyBtn.setOnAction(e -> deleteSelectedKey());
+        deleteKeyBtn.setOnAction(e -> deleteSelectedKeys());
         
         Button ttlBtn = new Button("TTL");
         ttlBtn.setStyle("-fx-border-radius: 4px; -fx-background-radius: 4px; -fx-padding: 4 12;");
@@ -142,6 +142,9 @@ public class RedisDataView extends BorderPane {
         keyTreeRoot.setExpanded(true);
         keyTreeView.setRoot(keyTreeRoot);
         keyTreeView.setShowRoot(false);
+
+        // 启用多选
+        keyTreeView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
 
         // 自定义CellFactory：使节点内容和箭头垂直居中
         keyTreeView.setCellFactory(tree -> new TreeCell<>() {
@@ -188,6 +191,7 @@ public class RedisDataView extends BorderPane {
 
         keyTreeView.setFixedCellSize(30);
 
+        // 左键单击选择key
         keyTreeView.setOnMouseClicked(e -> {
             if (e.getButton() == MouseButton.PRIMARY && e.getClickCount() == 1) {
                 TreeItem<String> selected = keyTreeView.getSelectionModel().getSelectedItem();
@@ -196,6 +200,71 @@ public class RedisDataView extends BorderPane {
                 }
             }
         });
+
+        // 右键菜单
+        setupTreeContextMenu();
+    }
+
+    // 设置右键菜单
+    private void setupTreeContextMenu() {
+        ContextMenu contextMenu = new ContextMenu();
+
+        MenuItem addMenuItem = new MenuItem("添加Key");
+        addMenuItem.setOnAction(e -> showAddKeyDialog());
+
+        MenuItem deleteMenuItem = new MenuItem("删除");
+        deleteMenuItem.setStyle("-fx-text-fill: #cc0000;");
+        deleteMenuItem.setOnAction(e -> deleteSelectedKeys());
+
+        MenuItem renameMenuItem = new MenuItem("重命名");
+        renameMenuItem.setOnAction(e -> renameSelectedKey());
+
+        MenuItem ttlMenuItem = new MenuItem("设置TTL");
+        ttlMenuItem.setOnAction(e -> showTtlDialog());
+
+        MenuItem copyKeyMenuItem = new MenuItem("复制Key名");
+        copyKeyMenuItem.setOnAction(e -> copySelectedKeyName());
+
+        contextMenu.getItems().addAll(addMenuItem, new SeparatorMenuItem(), deleteMenuItem, renameMenuItem, ttlMenuItem, new SeparatorMenuItem(), copyKeyMenuItem);
+
+        keyTreeView.setContextMenu(contextMenu);
+
+        // 菜单显示前动态控制菜单项可用性
+        contextMenu.setOnShowing(event -> {
+            ObservableList<TreeItem<String>> selectedItems = keyTreeView.getSelectionModel().getSelectedItems();
+            int selectedCount = (int) selectedItems.stream()
+                    .filter(item -> item != null && item != keyTreeRoot)
+                    .count();
+
+            deleteMenuItem.setDisable(selectedCount == 0);
+            renameMenuItem.setDisable(selectedCount != 1);
+            ttlMenuItem.setDisable(selectedCount != 1);
+            copyKeyMenuItem.setDisable(selectedCount == 0);
+
+            if (selectedCount > 1) {
+                deleteMenuItem.setText("删除 (" + selectedCount + "个)");
+            } else {
+                deleteMenuItem.setText("删除");
+            }
+        });
+    }
+
+    // 复制选中的Key名到剪贴板
+    private void copySelectedKeyName() {
+        ObservableList<TreeItem<String>> selectedItems = keyTreeView.getSelectionModel().getSelectedItems();
+        List<String> keyNames = new ArrayList<>();
+        for (TreeItem<String> item : selectedItems) {
+            if (item != null && item != keyTreeRoot) {
+                String key = buildFullKey(item);
+                if (key != null) keyNames.add(key);
+            }
+        }
+        if (!keyNames.isEmpty()) {
+            javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
+            javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
+            content.putString(String.join("\n", keyNames));
+            clipboard.setContent(content);
+        }
     }
     
     private void createValueEditor() {
@@ -796,42 +865,101 @@ public class RedisDataView extends BorderPane {
         });
     }
     
-    // 删除选中key
-    private void deleteSelectedKey() {
-        if (currentKey == null) {
+    // 删除选中的key（支持多选批量删除）
+    private void deleteSelectedKeys() {
+        ObservableList<TreeItem<String>> selectedItems = keyTreeView.getSelectionModel().getSelectedItems();
+        List<String> keysToDelete = new ArrayList<>();
+        for (TreeItem<String> item : selectedItems) {
+            if (item != null && item != keyTreeRoot) {
+                String key = buildFullKey(item);
+                if (key != null) keysToDelete.add(key);
+            }
+        }
+
+        if (keysToDelete.isEmpty()) {
             Alert alert = new Alert(Alert.AlertType.WARNING);
             alert.setTitle("提示");
             alert.setHeaderText(null);
-            alert.setContentText("请先选择一个Key");
+            alert.setContentText("请先选择要删除的Key");
             alert.showAndWait();
             return;
         }
-        
+
+        String message = keysToDelete.size() == 1
+                ? "确定要删除Key \"" + keysToDelete.get(0) + "\" 吗？"
+                : "确定要删除选中的 " + keysToDelete.size() + " 个Key吗？";
+
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         confirm.setTitle("删除Key");
-        confirm.setHeaderText("确定要删除Key \"" + currentKey + "\" 吗？");
+        confirm.setHeaderText(message);
+        if (keysToDelete.size() > 1 && keysToDelete.size() <= 10) {
+            confirm.setContentText("将删除以下Key：\n" + String.join("\n", keysToDelete));
+        } else if (keysToDelete.size() > 10) {
+            confirm.setContentText("将删除 " + keysToDelete.size() + " 个Key");
+        }
         confirm.showAndWait().ifPresent(response -> {
             if (response == ButtonType.OK) {
                 new Thread(() -> {
-                    try {
-                        RedisService.deleteKey(config, database, currentKey);
-                        Platform.runLater(() -> {
-                            currentKey = null;
-                            currentType = null;
-                            loadKeyTree();
-                            showEmptyValue("");
-                        });
-                    } catch (Exception e) {
-                        Platform.runLater(() -> {
-                            Alert alert = new Alert(Alert.AlertType.ERROR);
-                            alert.setTitle("删除失败");
-                            alert.setHeaderText(null);
-                            alert.setContentText("删除Key失败: " + e.getMessage());
-                            alert.showAndWait();
-                        });
+                    List<String> failedKeys = new ArrayList<>();
+                    for (String key : keysToDelete) {
+                        try {
+                            RedisService.deleteKey(config, database, key);
+                        } catch (Exception e) {
+                            failedKeys.add(key + ": " + e.getMessage());
+                        }
                     }
-                }, "Redis-DeleteKey").start();
+                    Platform.runLater(() -> {
+                        currentKey = null;
+                        currentType = null;
+                        loadKeyTree();
+                        showEmptyValue("");
+                        if (!failedKeys.isEmpty()) {
+                            Alert alert = new Alert(Alert.AlertType.WARNING);
+                            alert.setTitle("部分删除失败");
+                            alert.setHeaderText(null);
+                            alert.setContentText("以下Key删除失败：\n" + String.join("\n", failedKeys));
+                            alert.showAndWait();
+                        }
+                    });
+                }, "Redis-DeleteKeys").start();
             }
+        });
+    }
+
+    // 重命名选中的key
+    private void renameSelectedKey() {
+        TreeItem<String> selectedItem = keyTreeView.getSelectionModel().getSelectedItem();
+        if (selectedItem == null || selectedItem == keyTreeRoot) return;
+
+        String oldKey = buildFullKey(selectedItem);
+        if (oldKey == null) return;
+
+        TextInputDialog dialog = new TextInputDialog(oldKey);
+        dialog.setTitle("重命名Key");
+        dialog.setHeaderText("原Key名: " + oldKey);
+        dialog.setContentText("新Key名：");
+        dialog.showAndWait().ifPresent(input -> {
+            String newKey = input.trim();
+            if (newKey.isEmpty() || newKey.equals(oldKey)) return;
+
+            final String finalNewKey = newKey;
+            new Thread(() -> {
+                try {
+                    RedisService.renameKey(config, database, oldKey, finalNewKey);
+                    Platform.runLater(() -> {
+                        currentKey = finalNewKey;
+                        loadKeyTree();
+                    });
+                } catch (Exception e) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("重命名失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("重命名失败: " + e.getMessage());
+                        alert.showAndWait();
+                    });
+                }
+            }, "Redis-RenameKey").start();
         });
     }
     
