@@ -110,22 +110,11 @@ public class RdpClient {
                 if (onConnected != null) {
                     onConnected.accept(null);
                 }
-                // 在DISPLAY就绪后，延迟发送一个鼠标移动事件触发服务器推送全量屏幕更新
-                // 某些Windows RDP服务器在收到客户端输入事件前不会主动推送画面
-                java.util.Timer refreshTimer = new java.util.Timer("RDP-Refresh", true);
-                refreshTimer.schedule(new java.util.TimerTask() {
-                    @Override
-                    public void run() {
-                        try {
-                            // 发送鼠标移动事件 (RDP_INPUT_MOUSE=0x8001, MOUSE_FLAG_MOVE=0x0800)
-                            rdpLayer.sendInput(0, 0x8001, 0x0800, 0, 0);
-                            logger.info("已发送鼠标移动事件触发屏幕刷新");
-                        } catch (Exception e) {
-                            logger.warning("发送鼠标移动事件失败: " + e.getMessage());
-                        }
-                        cancel();
-                    }
-                }, 500);
+                // 注意：不能在Timer线程中调用sendInput！
+                // sendInput→initData→secureLayer.send不是线程安全的，
+                // 与mainLoop中的secureLayer.receive并发会导致数据损坏和连接断开。
+                // processDemandActive已正确发送Synchronize/Control/Fonts，
+                // 服务器应自动推送画面数据。
             }
         }
 
@@ -303,24 +292,24 @@ public class RdpClient {
         rdpThread.setDaemon(true);
         rdpThread.start();
 
-        // 诊断：每2秒dump RDP线程堆栈（运行3次后停止）
+        // 诊断：3秒后报告RDP Patch状态
         java.util.Timer diagTimer = new java.util.Timer("RDP-Diag", true);
         final int[] count = {0};
         diagTimer.scheduleAtFixedRate(new java.util.TimerTask() {
             @Override
             public void run() {
-                if (count[0]++ >= 5 || rdpThread == null || !rdpThread.isAlive()) {
+                if (count[0]++ >= 3 || rdpThread == null || !rdpThread.isAlive()) {
                     cancel();
                     return;
                 }
-                StackTraceElement[] stack = rdpThread.getStackTrace();
-                StringBuilder sb = new StringBuilder("RDP线程堆栈 #" + count[0] + ":");
-                for (StackTraceElement e : stack) {
-                    sb.append("\n  ").append(e);
+                if (rdpLayer instanceof RdpPatch) {
+                    RdpPatch patch = (RdpPatch) rdpLayer;
+                    logger.info(String.format("[DIAG #%d] bitmapUpdates=%d, rdp5Packets=%d, connected=%b, active=%b",
+                            count[0], patch.getBitmapUpdateCount(), patch.getRdp5PacketCount(),
+                            rdpLayer.isConnected(), state.isActive()));
                 }
-                logger.info(sb.toString());
             }
-        }, 3000, 2000);
+        }, 3000, 3000);
     }
 
     private void notifyDisconnected(String reason) {

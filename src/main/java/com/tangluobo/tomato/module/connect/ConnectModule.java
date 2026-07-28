@@ -133,11 +133,11 @@ public class ConnectModule implements Module {
         iv.setFitHeight(20);
         Image icon = switch (data.getType()) {
             case DATABASE -> data.isOpened() ? dbIcon : dbIconGray;
-            case TABLES_FOLDER -> folderIcon;
-            case VIEWS_FOLDER -> folderIcon;
-            case QUERY_FOLDER -> folderIcon;
+            case TABLES_FOLDER -> tableIcon;
+            case VIEWS_FOLDER -> viewIcon;
+            case QUERY_FOLDER -> queryIcon;
             case FUNCTION_FOLDER -> folderIcon;
-            case BACKUP_FOLDER -> folderIcon;
+            case BACKUP_FOLDER -> backupIcon;
             case TABLE -> tableIcon;
             case VIEW -> viewIcon;
             case BACKUP -> backupIcon;
