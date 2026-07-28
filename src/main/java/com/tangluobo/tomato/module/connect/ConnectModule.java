@@ -29,10 +29,7 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.stage.Stage;
 import javafx.beans.value.ChangeListener;
-import javafx.embed.swing.SwingFXUtils;
 
-import javax.swing.filechooser.FileSystemView;
-import java.awt.image.BufferedImage;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -67,7 +64,7 @@ public class ConnectModule implements Module {
 
     @Override
     public void loadSidebar(VBox sidebarContainer) {
-        folderIcon = getSystemFolderIcon();
+        folderIcon = loadFolderIcon();
         loadDbIcons();
 
         HBox headerBar = new HBox();
@@ -111,23 +108,7 @@ public class ConnectModule implements Module {
         treeView.prefHeightProperty().bind(sidebarContainer.heightProperty().subtract(50));
     }
 
-    private Image getSystemFolderIcon() {
-        try {
-            FileSystemView view = FileSystemView.getFileSystemView();
-            File tempFolder = new File(System.getProperty("user.home"));
-            javax.swing.Icon swingIcon = view.getSystemIcon(tempFolder);
-            
-            if (swingIcon != null) {
-                int width = swingIcon.getIconWidth();
-                int height = swingIcon.getIconHeight();
-                BufferedImage bufferedImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
-                swingIcon.paintIcon(null, bufferedImage.getGraphics(), 0, 0);
-                return SwingFXUtils.toFXImage(bufferedImage, null);
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        
+    private Image loadFolderIcon() {
         try {
             return new Image(getClass().getResourceAsStream("/images/connect/folder.png"));
         } catch (Exception e) {
@@ -143,7 +124,7 @@ public class ConnectModule implements Module {
         try { queryIcon = new Image(getClass().getResourceAsStream("/images/connect/query.png")); } catch (Exception e) { queryIcon = null; }
         try { functionIcon = new Image(getClass().getResourceAsStream("/images/connect/function.png")); } catch (Exception e) { functionIcon = null; }
         try { backupIcon = new Image(getClass().getResourceAsStream("/images/connect/backup.png")); } catch (Exception e) { backupIcon = null; }
-        // 查询图标：复用表图标作为查询图标，文件夹复用表文件夹图标
+        // 子文件夹统一使用folderIcon，实体节点使用各自的专用图标
     }
 
     private ImageView getDbNodeIcon(DatabaseNodeData data) {
@@ -152,13 +133,13 @@ public class ConnectModule implements Module {
         iv.setFitHeight(20);
         Image icon = switch (data.getType()) {
             case DATABASE -> data.isOpened() ? dbIcon : dbIconGray;
-            case TABLES_FOLDER -> tableIcon;
-            case VIEWS_FOLDER -> viewIcon;
-            case QUERY_FOLDER -> queryIcon;
+            case TABLES_FOLDER -> folderIcon;
+            case VIEWS_FOLDER -> folderIcon;
+            case QUERY_FOLDER -> folderIcon;
+            case FUNCTION_FOLDER -> folderIcon;
+            case BACKUP_FOLDER -> folderIcon;
             case TABLE -> tableIcon;
             case VIEW -> viewIcon;
-            case FUNCTION_FOLDER -> functionIcon;
-            case BACKUP_FOLDER -> backupIcon;
             case BACKUP -> backupIcon;
             case QUERY -> queryIcon;
         };
