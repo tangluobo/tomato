@@ -294,6 +294,19 @@
     -fx-border-color: transparent;
     -fx-border-width: 0;
     -fx-effect: none;
+    -fx-opacity: 0;
+}
+
+.combo-box-table-cell:hover .arrow-button {
+    -fx-opacity: 1;
+}
+
+.combo-box-table-cell .arrow {
+    -fx-background-color: #999999;
+}
+
+.combo-box-table-cell:hover .arrow {
+    -fx-background-color: #666666;
 }
 
 .toolbar-button {

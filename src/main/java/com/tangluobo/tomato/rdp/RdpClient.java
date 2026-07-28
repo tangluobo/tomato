@@ -96,12 +96,12 @@ public class RdpClient {
         public void ready(ReadyType readyType) {
             logger.info("RDP ready回调: " + readyType);
             if (readyType == ReadyType.INPUT) {
-                try {
-                    rdpLayer.sendInput(0, 0, 0, 0, 0);
-                    logger.info("已在INPUT阶段发送SYNCHRONIZE事件");
-                } catch (Exception e) {
-                    logger.warning("发送SYNCHRONIZE事件失败: " + e.getMessage());
-                }
+                // 不在这里发送任何Input PDU！
+                // ready(INPUT)在sendConfirmActive()内部触发，此时processDemandActive()
+                // 还没发送sendSynchronize/sendControl/sendFonts，如果在此发送Input PDU
+                // 会违反RDP协议序列（Input PDU必须出现在Synchronize/Control/Fonts之后），
+                // 导致服务器断开连接。
+                // processDemandActive()已经发送了正确的Synchronize数据PDU，服务器会自动推送画面。
             }
             if (readyType == ReadyType.DISPLAY) {
                 ready = true;
@@ -110,6 +110,22 @@ public class RdpClient {
                 if (onConnected != null) {
                     onConnected.accept(null);
                 }
+                // 在DISPLAY就绪后，延迟发送一个鼠标移动事件触发服务器推送全量屏幕更新
+                // 某些Windows RDP服务器在收到客户端输入事件前不会主动推送画面
+                java.util.Timer refreshTimer = new java.util.Timer("RDP-Refresh", true);
+                refreshTimer.schedule(new java.util.TimerTask() {
+                    @Override
+                    public void run() {
+                        try {
+                            // 发送鼠标移动事件 (RDP_INPUT_MOUSE=0x8001, MOUSE_FLAG_MOVE=0x0800)
+                            rdpLayer.sendInput(0, 0x8001, 0x0800, 0, 0);
+                            logger.info("已发送鼠标移动事件触发屏幕刷新");
+                        } catch (Exception e) {
+                            logger.warning("发送鼠标移动事件失败: " + e.getMessage());
+                        }
+                        cancel();
+                    }
+                }, 500);
             }
         }
 
@@ -242,8 +258,8 @@ public class RdpClient {
         // 注册剪贴板焦点监听
         ((JComponent) canvas.getDisplay()).addFocusListener(clipChannel);
 
-        // 创建RDP层
-        rdpLayer = new Rdp(context, state, channels);
+        // 创建RDP层（使用RdpPatch修复rdp5_process加密bug）
+        rdpLayer = new RdpPatch(context, state, channels);
 
         // 在新线程中执行RDP连接（connect+mainLoop是阻塞调用）
         rdpThread = new Thread(() -> {

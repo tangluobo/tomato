@@ -592,6 +592,17 @@ public class TableStructureView extends BorderPane {
             } else if ("主键".equals(title) || "非空".equals(title)) {
                 // "主键"/"非空"列使用复选框，点击直接切换
                 col.setCellFactory(tc -> new PrimaryKeyCheckBoxTableCell());
+            } else if ("字段名".equals(title) || "长度".equals(title)) {
+                // "字段名"/"长度"列使用可编辑TextField单元格
+                col.setCellFactory(tc -> new EditableTextFieldTableCell(columnTitles));
+                col.setOnEditCommit(event -> {
+                    ObservableList<String> row = event.getRowValue();
+                    String oldValue = row.get(dataColIndex);
+                    String newValue = event.getNewValue();
+                    if (!oldValue.equals(newValue)) {
+                        row.set(dataColIndex, newValue);
+                    }
+                });
             } else {
                 // 其他列保持只读
                 col.setCellFactory(tc -> new TableCell<>() {
@@ -691,7 +702,7 @@ public class TableStructureView extends BorderPane {
     }
 
     /**
-     * "类型"列的可编辑ComboBox单元格
+     * "类型"列的可编辑ComboBox单元格（始终显示ComboBox，点击即展开下拉）
      */
     private class DataTypeComboBoxTableCell extends TableCell<ObservableList<String>, String> {
         private ComboBox<String> comboBox;
@@ -704,6 +715,7 @@ public class TableStructureView extends BorderPane {
         public DataTypeComboBoxTableCell(List<String> dataTypes, List<String> columnTitles) {
             this.dataTypes = dataTypes;
             this.columnTitles = columnTitles;
+            setStyle("-fx-padding: 0; -fx-border-color: transparent;");
         }
 
         @Override
@@ -718,13 +730,20 @@ public class TableStructureView extends BorderPane {
             comboBox.setValue(getItem() != null ? getItem() : "");
             setText(null);
             setGraphic(comboBox);
-            // 延迟聚焦编辑器，确保用户可直接输入修改
+            // 编辑状态：白色背景+蓝色边框
+            comboBox.setStyle(
+                "-fx-background-radius: 0; -fx-border-radius: 0; " +
+                "-fx-border-color: transparent; " +
+                "-fx-padding: 0; " +
+                "-fx-pref-height: 24px;"
+            );
+            setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 1; -fx-padding: 0; -fx-text-fill: black;");
+            // 延迟聚焦编辑器并自动展开下拉
             Platform.runLater(() -> {
                 comboBox.getEditor().requestFocus();
                 comboBox.getEditor().selectAll();
+                comboBox.show();
             });
-            // 编辑状态：白色背景+蓝色边框
-            setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 2; -fx-padding: 0; -fx-text-fill: black;");
         }
 
         @Override
@@ -741,8 +760,11 @@ public class TableStructureView extends BorderPane {
             super.cancelEdit();
             // cancelEdit后getItem()返回原值，但数据模型可能已更新，需从数据模型读取显示值
             String displayValue = getCellData();
-            setText(displayValue != null ? displayValue : "");
-            setGraphic(null);
+            if (comboBox != null) {
+                comboBox.setValue(displayValue != null ? displayValue : "");
+            }
+            setText(null);
+            setGraphic(comboBox);
             applyRowStateStyle();
         }
 
@@ -754,16 +776,23 @@ public class TableStructureView extends BorderPane {
                 setGraphic(null);
                 setStyle("-fx-border-color: transparent; -fx-padding: 0;");
             } else {
+                if (comboBox == null) {
+                    createComboBox();
+                }
+                String value = item != null ? item : "";
+                comboBox.setValue(value);
+                setText(null);
+                setGraphic(comboBox);
                 if (isEditing()) {
-                    if (comboBox != null) {
-                        comboBox.setValue(getItem() != null ? getItem() : "");
-                    }
-                    setText(null);
-                    setGraphic(comboBox);
-                    setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 2; -fx-padding: 0; -fx-text-fill: black;");
+                    setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 1; -fx-padding: 0; -fx-text-fill: black; -fx-alignment: CENTER_LEFT;");
                 } else {
-                    setText(item != null ? item : "");
-                    setGraphic(null);
+                    // 非编辑状态：ComboBox看起来像普通文本
+                    comboBox.setStyle(
+                        "-fx-background-radius: 0; -fx-border-radius: 0; " +
+                        "-fx-border-color: transparent; " +
+                        "-fx-padding: 0; " +
+                        "-fx-pref-height: 24px;"
+                    );
                     applyRowStateStyle();
                 }
             }
@@ -787,6 +816,17 @@ public class TableStructureView extends BorderPane {
                 "-fx-padding: 0; " +
                 "-fx-pref-height: 24px;"
             );
+
+            // 点击ComboBox时进入编辑模式并展开下拉
+            comboBox.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, e -> {
+                if (!isEditing()) {
+                    TableView<ObservableList<String>> tv = getTableView();
+                    if (tv != null) {
+                        tv.edit(getIndex(), getTableColumn());
+                        e.consume();
+                    }
+                }
+            });
 
             // 输入时过滤下拉项（仅当编辑器有焦点时，即用户主动输入）
             comboBox.getEditor().textProperty().addListener((obs, oldValue, newValue) -> {
@@ -860,6 +900,135 @@ public class TableStructureView extends BorderPane {
         /**
          * 根据行状态应用视觉样式（主键行高亮）
          */
+        private void applyRowStateStyle() {
+            int pkColIndex = columnTitles.indexOf("主键");
+            if (pkColIndex >= 0) {
+                TableRow<?> currentRow = getTableRow();
+                if (currentRow != null && currentRow.getItem() instanceof ObservableList row) {
+                    String isPk = pkColIndex < row.size() ? (String) row.get(pkColIndex) : "";
+                    if ("是".equals(isPk)) {
+                        setStyle("-fx-font-weight: bold; -fx-text-fill: #1E88E5;");
+                        return;
+                    }
+                }
+            }
+            setStyle("");
+        }
+    }
+
+    /**
+     * "字段名"/"长度"列的可编辑TextField单元格（双击进入编辑模式）
+     */
+    private class EditableTextFieldTableCell extends TableCell<ObservableList<String>, String> {
+        private TextField textField;
+        private final List<String> columnTitles;
+        /** 标记用户是否按下了Escape键（真正取消编辑） */
+        private boolean escapePressed = false;
+
+        public EditableTextFieldTableCell(List<String> columnTitles) {
+            this.columnTitles = columnTitles;
+            setStyle("-fx-padding: 0; -fx-border-color: transparent;");
+        }
+
+        @Override
+        public void startEdit() {
+            escapePressed = false;
+            super.startEdit();
+            if (textField == null) {
+                createTextField();
+            }
+            setText(null);
+            setGraphic(textField);
+            textField.setText(getItem() != null ? getItem() : "");
+            // 编辑状态：白色背景+蓝色边框，内容垂直居中、水平左对齐
+            setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 1; -fx-padding: 0; -fx-text-fill: black; -fx-alignment: CENTER_LEFT;");
+            Platform.runLater(() -> {
+                textField.requestFocus();
+                textField.selectAll();
+            });
+        }
+
+        @Override
+        public void cancelEdit() {
+            // 非Escape触发的cancel（如点击其他cell导致失焦），保留编辑值到数据模型
+            if (!escapePressed && textField != null) {
+                String newValue = textField.getText();
+                String currentValue = getItem() != null ? getItem() : "";
+                if (!newValue.equals(currentValue)) {
+                    updateCellData(newValue);
+                }
+            }
+            escapePressed = false;
+            super.cancelEdit();
+            String displayValue = getCellData();
+            setText(displayValue != null ? displayValue : "");
+            setGraphic(null);
+            applyRowStateStyle();
+        }
+
+        @Override
+        protected void updateItem(String item, boolean empty) {
+            super.updateItem(item, empty);
+            if (empty) {
+                setText(null);
+                setGraphic(null);
+                setStyle("-fx-border-color: transparent; -fx-padding: 0;");
+            } else {
+                if (isEditing()) {
+                    if (textField != null) {
+                        textField.setText(getItem() != null ? getItem() : "");
+                    }
+                    setText(null);
+                    setGraphic(textField);
+                    setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 1; -fx-padding: 0; -fx-text-fill: black; -fx-alignment: CENTER_LEFT;");
+                } else {
+                    setText(item != null ? item : "");
+                    setGraphic(null);
+                    applyRowStateStyle();
+                }
+            }
+        }
+
+        private void createTextField() {
+            textField = new TextField(getItem() != null ? getItem() : "");
+            textField.setMinWidth(this.getWidth() - this.getGraphicTextGap() * 2);
+            textField.setStyle("-fx-background-color: white; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0 4; -fx-focus-color: transparent; -fx-faint-focus-color: transparent; -fx-text-fill: black; -fx-alignment: CENTER_LEFT;");
+            textField.setOnKeyPressed(event -> {
+                escapePressed = (event.getCode() == KeyCode.ESCAPE);
+            });
+            textField.setOnAction(e -> commitEdit(textField.getText()));
+            textField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
+                if (!isNowFocused && !escapePressed) {
+                    commitEdit(textField.getText());
+                }
+            });
+        }
+
+        private void updateCellData(String newValue) {
+            TableRow<?> tableRow = getTableRow();
+            if (tableRow == null) return;
+            @SuppressWarnings("unchecked")
+            ObservableList<String> row = (ObservableList<String>) tableRow.getItem();
+            if (row == null) return;
+            Integer dataColIndex = (Integer) getTableColumn().getUserData();
+            if (dataColIndex != null && dataColIndex >= 0 && dataColIndex < row.size()) {
+                row.set(dataColIndex, newValue);
+            }
+        }
+
+        private String getCellData() {
+            TableRow<?> tableRow = getTableRow();
+            if (tableRow == null) return getItem();
+            @SuppressWarnings("unchecked")
+            ObservableList<String> row = (ObservableList<String>) tableRow.getItem();
+            if (row == null) return getItem();
+            Integer dataColIndex = (Integer) getTableColumn().getUserData();
+            if (dataColIndex != null && dataColIndex >= 0 && dataColIndex < row.size()) {
+                return row.get(dataColIndex);
+            }
+            return getItem();
+        }
+
         private void applyRowStateStyle() {
             int pkColIndex = columnTitles.indexOf("主键");
             if (pkColIndex >= 0) {
