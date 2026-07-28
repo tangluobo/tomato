@@ -9,6 +9,8 @@ import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
@@ -45,6 +47,8 @@ public class TomatoController {
     private Button maximizeBtn;
     @FXML
     private Button closeBtn;
+    @FXML
+    private ImageView logoView;
 
     private double xOffset = 0;
     private double yOffset = 0;
@@ -185,6 +189,11 @@ public class TomatoController {
 
     @FXML
     public void initialize() {
+        Image logoImage = new Image(getClass().getResourceAsStream("/images/logo.png"));
+        if (logoImage != null) {
+            logoView.setImage(logoImage);
+        }
+
         divider2.setViewOrder(-1);
         divider2.setMouseTransparent(false);
 

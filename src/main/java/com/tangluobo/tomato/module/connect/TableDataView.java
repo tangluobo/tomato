@@ -858,8 +858,8 @@ public class TableDataView extends BorderPane {
                 arrow.setVisible(false);
                 // 左侧加网格线
                 setStyle("-fx-border-color: transparent #BEBEBC transparent #BEBEBC; -fx-border-width: 0 1 0 1;");
-                // 点击行选择器列时选中整行
-                setOnMousePressed(event -> {
+                // 点击行选择器列时选中整行（使用addEventFilter在捕获阶段处理，避免被TableView的拖拽选择处理器覆盖）
+                addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
                     if (getTableRow() != null && getTableRow().getItem() != null) {
                         int row = getTableRow().getIndex();
                         if (event.isControlDown()) {
@@ -869,7 +869,16 @@ public class TableDataView extends BorderPane {
                                 tableView.getSelectionModel().select(row);
                             }
                         } else if (event.isShiftDown()) {
-                            tableView.getSelectionModel().selectRange(row, tableView.getSelectionModel().getFocusedIndex());
+                            int anchor = tableView.getSelectionModel().getFocusedIndex();
+                            if (anchor >= 0) {
+                                int start = Math.min(row, anchor);
+                                int end = Math.max(row, anchor);
+                                tableView.getSelectionModel().clearSelection();
+                                tableView.getSelectionModel().selectRange(start, end + 1);
+                            } else {
+                                tableView.getSelectionModel().clearSelection();
+                                tableView.getSelectionModel().select(row);
+                            }
                         } else {
                             tableView.getSelectionModel().clearSelection();
                             tableView.getSelectionModel().select(row);
