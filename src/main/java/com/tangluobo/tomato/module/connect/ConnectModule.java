@@ -136,7 +136,7 @@ public class ConnectModule implements Module {
             case TABLES_FOLDER -> tableIcon;
             case VIEWS_FOLDER -> viewIcon;
             case QUERY_FOLDER -> queryIcon;
-            case FUNCTION_FOLDER -> folderIcon;
+            case FUNCTION_FOLDER -> functionIcon;
             case BACKUP_FOLDER -> backupIcon;
             case TABLE -> tableIcon;
             case VIEW -> viewIcon;
