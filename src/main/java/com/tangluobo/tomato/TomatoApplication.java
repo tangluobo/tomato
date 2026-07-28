@@ -4,6 +4,7 @@ import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Scene;
+import javafx.scene.image.Image;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
@@ -17,6 +18,7 @@ public class TomatoApplication extends Application {
         Scene scene = new Scene(fxmlLoader.load(), 1200, 900);
         scene.setFill(Color.WHITE);
         stage.initStyle(StageStyle.UNDECORATED);
+        stage.getIcons().add(new Image(getClass().getResourceAsStream("/images/logo.png")));
         stage.setScene(scene);
         stage.show();
     }

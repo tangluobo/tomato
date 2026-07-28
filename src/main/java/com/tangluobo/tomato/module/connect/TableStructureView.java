@@ -72,6 +72,9 @@ public class TableStructureView extends BorderPane {
         Button insertFieldBtn = createToolBarButton("插入字段", createInsertIcon());
         insertFieldBtn.setOnAction(e -> handleInsertField());
 
+        Button deleteFieldBtn = createToolBarButton("删除", createDeleteIcon());
+        deleteFieldBtn.setOnAction(e -> handleDeleteField());
+
         Button primaryKeyBtn = createToolBarButton("主键", createPrimaryKeyIcon());
         primaryKeyBtn.setOnAction(e -> handleTogglePrimaryKey());
 
@@ -89,7 +92,7 @@ public class TableStructureView extends BorderPane {
         refreshBtn.setOnAction(e -> loadStructure());
 
         toolBar.getChildren().addAll(
-                saveBtn, addFieldBtn, insertFieldBtn, primaryKeyBtn,
+                saveBtn, addFieldBtn, insertFieldBtn, deleteFieldBtn, primaryKeyBtn,
                 moveUpBtn, moveDownBtn, separator, refreshBtn);
 
         // TableView
@@ -97,7 +100,7 @@ public class TableStructureView extends BorderPane {
         tableView.setEditable(true);
         tableView.setFixedCellSize(28);
         tableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
-        tableView.getSelectionModel().setCellSelectionEnabled(true);
+        tableView.getSelectionModel().setCellSelectionEnabled(false);
         GlobalConfig globalConfig = GlobalConfig.getInstance();
         String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
                 globalConfig.getTableFontName(), globalConfig.getTableFontSize());
@@ -264,6 +267,23 @@ public class TableStructureView extends BorderPane {
         return g;
     }
 
+    /** 删除图标：红色X */
+    private Node createDeleteIcon() {
+        javafx.scene.Group g = new javafx.scene.Group();
+        Rectangle bg = new Rectangle(14, 14);
+        bg.setFill(Color.valueOf("#F44336"));
+        bg.setArcWidth(3);
+        bg.setArcHeight(3);
+        Line l1 = new Line(3, 3, 11, 11);
+        l1.setStroke(Color.WHITE);
+        l1.setStrokeWidth(2);
+        Line l2 = new Line(11, 3, 3, 11);
+        l2.setStroke(Color.WHITE);
+        l2.setStrokeWidth(2);
+        g.getChildren().addAll(bg, l1, l2);
+        return g;
+    }
+
     /** 刷新图标：灰色环形箭头 */
     private Node createRefreshIcon() {
         javafx.scene.Group g = new javafx.scene.Group();
@@ -427,6 +447,26 @@ public class TableStructureView extends BorderPane {
         statusLabel.setText("已下移字段（未保存）");
     }
 
+    private void handleDeleteField() {
+        ObservableList<ObservableList<String>> items = tableView.getItems();
+        if (items.isEmpty()) {
+            statusLabel.setText("请先加载表结构");
+            return;
+        }
+        List<Integer> selectedIndices = new ArrayList<>(tableView.getSelectionModel().getSelectedIndices());
+        if (selectedIndices.isEmpty()) {
+            statusLabel.setText("请先选择要删除的字段");
+            return;
+        }
+        selectedIndices.sort(Collections.reverseOrder());
+        for (int index : selectedIndices) {
+            items.remove(index);
+        }
+        int count = selectedIndices.size();
+        tableView.getSelectionModel().clearSelection();
+        statusLabel.setText("已删除 " + count + " 个字段（未保存）");
+    }
+
     /**
      * 根据列标题查找列在数据模型中的索引（跳过行选择器列）
      */
@@ -505,17 +545,26 @@ public class TableStructureView extends BorderPane {
                 setAlignment(Pos.CENTER);
                 arrow.setVisible(false);
                 setStyle("-fx-border-color: transparent #BEBEBC transparent #BEBEBC; -fx-border-width: 0 1 0 1;");
-                setOnMousePressed(event -> {
+                addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
                     if (getTableRow() != null && getTableRow().getItem() != null) {
                         int row = getTableRow().getIndex();
                         if (event.isControlDown()) {
-                            if (isRowSelected(row)) {
+                            if (tableView.getSelectionModel().isSelected(row)) {
                                 tableView.getSelectionModel().clearSelection(row);
                             } else {
                                 tableView.getSelectionModel().select(row);
                             }
                         } else if (event.isShiftDown()) {
-                            tableView.getSelectionModel().selectRange(row, tableView.getSelectionModel().getFocusedIndex());
+                            int anchor = tableView.getSelectionModel().getFocusedIndex();
+                            if (anchor >= 0) {
+                                int start = Math.min(row, anchor);
+                                int end = Math.max(row, anchor);
+                                tableView.getSelectionModel().clearSelection();
+                                tableView.getSelectionModel().selectRange(start, end + 1);
+                            } else {
+                                tableView.getSelectionModel().clearSelection();
+                                tableView.getSelectionModel().select(row);
+                            }
                         } else {
                             tableView.getSelectionModel().clearSelection();
                             tableView.getSelectionModel().select(row);
@@ -672,6 +721,10 @@ public class TableStructureView extends BorderPane {
         public PrimaryKeyCheckBoxTableCell() {
             this.checkBox = new CheckBox();
             checkBox.setStyle("-fx-padding: 0; -fx-alignment: center;");
+            // 点击复选框时先选中行
+            checkBox.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, e -> {
+                tableView.getSelectionModel().select(getIndex());
+            });
             // 点击复选框直接更新数据模型
             checkBox.setOnAction(e -> {
                 TableRow<?> tableRow = getTableRow();
@@ -711,6 +764,8 @@ public class TableStructureView extends BorderPane {
         private final List<String> columnTitles;
         /** 标记用户是否按下了Escape键（真正取消编辑） */
         private boolean escapePressed = false;
+        /** 选中状态监听器，用于在行选中/取消选中时更新样式 */
+        private javafx.beans.InvalidationListener selectionListener;
 
         public DataTypeComboBoxTableCell(List<String> dataTypes, List<String> columnTitles) {
             this.dataTypes = dataTypes;
@@ -770,6 +825,11 @@ public class TableStructureView extends BorderPane {
 
         @Override
         protected void updateItem(String item, boolean empty) {
+            // 清理旧的选中状态监听器
+            if (selectionListener != null) {
+                tableView.getSelectionModel().getSelectedCells().removeListener(selectionListener);
+                selectionListener = null;
+            }
             super.updateItem(item, empty);
             if (empty) {
                 setText(null);
@@ -794,6 +854,13 @@ public class TableStructureView extends BorderPane {
                         "-fx-pref-height: 24px;"
                     );
                     applyRowStateStyle();
+                    // 注册选中状态监听器，选中/取消选中时更新样式
+                    selectionListener = obs -> {
+                        if (!isEditing()) {
+                            applyRowStateStyle();
+                        }
+                    };
+                    tableView.getSelectionModel().getSelectedCells().addListener(selectionListener);
                 }
             }
         }
@@ -817,11 +884,12 @@ public class TableStructureView extends BorderPane {
                 "-fx-pref-height: 24px;"
             );
 
-            // 点击ComboBox时进入编辑模式并展开下拉
+            // 点击ComboBox时先选中行，再进入编辑模式并展开下拉
             comboBox.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, e -> {
                 if (!isEditing()) {
                     TableView<ObservableList<String>> tv = getTableView();
                     if (tv != null) {
+                        tv.getSelectionModel().select(getIndex());
                         tv.edit(getIndex(), getTableColumn());
                         e.consume();
                     }
@@ -898,7 +966,7 @@ public class TableStructureView extends BorderPane {
         }
 
         /**
-         * 根据行状态应用视觉样式（主键行高亮）
+         * 根据行状态应用视觉样式（主键行高亮、选中行蓝色背景白色文字）
          */
         private void applyRowStateStyle() {
             int pkColIndex = columnTitles.indexOf("主键");
@@ -907,12 +975,54 @@ public class TableStructureView extends BorderPane {
                 if (currentRow != null && currentRow.getItem() instanceof ObservableList row) {
                     String isPk = pkColIndex < row.size() ? (String) row.get(pkColIndex) : "";
                     if ("是".equals(isPk)) {
-                        setStyle("-fx-font-weight: bold; -fx-text-fill: #1E88E5;");
+                        if (currentRow.isSelected()) {
+                            setStyle("-fx-background-color: #3592CB; -fx-text-fill: white; -fx-font-weight: bold;");
+                            if (comboBox != null) {
+                                comboBox.setStyle(
+                                    "-fx-background-radius: 0; -fx-border-radius: 0; " +
+                                    "-fx-border-color: transparent; -fx-padding: 0; " +
+                                    "-fx-pref-height: 24px; -fx-background-color: #3592CB;"
+                                );
+                                comboBox.getEditor().setStyle("-fx-text-fill: white; -fx-background-color: #3592CB; -fx-padding: 0 4; -fx-border-color: transparent;");
+                            }
+                        } else {
+                            setStyle("-fx-font-weight: bold; -fx-text-fill: #1E88E5;");
+                            if (comboBox != null) {
+                                comboBox.setStyle(
+                                    "-fx-background-radius: 0; -fx-border-radius: 0; " +
+                                    "-fx-border-color: transparent; -fx-padding: 0; " +
+                                    "-fx-pref-height: 24px;"
+                                );
+                                comboBox.getEditor().setStyle("-fx-text-fill: #1E88E5; -fx-padding: 0 4; -fx-border-color: transparent; -fx-background-color: transparent;");
+                            }
+                        }
                         return;
                     }
                 }
             }
-            setStyle("");
+            // 非主键行：检查是否选中
+            TableRow<?> currentRow = getTableRow();
+            if (currentRow != null && currentRow.isSelected()) {
+                setStyle("-fx-background-color: #3592CB; -fx-text-fill: white;");
+                if (comboBox != null) {
+                    comboBox.setStyle(
+                        "-fx-background-radius: 0; -fx-border-radius: 0; " +
+                        "-fx-border-color: transparent; -fx-padding: 0; " +
+                        "-fx-pref-height: 24px; -fx-background-color: #3592CB;"
+                    );
+                    comboBox.getEditor().setStyle("-fx-text-fill: white; -fx-background-color: #3592CB; -fx-padding: 0 4; -fx-border-color: transparent;");
+                }
+            } else {
+                setStyle("");
+                if (comboBox != null) {
+                    comboBox.setStyle(
+                        "-fx-background-radius: 0; -fx-border-radius: 0; " +
+                        "-fx-border-color: transparent; -fx-padding: 0; " +
+                        "-fx-pref-height: 24px;"
+                    );
+                    comboBox.getEditor().setStyle("-fx-padding: 0 4; -fx-border-color: transparent; -fx-background-color: transparent;");
+                }
+            }
         }
     }
 
@@ -924,6 +1034,8 @@ public class TableStructureView extends BorderPane {
         private final List<String> columnTitles;
         /** 标记用户是否按下了Escape键（真正取消编辑） */
         private boolean escapePressed = false;
+        /** 选中状态监听器，用于在行选中/取消选中时更新样式 */
+        private javafx.beans.InvalidationListener selectionListener;
 
         public EditableTextFieldTableCell(List<String> columnTitles) {
             this.columnTitles = columnTitles;
@@ -968,6 +1080,11 @@ public class TableStructureView extends BorderPane {
 
         @Override
         protected void updateItem(String item, boolean empty) {
+            // 清理旧的选中状态监听器
+            if (selectionListener != null) {
+                tableView.getSelectionModel().getSelectedCells().removeListener(selectionListener);
+                selectionListener = null;
+            }
             super.updateItem(item, empty);
             if (empty) {
                 setText(null);
@@ -985,6 +1102,13 @@ public class TableStructureView extends BorderPane {
                     setText(item != null ? item : "");
                     setGraphic(null);
                     applyRowStateStyle();
+                    // 注册选中状态监听器，选中/取消选中时更新样式
+                    selectionListener = obs -> {
+                        if (!isEditing()) {
+                            applyRowStateStyle();
+                        }
+                    };
+                    tableView.getSelectionModel().getSelectedCells().addListener(selectionListener);
                 }
             }
         }
@@ -1036,12 +1160,22 @@ public class TableStructureView extends BorderPane {
                 if (currentRow != null && currentRow.getItem() instanceof ObservableList row) {
                     String isPk = pkColIndex < row.size() ? (String) row.get(pkColIndex) : "";
                     if ("是".equals(isPk)) {
-                        setStyle("-fx-font-weight: bold; -fx-text-fill: #1E88E5;");
+                        if (currentRow.isSelected()) {
+                            setStyle("-fx-background-color: #3592CB; -fx-text-fill: white; -fx-font-weight: bold;");
+                        } else {
+                            setStyle("-fx-font-weight: bold; -fx-text-fill: #1E88E5;");
+                        }
                         return;
                     }
                 }
             }
-            setStyle("");
+            // 非主键行：检查是否选中
+            TableRow<?> currentRow = getTableRow();
+            if (currentRow != null && currentRow.isSelected()) {
+                setStyle("-fx-background-color: #3592CB; -fx-text-fill: white;");
+            } else {
+                setStyle("");
+            }
         }
     }
 }
