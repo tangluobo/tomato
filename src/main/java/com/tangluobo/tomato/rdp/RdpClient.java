@@ -95,6 +95,14 @@ public class RdpClient {
         @Override
         public void ready(ReadyType readyType) {
             logger.info("RDP ready回调: " + readyType);
+            if (readyType == ReadyType.INPUT) {
+                try {
+                    rdpLayer.sendInput(0, 0, 0, 0, 0);
+                    logger.info("已在INPUT阶段发送SYNCHRONIZE事件");
+                } catch (Exception e) {
+                    logger.warning("发送SYNCHRONIZE事件失败: " + e.getMessage());
+                }
+            }
             if (readyType == ReadyType.DISPLAY) {
                 ready = true;
                 connected = true;
@@ -133,6 +141,14 @@ public class RdpClient {
                          String domain, int width, int height, int bpp) {
         if (connected) {
             throw new IllegalStateException("RDP客户端已连接，请先断开当前连接");
+        }
+
+        // 启用RDP库调试日志（slf4j-jdk14桥接到java.util.logging）
+        Logger sshtools = Logger.getLogger("com.sshtools");
+        sshtools.setLevel(Level.FINE);
+        Logger root = Logger.getLogger("");
+        for (java.util.logging.Handler h : root.getHandlers()) {
+            h.setLevel(Level.FINE);
         }
 
         // 创建配置
@@ -270,6 +286,25 @@ public class RdpClient {
         }, "RDP-" + host);
         rdpThread.setDaemon(true);
         rdpThread.start();
+
+        // 诊断：每2秒dump RDP线程堆栈（运行3次后停止）
+        java.util.Timer diagTimer = new java.util.Timer("RDP-Diag", true);
+        final int[] count = {0};
+        diagTimer.scheduleAtFixedRate(new java.util.TimerTask() {
+            @Override
+            public void run() {
+                if (count[0]++ >= 5 || rdpThread == null || !rdpThread.isAlive()) {
+                    cancel();
+                    return;
+                }
+                StackTraceElement[] stack = rdpThread.getStackTrace();
+                StringBuilder sb = new StringBuilder("RDP线程堆栈 #" + count[0] + ":");
+                for (StackTraceElement e : stack) {
+                    sb.append("\n  ").append(e);
+                }
+                logger.info(sb.toString());
+            }
+        }, 3000, 2000);
     }
 
     private void notifyDisconnected(String reason) {

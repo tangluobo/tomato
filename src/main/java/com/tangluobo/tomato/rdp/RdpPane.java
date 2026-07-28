@@ -161,6 +161,32 @@ public class RdpPane extends BorderPane {
                     updateStatus(ConnectionState.CONNECTED);
                 });
             });
+            // 诊断：3秒后采样BufferedImage像素，检查RDP库是否在绘制
+            javax.swing.Timer diagTimer = new javax.swing.Timer(3000, e -> {
+                SwingUtilities.invokeLater(() -> {
+                    try {
+                        if (displayComponent instanceof com.sshtools.javardp.graphics.Display) {
+                            com.sshtools.javardp.graphics.Display disp = (com.sshtools.javardp.graphics.Display) displayComponent;
+                            java.awt.image.BufferedImage bi = disp.getBufferedImage();
+                            int w = bi.getWidth(), h = bi.getHeight();
+                            // 采样多个点
+                            int[] xs = {0, w/4, w/2, w*3/4, w-1};
+                            int[] ys = {0, h/4, h/2, h*3/4, h-1};
+                            StringBuilder sb = new StringBuilder("BufferedImage采样(" + w + "x" + h + "):");
+                            for (int x : xs) for (int y : ys) {
+                                sb.append(String.format(" (%d,%d)=%06x", x, y, bi.getRGB(x, y) & 0xFFFFFF));
+                            }
+                            logger.info(sb.toString());
+                            // 强制全量重绘
+                            displayComponent.repaint();
+                        }
+                    } catch (Exception ex) {
+                        logger.warning("诊断采样失败: " + ex.getMessage());
+                    }
+                });
+            });
+            diagTimer.setRepeats(false);
+            diagTimer.start();
         });
 
         // 设置断开回调

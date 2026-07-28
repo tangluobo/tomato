@@ -29,6 +29,8 @@ import java.util.*;
  */
 public class TableStructureView extends BorderPane {
 
+    private static final String ROW_SELECTOR_COL = "__ROW_SELECTOR__";
+
     private final ConnectionConfig config;
     private final String databaseName;
     private final String tableName;
@@ -36,6 +38,9 @@ public class TableStructureView extends BorderPane {
     private TableView<ObservableList<String>> tableView;
     private ProgressIndicator loadingIndicator;
     private Label statusLabel;
+
+    /** 数据列数量（不含行选择器列） */
+    private int dataColumnCount;
 
     /** 缓存的数据类型列表（基于当前连接的数据库类型和版本） */
     private List<String> cachedDataTypes;
@@ -91,6 +96,8 @@ public class TableStructureView extends BorderPane {
         tableView = new TableView<>();
         tableView.setEditable(true);
         tableView.setFixedCellSize(28);
+        tableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+        tableView.getSelectionModel().setCellSelectionEnabled(true);
         GlobalConfig globalConfig = GlobalConfig.getInstance();
         String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
                 globalConfig.getTableFontName(), globalConfig.getTableFontSize());
@@ -336,12 +343,13 @@ public class TableStructureView extends BorderPane {
             return;
         }
         ObservableList<String> newRow = FXCollections.observableArrayList();
-        int colCount = tableView.getColumns().size();
-        for (int i = 0; i < colCount; i++) {
+        for (int i = 0; i < dataColumnCount; i++) {
             newRow.add("");
         }
         items.add(newRow);
-        tableView.getSelectionModel().select(newRow);
+        int newIndex = items.size() - 1;
+        tableView.getSelectionModel().clearSelection();
+        tableView.getSelectionModel().select(newIndex);
         statusLabel.setText("已添加字段行（未保存）");
     }
 
@@ -355,12 +363,12 @@ public class TableStructureView extends BorderPane {
         ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
         int insertIndex = selected != null ? items.indexOf(selected) : items.size();
         ObservableList<String> newRow = FXCollections.observableArrayList();
-        int colCount = tableView.getColumns().size();
-        for (int i = 0; i < colCount; i++) {
+        for (int i = 0; i < dataColumnCount; i++) {
             newRow.add("");
         }
         items.add(insertIndex, newRow);
-        tableView.getSelectionModel().select(newRow);
+        tableView.getSelectionModel().clearSelection();
+        tableView.getSelectionModel().select(insertIndex);
         statusLabel.setText("已插入字段行（未保存）");
     }
 
@@ -395,7 +403,8 @@ public class TableStructureView extends BorderPane {
         }
         items.remove(index);
         items.add(index - 1, selected);
-        tableView.getSelectionModel().select(selected);
+        tableView.getSelectionModel().clearSelection();
+        tableView.getSelectionModel().select(index - 1);
         statusLabel.setText("已上移字段（未保存）");
     }
 
@@ -413,19 +422,23 @@ public class TableStructureView extends BorderPane {
         }
         items.remove(index);
         items.add(index + 1, selected);
-        tableView.getSelectionModel().select(selected);
+        tableView.getSelectionModel().clearSelection();
+        tableView.getSelectionModel().select(index + 1);
         statusLabel.setText("已下移字段（未保存）");
     }
 
     /**
-     * 根据列标题查找列在TableView中的索引
+     * 根据列标题查找列在数据模型中的索引（跳过行选择器列）
      */
     private int findColumnIndexByTitle(String title) {
-        List<String> titles = new ArrayList<>();
         for (TableColumn<ObservableList<String>, ?> col : tableView.getColumns()) {
-            titles.add(col.getText());
+            if (ROW_SELECTOR_COL.equals(col.getUserData())) continue;
+            if (title.equals(col.getText())) {
+                Integer idx = (Integer) col.getUserData();
+                return idx != null ? idx : -1;
+            }
         }
-        return titles.indexOf(title);
+        return -1;
     }
 
     public void loadStructure() {
@@ -470,12 +483,78 @@ public class TableStructureView extends BorderPane {
 
         // 列标题名（从第一行的key集合获取，保持LinkedHashMap的插入顺序）
         List<String> columnTitles = new ArrayList<>(columns.get(0).keySet());
+        dataColumnCount = columnTitles.size();
 
-        // 创建列
+        // 创建行选择器列：选中行显示黑色实心三角箭头
+        TableColumn<ObservableList<String>, String> selectorCol = new TableColumn<>();
+        selectorCol.setPrefWidth(15);
+        selectorCol.setMaxWidth(15);
+        selectorCol.setMinWidth(15);
+        selectorCol.setSortable(false);
+        selectorCol.setReorderable(false);
+        selectorCol.setStyle("-fx-alignment: CENTER;");
+        selectorCol.setUserData(ROW_SELECTOR_COL);
+        selectorCol.setCellFactory(col -> new TableCell<>() {
+            private final Polygon arrow = new Polygon(0, -0.5, 5, 4.5, 0, 9.5);
+            private javafx.beans.InvalidationListener selectionListener;
+
+            {
+                arrow.setFill(Color.BLACK);
+                setGraphic(arrow);
+                setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+                setAlignment(Pos.CENTER);
+                arrow.setVisible(false);
+                setStyle("-fx-border-color: transparent #BEBEBC transparent #BEBEBC; -fx-border-width: 0 1 0 1;");
+                setOnMousePressed(event -> {
+                    if (getTableRow() != null && getTableRow().getItem() != null) {
+                        int row = getTableRow().getIndex();
+                        if (event.isControlDown()) {
+                            if (isRowSelected(row)) {
+                                tableView.getSelectionModel().clearSelection(row);
+                            } else {
+                                tableView.getSelectionModel().select(row);
+                            }
+                        } else if (event.isShiftDown()) {
+                            tableView.getSelectionModel().selectRange(row, tableView.getSelectionModel().getFocusedIndex());
+                        } else {
+                            tableView.getSelectionModel().clearSelection();
+                            tableView.getSelectionModel().select(row);
+                        }
+                        event.consume();
+                    }
+                });
+            }
+
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                if (selectionListener != null) {
+                    tableView.getSelectionModel().getSelectedCells().removeListener(selectionListener);
+                    selectionListener = null;
+                }
+                super.updateItem(item, empty);
+                if (empty || getTableRow() == null || getTableRow().getItem() == null) {
+                    arrow.setVisible(false);
+                    return;
+                }
+                arrow.setVisible(isRowSelected(getTableRow().getIndex()));
+                selectionListener = obs -> {
+                    if (getTableRow() != null) {
+                        arrow.setVisible(isRowSelected(getTableRow().getIndex()));
+                    }
+                };
+                tableView.getSelectionModel().getSelectedCells().addListener(selectionListener);
+            }
+        });
+        tableView.getColumns().add(selectorCol);
+
+        // 创建数据列
         for (int i = 0; i < columnTitles.size(); i++) {
-            final int colIndex = i;
+            final int dataColIndex = i;
             String title = columnTitles.get(i);
             TableColumn<ObservableList<String>, String> col = new TableColumn<>(title);
+
+            // 存储数据列索引到userData，避免行选择器列导致的索引偏移
+            col.setUserData(dataColIndex);
 
             // 根据标题设置列宽
             int prefWidth = switch (title) {
@@ -492,8 +571,8 @@ public class TableStructureView extends BorderPane {
 
             col.setCellValueFactory(param -> {
                 ObservableList<String> row = param.getValue();
-                if (colIndex < row.size()) {
-                    return new SimpleStringProperty(row.get(colIndex));
+                if (dataColIndex < row.size()) {
+                    return new SimpleStringProperty(row.get(dataColIndex));
                 }
                 return new SimpleStringProperty("");
             });
@@ -504,10 +583,10 @@ public class TableStructureView extends BorderPane {
                 col.setCellFactory(tc -> new DataTypeComboBoxTableCell(dataTypes, columnTitles));
                 col.setOnEditCommit(event -> {
                     ObservableList<String> row = event.getRowValue();
-                    String oldValue = row.get(colIndex);
+                    String oldValue = row.get(dataColIndex);
                     String newValue = event.getNewValue();
                     if (!oldValue.equals(newValue)) {
-                        row.set(colIndex, newValue);
+                        row.set(dataColIndex, newValue);
                     }
                 });
             } else if ("主键".equals(title) || "非空".equals(title)) {
@@ -557,6 +636,16 @@ public class TableStructureView extends BorderPane {
         tableView.setItems(rows);
     }
 
+    /**
+     * 判断指定行是否有任何cell被选中
+     */
+    private boolean isRowSelected(int rowIndex) {
+        for (TablePosition<?, ?> pos : tableView.getSelectionModel().getSelectedCells()) {
+            if (pos.getRow() == rowIndex) return true;
+        }
+        return false;
+    }
+
     public void applyTableConfig(GlobalConfig config) {
         String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
                 config.getTableFontName(), config.getTableFontSize());
@@ -578,9 +667,9 @@ public class TableStructureView extends BorderPane {
                 if (tableRow == null || tableRow.getItem() == null) return;
                 @SuppressWarnings("unchecked")
                 ObservableList<String> row = (ObservableList<String>) tableRow.getItem();
-                int colIndex = getTableView().getColumns().indexOf(getTableColumn());
-                if (colIndex >= 0 && colIndex < row.size()) {
-                    row.set(colIndex, checkBox.isSelected() ? "是" : "否");
+                Integer dataColIndex = (Integer) getTableColumn().getUserData();
+                if (dataColIndex != null && dataColIndex >= 0 && dataColIndex < row.size()) {
+                    row.set(dataColIndex, checkBox.isSelected() ? "是" : "否");
                 }
             });
         }
@@ -746,9 +835,9 @@ public class TableStructureView extends BorderPane {
             @SuppressWarnings("unchecked")
             ObservableList<String> row = (ObservableList<String>) tableRow.getItem();
             if (row == null) return;
-            int tableViewColIndex = getTableView().getColumns().indexOf(getTableColumn());
-            if (tableViewColIndex >= 0 && tableViewColIndex < row.size()) {
-                row.set(tableViewColIndex, newValue);
+            Integer dataColIndex = (Integer) getTableColumn().getUserData();
+            if (dataColIndex != null && dataColIndex >= 0 && dataColIndex < row.size()) {
+                row.set(dataColIndex, newValue);
             }
         }
 
@@ -761,9 +850,9 @@ public class TableStructureView extends BorderPane {
             @SuppressWarnings("unchecked")
             ObservableList<String> row = (ObservableList<String>) tableRow.getItem();
             if (row == null) return getItem();
-            int tableViewColIndex = getTableView().getColumns().indexOf(getTableColumn());
-            if (tableViewColIndex >= 0 && tableViewColIndex < row.size()) {
-                return row.get(tableViewColIndex);
+            Integer dataColIndex = (Integer) getTableColumn().getUserData();
+            if (dataColIndex != null && dataColIndex >= 0 && dataColIndex < row.size()) {
+                return row.get(dataColIndex);
             }
             return getItem();
         }
