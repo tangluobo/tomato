@@ -292,6 +292,12 @@ public class TerminalView extends Canvas {
         // 键盘输入时重置光标闪烁
         resetCursorBlink();
 
+        // 过滤Ctrl+Shift组合键（如Ctrl+Shift+C/V复制粘贴），避免在Linux下将大写字母作为普通输入发送
+        if (event.isControlDown() && event.isShiftDown()) {
+            event.consume();
+            return;
+        }
+
         String ch = event.getCharacter();
         if (ch != null && !ch.isEmpty()) {
             char c = ch.charAt(0);
