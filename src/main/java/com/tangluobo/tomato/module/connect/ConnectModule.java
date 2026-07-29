@@ -279,8 +279,8 @@ public class ConnectModule implements Module {
 
     private ImageView getIconForConfig(ConnectionConfig config) {
         ImageView imageView = new ImageView();
-        imageView.setFitWidth(16);
-        imageView.setFitHeight(16);
+        imageView.setFitWidth(20);
+        imageView.setFitHeight(20);
 
         if (config.getType() == null) {
             if (folderIcon != null) {
