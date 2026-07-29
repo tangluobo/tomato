@@ -447,8 +447,11 @@ public class ConnectModule implements Module {
                         MenuItem renameItem = new MenuItem("重命名");
                         renameItem.setOnAction(e -> {
                             editingItem = targetItem;
-                            treeView.setEditable(true);
-                            treeView.edit(targetItem);
+                            Platform.runLater(() -> {
+                                treeView.requestFocus();
+                                treeView.setEditable(true);
+                                treeView.edit(targetItem);
+                            });
                         });
                         MenuItem copyItem = new MenuItem("复制连接");
                         copyItem.setOnAction(e -> handleCopyConnection(targetItem, targetConfig));
@@ -463,8 +466,11 @@ public class ConnectModule implements Module {
                         MenuItem renameItem = new MenuItem("重命名");
                         renameItem.setOnAction(e -> {
                             editingItem = targetItem;
-                            treeView.setEditable(true);
-                            treeView.edit(targetItem);
+                            Platform.runLater(() -> {
+                                treeView.requestFocus();
+                                treeView.setEditable(true);
+                                treeView.edit(targetItem);
+                            });
                         });
                         MenuItem deleteItem = new MenuItem("删除");
                         deleteItem.setOnAction(e -> handleDelete(targetItem));
@@ -491,6 +497,18 @@ public class ConnectModule implements Module {
             TreeItem<String> selectedItem = treeView.getSelectionModel().getSelectedItem();
             if (selectedItem == null) return;
 
+            // 判断点击是否在选中项的TreeCell上
+            Node clickedNode = event.getPickResult().getIntersectedNode();
+            TreeItem<String> clickedItem = null;
+            Node n = clickedNode;
+            while (n != null && !(n instanceof TreeCell)) {
+                n = n.getParent();
+            }
+            if (n instanceof TreeCell<?> cell) {
+                clickedItem = (TreeItem<String>) cell.getTreeItem();
+            }
+            boolean clickOnSelectedItem = selectedItem == clickedItem;
+
             DatabaseNodeData dbData = dbNodeDataMap.get(selectedItem);
             ConnectionConfig config = itemConfigMap.get(selectedItem);
             boolean isTableOrView = dbData != null
@@ -498,8 +516,8 @@ public class ConnectModule implements Module {
             boolean isFolder = dbData == null && config != null && config.getType() == null;
             boolean isHost = dbData == null && config != null && config.getType() != null;
 
-            boolean wasAlreadySelected = selectedItem == selectedItemBeforeClick;
-            boolean canReedit = wasAlreadySelected || selectedItem == recentlyEditedItem;
+            boolean wasAlreadySelected = clickOnSelectedItem && selectedItem == selectedItemBeforeClick;
+            boolean canReedit = wasAlreadySelected || (clickOnSelectedItem && selectedItem == recentlyEditedItem);
             if (selectedItem != recentlyEditedItem) {
                 recentlyEditedItem = null;
             }
@@ -533,6 +551,7 @@ public class ConnectModule implements Module {
                                     if (editingItem == null && itemToEdit == treeView.getSelectionModel().getSelectedItem()) {
                                         editingItem = itemToEdit;
                                         recentlyEditedItem = null;
+                                        treeView.requestFocus();
                                         treeView.setEditable(true);
                                         treeView.edit(itemToEdit);
                                     }
@@ -582,6 +601,7 @@ public class ConnectModule implements Module {
                             if (editingItem == null && itemToEdit == treeView.getSelectionModel().getSelectedItem()) {
                                 editingItem = itemToEdit;
                                 recentlyEditedItem = null;
+                                treeView.requestFocus();
                                 treeView.setEditable(true);
                                 treeView.edit(itemToEdit);
                             }
@@ -672,6 +692,7 @@ public class ConnectModule implements Module {
                     recentlyEditedItem = treeItem;
                     editingItem = null;
                     editField = null;
+                    treeView.edit(null);
                     treeView.setEditable(false);
 
                     setText(oldName);
@@ -698,6 +719,7 @@ public class ConnectModule implements Module {
                     recentlyEditedItem = treeItem;
                     editingItem = null;
                     editField = null;
+                    treeView.edit(null);
                     treeView.setEditable(false);
 
                     super.cancelEdit();
