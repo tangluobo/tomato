@@ -102,7 +102,6 @@ public class ConnectionConfigDialog {
     private TextField s3NameField;
     private TextField s3EndpointField;
     private TextField s3RegionField;
-    private TextField s3PortField;
     private TextField s3AccessKeyField;
     private PasswordField s3SecretKeyField;
     private CheckBox s3SaveSecretKeyCheckBox;
@@ -790,12 +789,6 @@ public class ConnectionConfigDialog {
         s3RegionField.setPrefWidth(280);
         grid.add(s3RegionField, 1, row++);
 
-        grid.add(new Label("端口："), 0, row);
-        s3PortField = new TextField();
-        s3PortField.setPrefWidth(100);
-        s3PortField.setPromptText("留空则使用默认端口");
-        grid.add(s3PortField, 1, row++);
-
         grid.add(new Label("Access Key："), 0, row);
         s3AccessKeyField = new TextField();
         s3AccessKeyField.setPromptText("访问密钥ID");
@@ -1154,9 +1147,6 @@ public class ConnectionConfigDialog {
             if (s3RegionField.getText().isEmpty()) {
                 s3RegionField.setText(selectedType == ConnectType.ALIYUN_OSS ? "cn-hangzhou" : "us-east-1");
             }
-            if (s3PortField.getText().isEmpty()) {
-                s3PortField.setText(String.valueOf(getDefaultPort(selectedType)));
-            }
             // S3类型默认勾选路径风格访问
             if (selectedType == ConnectType.S3 && !s3PathStyleAccessCheckBox.isSelected()) {
                 // 不自动勾选，让用户根据实际情况选择
@@ -1278,7 +1268,6 @@ public class ConnectionConfigDialog {
             if (existingConfig.getRegion() != null) {
                 s3RegionField.setText(existingConfig.getRegion());
             }
-            s3PortField.setText(String.valueOf(existingConfig.getPort()));
             s3AccessKeyField.setText(existingConfig.getUsername() != null ? existingConfig.getUsername() : "");
             if (existingConfig.getPassword() != null) {
                 s3SecretKeyField.setText(existingConfig.getPassword());
@@ -1464,7 +1453,6 @@ public class ConnectionConfigDialog {
             config.setName(s3NameField.getText().trim());
             config.setEndpoint(s3EndpointField.getText().trim());
             config.setRegion(s3RegionField.getText().trim());
-            config.setPort(s3PortField.getText().trim().isEmpty() ? getDefaultPort(selectedType) : Integer.parseInt(s3PortField.getText().trim()));
             config.setUsername(s3AccessKeyField.getText().trim());
             config.setUsePassword(true);
             config.setUseKey(false);
@@ -1700,14 +1688,6 @@ public class ConnectionConfigDialog {
         if (s3RegionField.getText().trim().isEmpty()) {
             showAlert("请输入区域");
             return false;
-        }
-        if (!s3PortField.getText().trim().isEmpty()) {
-            try {
-                Integer.parseInt(s3PortField.getText().trim());
-            } catch (NumberFormatException e) {
-                showAlert("端口号必须是数字");
-                return false;
-            }
         }
         if (s3AccessKeyField.getText().trim().isEmpty()) {
             showAlert("请输入Access Key");
