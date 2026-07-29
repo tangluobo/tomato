@@ -497,17 +497,21 @@ public class ConnectModule implements Module {
             TreeItem<String> selectedItem = treeView.getSelectionModel().getSelectedItem();
             if (selectedItem == null) return;
 
-            // 判断点击是否在选中项的TreeCell上
+            // 判断点击是否在选中项的文本区域上（排除箭头和图标区域）
             Node clickedNode = event.getPickResult().getIntersectedNode();
             TreeItem<String> clickedItem = null;
+            boolean isTextClick = false;
             Node n = clickedNode;
             while (n != null && !(n instanceof TreeCell)) {
+                if (n.getClass().getName().equals("com.sun.javafx.scene.control.LabeledText")) {
+                    isTextClick = true;
+                }
                 n = n.getParent();
             }
             if (n instanceof TreeCell<?> cell) {
                 clickedItem = (TreeItem<String>) cell.getTreeItem();
             }
-            boolean clickOnSelectedItem = selectedItem == clickedItem;
+            boolean clickOnSelectedItem = isTextClick && selectedItem == clickedItem;
 
             DatabaseNodeData dbData = dbNodeDataMap.get(selectedItem);
             ConnectionConfig config = itemConfigMap.get(selectedItem);
