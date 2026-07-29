@@ -56,8 +56,11 @@ public class ToolsModule implements Module {
         // 搜索栏
         HBox searchBar = new HBox(8);
         searchBar.setAlignment(Pos.CENTER_LEFT);
-        searchBar.setPadding(new Insets(12, 10, 8, 10));
-        searchBar.setStyle("-fx-background-color: #f7f7f7; -fx-border-color: #e0e0e0; -fx-border-width: 0 0 1 0;");
+        searchBar.setPrefHeight(52);
+        searchBar.setMinHeight(52);
+        searchBar.setMaxHeight(52);
+        searchBar.setPadding(new Insets(10, 15, 10, 15));
+        searchBar.setStyle("-fx-background-color: #ffffff; -fx-border-color: #D9D9D7; -fx-border-width: 0 0 1 0;");
 
         Label searchIcon = new Label("🔍");
         searchIcon.setStyle("-fx-font-size: 14px;");
