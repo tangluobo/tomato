@@ -261,6 +261,9 @@ public class SSHTerminalPane extends BorderPane {
             }
         });
 
+        // 设置粘贴回调（Ctrl+Shift+V触发）
+        terminalView.setPasteHandler(() -> doPaste());
+
         // 设置键盘输入回调
         terminalView.setKeyInputHandler(data -> {
             // 连接丢失时，按回车重新连接

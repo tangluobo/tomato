@@ -198,6 +198,9 @@ public class LocalTerminalPane extends BorderPane {
             }
         });
 
+        // 设置粘贴回调（Ctrl+Shift+V触发）
+        terminalView.setPasteHandler(() -> doPaste());
+
         // 设置键盘输入回调
         terminalView.setKeyInputHandler(data -> {
             if (processOutput != null && running.get()) {

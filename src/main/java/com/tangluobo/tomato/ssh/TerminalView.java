@@ -73,6 +73,11 @@ public class TerminalView extends Canvas {
         void onResize(int cols, int rows, int width, int height);
     }
 
+    public interface PasteHandler {
+        void onPaste();
+    }
+    private PasteHandler pasteHandler;
+
     public TerminalView(TerminalEmulator emulator) {
         this.emulator = emulator;
         this.gc = getGraphicsContext2D();
@@ -163,6 +168,10 @@ public class TerminalView extends Canvas {
         this.scrollbarHandler = handler;
     }
 
+    public void setPasteHandler(PasteHandler handler) {
+        this.pasteHandler = handler;
+    }
+
     /**
      * 由外部滚动条驱动滚动
      */
@@ -223,6 +232,18 @@ public class TerminalView extends Canvas {
             data = "\033OR".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.F4) {
             data = "\033OS".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.C && event.isControlDown() && event.isShiftDown()) {
+            // Ctrl+Shift+C: 复制选中文本
+            copySelection();
+            event.consume();
+            return;
+        } else if (event.getCode() == javafx.scene.input.KeyCode.V && event.isControlDown() && event.isShiftDown()) {
+            // Ctrl+Shift+V: 粘贴剪贴板内容
+            if (pasteHandler != null) {
+                pasteHandler.onPaste();
+            }
+            event.consume();
+            return;
         } else if (event.getCode() == javafx.scene.input.KeyCode.C && event.isControlDown()) {
             data = "\003".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.D && event.isControlDown()) {
