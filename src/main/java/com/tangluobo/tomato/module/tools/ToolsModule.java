@@ -6,6 +6,7 @@ import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
@@ -62,11 +63,17 @@ public class ToolsModule implements Module {
         searchBar.setPadding(new Insets(10, 15, 10, 15));
         searchBar.setStyle("-fx-background-color: #ffffff; -fx-border-color: #D9D9D7; -fx-border-width: 0 0 1 0;");
 
-        Label searchIcon = new Label("🔍");
-        searchIcon.setStyle("-fx-font-size: 14px;");
-        Label searchHint = new Label("搜索工具...");
-        searchHint.setStyle("-fx-font-size: 12px; -fx-text-fill: #999;");
-        searchBar.getChildren().addAll(searchIcon, searchHint);
+        SVGPath searchIcon = new SVGPath();
+        searchIcon.setContent("M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z");
+        searchIcon.setFill(Color.web("#999999"));
+        searchIcon.setScaleX(0.7);
+        searchIcon.setScaleY(0.7);
+
+        TextField searchField = new TextField();
+        searchField.setPromptText("搜索工具...");
+        searchField.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-padding: 0; -fx-font-size: 12px; -fx-prompt-text-fill: #999; -fx-text-fill: #333;");
+
+        searchBar.getChildren().addAll(searchIcon, searchField);
 
         // 工具列表
         VBox toolList = new VBox(0);
@@ -87,6 +94,18 @@ public class ToolsModule implements Module {
         scrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
         scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+
+        // 搜索过滤
+        searchField.textProperty().addListener((obs, oldVal, newVal) -> {
+            String keyword = newVal.trim().toLowerCase();
+            toolList.getChildren().clear();
+            for (ToolItem item : toolItems) {
+                if (keyword.isEmpty() || item.name.toLowerCase().contains(keyword) || item.description.toLowerCase().contains(keyword)) {
+                    VBox itemBox = createToolItemBox(item);
+                    toolList.getChildren().add(itemBox);
+                }
+            }
+        });
 
         sidebarContainer.getChildren().addAll(searchBar, scrollPane);
         VBox.setVgrow(scrollPane, Priority.ALWAYS);

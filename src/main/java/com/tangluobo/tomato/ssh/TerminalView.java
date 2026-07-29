@@ -537,12 +537,21 @@ public class TerminalView extends Canvas {
             // 双击选中单词（以不可见字符为分隔）
             int startCol = col;
             int endCol = col;
+            // 如果点击在宽字符占位符(\0)上，回退到宽字符主cell
+            if (emulator.getChar(startCol, row) == '\0' && startCol > 0) {
+                startCol--;
+                endCol = startCol;
+            }
             // 向左查找单词边界
             while (startCol > 0 && isWordChar(emulator.getChar(startCol - 1, row))) {
                 startCol--;
             }
             // 向右查找单词边界
             while (endCol < cols - 1 && isWordChar(emulator.getChar(endCol + 1, row))) {
+                endCol++;
+            }
+            // 确保选中范围包含完整的宽字符（如果endCol停在宽字符主cell上，需要包含其占位符）
+            if (emulator.isWideChar(emulator.getChar(endCol, row)) && endCol + 1 < cols) {
                 endCol++;
             }
             selectionStartRow = row;
@@ -563,10 +572,12 @@ public class TerminalView extends Canvas {
     }
 
     /**
-     * 判断字符是否为单词字符（可见非空白字符，用于双击选词）
+     * 判断字符是否为单词字符（用于双击选词）
+     * 宽字符占位符(\0)视为单词字符（属于宽字符的延续部分）
      * 空格、制表符等空白字符和控制字符作为单词分隔符
      */
     private boolean isWordChar(char c) {
+        if (c == '\0') return true; // 宽字符占位符，属于宽字符的一部分
         return !Character.isWhitespace(c) && c > 0x1F && c != 0x7F;
     }
 
