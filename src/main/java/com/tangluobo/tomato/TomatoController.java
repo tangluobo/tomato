@@ -5,14 +5,21 @@ import com.tangluobo.tomato.module.connect.ConnectModule;
 import com.tangluobo.tomato.module.settings.SettingsModule;
 import com.tangluobo.tomato.module.tools.ToolsModule;
 import javafx.fxml.FXML;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.geometry.Insets;
+import javafx.geometry.Rectangle2D;
 import javafx.scene.Cursor;
+import javafx.stage.Screen;
 import javafx.stage.Stage;
 
 import java.nio.charset.Charset;
@@ -29,6 +36,8 @@ public class TomatoController {
     @FXML
     private VBox contentPane;
     @FXML
+    private HBox titleBar;
+    @FXML
     private Label chatTitle;
     @FXML
     private VBox chatContent;
@@ -40,6 +49,8 @@ public class TomatoController {
     private Button maximizeBtn;
     @FXML
     private Button closeBtn;
+    @FXML
+    private ImageView logoView;
 
     private double xOffset = 0;
     private double yOffset = 0;
@@ -58,8 +69,20 @@ public class TomatoController {
     private boolean resizingTop = false;
     private boolean resizingBottom = false;
     private boolean resizingDivider2 = false;
+    private boolean windowManagementActive = false;
+    private boolean customMaximized = false;
+    private boolean draggingFromMaximized = false;
+
+    private double savedX = 0;
+    private double savedY = 0;
+    private double savedWidth = 0;
+    private double savedHeight = 0;
+
+    private double dragStartX = 0;
+    private double dragStartY = 0;
 
     private static final int EDGE_THRESHOLD = 10;
+    private static final int MAXIMIZE_THRESHOLD = 5;
 
     @FXML
     protected void onHelloButtonClick() {
@@ -113,7 +136,25 @@ public class TomatoController {
         }
 
         chatContent.getChildren().clear();
-        module.loadContent(chatContent);
+        // 移除contentPane中之前可能添加的模块内容（保留titleBar和chatScrollPane）
+        contentPane.getChildren().removeIf(n -> n != titleBar && n != chatScrollPane);
+
+        // 隐藏ScrollPane，改为直接在contentPane中添加模块内容容器
+        // 这样模块内容可以占满右侧全部空间
+        chatScrollPane.setManaged(false);
+        chatScrollPane.setVisible(false);
+
+        contentPane.setFillWidth(true);
+
+        VBox moduleContent = new VBox();
+        moduleContent.setStyle("-fx-background-color: #ffffff;");
+        moduleContent.setFillWidth(true);
+        moduleContent.setMaxWidth(Double.MAX_VALUE);
+        moduleContent.setMaxHeight(Double.MAX_VALUE);
+        VBox.setVgrow(moduleContent, Priority.ALWAYS);
+        contentPane.getChildren().add(moduleContent);
+
+        module.loadContent(moduleContent);
     }
 
     @FXML
@@ -125,7 +166,39 @@ public class TomatoController {
     @FXML
     protected void onMaximize() {
         Stage stage = (Stage) rootPane.getScene().getWindow();
-        stage.setMaximized(!stage.isMaximized());
+
+        if (customMaximized) {
+            restoreWindow(stage);
+        } else {
+            maximizeWindow(stage);
+        }
+    }
+
+    private void maximizeWindow(Stage stage) {
+        savedX = stage.getX();
+        savedY = stage.getY();
+        savedWidth = stage.getWidth();
+        savedHeight = stage.getHeight();
+
+        Screen screen = Screen.getPrimary();
+        Rectangle2D visualBounds = screen.getVisualBounds();
+
+        stage.setX(visualBounds.getMinX());
+        stage.setY(visualBounds.getMinY());
+        stage.setWidth(visualBounds.getWidth());
+        stage.setHeight(visualBounds.getHeight());
+
+        customMaximized = true;
+        rootPane.setStyle("-fx-border-color: transparent; -fx-border-width: 0;");
+    }
+
+    private void restoreWindow(Stage stage) {
+        stage.setX(savedX);
+        stage.setY(savedY);
+        stage.setWidth(savedWidth);
+        stage.setHeight(savedHeight);
+        customMaximized = false;
+        rootPane.setStyle("-fx-border-color: #D9D9D7; -fx-border-width: 1px;");
     }
 
     @FXML
@@ -136,47 +209,81 @@ public class TomatoController {
 
     @FXML
     public void initialize() {
-        rootPane.setOnMousePressed(this::onMousePressed);
-        rootPane.setOnMouseDragged(this::onMouseDragged);
-        rootPane.setOnMouseMoved(this::onMouseMoved);
-        rootPane.setOnMouseExited(this::onMouseExited);
-        rootPane.setOnMouseReleased(this::onMouseReleased);
+        Image logoImage = new Image(getClass().getResourceAsStream("/images/logo.png"));
+        if (logoImage != null) {
+            logoView.setImage(logoImage);
+        }
 
         divider2.setViewOrder(-1);
         divider2.setMouseTransparent(false);
 
         setupDivider(divider2);
 
+        titleBar.setOnMouseClicked(event -> {
+            if (event.getClickCount() == 2) {
+                Stage stage = (Stage) titleBar.getScene().getWindow();
+                if (customMaximized) {
+                    restoreWindow(stage);
+                } else {
+                    maximizeWindow(stage);
+                }
+                event.consume();
+            }
+        });
+
+        rootPane.sceneProperty().addListener((obs, oldScene, newScene) -> {
+            if (newScene != null) {
+                newScene.addEventFilter(MouseEvent.MOUSE_PRESSED, this::onMousePressed);
+                newScene.addEventFilter(MouseEvent.MOUSE_DRAGGED, this::onMouseDragged);
+                newScene.addEventFilter(MouseEvent.MOUSE_MOVED, this::onMouseMoved);
+                newScene.addEventFilter(MouseEvent.MOUSE_EXITED, this::onMouseExited);
+                newScene.addEventFilter(MouseEvent.MOUSE_RELEASED, this::onMouseReleased);
+            }
+        });
+
         loadModule(new ConnectModule());
     }
 
     private void setupDivider(Region divider) {
+        // 初始化时锁定sidebar最小宽度，防止被内容区压缩
+        sidebarPane.setMinWidth(sidebarPane.getPrefWidth());
+
         divider.setOnMouseEntered(e -> divider.setCursor(Cursor.H_RESIZE));
         divider.setOnMouseExited(e -> divider.setCursor(Cursor.DEFAULT));
-        
+
         divider.setOnMousePressed(e -> {
             dividerStartX = e.getScreenX();
             dividerStartWidth = sidebarPane.getWidth();
             resizingDivider2 = true;
         });
-        
+
         divider.setOnMouseDragged(e -> {
             double deltaX = e.getScreenX() - dividerStartX;
             double newWidth = dividerStartWidth + deltaX;
             if (newWidth >= 60 && newWidth <= 500) {
                 sidebarPane.setPrefWidth(newWidth);
+                sidebarPane.setMinWidth(newWidth);
             }
         });
-        
+
         divider.setOnMouseReleased(e -> {
             resizingDivider2 = false;
         });
     }
 
     private void onMouseMoved(MouseEvent event) {
-        Stage stage = (Stage) rootPane.getScene().getWindow();
+        if (resizingDivider2) {
+            return;
+        }
+
+        if (customMaximized) {
+            rootPane.setCursor(Cursor.DEFAULT);
+            return;
+        }
+
         double sceneX = event.getSceneX();
         double sceneY = event.getSceneY();
+        Stage stage = (Stage) rootPane.getScene().getWindow();
         double width = stage.getWidth();
         double height = stage.getHeight();
 
@@ -205,7 +312,37 @@ public class TomatoController {
     }
 
     private void onMousePressed(MouseEvent event) {
+        if (resizingDivider2) {
+            return;
+        }
+
+        if (event.getTarget() instanceof javafx.scene.control.TextInputControl ||
+            event.getTarget() instanceof javafx.scene.control.ButtonBase ||
+            event.getTarget() instanceof javafx.scene.control.ListCell) {
+            windowManagementActive = false;
+            return;
+        }
+
         Stage stage = (Stage) rootPane.getScene().getWindow();
+
+        if (customMaximized) {
+            if (isInTitleBar(event)) {
+                draggingFromMaximized = true;
+                dragStartX = event.getScreenX();
+                dragStartY = event.getScreenY();
+                windowManagementActive = true;
+                resizingLeft = false;
+                resizingRight = false;
+                resizingTop = false;
+                resizingBottom = false;
+                xOffset = dragStartX - savedX;
+                yOffset = dragStartY - savedY;
+            } else {
+                windowManagementActive = false;
+            }
+            return;
+        }
+
         double sceneX = event.getSceneX();
         double sceneY = event.getSceneY();
         double width = stage.getWidth();
@@ -217,22 +354,64 @@ public class TomatoController {
         resizingBottom = sceneY >= height - EDGE_THRESHOLD;
 
         if (resizingLeft || resizingRight || resizingTop || resizingBottom) {
+            windowManagementActive = true;
+            draggingFromMaximized = false;
             startWidth = width;
             startHeight = height;
             startX = event.getScreenX();
             startY = event.getScreenY();
             startWindowX = stage.getX();
             startWindowY = stage.getY();
-        } else {
+        } else if (isInTitleBar(event)) {
+            windowManagementActive = true;
+            draggingFromMaximized = false;
             xOffset = event.getSceneX();
             yOffset = event.getSceneY();
+        } else {
+            windowManagementActive = false;
         }
     }
 
+    private boolean isInTitleBar(MouseEvent event) {
+        if (titleBar == null) return false;
+        Object target = event.getTarget();
+        if (target == titleBar) return true;
+        if (target instanceof Node) {
+            Node node = (Node) target;
+            while (node != null) {
+                if (node == titleBar) return true;
+                node = node.getParent();
+            }
+        }
+        return false;
+    }
+
     private void onMouseDragged(MouseEvent event) {
+        if (resizingDivider2) {
+            return;
+        }
+
+        if (!windowManagementActive) {
+            return;
+        }
+
         Stage stage = (Stage) rootPane.getScene().getWindow();
 
-        if (resizingDivider2) {
+        if (draggingFromMaximized) {
+            double currentY = event.getScreenY();
+            if (currentY > MAXIMIZE_THRESHOLD) {
+                restoreWindow(stage);
+                double deltaX = event.getScreenX() - dragStartX;
+                double deltaY = event.getScreenY() - dragStartY;
+                stage.setX(savedX + deltaX);
+                stage.setY(savedY + deltaY);
+                draggingFromMaximized = false;
+                windowManagementActive = false;
+            }
+            return;
+        }
+
+        if (customMaximized) {
             return;
         }
 
@@ -264,15 +443,34 @@ public class TomatoController {
             if (resizingLeft) stage.setX(newX);
             if (resizingTop) stage.setY(newY);
         } else {
-            stage.setX(event.getScreenX() - xOffset);
-            stage.setY(event.getScreenY() - yOffset);
+            double newX = event.getScreenX() - xOffset;
+            double newY = event.getScreenY() - yOffset;
+
+            Screen screen = Screen.getPrimary();
+            double screenTop = screen.getVisualBounds().getMinY();
+
+            if (newY <= MAXIMIZE_THRESHOLD && newX >= screen.getVisualBounds().getMinX()
+                && newX + stage.getWidth() <= screen.getVisualBounds().getMaxX()) {
+                maximizeWindow(stage);
+                windowManagementActive = false;
+            } else {
+                stage.setX(newX);
+                stage.setY(newY);
+            }
         }
     }
 
     private void onMouseReleased(MouseEvent event) {
+        if (resizingDivider2) {
+            return;
+        }
+
+        windowManagementActive = false;
+        draggingFromMaximized = false;
         resizingLeft = false;
         resizingRight = false;
         resizingTop = false;
         resizingBottom = false;
+        rootPane.setCursor(Cursor.DEFAULT);
     }
 }

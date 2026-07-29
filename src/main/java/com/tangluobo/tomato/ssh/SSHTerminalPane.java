@@ -1,23 +1,34 @@
 package com.tangluobo.tomato.ssh;
 
-import com.tangluobo.tomato.zmodem.ZModem;
-import com.tangluobo.tomato.zmodem.util.CustomFile;
-import com.tangluobo.tomato.zmodem.util.FileAdapter;
-import com.tangluobo.tomato.zmodem.xfer.zm.util.ZModemCharacter;
+import com.tangluobo.tomato.ssh.zmodem.ZModem;
+import com.tangluobo.tomato.ssh.zmodem.util.CustomFile;
+import com.tangluobo.tomato.ssh.zmodem.util.FileAdapter;
+import com.tangluobo.tomato.ssh.zmodem.xfer.zm.util.ZModemCharacter;
 import javafx.application.Platform;
+import javafx.scene.canvas.Canvas;
+import javafx.scene.canvas.GraphicsContext;
+import javafx.scene.control.Button;
 import javafx.scene.control.ContextMenu;
+import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.ScrollBar;
+import javafx.scene.control.SplitPane;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.input.Clipboard;
-import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.MouseEvent;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.Circle;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
 import java.io.*;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -25,9 +36,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * SSH终端组件，使用VT100终端模拟器，支持ZModem协议（rz/sz文件传输）
- * 继承Pane，在layoutChildren中直接控制Canvas大小
+ * 继承BorderPane，中间放终端，底部放状态栏，右侧可展开SFTP文件浏览器
  */
-public class SSHTerminalPane extends Pane {
+public class SSHTerminalPane extends BorderPane {
 
     // ZModem协议前缀: ** ZDLE
     private static final char[] ZMODEM_PREFIX = new char[]{
@@ -58,14 +69,163 @@ public class SSHTerminalPane extends Pane {
     private static final long RENDER_INTERVAL = 33; // ~30fps
     private boolean renderPending = false;
 
+    // 状态栏
+    private final Label stateLabel;
+    private final Label connLabel;
+    private final Label encodingLabel;
+    private final Circle statusDot;
+    private final Button folderBtn;
+    private final Button monitorBtn;
+
+    // 终端容器
+    private final Pane terminalPane;
+    private final SplitPane splitPane;
+    private final ScrollBar scrollBar;
+    private final javafx.scene.layout.VBox rightPanel;
+
+    // SFTP文件浏览器
+    private SFTPFileBrowser fileBrowser;
+    private SFTPClient sftpClient;
+    private boolean fileBrowserVisible = false;
+
+    // 监控视图
+    private boolean monitorVisible = false;
+    private MonitorPanel monitorPanel;
+
+    // 防止scrollbar↔render循环
+    private boolean updatingScrollbar = false;
+
+    // 交替缓冲区状态跟踪
+    private boolean lastAltBufferState = false;
+
+    // 连接信息
+    private String host;
+    private int port;
+    private String username;
+    private String password;
+    private List<String> privateKeyPaths;
+
+    // 连接丢失标志（非用户主动断开）
+    private volatile boolean connectionLost = false;
+
     public SSHTerminalPane() {
         emulator = new TerminalEmulator();
         terminalView = new TerminalView(emulator);
 
-        getChildren().add(terminalView);
+        // 状态栏
+        HBox statusBar = new HBox();
+        statusBar.setStyle("-fx-background-color: #FFFFFB; -fx-padding: 2 10; -fx-alignment: center-left; -fx-border-color: #e0e0e0; -fx-border-width: 1 0 0 0;");
+
+        statusDot = new Circle(4, Color.RED);
+        HBox.setMargin(statusDot, new javafx.geometry.Insets(0, 4, 0, 0));
+
+        stateLabel = new Label("未连接");
+        stateLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
+        HBox.setMargin(stateLabel, new javafx.geometry.Insets(0, 8, 0, 0));
+
+        connLabel = new Label("");
+        connLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
+        HBox.setMargin(connLabel, new javafx.geometry.Insets(0, 8, 0, 0));
+
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        encodingLabel = new Label("UTF-8");
+        encodingLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
+
+        // SFTP文件浏览器开关按钮
+        folderBtn = new Button();
+        folderBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
+        folderBtn.setGraphic(createIcon("/images/connect/folder.png", false));
+        folderBtn.setOnAction(e -> toggleFileBrowser());
+
+        // 监控视图开关按钮
+        monitorBtn = new Button();
+        monitorBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
+        monitorBtn.setGraphic(createIcon("/images/connect/monitor.png", false));
+        monitorBtn.setOnAction(e -> toggleMonitor());
+
+        statusBar.getChildren().addAll(statusDot, stateLabel, connLabel, encodingLabel, spacer, folderBtn, monitorBtn);
+
+        // 终端区域 + 右侧滚动条
+        scrollBar = new ScrollBar();
+        scrollBar.setOrientation(javafx.geometry.Orientation.VERTICAL);
+        scrollBar.setStyle("-fx-background-color: #2d2d2d;");
+        scrollBar.setPrefWidth(12);
+        scrollBar.setMin(0);
+        scrollBar.setMax(0);
+        scrollBar.setValue(0);
+        scrollBar.setVisible(false);
+        scrollBar.valueProperty().addListener((obs, oldVal, newVal) -> {
+            if (updatingScrollbar) return;
+            // 交替屏幕缓冲区模式下禁止滚动条操作scrollback
+            if (emulator.isUsingAltBuffer()) return;
+            double visibleAmt = scrollBar.getVisibleAmount();
+            int scrollbackSize = emulator.getScrollbackSize();
+            double val = newVal.doubleValue();
+            int offset = (int) Math.round(scrollbackSize - val + visibleAmt - 1);
+            terminalView.setScrollOffset(Math.max(0, Math.min(offset, scrollbackSize)));
+        });
+
+        terminalPane = new Pane() {
+            @Override
+            protected void layoutChildren() {
+                super.layoutChildren();
+                double w = getWidth();
+                double h = getHeight();
+                if (w > 0 && h > 0) {
+                    double sbWidth = scrollBar.isVisible() ? scrollBar.getWidth() : 0;
+                    terminalView.relocate(0, 0);
+                    terminalView.resize(w - sbWidth, h);
+                    scrollBar.resizeRelocate(w - scrollBar.getPrefWidth(), 0, scrollBar.getPrefWidth(), h);
+                }
+            }
+        };
+        terminalPane.getChildren().addAll(terminalView, scrollBar);
+        terminalPane.setStyle("-fx-background-color: #1e1e1e;");
+        terminalPane.setMaxWidth(Double.MAX_VALUE);
+        terminalPane.setMaxHeight(Double.MAX_VALUE);
+        terminalPane.setPrefWidth(800);
+        terminalPane.setPrefHeight(600);
+
+        // 滚动条回调：更新滚动条状态
+        terminalView.setScrollbarHandler((scrollbackSize, scrollOffset, visibleRows) -> {
+            Platform.runLater(() -> {
+                updatingScrollbar = true;
+                try {
+                    int currentSbSize = emulator.getScrollbackSize();
+                    int currentOffset = emulator.getScrollOffset();
+                    if (currentSbSize > 0) {
+                        scrollBar.setVisible(true);
+                        int totalContent = currentSbSize + visibleRows;
+                        scrollBar.setMin(0);
+                        scrollBar.setMax(totalContent - 1);
+                        scrollBar.setVisibleAmount(visibleRows);
+                        scrollBar.setValue(currentSbSize - currentOffset + visibleRows - 1);
+                    } else {
+                        scrollBar.setVisible(false);
+                    }
+                } finally {
+                    updatingScrollbar = false;
+                }
+            });
+        });
+
+        // 右侧面板：文件浏览器 + 监控面板（垂直排列）
+        rightPanel = new javafx.scene.layout.VBox();
+        rightPanel.setStyle("-fx-background-color: #FFFFFF;");
+
+        // SplitPane: 终端 + 右侧面板，支持拖拽调整宽度
+        splitPane = new SplitPane();
+        splitPane.getItems().add(terminalPane);
+        splitPane.setDividerPositions(1.0);
+//        splitPane.setStyle("-fx-background-color: #1e1e1e;");
+
+        setCenter(splitPane);
+        setBottom(statusBar);
         setStyle("-fx-background-color: #1e1e1e;");
 
-        // 关键：Pane默认maxWidth/maxHeight=USE_COMPUTED_SIZE=prefSize=0
+        // 关键：默认maxWidth/maxHeight=USE_COMPUTED_SIZE=prefSize=0
         // 必须设为MAX_VALUE，否则任何布局容器都不会给它分配空间
         setMaxWidth(Double.MAX_VALUE);
         setMaxHeight(Double.MAX_VALUE);
@@ -87,6 +247,13 @@ public class SSHTerminalPane extends Pane {
             }
         });
 
+        // 设置OSC7目录变化回调，通知文件浏览器跟随
+        emulator.setCwdChangeListener(path -> {
+            if (fileBrowser != null) {
+                fileBrowser.onTerminalCwdChanged(path);
+            }
+        });
+
         // 终端大小变化时通知SSH服务器
         terminalView.setResizeHandler((cols, rows, width, height) -> {
             if (sshSession != null && sshSession.isConnected()) {
@@ -94,8 +261,18 @@ public class SSHTerminalPane extends Pane {
             }
         });
 
+        // 设置粘贴回调（Ctrl+Shift+V触发）
+        terminalView.setPasteHandler(() -> doPaste());
+
         // 设置键盘输入回调
         terminalView.setKeyInputHandler(data -> {
+            // 连接丢失时，按回车重新连接
+            if (connectionLost) {
+                if (data.length == 1 && (data[0] == '\r' || data[0] == '\n')) {
+                    reconnect();
+                }
+                return;
+            }
             if (sshSession == null || !sshSession.isConnected()) return;
             if (inZModemMode) {
                 // ZModem传输中，Ctrl+C取消
@@ -147,29 +324,139 @@ public class SSHTerminalPane extends Pane {
                 contextMenu.hide();
             }
         });
+        // Canvas会拦截鼠标事件，需要在terminalView上也监听
+        // 使用addEventHandler而非setOnMousePressed，避免覆盖TerminalView中的选择逻辑
+        terminalView.addEventHandler(MouseEvent.MOUSE_PRESSED, e -> {
+            if (contextMenu.isShowing()) {
+                contextMenu.hide();
+            }
+        });
     }
 
     /**
-     * 重写布局方法，让Canvas填满整个Pane
+     * 切换文件浏览器显示
      */
-    @Override
-    protected void layoutChildren() {
-        super.layoutChildren();
-        double w = getWidth();
-        double h = getHeight();
-        if (w > 0 && h > 0) {
-            terminalView.relocate(0, 0);
-            terminalView.resize(w, h);
+    private void toggleFileBrowser() {
+        if (fileBrowserVisible) {
+            // 关闭文件浏览器
+            if (fileBrowser != null && rightPanel.getChildren().contains(fileBrowser)) {
+                rightPanel.getChildren().remove(fileBrowser);
+            }
+            fileBrowserVisible = false;
+            folderBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
+            folderBtn.setGraphic(createIcon("/images/connect/folder.png", false));
+            updateRightPanelVisibility();
+        } else {
+            // 打开文件浏览器
+            if (sshSession == null || !sshSession.isConnected()) return;
+            if (fileBrowser == null) {
+                sftpClient = new SFTPClient();
+                fileBrowser = new SFTPFileBrowser(sshSession, sftpClient);
+            }
+            ensureRightPanelVisible();
+            if (!rightPanel.getChildren().contains(fileBrowser)) {
+                rightPanel.getChildren().add(0, fileBrowser);
+            }
+            splitPane.setDividerPositions(0.7);
+            fileBrowser.initConnection();
+            fileBrowserVisible = true;
+            folderBtn.setStyle("-fx-background-color: #e0e0e0; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand; -fx-border-radius: 3;");
+            folderBtn.setGraphic(createIcon("/images/connect/folder.png", true));
         }
+    }
+
+    /**
+     * 切换监控视图显示
+     */
+    private void toggleMonitor() {
+        if (monitorVisible) {
+            // 关闭监控视图
+            if (monitorPanel != null) {
+                monitorPanel.stopMonitoring();
+                if (rightPanel.getChildren().contains(monitorPanel)) {
+                    rightPanel.getChildren().remove(monitorPanel);
+                }
+            }
+            monitorVisible = false;
+            monitorBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
+            monitorBtn.setGraphic(createIcon("/images/connect/monitor.png", false));
+            updateRightPanelVisibility();
+        } else {
+            // 打开监控视图
+            if (sshSession == null || !sshSession.isConnected()) return;
+            if (monitorPanel == null) {
+                monitorPanel = new MonitorPanel(sshSession);
+            }
+            ensureRightPanelVisible();
+            if (!rightPanel.getChildren().contains(monitorPanel)) {
+                rightPanel.getChildren().add(monitorPanel);
+            }
+            monitorPanel.startMonitoring();
+            monitorVisible = true;
+            monitorBtn.setStyle("-fx-background-color: #e0e0e0; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand; -fx-border-radius: 3;");
+            monitorBtn.setGraphic(createIcon("/images/connect/monitor.png", true));
+        }
+    }
+
+    /**
+     * 确保右侧面板在SplitPane中可见
+     */
+    private void ensureRightPanelVisible() {
+        if (!splitPane.getItems().contains(rightPanel)) {
+            splitPane.getItems().add(rightPanel);
+            if (fileBrowserVisible && monitorVisible) {
+                splitPane.setDividerPositions(0.7);
+            } else {
+                splitPane.setDividerPositions(0.8);
+            }
+        }
+    }
+
+    /**
+     * 更新右侧面板的可见性
+     */
+    private void updateRightPanelVisibility() {
+        if (!fileBrowserVisible && !monitorVisible) {
+            if (splitPane.getItems().contains(rightPanel)) {
+                splitPane.getItems().remove(rightPanel);
+            }
+        } else if (!splitPane.getItems().contains(rightPanel)) {
+            splitPane.getItems().add(rightPanel);
+            splitPane.setDividerPositions(fileBrowserVisible && monitorVisible ? 0.7 : 0.8);
+        }
+    }
+
+    /**
+     * 设置回滚行数
+     */
+    public void setScrollbackLines(int lines) {
+        emulator.setMaxScrollback(lines);
     }
 
     /**
      * 连接SSH
      */
     public void connect(String host, int port, String username, String password) throws Exception {
-        sshSession = new SSHSession(host, port, username, password);
+        connect(host, port, username, password, (List<String>) null);
+    }
+
+    public void connect(String host, int port, String username, String password, String privateKeyPath) throws Exception {
+        connect(host, port, username, password, privateKeyPath != null ? List.of(privateKeyPath) : null);
+    }
+
+    public void connect(String host, int port, String username, String password, List<String> privateKeyPaths) throws Exception {
+        this.host = host;
+        this.port = port;
+        this.username = username;
+        this.password = password;
+        this.privateKeyPaths = privateKeyPaths;
+        this.connectionLost = false;
+
+        sshSession = new SSHSession(host, port, username, password, privateKeyPaths);
         sshSession.connect();
         running.set(true);
+
+        updateStatusBar("已连接");
 
         // 启用调试日志（写入/tmp/terminal_debug.log）
         try {
@@ -188,6 +475,34 @@ public class SSHTerminalPane extends Pane {
         startReadThread();
         // requestFocus必须在FX线程执行
         Platform.runLater(() -> terminalView.requestFocus());
+    }
+
+    /**
+     * 更新状态栏
+     */
+    private void updateStatusBar(String state) {
+        Platform.runLater(() -> {
+            boolean connected = state.equals("已连接") || state.startsWith("ZModem");
+            statusDot.setFill(connected ? Color.valueOf("#4CAF50") : Color.RED);
+            stateLabel.setText(state);
+            if (host != null) {
+                connLabel.setText(username + "@" + host + ":" + port);
+            }
+        });
+    }
+
+    /**
+     * 创建图标ImageView
+     * @param path 图标资源路径
+     * @param active 是否激活状态
+     */
+    private ImageView createIcon(String path, boolean active) {
+        Image image = new Image(getClass().getResourceAsStream(path));
+        ImageView iv = new ImageView(image);
+        iv.setFitWidth(16);
+        iv.setFitHeight(16);
+        iv.setOpacity(active ? 1.0 : 0.6);
+        return iv;
     }
 
     /**
@@ -216,10 +531,11 @@ public class SSHTerminalPane extends Pane {
     }
 
     /**
-     * 断开连接
+     * 断开连接（用户主动关闭标签时调用）
      */
     public void disconnect() {
         running.set(false);
+        connectionLost = false;
         terminalView.stopBlink();
         if (zmodem != null) {
             try { zmodem.cancel(); } catch (IOException ignored) {}
@@ -227,14 +543,96 @@ public class SSHTerminalPane extends Pane {
         if (readThread != null) {
             readThread.interrupt();
         }
+        if (sftpClient != null) {
+            sftpClient.disconnect();
+        }
         if (sshSession != null) {
             sshSession.disconnect();
             sshSession = null;
         }
-        // 通知断开回调
-        if (onDisconnect != null) {
-            Platform.runLater(onDisconnect);
+        // 关闭文件浏览器
+        if (fileBrowser != null) {
+            splitPane.getItems().remove(fileBrowser);
         }
+        fileBrowserVisible = false;
+        fileBrowser = null;
+        sftpClient = null;
+
+        // 关闭监控视图
+        if (monitorPanel != null) {
+            monitorPanel.stopMonitoring();
+            if (rightPanel.getChildren().contains(monitorPanel)) {
+                rightPanel.getChildren().remove(monitorPanel);
+            }
+        }
+        monitorVisible = false;
+        monitorPanel = null;
+
+        updateStatusBar("已断开");
+    }
+
+    /**
+     * 重新连接
+     */
+    private void reconnect() {
+        if (host == null || password == null) return;
+        connectionLost = false;
+        updateStatusBar("重新连接中...");
+
+        new Thread(() -> {
+            try {
+                // 清理旧会话
+                if (sftpClient != null) {
+                    sftpClient.disconnect();
+                }
+                if (sshSession != null) {
+                    sshSession.disconnect();
+                    sshSession = null;
+                }
+                if (readThread != null) {
+                    readThread.interrupt();
+                    readThread = null;
+                }
+
+                sshSession = new SSHSession(host, port, username, password, privateKeyPaths);
+                sshSession.connect();
+                running.set(true);
+
+                // 通知SSH服务器终端大小
+                sshSession.resize(emulator.getCols(), emulator.getRows(),
+                        (int) terminalView.getCharWidth() * emulator.getCols(),
+                        (int) terminalView.getCharHeight() * emulator.getRows());
+
+                // 如果文件浏览器打开，重新初始化SFTP
+                if (fileBrowserVisible && fileBrowser != null) {
+                    sftpClient = new SFTPClient();
+                    fileBrowser = new SFTPFileBrowser(sshSession, sftpClient);
+                    Platform.runLater(() -> {
+                        if (!splitPane.getItems().contains(fileBrowser)) {
+                            splitPane.getItems().add(fileBrowser);
+                            splitPane.setDividerPositions(0.7);
+                        }
+                        fileBrowser.initConnection();
+                    });
+                }
+
+                Platform.runLater(() -> {
+                    emulator.process(("\r\n[重新连接成功]\r\n").getBytes());
+                    scheduleRender();
+                    updateStatusBar("已连接");
+                    terminalView.requestFocus();
+                });
+
+                startReadThread();
+            } catch (Exception e) {
+                connectionLost = true;
+                Platform.runLater(() -> {
+                    emulator.process(("\r\n[重新连接失败: " + e.getMessage() + "]\r\n").getBytes());
+                    scheduleRender();
+                    updateStatusBar("重连失败 - 按回车重试");
+                });
+            }
+        }, "SSH-Reconnect").start();
     }
 
     public void setOnDisconnect(Runnable callback) {
@@ -304,14 +702,12 @@ public class SSHTerminalPane extends Pane {
             }
             running.set(false);
 
-            // 显示断开信息
+            // 连接丢失，显示提示并等待用户按回车重连
+            connectionLost = true;
             Platform.runLater(() -> {
-                emulator.process(("\r\n[连接已关闭]\r\n").getBytes());
+                emulator.process(("\r\n[连接已断开 - 按回车重新连接]\r\n").getBytes());
                 scheduleRender();
-                // 通知断开回调
-                if (onDisconnect != null) {
-                    onDisconnect.run();
-                }
+                updateStatusBar("已断开 - 按回车重连");
             });
         }, "SSH-Read-Thread");
         readThread.setDaemon(true);
@@ -327,6 +723,7 @@ public class SSHTerminalPane extends Pane {
             lastRenderTime = now;
             terminalView.render();
             renderPending = false;
+            checkAltBufferState();
         } else if (!renderPending) {
             renderPending = true;
             // 延迟渲染
@@ -336,8 +733,26 @@ public class SSHTerminalPane extends Pane {
                 lastRenderTime = System.currentTimeMillis();
                 terminalView.render();
                 renderPending = false;
+                checkAltBufferState();
             });
             delay.play();
+        }
+    }
+
+    /**
+     * 检测交替缓冲区状态变化，更新状态栏显示
+     */
+    private void checkAltBufferState() {
+        boolean altBuffer = emulator.isUsingAltBuffer();
+        if (altBuffer != lastAltBufferState) {
+            lastAltBufferState = altBuffer;
+            if (altBuffer) {
+                stateLabel.setText("已连接 [ALT]");
+                System.err.println("[Terminal] Status bar: ALT buffer active");
+            } else {
+                stateLabel.setText("已连接");
+                System.err.println("[Terminal] Status bar: MAIN buffer active");
+            }
         }
     }
 
@@ -346,6 +761,7 @@ public class SSHTerminalPane extends Pane {
      */
     private void handleRzUpload(ZModemInputStream zmodemIn, OutputStream outputStream) {
         inZModemMode = true;
+        updateStatusBar("ZModem 上传中...");
         Platform.runLater(() -> {
             emulator.process(("\r\n[ZModem] 检测到rz上传请求，请选择要上传的文件...\r\n").getBytes());
             scheduleRender();
@@ -389,6 +805,7 @@ public class SSHTerminalPane extends Pane {
         } finally {
             inZModemMode = false;
             zmodem = null;
+            updateStatusBar("已连接");
         }
     }
 
@@ -397,6 +814,7 @@ public class SSHTerminalPane extends Pane {
      */
     private void handleSzDownload(ZModemInputStream zmodemIn, OutputStream outputStream) {
         inZModemMode = true;
+        updateStatusBar("ZModem 下载中...");
         Platform.runLater(() -> {
             emulator.process(("\r\n[ZModem] 检测到sz下载请求，请选择保存目录...\r\n").getBytes());
             scheduleRender();
@@ -435,6 +853,7 @@ public class SSHTerminalPane extends Pane {
         } finally {
             inZModemMode = false;
             zmodem = null;
+            updateStatusBar("已连接");
         }
     }
 
@@ -536,6 +955,20 @@ public class SSHTerminalPane extends Pane {
             }
             return input.read(b, off, len);
         }
+    }
+
+    /**
+     * 获取终端模拟器
+     */
+    public TerminalEmulator getEmulator() {
+        return emulator;
+    }
+
+    /**
+     * 获取终端视图
+     */
+    public TerminalView getTerminalView() {
+        return terminalView;
     }
 
     /**

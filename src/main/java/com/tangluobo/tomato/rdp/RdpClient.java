@@ -1,0 +1,466 @@
+package com.tangluobo.tomato.rdp;
+
+import java.io.InputStream;
+import java.net.InetAddress;
+import java.net.URL;
+import java.security.cert.X509Certificate;
+import java.util.function.Consumer;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import javax.net.ssl.X509TrustManager;
+import javax.swing.JComponent;
+
+import com.sshtools.javardp.CredentialProvider;
+import com.sshtools.javardp.DefaultCredentialsProvider;
+import com.sshtools.javardp.IContext;
+import com.sshtools.javardp.IContext.ReadyType;
+import com.sshtools.javardp.Options;
+import com.sshtools.javardp.RdesktopDisconnectException;
+import com.sshtools.javardp.RdesktopException;
+import com.sshtools.javardp.RdesktopLicenseException;
+import com.sshtools.javardp.State;
+import com.sshtools.javardp.graphics.RdesktopCanvas;
+import com.sshtools.javardp.io.DefaultIO;
+import com.sshtools.javardp.keymapping.KeyCode_FileBased;
+import com.sshtools.javardp.layers.Rdp;
+import com.sshtools.javardp.rdp5.VChannels;
+import com.sshtools.javardp.rdp5.cliprdr.ClipChannel;
+
+/**
+ * RDP客户端封装类，基于com.sshtools:rdp库
+ * 提供连接、断开、状态查询等功能，支持NLA认证和多会话
+ */
+public class RdpClient {
+
+    private static final Logger logger = Logger.getLogger(RdpClient.class.getName());
+
+    private volatile boolean connected = false;
+    private volatile Rdp rdpLayer;
+    private RdesktopCanvas canvas;
+    private State state;
+    private Options options;
+    private Consumer<String> onDisconnected;
+    private Consumer<Void> onConnected;
+    private Thread rdpThread;
+
+    /**
+     * 嵌入式IContext实现，不创建独立窗口
+     */
+    private class EmbeddedContext implements IContext {
+        private volatile boolean loggedOn = false;
+        private volatile boolean ready = false;
+
+        @Override
+        public void dispose() {
+            connected = false;
+        }
+
+        @Override
+        public void error(Exception e, boolean sysexit) {
+            logger.log(Level.SEVERE, "RDP错误: " + e.getMessage(), e);
+            if (sysexit) {
+                connected = false;
+                notifyDisconnected("连接错误: " + e.getMessage());
+            }
+        }
+
+        @Override
+        public byte[] loadLicense() throws java.io.IOException {
+            // 暂不支持许可证持久化
+            return null;
+        }
+
+        @Override
+        public void saveLicense(byte[] license) throws java.io.IOException {
+            // 暂不支持许可证持久化
+        }
+
+        @Override
+        public void screenResized(int width, int height, boolean clientInitiated) {
+            logger.info("屏幕大小变更: " + width + "x" + height);
+        }
+
+        @Override
+        public void setLoggedOn() {
+            loggedOn = true;
+            logger.info("RDP登录成功");
+        }
+
+        @Override
+        public void toggleFullScreen() {
+            // 嵌入模式不支持全屏切换
+        }
+
+        @Override
+        public void ready(ReadyType readyType) {
+            logger.info("RDP ready回调: " + readyType);
+            // 关键：必须调用canvas.triggerReady()！
+            // RdesktopFrame的标准实现会调用canvas.triggerReady(ready)，
+            // 这在INPUT阶段触发input.triggerReadyToSend()→doLockKeys()，
+            // 发送CapsLock/NumLock同步键事件，这是服务器开始推送画面的前提条件。
+            // 不调用triggerReady(INPUT)会导致服务器不推送画面数据（黑屏）。
+            if (canvas != null) {
+                canvas.triggerReady(readyType);
+            }
+            if (readyType == ReadyType.DISPLAY) {
+                ready = true;
+                connected = true;
+                logger.info("RDP桌面就绪，触发onConnected回调, rdp5=" + state.isRDP5());
+                if (onConnected != null) {
+                    onConnected.accept(null);
+                }
+            }
+        }
+
+        public boolean isLoggedOn() {
+            return loggedOn;
+        }
+
+        public boolean isReady() {
+            return ready;
+        }
+    }
+
+    public RdpClient() {
+    }
+
+    /**
+     * 连接到RDP服务器（异步，连接就绪后通过onConnected回调通知）
+     *
+     * @param host     服务器地址
+     * @param port     服务器端口（通常3389）
+     * @param username 用户名
+     * @param password 密码
+     * @param domain   域名（可为null）
+     * @param width    桌面宽度
+     * @param height   桌面高度
+     * @param bpp      色深（16/24）
+     * @param useSsl   是否使用SSL/TLS加密（无TLS服务器需设为false）
+     */
+    public void connect(String host, int port, String username, String password,
+                         String domain, int width, int height, int bpp, boolean useSsl) {
+        if (connected) {
+            throw new IllegalStateException("RDP客户端已连接，请先断开当前连接");
+        }
+
+        // 启用RDP库调试日志（slf4j-jdk14桥接到java.util.logging）
+        Logger sshtools = Logger.getLogger("com.sshtools");
+        sshtools.setLevel(Level.FINE);
+        Logger root = Logger.getLogger("");
+        for (java.util.logging.Handler h : root.getHandlers()) {
+            h.setLevel(Level.FINE);
+        }
+
+        // 创建配置
+        options = new Options();
+        options.setWidth(width);
+        options.setHeight(height);
+        options.setBpp(bpp);
+        options.setRdp5(true);
+        options.setPacketEncryption(true);
+        options.setBitmapCaching(true);
+        options.setMapClipboard(true);
+        options.setLowLatency(true);
+
+        // 调试：启用hex dump查看所有收发数据
+        options.setDebugHexdump(true);
+
+        // 配置安全类型
+        // State构造函数取securityTypes列表的最后一个元素作为初始securityType，
+        // 所以列表最后一个元素决定了优先选择的安全类型。
+        // 详见State.java: securityType = options.getSecurityTypes().get(size - 1)
+        options.getSecurityTypes().clear();
+        options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.STANDARD);
+        if (useSsl) {
+            // SSL在列表末尾会被优先选择；服务器不支持SSL时ISO协商会自动降级
+            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.SSL);
+        }
+
+        // 设置宽松的TrustManager：接受RDP服务器自签名证书
+        X509TrustManager permissiveTrustManager = new X509TrustManager() {
+            @Override
+            public void checkClientTrusted(X509Certificate[] chain, String authType) {
+            }
+            @Override
+            public void checkServerTrusted(X509Certificate[] chain, String authType) {
+            }
+            @Override
+            public X509Certificate[] getAcceptedIssuers() {
+                return new X509Certificate[0];
+            }
+        };
+        options.setTrustManager(permissiveTrustManager);
+
+        // 应用RDP TLS兼容性修复（替换Transport.CIPHERS + 设置SSLContext + 移除安全限制）
+        RdpTlsFix.apply(permissiveTrustManager);
+
+        // 创建凭证
+        DefaultCredentialsProvider dcp = new DefaultCredentialsProvider();
+        if (username != null) dcp.setUsername(username);
+        if (password != null) dcp.setPassword(password.toCharArray());
+        if (domain != null && !domain.isEmpty()) dcp.setDomain(domain);
+
+        // 创建状态（使用RdpState阻止processGeneralCaps错误禁用RDP5）
+        RdpState rdpState = new RdpState(options);
+        rdpState.lockRdp5(); // 在连接前锁定RDP5状态
+        state = rdpState;
+
+        // 加载键盘映射（keymaps在rdp JAR的根目录下）
+        String keyMapPath = "keymaps/";
+        String mapFile = "en-us";
+        try {
+            // 尝试从rdp JAR的classpath加载
+            URL resource = KeyCode_FileBased.class.getResource("/" + keyMapPath + mapFile);
+            if (resource == null) {
+                // 备选：用ClassLoader加载
+                resource = ClassLoader.getSystemResource(keyMapPath + mapFile);
+            }
+            if (resource != null) {
+                InputStream istr = resource.openStream();
+                if (istr != null) {
+                    KeyCode_FileBased keyMap = new KeyCode_FileBased(options, resource, istr);
+                    options.setKeymap(keyMap);
+                    istr.close();
+                    logger.info("键盘映射加载成功: " + mapFile);
+                }
+            } else {
+                logger.warning("未找到键盘映射文件: " + keyMapPath + mapFile + "，使用默认映射");
+            }
+        } catch (Exception e) {
+            logger.log(Level.WARNING, "加载键盘映射失败: " + e.getMessage());
+        }
+
+        // 创建虚拟通道
+        VChannels channels = new VChannels(state);
+        ClipChannel clipChannel = new ClipChannel();
+        if (state.isRDP5()) {
+            try {
+                channels.register(clipChannel);
+            } catch (RdesktopException e) {
+                logger.log(Level.WARNING, "注册剪贴板通道失败: " + e.getMessage());
+            }
+        }
+
+        // 创建嵌入式Context
+        EmbeddedContext context = new EmbeddedContext();
+
+        // 创建画布（不在SwingNode中显示，直到ready回调触发）
+        canvas = new RdesktopCanvas(context, state);
+        state.setCanvas(canvas);
+
+        // 注册剪贴板焦点监听
+        ((JComponent) canvas.getDisplay()).addFocusListener(clipChannel);
+
+        // 创建RDP层（使用RdpPatch修复rdp5_process加密bug）
+        rdpLayer = new RdpPatch(context, state, channels);
+
+        // 核心修复1：通过反射替换Transport为RdpTransport
+        // RdpTransport覆盖negotiateSSL()方法，强制使用TLS 1.2协议
+        // 这解决了Transport.negotiateSSL()未调用setEnabledProtocols()
+        // 导致SSLSocket尝试TLS 1.3而被Windows RDP服务器Connection Reset的问题
+        RdpTlsFix.injectRdpTransport(rdpLayer);
+
+        // 核心修复2：通过反射替换ISO为RdpIso
+        // RdpIso修复ISO层的fast-path包检测条件：(version & 3) == 0 → (version & 1) == 0
+        // 原始条件在fast-path包加密标志位为1时（首字节0x02）无法识别fast-path包，
+        // 导致fast-path包（包含位图更新数据）被错误当作slow-path处理，画面黑屏。
+        RdpIsoFix.injectRdpIso(rdpLayer);
+
+        // 在新线程中执行RDP连接（connect+mainLoop是阻塞调用）
+        rdpThread = new Thread(() -> {
+            try {
+                logger.info("开始RDP连接: " + host + ":" + port + " useSsl=" + useSsl);
+                rdpLayer.connect(new DefaultIO(InetAddress.getByName(host), port),
+                        dcp, options.getCommand(), options.getDirectory());
+                // 核心修复：SSL模式下在connect()之后强制设置licenceIssued=true
+                // 原因：Secure.receive()在licenceIssued=false时会读取4字节sec_flags header，
+                // 但SSL模式下接收的数据已被TLS层加密，不存在Secure层header。
+                // 这导致4字节RDP有效数据被错误消费，后续所有PDU解析失败（bitmapUpdates=0）。
+                // 必须在connect()之后设置：connect()期间Secure层发送PDUs时需要sec_flags header
+                // （服务器在SSL模式下仍期望看到sec_flags来识别PDU类型如SEC_LOGON_INFO），
+                // 但connect()之后接收PDUs时不应再读sec_flags（SSL模式下接收侧无此header）。
+                if (useSsl && !state.isLicenceIssued()) {
+                    logger.info("SSL模式：在connect()后强制设置licenceIssued=true（接收侧无Secure层header）");
+                    state.setLicenceIssued(true);
+                }
+                logger.info("RDP协议握手完成，进入主循环: " + host + ":" + port);
+                rdpLayer.mainLoop();
+                logger.info("RDP主循环正常退出");
+            } catch (RdesktopDisconnectException e) {
+                logger.info("RDP连接断开: " + e.getMessage());
+                notifyDisconnected(e.getMessage() != null ? e.getMessage() : "连接已断开");
+            } catch (RdesktopLicenseException e) {
+                logger.log(Level.SEVERE, "RDP许可证错误: " + e.getMessage());
+                notifyDisconnected("许可证错误: " + e.getMessage());
+            } catch (RdesktopException e) {
+                // SSL协商失败且当前使用SSL时，自动回退到STANDARD重试
+                if (useSsl && e.getMessage() != null && e.getMessage().contains("SSL negotiation failed")) {
+                    logger.warning("SSL协商失败，尝试回退到Standard RDP Security（无TLS）重连...");
+                    retryWithStandardSecurity(host, port, dcp);
+                    return;
+                }
+                logger.log(Level.SEVERE, "RDP异常: " + e.getMessage(), e);
+                notifyDisconnected("连接异常: " + e.getMessage());
+            } catch (java.net.UnknownHostException e) {
+                logger.log(Level.SEVERE, "无法解析主机: " + host);
+                notifyDisconnected("无法解析主机: " + host);
+            } catch (java.net.ConnectException e) {
+                logger.log(Level.SEVERE, "连接被拒绝: " + e.getMessage());
+                notifyDisconnected("连接被拒绝: " + host + ":" + port + " - " + e.getMessage());
+            } catch (java.net.SocketException e) {
+                if (connected) {
+                    logger.log(Level.WARNING, "连接中断: " + e.getMessage());
+                    notifyDisconnected("连接中断: " + e.getMessage());
+                }
+            } catch (java.io.IOException e) {
+                // SSL_NOT_ALLOWED_BY_SERVER错误：服务器不支持SSL
+                if (useSsl && e.getMessage() != null && e.getMessage().contains("SSL_NOT_ALLOWED_BY_SERVER")) {
+                    logger.warning("服务器不支持SSL，回退到Standard RDP Security重连...");
+                    retryWithStandardSecurity(host, port, dcp);
+                    return;
+                }
+                logger.log(Level.SEVERE, "IO错误: " + e.getMessage());
+                notifyDisconnected("IO错误: " + e.getMessage());
+            } catch (Exception e) {
+                logger.log(Level.SEVERE, "RDP连接错误: " + e.getMessage(), e);
+                notifyDisconnected("连接错误: " + e.getMessage());
+            } finally {
+                connected = false;
+            }
+        }, "RDP-" + host);
+        rdpThread.setDaemon(true);
+        rdpThread.start();
+
+        // 诊断：3秒后报告RDP Patch状态
+        java.util.Timer diagTimer = new java.util.Timer("RDP-Diag", true);
+        final int[] count = {0};
+        diagTimer.scheduleAtFixedRate(new java.util.TimerTask() {
+            @Override
+            public void run() {
+                if (count[0]++ >= 3 || rdpThread == null || !rdpThread.isAlive()) {
+                    cancel();
+                    return;
+                }
+                if (rdpLayer instanceof RdpPatch) {
+                    RdpPatch patch = (RdpPatch) rdpLayer;
+                    logger.info(String.format("[DIAG #%d] totalPDUs=%d, bitmapUpdates=%d, rdp5Packets=%d, connected=%b, active=%b, rdp5=%b",
+                            count[0], patch.getTotalPduCount(), patch.getBitmapUpdateCount(), patch.getRdp5PacketCount(),
+                            rdpLayer.isConnected(), state.isActive(), state.isRDP5()));
+                }
+            }
+        }, 3000, 3000);
+    }
+
+    private void notifyDisconnected(String reason) {
+        connected = false;
+        if (onDisconnected != null) {
+            onDisconnected.accept(reason);
+        }
+    }
+
+    /**
+     * 断开RDP连接
+     */
+    public void disconnect() {
+        if (!connected && (rdpLayer == null || !rdpLayer.isConnected())) return;
+        connected = false;
+        try {
+            if (rdpLayer != null && rdpLayer.isConnected()) {
+                rdpLayer.disconnect();
+                logger.info("RDP已断开");
+            }
+        } catch (Exception e) {
+            logger.log(Level.WARNING, "断开RDP连接时出错: " + e.getMessage());
+        }
+    }
+
+    /**
+     * SSL协商失败后，回退到Standard RDP Security（无TLS）重试连接。
+     * 重新创建所有RDP层对象，仅使用STANDARD安全类型。
+     */
+    private void retryWithStandardSecurity(String host, int port, CredentialProvider dcp) {
+        try {
+            // 断开之前的连接
+            if (rdpLayer != null && rdpLayer.isConnected()) {
+                try { rdpLayer.disconnect(); } catch (Exception ignored) {}
+            }
+
+            // 重新配置：仅STANDARD安全类型
+            options.getSecurityTypes().clear();
+            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.SSL);
+            // 注意：STANDARD放在最后，这样State构造函数会选择STANDARD
+            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.STANDARD);
+
+            // 重新创建状态
+            RdpState rdpState = new RdpState(options);
+            rdpState.lockRdp5();
+            state = rdpState;
+
+            // 重新创建画布
+            EmbeddedContext context = new EmbeddedContext();
+            canvas = new RdesktopCanvas(context, state);
+            state.setCanvas(canvas);
+
+            // 重新创建RDP层
+            VChannels channels = new VChannels(state);
+            rdpLayer = new RdpPatch(context, state, channels);
+
+            // 注入RdpTransport（仅当服务器支持SSL时才需要）
+            RdpTlsFix.injectRdpTransport(rdpLayer);
+
+            // 注入RdpIso（修复fast-path检测）
+            RdpIsoFix.injectRdpIso(rdpLayer);
+
+            logger.info("回退重连: " + host + ":" + port + " securityType=STANDARD");
+            rdpLayer.connect(new DefaultIO(InetAddress.getByName(host), port),
+                    dcp, options.getCommand(), options.getDirectory());
+            logger.info("Standard RDP Security连接成功，进入主循环");
+            rdpLayer.mainLoop();
+            logger.info("RDP主循环正常退出");
+        } catch (RdesktopDisconnectException e) {
+            logger.info("RDP连接断开: " + e.getMessage());
+            notifyDisconnected(e.getMessage() != null ? e.getMessage() : "连接已断开");
+        } catch (Exception e) {
+            logger.log(Level.SEVERE, "Standard RDP Security重连也失败: " + e.getMessage(), e);
+            notifyDisconnected("连接失败（SSL和Standard均不可用）: " + e.getMessage());
+        } finally {
+            connected = false;
+        }
+    }
+
+    /**
+     * 查询连接状态
+     */
+    public boolean isConnected() {
+        return connected && rdpLayer != null && rdpLayer.isConnected();
+    }
+
+    /**
+     * 设置断开连接回调
+     */
+    public void setOnDisconnected(Consumer<String> callback) {
+        this.onDisconnected = callback;
+    }
+
+    /**
+     * 设置连接就绪回调
+     */
+    public void setOnConnected(Consumer<Void> callback) {
+        this.onConnected = callback;
+    }
+
+    /**
+     * 获取渲染画布的JComponent（仅在onConnected回调后才有效）
+     */
+    public JComponent getDisplayComponent() {
+        return canvas != null ? (JComponent) canvas.getDisplay() : null;
+    }
+
+    /**
+     * 获取RdesktopCanvas
+     */
+    public RdesktopCanvas getCanvas() {
+        return canvas;
+    }
+}

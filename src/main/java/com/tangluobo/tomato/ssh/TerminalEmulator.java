@@ -9,6 +9,7 @@ public class TerminalEmulator {
 
     public static final int DEFAULT_COLS = 80;
     public static final int DEFAULT_ROWS = 24;
+    public static final int DEFAULT_SCROLLBACK = 1000;
 
     // 字符缓冲区
     private char[][] buffer;
@@ -48,12 +49,38 @@ public class TerminalEmulator {
     private int altSavedCursorX = 0;
     private int altSavedCursorY = 0;
     private boolean usingAltBuffer = false;
+    // 自动交替缓冲区标志：当检测到全屏程序（如top）未发送标准交替缓冲区序列时，
+    // 通过CSI 2J+应用光标键模式自动切换到交替缓冲区
+    private boolean autoAltBuffer = false;
+    // 交替缓冲区专用光标保存（不受DECSC/DECRC即ESC 7/8影响）
+    private int altBufferSavedCursorX = 0;
+    private int altBufferSavedCursorY = 0;
+    // 抑制屏幕修改标志：从交替缓冲区切回主缓冲区后，全屏程序（如top）退出时
+    // 可能发送清屏、换行、清除行等序列，该标志用于抑制这些修改命令，
+    // 直到收到新的可打印字符为止（说明shell已开始输出）
+    private boolean suppressScreenModify = false;
+
+    // 回滚历史缓冲区
+    private java.util.LinkedList<char[]> scrollbackLines = new java.util.LinkedList<>();
+    private java.util.LinkedList<int[]> scrollbackAttrs = new java.util.LinkedList<>();
+    private int maxScrollback = DEFAULT_SCROLLBACK;
+    // 用户滚动偏移（0=底部，>0=向上回看）
+    private int scrollOffset = 0;
+    // 切换到交替缓冲区时保存主缓冲区的滚动偏移
+    private int mainBufferScrollOffset = 0;
 
     // ANSI解析状态
     private ParseState parseState = ParseState.NORMAL;
     private StringBuilder escapeSeq = new StringBuilder();
+    private StringBuilder oscSeq = new StringBuilder();
     // 响应回调（发送数据回SSH服务器）
     private ResponseHandler responseHandler;
+
+    // 工作目录变化回调
+    public interface CwdChangeListener {
+        void onCwdChanged(String path);
+    }
+    private CwdChangeListener cwdChangeListener;
     // 调试输出
     private java.util.function.Consumer<String> debugWriter;
     // 当前属性
@@ -146,6 +173,10 @@ public class TerminalEmulator {
         this.debugWriter = writer;
     }
 
+    public void setCwdChangeListener(CwdChangeListener listener) {
+        this.cwdChangeListener = listener;
+    }
+
     private void sendResponse(String data) {
         if (responseHandler != null) {
             responseHandler.sendResponse(data.getBytes());
@@ -188,6 +219,61 @@ public class TerminalEmulator {
         return sb.toString();
     }
 
+    // === 回滚/滚动相关方法 ===
+
+    public int getScrollbackSize() {
+        return scrollbackLines.size();
+    }
+
+    public int getMaxScrollback() {
+        return maxScrollback;
+    }
+
+    public void setMaxScrollback(int max) {
+        this.maxScrollback = Math.max(0, max);
+        while (scrollbackLines.size() > maxScrollback) {
+            scrollbackLines.removeFirst();
+            scrollbackAttrs.removeFirst();
+        }
+        if (scrollOffset > scrollbackLines.size()) {
+            scrollOffset = scrollbackLines.size();
+        }
+    }
+
+    public int getScrollOffset() {
+        return scrollOffset;
+    }
+
+    /**
+     * 是否正在使用交替屏幕缓冲区
+     */
+    public boolean isUsingAltBuffer() {
+        return usingAltBuffer;
+    }
+
+    /**
+     * 设置滚动偏移（由滚动条驱动）
+     * @param offset 0=底部（最新），max=顶部（最旧）
+     */
+    public void setScrollOffset(int offset) {
+        this.scrollOffset = Math.max(0, Math.min(offset, scrollbackLines.size()));
+    }
+
+    /**
+     * 获取指定行的字符和属性（考虑scrollback偏移）
+     * @param screenRow 屏幕行号（0~rows-1）
+     * @return char[] 和 int[] 的数据，null表示空行
+     */
+    public char[] getScrollbackLine(int index) {
+        if (index < 0 || index >= scrollbackLines.size()) return null;
+        return scrollbackLines.get(index);
+    }
+
+    public int[] getScrollbackAttrLine(int index) {
+        if (index < 0 || index >= scrollbackAttrs.size()) return null;
+        return scrollbackAttrs.get(index);
+    }
+
     /**
      * 获取滚动区域（0-based）
      */
@@ -226,7 +312,26 @@ public class TerminalEmulator {
         scrollTop = 0;
         scrollBottom = 0;
         // 重建交替缓冲区
-        initAltBuffer();
+        if (usingAltBuffer) {
+            // 在alt buffer模式下，altBuffer保存着主缓冲区的内容，需要一并调整大小
+            char[][] newAltBuffer = new char[newRows][newCols];
+            int[][] newAltAttrs = new int[newRows][newCols];
+            for (int y = 0; y < newRows; y++) {
+                for (int x = 0; x < newCols; x++) {
+                    if (y < rows && x < cols) {
+                        newAltBuffer[y][x] = altBuffer[y][x];
+                        newAltAttrs[y][x] = altAttrs[y][x];
+                    } else {
+                        newAltBuffer[y][x] = ' ';
+                        newAltAttrs[y][x] = makeAttr(7, 0, false, false, false);
+                    }
+                }
+            }
+            altBuffer = newAltBuffer;
+            altAttrs = newAltAttrs;
+        } else {
+            initAltBuffer();
+        }
     }
 
     /**
@@ -283,10 +388,15 @@ public class TerminalEmulator {
         } else if (ch == '\r') {
             cursorX = 0;
         } else if (ch == '\n') {
-            cursorY++;
-            if (cursorY > getScrollBottom()) {
-                cursorY = getScrollBottom();
-                scrollUp(1);
+            // 抑制交替缓冲区切回后的换行（top退出时发送的清理序列）
+            if (suppressScreenModify) {
+                System.err.println("[Terminal] SUPPRESS \\n after alt buffer switch back");
+            } else {
+                cursorY++;
+                if (cursorY > getScrollBottom()) {
+                    cursorY = getScrollBottom();
+                    scrollUp(1);
+                }
             }
         } else if (ch == '\t') {
             cursorX = (cursorX / 8 + 1) * 8;
@@ -297,6 +407,11 @@ public class TerminalEmulator {
             // 忽略响铃
         } else if (ch >= 0x20 || Character.isISOControl(ch) == false) {
             // 可打印字符（包括CJK等Unicode字符）
+            // 收到可打印字符时重置抑制标志（说明shell已开始输出新内容）
+            if (suppressScreenModify) {
+                suppressScreenModify = false;
+                System.err.println("[Terminal] Printable char received, suppressScreenModify=false");
+            }
             boolean wideChar = isWideChar(ch);
             int charWidth = wideChar ? 2 : 1;
 
@@ -356,19 +471,30 @@ public class TerminalEmulator {
         } else if (ch == ']') {
             parseState = ParseState.OSC;
             escapeSeq.setLength(0);
+            oscSeq.setLength(0);
         } else if (ch == '7') {
             savedCursorX = cursorX;
             savedCursorY = cursorY;
             parseState = ParseState.NORMAL;
         } else if (ch == '8') {
-            cursorX = savedCursorX;
-            cursorY = savedCursorY;
+            // 抑制交替缓冲区切回后的光标恢复（top退出时可能发送ESC 8）
+            if (suppressScreenModify) {
+                System.err.println("[Terminal] SUPPRESS ESC 8 after alt buffer switch back");
+            } else {
+                cursorX = savedCursorX;
+                cursorY = savedCursorY;
+            }
             parseState = ParseState.NORMAL;
         } else if (ch == 'D') {
-            cursorY++;
-            if (cursorY > getScrollBottom()) {
-                cursorY = getScrollBottom();
-                scrollUp(1);
+            // 抑制交替缓冲区切回后的索引下移（top退出时可能发送ESC D）
+            if (suppressScreenModify) {
+                System.err.println("[Terminal] SUPPRESS ESC D after alt buffer switch back");
+            } else {
+                cursorY++;
+                if (cursorY > getScrollBottom()) {
+                    cursorY = getScrollBottom();
+                    scrollUp(1);
+                }
             }
             parseState = ParseState.NORMAL;
         } else if (ch == 'M') {
@@ -402,12 +528,45 @@ public class TerminalEmulator {
     }
 
     private void processOscChar(char ch) {
-        if (ch == 0x1b) {
-            parseState = ParseState.ESC;
-        } else if (ch == 7) { // BEL结束OSC
+        if (ch == 7) { // BEL结束OSC
+            processOscSequence(oscSeq.toString());
             parseState = ParseState.NORMAL;
-        } else if (ch == '\033') {
+        } else if (ch == 0x1b || ch == '\033') {
+            // ST = ESC \ 结束OSC
+            if (oscSeq.length() > 0 && oscSeq.charAt(oscSeq.length() - 1) == '\\') {
+                processOscSequence(oscSeq.substring(0, oscSeq.length() - 1));
+            }
             parseState = ParseState.ESC;
+        } else {
+            oscSeq.append(ch);
+        }
+    }
+
+    private void processOscSequence(String seq) {
+        // OSC 7: 设置工作目录  \e]7;file://HOST/PATH\a
+        if (seq.startsWith("7;")) {
+            String url = seq.substring(2);
+            if (url.startsWith("file://")) {
+                // 解析 file://HOST/PATH
+                String pathPart = url.substring(7);
+                int slashIdx = pathPart.indexOf('/');
+                if (slashIdx >= 0) {
+                    String path = pathPart.substring(slashIdx);
+                    if (cwdChangeListener != null) {
+                        cwdChangeListener.onCwdChanged(path);
+                    }
+                } else {
+                    // file://PATH (无HOST)
+                    if (cwdChangeListener != null) {
+                        cwdChangeListener.onCwdChanged("/" + pathPart);
+                    }
+                }
+            } else if (!url.isEmpty()) {
+                // 纯路径
+                if (cwdChangeListener != null) {
+                    cwdChangeListener.onCwdChanged(url);
+                }
+            }
         }
     }
 
@@ -437,6 +596,10 @@ public class TerminalEmulator {
         switch (cmd) {
             case 'H': // 光标位置
             case 'f':
+                if (suppressScreenModify) {
+                    System.err.println("[Terminal] SUPPRESS CSI H after alt buffer switch back");
+                    break;
+                }
                 int row = (params.length > 0 ? params[0] : 1) - 1;
                 int col = (params.length > 1 ? params[1] : 1) - 1;
                 if (originMode) {
@@ -450,41 +613,80 @@ public class TerminalEmulator {
                 clampCursor();
                 break;
             case 'A': // 光标上移
+                if (suppressScreenModify) break;
                 cursorY -= (params.length > 0 ? params[0] : 1);
                 if (cursorY < getScrollTop()) cursorY = getScrollTop();
                 break;
             case 'B': // 光标下移
+                if (suppressScreenModify) break;
                 cursorY += (params.length > 0 ? params[0] : 1);
                 if (cursorY > getScrollBottom()) cursorY = getScrollBottom();
                 break;
             case 'C': // 光标右移
+                if (suppressScreenModify) break;
                 cursorX += (params.length > 0 ? params[0] : 1);
                 if (cursorX >= cols) cursorX = cols - 1;
                 break;
             case 'D': // 光标左移
+                if (suppressScreenModify) break;
                 cursorX -= (params.length > 0 ? params[0] : 1);
                 if (cursorX < 0) cursorX = 0;
                 break;
             case 'G': // 光标水平绝对位置
+                if (suppressScreenModify) break;
                 cursorX = (params.length > 0 ? params[0] : 1) - 1;
                 clampCursor();
                 break;
             case 'd': // 光标垂直绝对位置
+                if (suppressScreenModify) break;
                 cursorY = (params.length > 0 ? params[0] : 1) - 1;
                 clampCursor();
                 break;
             case 'J': // 清屏
-                clearScreen(params.length > 0 ? params[0] : 0);
+                int clearMode = params.length > 0 ? params[0] : 0;
+                System.err.println("[Terminal] CSI " + clearMode + "J (clear screen) altBuf=" + usingAltBuffer + " autoAlt=" + autoAltBuffer + " appCursor=" + applicationCursorKeys + " suppress=" + suppressScreenModify);
+                if (suppressScreenModify) {
+                    // 从交替缓冲区切回后抑制所有清屏命令（top退出时的清理序列）
+                    System.err.println("[Terminal] SUPPRESS CSI " + clearMode + "J after alt buffer switch back");
+                    break;
+                }
+                if (clearMode == 2 && !usingAltBuffer) {
+                    // CSI 2J: 清除整个屏幕
+                    // 如果当前处于应用光标键模式（全屏程序如top的标志），
+                    // 且不在交替缓冲区，说明该程序没有发送标准的交替缓冲区切换序列，
+                    // 自动切换到交替缓冲区以保护主缓冲区内容
+                    if (applicationCursorKeys) {
+                        System.err.println("[Terminal] AUTO SWITCH TO ALT BUFFER (detected CSI 2J + appCursorKeys)");
+                        // 保存CSI ?1h时记录的光标位置，防止被switchToAltBuffer()覆盖
+                        // 因为在CSI ?1h和CSI 2J之间，top可能已经移动了光标（如CSI H）
+                        int savedX = altBufferSavedCursorX;
+                        int savedY = altBufferSavedCursorY;
+                        switchToAltBuffer();
+                        // 恢复CSI ?1h时保存的正确光标位置
+                        altBufferSavedCursorX = savedX;
+                        altBufferSavedCursorY = savedY;
+                        autoAltBuffer = true;
+                    }
+                }
+                clearScreen(clearMode);
                 break;
             case 's': // ANSI保存光标位置
                 ansiSavedCursorX = cursorX;
                 ansiSavedCursorY = cursorY;
                 break;
             case 'u': // ANSI恢复光标位置
+                if (suppressScreenModify) {
+                    System.err.println("[Terminal] SUPPRESS CSI u after alt buffer switch back");
+                    break;
+                }
                 cursorX = ansiSavedCursorX;
                 cursorY = ansiSavedCursorY;
                 break;
             case 'K': // 清行
+                if (suppressScreenModify) {
+                    System.err.println("[Terminal] SUPPRESS CSI K after alt buffer switch back");
+                    break;
+                }
                 clearLine(params.length > 0 ? params[0] : 0);
                 break;
             case 'm': // 设置属性
@@ -495,12 +697,27 @@ public class TerminalEmulator {
                     for (int p : params) {
                         switch (p) {
                             case 25: cursorVisible = true; break;
-                            case 1: applicationCursorKeys = true; break;
+                            case 1:
+                                applicationCursorKeys = true;
+                                // 保存当前光标位置到专用字段，用于自动交替缓冲区恢复
+                                // 注意：不能用savedCursorX/Y，因为top运行期间ESC 7/8会覆盖它
+                                if (!usingAltBuffer && !autoAltBuffer) {
+                                    altBufferSavedCursorX = cursorX;
+                                    altBufferSavedCursorY = cursorY;
+                                }
+                                System.err.println("[Terminal] CSI ?1h (appCursorKeys ON) altBuf=" + usingAltBuffer + " autoAlt=" + autoAltBuffer + " savedCursor=(" + altBufferSavedCursorX + "," + altBufferSavedCursorY + ")");
+                                break;
                             case 6: originMode = true; break;
                             case 1049: // 切换到交替屏幕缓冲区
+                                System.err.println("[Terminal] CSI ?1049h (switch to alt buffer) alreadyInAlt=" + usingAltBuffer);
+                                if (!usingAltBuffer) switchToAltBuffer();
+                                break;
+                            case 1047: // 交替屏幕缓冲区（xterm变体）
+                                System.err.println("[Terminal] CSI ?1047h (switch to alt buffer) alreadyInAlt=" + usingAltBuffer);
                                 if (!usingAltBuffer) switchToAltBuffer();
                                 break;
                             case 47: // 交替屏幕缓冲区（旧版）
+                                System.err.println("[Terminal] CSI ?47h (switch to alt buffer) alreadyInAlt=" + usingAltBuffer);
                                 if (!usingAltBuffer) switchToAltBuffer();
                                 break;
                             case 7: autoWrap = true; break;
@@ -520,13 +737,41 @@ public class TerminalEmulator {
                     for (int p : params) {
                         switch (p) {
                             case 25: cursorVisible = false; break;
-                            case 1: applicationCursorKeys = false; break;
+                            case 1:
+                                applicationCursorKeys = false;
+                                System.err.println("[Terminal] CSI ?1l (appCursorKeys OFF) altBuf=" + usingAltBuffer + " autoAlt=" + autoAltBuffer);
+                                // 自动交替缓冲区：当应用光标键模式重置时，说明全屏程序退出
+                                if (autoAltBuffer && usingAltBuffer) {
+                                    System.err.println("[Terminal] AUTO SWITCH TO MAIN BUFFER (appCursorKeys OFF)");
+                                    switchToMainBuffer();
+                                    autoAltBuffer = false;
+                                }
+                                break;
                             case 6: originMode = false; break;
                             case 1049: // 切回主屏幕缓冲区
-                                if (usingAltBuffer) switchToMainBuffer();
+                                System.err.println("[Terminal] CSI ?1049l (switch to main buffer) inAlt=" + usingAltBuffer + " autoAlt=" + autoAltBuffer);
+                                if (usingAltBuffer) {
+                                    switchToMainBuffer();
+                                    // 抑制切回后的屏幕修改序列（全屏程序退出时的清理序列）
+                                    suppressScreenModify = true;
+                                }
+                                autoAltBuffer = false;
+                                break;
+                            case 1047: // 交替屏幕缓冲区（xterm变体）
+                                System.err.println("[Terminal] CSI ?1047l (switch to main buffer) inAlt=" + usingAltBuffer + " autoAlt=" + autoAltBuffer);
+                                if (usingAltBuffer) {
+                                    switchToMainBuffer();
+                                    suppressScreenModify = true;
+                                }
+                                autoAltBuffer = false;
                                 break;
                             case 47: // 交替屏幕缓冲区（旧版）
-                                if (usingAltBuffer) switchToMainBuffer();
+                                System.err.println("[Terminal] CSI ?47l (switch to main buffer) inAlt=" + usingAltBuffer + " autoAlt=" + autoAltBuffer);
+                                if (usingAltBuffer) {
+                                    switchToMainBuffer();
+                                    suppressScreenModify = true;
+                                }
+                                autoAltBuffer = false;
                                 break;
                             case 7: autoWrap = false; break;
                         }
@@ -541,6 +786,10 @@ public class TerminalEmulator {
                 }
                 break;
             case 'r': // 设置滚动区域（DECSTBM）
+                if (suppressScreenModify) {
+                    System.err.println("[Terminal] SUPPRESS CSI r after alt buffer switch back");
+                    break;
+                }
                 scrollTop = (params.length > 0 && params[0] > 0) ? params[0] : 0;
                 scrollBottom = (params.length > 1 && params[1] > 0) ? params[1] : 0;
                 // 光标移到滚动区域起始位置
@@ -548,24 +797,31 @@ public class TerminalEmulator {
                 cursorY = getScrollTop();
                 break;
             case 'S': // 向上滚动
+                if (suppressScreenModify) break;
                 scrollUp(params.length > 0 ? params[0] : 1);
                 break;
             case 'T': // 向下滚动
+                if (suppressScreenModify) break;
                 scrollDown(params.length > 0 ? params[0] : 1);
                 break;
             case 'L': // 插入行
+                if (suppressScreenModify) break;
                 insertLines(params.length > 0 ? params[0] : 1);
                 break;
             case 'M': // 删除行
+                if (suppressScreenModify) break;
                 deleteLines(params.length > 0 ? params[0] : 1);
                 break;
             case 'P': // 删除字符
+                if (suppressScreenModify) break;
                 deleteChars(params.length > 0 ? params[0] : 1);
                 break;
             case '@': // 插入字符
+                if (suppressScreenModify) break;
                 insertChars(params.length > 0 ? params[0] : 1);
                 break;
             case 'X': // 删除字符（用空格替换）
+                if (suppressScreenModify) break;
                 eraseChars(params.length > 0 ? params[0] : 1);
                 break;
             case 'c': // DA - Device Attributes
@@ -593,7 +849,8 @@ public class TerminalEmulator {
      * 切换到交替屏幕缓冲区
      */
     private void switchToAltBuffer() {
-        // 保存当前缓冲区
+        System.err.println("[Terminal] SWITCH TO ALT BUFFER (autoAlt=" + autoAltBuffer + ")");
+        // 保存当前缓冲区（主缓冲区内容）
         char[][] tmpBuf = buffer;
         int[][] tmpAttrs = attrs;
         // 切换到交替缓冲区
@@ -601,11 +858,15 @@ public class TerminalEmulator {
         attrs = altAttrs;
         altBuffer = tmpBuf;
         altAttrs = tmpAttrs;
-        // 保存光标
+        // 保存DECSC光标位置（ESC 7/8使用的savedCursorX/Y）
         altSavedCursorX = savedCursorX;
         altSavedCursorY = savedCursorY;
-        savedCursorX = cursorX;
-        savedCursorY = cursorY;
+        // 保存光标到专用字段（用于切回时恢复，不被ESC 7/8覆盖）
+        altBufferSavedCursorX = cursorX;
+        altBufferSavedCursorY = cursorY;
+        // 保存主缓冲区的滚动偏移，重置为0
+        mainBufferScrollOffset = scrollOffset;
+        scrollOffset = 0;
         // 清除交替缓冲区
         clearBuffer(buffer, attrs);
         cursorX = 0;
@@ -619,6 +880,7 @@ public class TerminalEmulator {
      * 切回主屏幕缓冲区
      */
     private void switchToMainBuffer() {
+        System.err.println("[Terminal] SWITCH TO MAIN BUFFER (autoAlt=" + autoAltBuffer + ")");
         // 保存交替缓冲区内容
         char[][] tmpBuf = buffer;
         int[][] tmpAttrs = attrs;
@@ -627,14 +889,46 @@ public class TerminalEmulator {
         attrs = altAttrs;
         altBuffer = tmpBuf;
         altAttrs = tmpAttrs;
-        // 恢复光标
-        cursorX = savedCursorX;
-        cursorY = savedCursorY;
+        // 恢复DECSC保存的光标位置
         savedCursorX = altSavedCursorX;
         savedCursorY = altSavedCursorY;
+
+        if (autoAltBuffer) {
+            // 自动交替缓冲区模式：恢复到top启动前的光标位置
+            // 使用CSI ?1h时保存的altBufferSavedCursorX/Y（已防止被switchToAltBuffer覆盖）
+            cursorX = altBufferSavedCursorX;
+            cursorY = altBufferSavedCursorY;
+            // 设置抑制屏幕修改标志：top退出时可能发送清理序列，需要抑制
+            suppressScreenModify = true;
+            System.err.println("[Terminal] AUTO ALT: cursor restored to (" + cursorX + "," + cursorY + ") suppressScreenModify=true");
+        } else {
+            // 标准交替缓冲区模式：使用保存的光标位置
+            cursorX = altBufferSavedCursorX;
+            cursorY = altBufferSavedCursorY;
+        }
+
+        // 恢复主缓冲区的滚动偏移
+        scrollOffset = mainBufferScrollOffset;
+        mainBufferScrollOffset = 0;
         usingAltBuffer = false;
+        autoAltBuffer = false;
         scrollTop = 0;
         scrollBottom = 0;
+    }
+
+    /**
+     * 查找当前缓冲区中最后一个有非空格内容的行
+     * @return 最后一个有内容的行号，如果全部为空则返回-1
+     */
+    private int findLastContentRow() {
+        for (int y = rows - 1; y >= 0; y--) {
+            for (int x = 0; x < cols; x++) {
+                if (buffer[y][x] != ' ' && buffer[y][x] != '\0') {
+                    return y;
+                }
+            }
+        }
+        return -1;
     }
 
     private int[] parseParams(String seq) {
@@ -760,6 +1054,18 @@ public class TerminalEmulator {
         int top = getScrollTop();
         int bottom = getScrollBottom();
         for (int i = 0; i < n; i++) {
+            if (top == 0 && !usingAltBuffer) {
+                char[] savedLine = new char[cols];
+                int[] savedAttr = new int[cols];
+                System.arraycopy(buffer[0], 0, savedLine, 0, cols);
+                System.arraycopy(attrs[0], 0, savedAttr, 0, cols);
+                scrollbackLines.addLast(savedLine);
+                scrollbackAttrs.addLast(savedAttr);
+                while (scrollbackLines.size() > maxScrollback) {
+                    scrollbackLines.removeFirst();
+                    scrollbackAttrs.removeFirst();
+                }
+            }
             for (int y = top; y < bottom; y++) {
                 System.arraycopy(buffer[y + 1], 0, buffer[y], 0, cols);
                 System.arraycopy(attrs[y + 1], 0, attrs[y], 0, cols);
@@ -768,6 +1074,9 @@ public class TerminalEmulator {
                 buffer[bottom][x] = ' ';
                 attrs[bottom][x] = makeAttr(7, 0, false, false, false);
             }
+        }
+        if (scrollOffset > 0) {
+            scrollOffset = Math.min(scrollOffset + n, scrollbackLines.size());
         }
     }
 

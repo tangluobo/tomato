@@ -1,0 +1,22 @@
+/* SQL语法高亮样式 */
+.keyword {
+    -fx-fill: #0000FF;
+    -fx-font-weight: bold;
+}
+
+.string {
+    -fx-fill: #A31515;
+}
+
+.comment {
+    -fx-fill: #6A9955;
+    -fx-font-style: italic;
+}
+
+.number {
+    -fx-fill: #098658;
+}
+
+.plain {
+    -fx-fill: #333333;
+}
