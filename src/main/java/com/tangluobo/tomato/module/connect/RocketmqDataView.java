@@ -449,7 +449,7 @@ public class RocketmqDataView extends VBox {
                         String keys = String.valueOf(m.getOrDefault("keys", ""));
                         String storeTime = formatTimestamp(m.get("storeTimestamp"));
                         String bornHost = String.valueOf(m.getOrDefault("bornHost", ""));
-                        messageData.add(new MessageItem(msgId, tags, keys, storeTime, bornHost));
+                        messageData.add(new MessageItem(msgId, tags, keys, storeTime, bornHost, m));
                     }
                 });
             } catch (Exception e) {
@@ -462,6 +462,21 @@ public class RocketmqDataView extends VBox {
     }
 
     private void showMessageDetail(MessageItem item) {
+        // 优先使用缓存的消息详情（包含body）
+        if (item.getDetail() != null && !item.getDetail().isEmpty()) {
+            StringBuilder sb = new StringBuilder();
+            for (Map.Entry<String, Object> entry : item.getDetail().entrySet()) {
+                String key = entry.getKey();
+                Object value = entry.getValue();
+                if ("storeTimestamp".equals(key) || "bornTimestamp".equals(key)) {
+                    value = formatTimestamp(value);
+                }
+                sb.append(key).append(": ").append(value).append("\n");
+            }
+            messageDetailArea.setText(sb.toString());
+            return;
+        }
+        // 没有缓存时再尝试viewMessage
         String topicValue = msgTopicCombo.getValue();
         if (topicValue == null || topicValue.trim().isEmpty() || item.getMsgId().isEmpty()) return;
         final String topic = topicValue.trim();
@@ -474,14 +489,12 @@ public class RocketmqDataView extends VBox {
                 }
                 Platform.runLater(() -> messageDetailArea.setText(sb.toString()));
             } catch (Exception e) {
-                // viewMessage失败时，显示列表中已有的信息
                 StringBuilder sb = new StringBuilder();
                 sb.append("MsgId: ").append(item.getMsgId()).append("\n");
                 sb.append("Tags: ").append(item.getTags()).append("\n");
                 sb.append("Keys: ").append(item.getKeys()).append("\n");
                 sb.append("StoreTime: ").append(item.getStoreTime()).append("\n");
                 sb.append("BornHost: ").append(item.getBornHost()).append("\n");
-                sb.append("\n(完整详情获取失败: ").append(e.getMessage()).append(")");
                 Platform.runLater(() -> messageDetailArea.setText(sb.toString()));
             }
         }, "RocketMQ-MessageDetail").start();
@@ -717,14 +730,16 @@ public class RocketmqDataView extends VBox {
         private final String keys;
         private final String storeTime;
         private final String bornHost;
-        public MessageItem(String msgId, String tags, String keys, String storeTime, String bornHost) {
-            this.msgId = msgId; this.tags = tags; this.keys = keys; this.storeTime = storeTime; this.bornHost = bornHost;
+        private final Map<String, Object> detail; // 缓存完整消息详情
+        public MessageItem(String msgId, String tags, String keys, String storeTime, String bornHost, Map<String, Object> detail) {
+            this.msgId = msgId; this.tags = tags; this.keys = keys; this.storeTime = storeTime; this.bornHost = bornHost; this.detail = detail;
         }
         public String getMsgId() { return msgId; }
         public String getTags() { return tags; }
         public String getKeys() { return keys; }
         public String getStoreTime() { return storeTime; }
         public String getBornHost() { return bornHost; }
+        public Map<String, Object> getDetail() { return detail; }
     }
 
     public static class ConsumerItem {

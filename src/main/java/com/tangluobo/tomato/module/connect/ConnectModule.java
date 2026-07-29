@@ -444,9 +444,17 @@ public class ConnectModule implements Module {
                         connectItem.setOnAction(e -> handleConnect(targetConfig));
                         MenuItem editItem = new MenuItem("编辑");
                         editItem.setOnAction(e -> handleEdit(targetItem));
+                        MenuItem renameItem = new MenuItem("重命名");
+                        renameItem.setOnAction(e -> {
+                            editingItem = targetItem;
+                            treeView.setEditable(true);
+                            treeView.edit(targetItem);
+                        });
+                        MenuItem copyItem = new MenuItem("复制连接");
+                        copyItem.setOnAction(e -> handleCopyConnection(targetItem, targetConfig));
                         MenuItem deleteItem = new MenuItem("删除");
                         deleteItem.setOnAction(e -> handleDelete(targetItem));
-                        contextMenu.getItems().addAll(connectItem, new SeparatorMenuItem(), editItem, deleteItem);
+                        contextMenu.getItems().addAll(connectItem, new SeparatorMenuItem(), editItem, renameItem, copyItem, new SeparatorMenuItem(), deleteItem);
                     } else {
                         MenuItem addFolder = new MenuItem("新建目录");
                         addFolder.setOnAction(e -> handleAddFolder(targetItem));
@@ -488,6 +496,7 @@ public class ConnectModule implements Module {
             boolean isTableOrView = dbData != null
                     && (dbData.getType() == DatabaseNodeData.NodeType.TABLE || dbData.getType() == DatabaseNodeData.NodeType.VIEW);
             boolean isFolder = dbData == null && config != null && config.getType() == null;
+            boolean isHost = dbData == null && config != null && config.getType() != null;
 
             boolean wasAlreadySelected = selectedItem == selectedItemBeforeClick;
             boolean canReedit = wasAlreadySelected || selectedItem == recentlyEditedItem;
@@ -544,7 +553,7 @@ public class ConnectModule implements Module {
                     editingItem = null;
                     treeView.setEditable(false);
                 }
-                if (config != null && config.getType() != null) {
+                if (isHost) {
                     boolean isDatabase = config.getType() == ConnectType.MYSQL
                             || config.getType() == ConnectType.POSTGRESQL
                             || config.getType() == ConnectType.ORACLE;
@@ -562,7 +571,7 @@ public class ConnectModule implements Module {
                 }
                 selectedItemBeforeClick = null;
                 recentlyEditedItem = null;
-            } else if (isFolder && event.getClickCount() == 1 && canReedit && editingItem == null) {
+            } else if ((isFolder || isHost) && event.getClickCount() == 1 && canReedit && editingItem == null) {
                 TreeItem<String> itemToEdit = selectedItem;
                 if (singleClickTimer != null) {
                     singleClickTimer.stop();
@@ -675,7 +684,7 @@ public class ConnectModule implements Module {
                         commitTableNameRename(treeItem, dbData, oldName, newName);
                     } else {
                         ConnectionConfig cfg = itemConfigMap.get(treeItem);
-                        if (cfg != null && cfg.getType() == null) {
+                        if (cfg != null) {
                             cfg.setName(newName);
                             ConfigManager.saveConnections(connections);
                             treeItem.setValue(newName);
@@ -2675,6 +2684,28 @@ public class ConnectModule implements Module {
             itemConfigMap.put(item, updatedConfig);
 
             item.setValue(updatedConfig.getName());
+        }
+    }
+
+    private void handleCopyConnection(TreeItem<String> item, ConnectionConfig sourceConfig) {
+        com.google.gson.Gson gson = new com.google.gson.Gson();
+        ConnectionConfig copiedConfig = gson.fromJson(gson.toJson(sourceConfig), ConnectionConfig.class);
+        copiedConfig.setId(ConfigManager.generateId());
+        copiedConfig.setName(sourceConfig.getName() + " - 副本");
+
+        ConnectionConfig parentConfig = itemConfigMap.get(item);
+        if (parentConfig != null) {
+            copiedConfig.setParentId(parentConfig.getParentId());
+        }
+
+        connections.add(copiedConfig);
+        ConfigManager.saveConnections(connections);
+
+        TreeItem<String> copiedItem = createTreeItem(copiedConfig);
+        TreeItem<String> parent = item.getParent();
+        if (parent != null) {
+            int index = parent.getChildren().indexOf(item);
+            parent.getChildren().add(index + 1, copiedItem);
         }
     }
 
