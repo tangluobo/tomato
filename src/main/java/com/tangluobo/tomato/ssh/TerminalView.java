@@ -492,6 +492,8 @@ public class TerminalView extends Canvas {
     private void handleMousePressed(MouseEvent e) {
         requestFocus();
         if (e.getButton() == MouseButton.PRIMARY) {
+            // 双击/三击时不在此处重置选择，由handleMouseClicked处理
+            if (e.getClickCount() > 1) return;
             isSelecting = true;
             selectionStartCol = mouseToCol(e.getX());
             selectionStartRow = mouseToRow(e.getY());
@@ -525,6 +527,47 @@ public class TerminalView extends Canvas {
 
     private void handleMouseClicked(MouseEvent e) {
         requestFocus();
+        if (e.getButton() != MouseButton.PRIMARY) return;
+
+        int col = mouseToCol(e.getX());
+        int row = mouseToRow(e.getY());
+        int cols = emulator.getCols();
+
+        if (e.getClickCount() == 2) {
+            // 双击选中单词（以不可见字符为分隔）
+            int startCol = col;
+            int endCol = col;
+            // 向左查找单词边界
+            while (startCol > 0 && isWordChar(emulator.getChar(startCol - 1, row))) {
+                startCol--;
+            }
+            // 向右查找单词边界
+            while (endCol < cols - 1 && isWordChar(emulator.getChar(endCol + 1, row))) {
+                endCol++;
+            }
+            selectionStartRow = row;
+            selectionStartCol = startCol;
+            selectionEndRow = row;
+            selectionEndCol = endCol;
+            isSelecting = false;
+            render();
+        } else if (e.getClickCount() == 3) {
+            // 三击选中整行
+            selectionStartRow = row;
+            selectionStartCol = 0;
+            selectionEndRow = row;
+            selectionEndCol = cols - 1;
+            isSelecting = false;
+            render();
+        }
+    }
+
+    /**
+     * 判断字符是否为单词字符（可见非空白字符，用于双击选词）
+     * 空格、制表符等空白字符和控制字符作为单词分隔符
+     */
+    private boolean isWordChar(char c) {
+        return !Character.isWhitespace(c) && c > 0x1F && c != 0x7F;
     }
 
     /**
