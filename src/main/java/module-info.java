@@ -22,6 +22,12 @@ module tomato {
     requires software.amazon.awssdk.core;
     requires aliyun.sdk.oss;
     requires redis.clients.jedis;
+    requires rocketmq.tools;
+    requires rocketmq.remoting;
+    requires rocketmq.common;
+    requires rocketmq.client;
+    requires rocketmq.acl;
+    requires rocketmq.srvutil;
     requires org.apache.commons.lang3;
     requires slf4j.api;
     requires org.apache.xmlgraphics.batik.transcoder;

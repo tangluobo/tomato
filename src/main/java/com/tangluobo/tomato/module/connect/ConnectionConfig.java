@@ -142,6 +142,7 @@ public class ConnectionConfig {
     public int getRedisDatabase() { return redisDatabase; }
     public void setRedisDatabase(int redisDatabase) { this.redisDatabase = redisDatabase; }
 
+
     public boolean isUseSshTunnel() { return useSshTunnel; }
     public void setUseSshTunnel(boolean useSshTunnel) { this.useSshTunnel = useSshTunnel; }
 

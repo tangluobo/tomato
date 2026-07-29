@@ -12,7 +12,11 @@ public class DatabaseNodeData {
         QUERY_FOLDER,   // "查询"文件夹节点
         TABLE,          // 表节点
         VIEW,           // 视图节点
-        FUNCTION_FOLDER, BACKUP_FOLDER, QUERY, BACKUP
+        FUNCTION_FOLDER, BACKUP_FOLDER, QUERY, BACKUP,
+        ROCKETMQ_TOPICS_FOLDER,   // RocketMQ主题文件夹
+        ROCKETMQ_CONSUMERS_FOLDER, // RocketMQ消费者组文件夹
+        ROCKETMQ_CLUSTER_FOLDER,   // RocketMQ集群文件夹
+        ROCKETMQ_MESSAGES_FOLDER   // RocketMQ消息文件夹
     }
 
     private final NodeType type;

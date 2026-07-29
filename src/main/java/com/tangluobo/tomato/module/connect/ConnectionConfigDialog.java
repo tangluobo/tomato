@@ -123,6 +123,13 @@ public class ConnectionConfigDialog {
     private TextField redisDatabaseField;
     private TextField redisDescriptionField;
 
+    // ===== RocketMQ专属字段 =====
+    private VBox rocketmqConfigContent;
+    private TextField rocketmqNameField;
+    private TextField rocketmqHostField;
+    private TextField rocketmqPortField;
+    private TextField rocketmqDescriptionField;
+
     /**
      * 密钥条目：每行一个密钥文件（复选框 + 路径 + 浏览 + 删除）
      */
@@ -266,6 +273,9 @@ public class ConnectionConfigDialog {
         // ---- 构建Redis类型的配置 ----
         buildRedisConfigContent();
 
+        // ---- 构建RocketMQ类型的配置 ----
+        buildRocketmqConfigContent();
+
         // 按钮区域
         HBox configButtons = new HBox(10);
         configButtons.setAlignment(Pos.CENTER_RIGHT);
@@ -284,7 +294,7 @@ public class ConnectionConfigDialog {
 
         configButtons.getChildren().addAll(backBtn, cancelBtn2, okBtn);
 
-        configPage.getChildren().addAll(configTitle, dbTabPane, sshConfigContent, simpleConfigContent, localTerminalConfigContent, s3ConfigContent, redisConfigContent, configButtons);
+        configPage.getChildren().addAll(configTitle, dbTabPane, sshConfigContent, simpleConfigContent, localTerminalConfigContent, s3ConfigContent, redisConfigContent, rocketmqConfigContent, configButtons);
 
         // 编辑已有连接时直接显示配置页
         if (existingConfig != null) {
@@ -932,6 +942,52 @@ public class ConnectionConfigDialog {
         redisConfigContent.getChildren().addAll(grid, hint);
     }
 
+    /**
+     * 构建RocketMQ类型的配置内容
+     */
+    private void buildRocketmqConfigContent() {
+        rocketmqConfigContent = new VBox(15);
+        rocketmqConfigContent.setVisible(false);
+        rocketmqConfigContent.setManaged(false);
+
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(10);
+        grid.setPadding(new Insets(10, 0, 0, 0));
+
+        int row = 0;
+
+        grid.add(new Label("名称："), 0, row);
+        rocketmqNameField = new TextField();
+        rocketmqNameField.setPromptText("连接名称");
+        rocketmqNameField.setPrefWidth(280);
+        grid.add(rocketmqNameField, 1, row++);
+
+        grid.add(new Label("NameServer主机："), 0, row);
+        rocketmqHostField = new TextField();
+        rocketmqHostField.setPromptText("NameServer地址");
+        rocketmqHostField.setPrefWidth(280);
+        grid.add(rocketmqHostField, 1, row++);
+
+        grid.add(new Label("NameServer端口："), 0, row);
+        rocketmqPortField = new TextField();
+        rocketmqPortField.setPromptText("9876");
+        rocketmqPortField.setPrefWidth(100);
+        grid.add(rocketmqPortField, 1, row++);
+
+        grid.add(new Label("备注："), 0, row);
+        rocketmqDescriptionField = new TextField();
+        rocketmqDescriptionField.setPromptText("备注信息");
+        rocketmqDescriptionField.setPrefWidth(280);
+        grid.add(rocketmqDescriptionField, 1, row);
+
+        Label hint = new Label("填写RocketMQ NameServer地址，直接连接管理主题、消息、消费者组等");
+        hint.setStyle("-fx-font-size: 10px; -fx-text-fill: #999;");
+        hint.setWrapText(true);
+
+        rocketmqConfigContent.getChildren().addAll(grid, hint);
+    }
+
     // ==================== 密钥条目管理 ====================
 
     /**
@@ -1055,6 +1111,7 @@ public class ConnectionConfigDialog {
         boolean isLocalTerminal = selectedType == ConnectType.LOCAL_TERMINAL;
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
         boolean isRedis = selectedType == ConnectType.REDIS;
+        boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
 
         // 数据库类型TabPane已有标签标题，隐藏顶部标题避免重复
         configTitle.setVisible(!isDatabase);
@@ -1070,14 +1127,16 @@ public class ConnectionConfigDialog {
         dbTabPane.setManaged(isDatabase);
         sshConfigContent.setVisible(isSSH);
         sshConfigContent.setManaged(isSSH);
-        simpleConfigContent.setVisible(!isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis);
-        simpleConfigContent.setManaged(!isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis);
+        simpleConfigContent.setVisible(!isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis && !isRocketmq);
+        simpleConfigContent.setManaged(!isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis && !isRocketmq);
         localTerminalConfigContent.setVisible(isLocalTerminal);
         localTerminalConfigContent.setManaged(isLocalTerminal);
         s3ConfigContent.setVisible(isS3orOSS);
         s3ConfigContent.setManaged(isS3orOSS);
         redisConfigContent.setVisible(isRedis);
         redisConfigContent.setManaged(isRedis);
+        rocketmqConfigContent.setVisible(isRocketmq);
+        rocketmqConfigContent.setManaged(isRocketmq);
 
         if (isDatabase) {
             // 设置默认端口
@@ -1109,6 +1168,10 @@ public class ConnectionConfigDialog {
             if (redisDatabaseField.getText().isEmpty()) {
                 redisDatabaseField.setText("0");
             }
+        } else if (isRocketmq) {
+            if (rocketmqPortField.getText().isEmpty()) {
+                rocketmqPortField.setText("9876");
+            }
         } else {
             if (simplePortField.getText().isEmpty()) {
                 simplePortField.setText(String.valueOf(getDefaultPort(selectedType)));
@@ -1130,6 +1193,7 @@ public class ConnectionConfigDialog {
         boolean isLocalTerminal = selectedType == ConnectType.LOCAL_TERMINAL;
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
         boolean isRedis = selectedType == ConnectType.REDIS;
+        boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
 
         if (isLocalTerminal) {
             localTerminalNameField.setText(existingConfig.getName());
@@ -1242,6 +1306,11 @@ public class ConnectionConfigDialog {
             }
             redisDatabaseField.setText(String.valueOf(existingConfig.getRedisDatabase()));
             redisDescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
+        } else if (isRocketmq) {
+            rocketmqNameField.setText(existingConfig.getName());
+            rocketmqHostField.setText(existingConfig.getHost());
+            rocketmqPortField.setText(String.valueOf(existingConfig.getPort()));
+            rocketmqDescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
         } else {
             simpleNameField.setText(existingConfig.getName());
             simpleHostField.setText(existingConfig.getHost());
@@ -1292,6 +1361,7 @@ public class ConnectionConfigDialog {
 
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
         boolean isRedis = selectedType == ConnectType.REDIS;
+        boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
 
         if (isLocalTerminal) {
             config.setName(localTerminalNameField.getText().trim());
@@ -1425,6 +1495,12 @@ public class ConnectionConfigDialog {
             config.setRedisDatabase(Integer.parseInt(redisDatabaseField.getText().trim()));
             config.setDescription(redisDescriptionField.getText().trim());
 
+        } else if (isRocketmq) {
+            config.setName(rocketmqNameField.getText().trim());
+            config.setHost(rocketmqHostField.getText().trim());
+            config.setPort(Integer.parseInt(rocketmqPortField.getText().trim()));
+            config.setDescription(rocketmqDescriptionField.getText().trim());
+
         } else {
             config.setName(simpleNameField.getText().trim());
             config.setHost(simpleHostField.getText().trim());
@@ -1474,6 +1550,7 @@ public class ConnectionConfigDialog {
         boolean isLocalTerminal = selectedType == ConnectType.LOCAL_TERMINAL;
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
         boolean isRedis = selectedType == ConnectType.REDIS;
+        boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
 
         if (isLocalTerminal) {
             return validateLocalTerminalInput();
@@ -1485,6 +1562,8 @@ public class ConnectionConfigDialog {
             return validateS3Input();
         } else if (isRedis) {
             return validateRedisInput();
+        } else if (isRocketmq) {
+            return validateRocketmqInput();
         } else {
             return validateSimpleInput();
         }
@@ -1675,6 +1754,18 @@ public class ConnectionConfigDialog {
         return true;
     }
 
+    private boolean validateRocketmqInput() {
+        if (rocketmqNameField.getText().trim().isEmpty()) {
+            showAlert("请输入连接名称");
+            return false;
+        }
+        if (rocketmqHostField.getText().trim().isEmpty()) {
+            showAlert("请输入NameServer主机地址");
+            return false;
+        }
+        return true;
+    }
+
     private boolean validateSimpleInput() {
         if (simpleNameField.getText().trim().isEmpty()) {
             showAlert("请输入连接名称");
@@ -1712,6 +1803,7 @@ public class ConnectionConfigDialog {
             case S3 -> 9000;
             case ALIYUN_OSS -> 443;
             case REDIS -> 6379;
+            case ROCKETMQ -> 8080;
             case LOCAL_TERMINAL -> 0;
         };
     }

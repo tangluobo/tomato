@@ -40,6 +40,7 @@ public class ConnectModule implements Module {
     private Map<TreeItem<String>, Boolean> connectionStateMap;
     private TreeItem<String> editingItem;
     private TreeItem<String> selectedItemBeforeClick;
+    private TreeItem<String> recentlyEditedItem;
     private Timeline singleClickTimer;
     private Image folderIcon;
     private Image dbIcon;
@@ -49,6 +50,10 @@ public class ConnectModule implements Module {
     private Image functionIcon;
     private Image backupIcon;
     private Image queryIcon;
+    private Image rocketmqTopicIcon;
+    private Image rocketmqConsumerIcon;
+    private Image rocketmqClusterIcon;
+    private Image rocketmqMessageIcon;
     private TextField searchField;
 
     // 内容区域
@@ -121,6 +126,10 @@ public class ConnectModule implements Module {
         try { queryIcon = new Image(getClass().getResourceAsStream("/images/connect/query.png")); } catch (Exception e) { queryIcon = null; }
         try { functionIcon = new Image(getClass().getResourceAsStream("/images/connect/function.png")); } catch (Exception e) { functionIcon = null; }
         try { backupIcon = new Image(getClass().getResourceAsStream("/images/connect/backup.png")); } catch (Exception e) { backupIcon = null; }
+        try { rocketmqTopicIcon = new Image(getClass().getResourceAsStream("/images/connect/table.png")); } catch (Exception e) { rocketmqTopicIcon = null; }
+        try { rocketmqConsumerIcon = new Image(getClass().getResourceAsStream("/images/connect/user.png")); } catch (Exception e) { rocketmqConsumerIcon = null; }
+        try { rocketmqClusterIcon = new Image(getClass().getResourceAsStream("/images/connect/monitor.png")); } catch (Exception e) { rocketmqClusterIcon = null; }
+        try { rocketmqMessageIcon = new Image(getClass().getResourceAsStream("/images/connect/code.png")); } catch (Exception e) { rocketmqMessageIcon = null; }
     }
 
     private ImageView getDbNodeIcon(DatabaseNodeData data) {
@@ -139,6 +148,10 @@ public class ConnectModule implements Module {
             case VIEW -> viewIcon;
             case BACKUP -> backupIcon;
             case QUERY -> queryIcon;
+            case ROCKETMQ_TOPICS_FOLDER -> rocketmqTopicIcon;
+            case ROCKETMQ_CONSUMERS_FOLDER -> rocketmqConsumerIcon;
+            case ROCKETMQ_CLUSTER_FOLDER -> rocketmqClusterIcon;
+            case ROCKETMQ_MESSAGES_FOLDER -> rocketmqMessageIcon;
         };
         if (icon != null) iv.setImage(icon);
         return iv;
@@ -339,6 +352,13 @@ public class ConnectModule implements Module {
                             openItem.setOnAction(e -> handleRedisDbDoubleClick(targetItem, dbData));
                             contextMenu.getItems().add(openItem);
                         }
+                        case ROCKETMQ_TOPICS_FOLDER, ROCKETMQ_CONSUMERS_FOLDER, ROCKETMQ_CLUSTER_FOLDER, ROCKETMQ_MESSAGES_FOLDER -> {
+                            MenuItem openItem = new MenuItem("打开");
+                            openItem.setOnAction(e -> handleRocketmqFolderDoubleClick(targetItem, dbData));
+                            MenuItem refreshItem = new MenuItem("刷新");
+                            refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
+                            contextMenu.getItems().addAll(openItem, new SeparatorMenuItem(), refreshItem);
+                        }
                         case TABLES_FOLDER, VIEWS_FOLDER -> {
                             MenuItem refreshItem = new MenuItem("刷新");
                             refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
@@ -395,6 +415,7 @@ public class ConnectModule implements Module {
                                 || targetConfig.getType() == ConnectType.POSTGRESQL
                                 || targetConfig.getType() == ConnectType.ORACLE;
                         boolean isRedis = targetConfig.getType() == ConnectType.REDIS;
+                        boolean isRocketmq = targetConfig.getType() == ConnectType.ROCKETMQ;
                         if (isDatabase) {
                             MenuItem createDbItem = new MenuItem("新建数据库");
                             createDbItem.setOnAction(e -> handleCreateDatabase(targetItem, targetConfig));
@@ -406,6 +427,13 @@ public class ConnectModule implements Module {
                             }
                         }
                         if (isRedis) {
+                            if (!targetItem.getChildren().isEmpty()) {
+                                MenuItem refreshItem = new MenuItem("刷新");
+                                refreshItem.setOnAction(e -> handleRefreshDbHost(targetItem, targetConfig));
+                                contextMenu.getItems().add(refreshItem);
+                            }
+                        }
+                        if (isRocketmq) {
                             if (!targetItem.getChildren().isEmpty()) {
                                 MenuItem refreshItem = new MenuItem("刷新");
                                 refreshItem.setOnAction(e -> handleRefreshDbHost(targetItem, targetConfig));
@@ -424,9 +452,15 @@ public class ConnectModule implements Module {
                         addFolder.setOnAction(e -> handleAddFolder(targetItem));
                         MenuItem addConnection = new MenuItem("新建连接");
                         addConnection.setOnAction(e -> handleAddConnection(targetItem));
+                        MenuItem renameItem = new MenuItem("重命名");
+                        renameItem.setOnAction(e -> {
+                            editingItem = targetItem;
+                            treeView.setEditable(true);
+                            treeView.edit(targetItem);
+                        });
                         MenuItem deleteItem = new MenuItem("删除");
                         deleteItem.setOnAction(e -> handleDelete(targetItem));
-                        contextMenu.getItems().addAll(addFolder, addConnection, new SeparatorMenuItem(), deleteItem);
+                        contextMenu.getItems().addAll(addFolder, addConnection, new SeparatorMenuItem(), renameItem, deleteItem);
                     }
                 }
             }
@@ -450,10 +484,16 @@ public class ConnectModule implements Module {
             if (selectedItem == null) return;
 
             DatabaseNodeData dbData = dbNodeDataMap.get(selectedItem);
+            ConnectionConfig config = itemConfigMap.get(selectedItem);
             boolean isTableOrView = dbData != null
                     && (dbData.getType() == DatabaseNodeData.NodeType.TABLE || dbData.getType() == DatabaseNodeData.NodeType.VIEW);
+            boolean isFolder = dbData == null && config != null && config.getType() == null;
 
             boolean wasAlreadySelected = selectedItem == selectedItemBeforeClick;
+            boolean canReedit = wasAlreadySelected || selectedItem == recentlyEditedItem;
+            if (selectedItem != recentlyEditedItem) {
+                recentlyEditedItem = null;
+            }
 
             if (dbData != null) {
                 if (event.getClickCount() == 2) {
@@ -464,6 +504,7 @@ public class ConnectModule implements Module {
                     event.consume();
                     handleDbNodeDoubleClick(selectedItem, dbData);
                     selectedItemBeforeClick = null;
+                    recentlyEditedItem = null;
                     if (editingItem != null) {
                         editingItem = null;
                         treeView.setEditable(false);
@@ -472,7 +513,7 @@ public class ConnectModule implements Module {
                 }
 
                 if (event.getClickCount() == 1) {
-                    if (isTableOrView && wasAlreadySelected && editingItem == null) {
+                    if (isTableOrView && canReedit && editingItem == null) {
                         TreeItem<String> itemToEdit = selectedItem;
                         if (singleClickTimer != null) {
                             singleClickTimer.stop();
@@ -482,6 +523,7 @@ public class ConnectModule implements Module {
                                 ae -> {
                                     if (editingItem == null && itemToEdit == treeView.getSelectionModel().getSelectedItem()) {
                                         editingItem = itemToEdit;
+                                        recentlyEditedItem = null;
                                         treeView.setEditable(true);
                                         treeView.edit(itemToEdit);
                                     }
@@ -494,20 +536,50 @@ public class ConnectModule implements Module {
                     }
                 }
             } else if (event.getClickCount() == 2) {
-                ConnectionConfig config = itemConfigMap.get(selectedItem);
+                if (singleClickTimer != null) {
+                    singleClickTimer.stop();
+                    singleClickTimer = null;
+                }
+                if (editingItem != null) {
+                    editingItem = null;
+                    treeView.setEditable(false);
+                }
                 if (config != null && config.getType() != null) {
                     boolean isDatabase = config.getType() == ConnectType.MYSQL
                             || config.getType() == ConnectType.POSTGRESQL
                             || config.getType() == ConnectType.ORACLE;
                     boolean isRedis = config.getType() == ConnectType.REDIS;
+                    boolean isRocketmq = config.getType() == ConnectType.ROCKETMQ;
                     if (isDatabase) {
                         handleDbHostDoubleClick(selectedItem, config);
                     } else if (isRedis) {
                         handleRedisHostDoubleClick(selectedItem, config);
+                    } else if (isRocketmq) {
+                        handleRocketmqHostDoubleClick(selectedItem, config);
                     } else {
                         handleConnect(config);
                     }
                 }
+                selectedItemBeforeClick = null;
+                recentlyEditedItem = null;
+            } else if (isFolder && event.getClickCount() == 1 && canReedit && editingItem == null) {
+                TreeItem<String> itemToEdit = selectedItem;
+                if (singleClickTimer != null) {
+                    singleClickTimer.stop();
+                }
+                singleClickTimer = new Timeline(new KeyFrame(
+                        javafx.util.Duration.millis(300),
+                        ae -> {
+                            if (editingItem == null && itemToEdit == treeView.getSelectionModel().getSelectedItem()) {
+                                editingItem = itemToEdit;
+                                recentlyEditedItem = null;
+                                treeView.setEditable(true);
+                                treeView.edit(itemToEdit);
+                            }
+                            singleClickTimer = null;
+                        }
+                ));
+                singleClickTimer.play();
                 selectedItemBeforeClick = null;
             }
         });
@@ -588,6 +660,7 @@ public class ConnectModule implements Module {
 
                     String oldName = treeItem.getValue();
                     String newName = newValue.trim();
+                    recentlyEditedItem = treeItem;
                     editingItem = null;
                     editField = null;
                     treeView.setEditable(false);
@@ -600,12 +673,20 @@ public class ConnectModule implements Module {
                     DatabaseNodeData dbData = dbNodeDataMap.get(treeItem);
                     if (dbData != null) {
                         commitTableNameRename(treeItem, dbData, oldName, newName);
+                    } else {
+                        ConnectionConfig cfg = itemConfigMap.get(treeItem);
+                        if (cfg != null && cfg.getType() == null) {
+                            cfg.setName(newName);
+                            ConfigManager.saveConnections(connections);
+                            treeItem.setValue(newName);
+                        }
                     }
                 }
 
                 @Override
                 public void cancelEdit() {
                     TreeItem<String> treeItem = getTreeItem();
+                    recentlyEditedItem = treeItem;
                     editingItem = null;
                     editField = null;
                     treeView.setEditable(false);
@@ -922,6 +1003,140 @@ public class ConnectModule implements Module {
         }, "Redis-LoadDatabases").start();
     }
 
+    private void handleRocketmqHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
+        if (!hostItem.getChildren().isEmpty()) {
+            hostItem.setExpanded(!hostItem.isExpanded());
+            return;
+        }
+
+        ProgressIndicator loadingIndicator = new ProgressIndicator();
+        loadingIndicator.setPrefSize(16, 16);
+        loadingIndicator.setMaxSize(16, 16);
+        loadingIndicator.setStyle("-fx-progress-color: #4CAF50;");
+        hostItem.setGraphic(loadingIndicator);
+
+        new Thread(() -> {
+            try {
+                boolean connected = RocketmqService.testConnection(config);
+                if (!connected) {
+                    Platform.runLater(() -> {
+                        hostItem.setGraphic(getIconForConfig(config));
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("连接失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("无法连接到RocketMQ NameServer: " + config.getHost() + ":" + config.getPort());
+                        alert.showAndWait();
+                    });
+                    return;
+                }
+                Platform.runLater(() -> {
+                    updateHostIcon(hostItem, config, true);
+                    hostItem.getChildren().clear();
+
+                    // 主题节点
+                    TreeItem<String> topicsFolder = new TreeItem<>("主题");
+                    topicsFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_TOPICS_FOLDER, "主题", config, "")));
+                    dbNodeDataMap.put(topicsFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_TOPICS_FOLDER, "主题", config, ""));
+
+                    // 消息节点
+                    TreeItem<String> messagesFolder = new TreeItem<>("消息");
+                    messagesFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_MESSAGES_FOLDER, "消息", config, "")));
+                    dbNodeDataMap.put(messagesFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_MESSAGES_FOLDER, "消息", config, ""));
+
+                    // 消费者组节点
+                    TreeItem<String> consumersFolder = new TreeItem<>("消费者组");
+                    consumersFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_CONSUMERS_FOLDER, "消费者组", config, "")));
+                    dbNodeDataMap.put(consumersFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_CONSUMERS_FOLDER, "消费者组", config, ""));
+
+                    // 集群节点
+                    TreeItem<String> clusterFolder = new TreeItem<>("集群");
+                    clusterFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_CLUSTER_FOLDER, "集群", config, "")));
+                    dbNodeDataMap.put(clusterFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_CLUSTER_FOLDER, "集群", config, ""));
+
+                    hostItem.getChildren().addAll(topicsFolder, messagesFolder, consumersFolder, clusterFolder);
+                    hostItem.setExpanded(true);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    hostItem.setGraphic(getIconForConfig(config));
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("连接失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法连接到RocketMQ " + config.getName() + ": " + e.getMessage());
+                    alert.showAndWait();
+                });
+                e.printStackTrace();
+            }
+        }, "RocketMQ-Connect").start();
+    }
+
+    private void handleRocketmqFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
+        if (contentArea == null || terminalTabPane == null) return;
+        if (!ensureTabPaneInstalled()) return;
+
+        ConnectionConfig config = data.getConnectionConfig();
+        String folderName = data.getName();
+        DatabaseNodeData.NodeType nodeType = data.getType();
+
+        // 生成唯一tabId
+        String tabId = "rocketmq_" + config.getId() + "_" + nodeType.name();
+        for (Tab tab : terminalTabPane.getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                terminalTabPane.getSelectionModel().select(tab);
+                showDataView();
+                return;
+            }
+        }
+
+        // 打开RocketMQ管理视图
+        RocketmqDataView dataView = new RocketmqDataView(config);
+
+        // 根据节点类型切换到对应的Tab
+        switch (nodeType) {
+            case ROCKETMQ_TOPICS_FOLDER -> dataView.getMainTabPane().getSelectionModel().select(0);
+            case ROCKETMQ_MESSAGES_FOLDER -> dataView.getMainTabPane().getSelectionModel().select(1);
+            case ROCKETMQ_CONSUMERS_FOLDER -> dataView.getMainTabPane().getSelectionModel().select(2);
+            case ROCKETMQ_CLUSTER_FOLDER -> dataView.getMainTabPane().getSelectionModel().select(3);
+            default -> {}
+        }
+
+        String tabTitle = folderName + "(" + config.getHost() + ":" + config.getPort() + ")-RocketMQ";
+        Tab tab = new Tab(tabTitle);
+
+        try {
+            Image rocketmqIcon = new Image(getClass().getResourceAsStream("/images/connect/rocketmq.png"));
+            ImageView tabIconView = new ImageView(rocketmqIcon);
+            tabIconView.setFitWidth(18);
+            tabIconView.setFitHeight(18);
+            tab.setGraphic(tabIconView);
+        } catch (Exception ignored) {}
+
+        tab.setContent(dataView);
+        tab.setUserData(tabId);
+
+        ContextMenu rocketmqTabContextMenu = new ContextMenu();
+        MenuItem refreshItem = new MenuItem("刷新");
+        refreshItem.setOnAction(e -> {
+            // 切换到对应tab后触发刷新
+            int selectedIndex = dataView.getMainTabPane().getSelectionModel().getSelectedIndex();
+            if (selectedIndex == 0) {
+                // Topic tab - 刷新在dataView内部处理
+            }
+        });
+        rocketmqTabContextMenu.getItems().add(refreshItem);
+        tab.setContextMenu(rocketmqTabContextMenu);
+
+        tab.setOnClosed(e -> {
+            if (terminalTabPane.getTabs().isEmpty()) {
+                showWelcomeView();
+            }
+        });
+
+        terminalTabPane.getTabs().add(tab);
+        terminalTabPane.getSelectionModel().select(tab);
+        showDataView();
+    }
+
     private void handleDbNodeDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
         switch (data.getType()) {
             case DATABASE -> handleDatabaseDoubleClick(item, data);
@@ -935,6 +1150,9 @@ public class ConnectModule implements Module {
             case BACKUP_FOLDER -> {
                 loadBackupsForFolder(item, data.getConnectionConfig(), data.getDatabaseName());
                 item.setExpanded(!item.isExpanded());
+            }
+            case ROCKETMQ_TOPICS_FOLDER, ROCKETMQ_CONSUMERS_FOLDER, ROCKETMQ_CLUSTER_FOLDER, ROCKETMQ_MESSAGES_FOLDER -> {
+                handleRocketmqFolderDoubleClick(item, data);
             }
         }
     }
@@ -1808,6 +2026,14 @@ public class ConnectModule implements Module {
     }
 
     private void handleRefreshDbHost(TreeItem<String> hostItem, ConnectionConfig config) {
+        if (config.getType() == ConnectType.ROCKETMQ) {
+            for (TreeItem<String> child : hostItem.getChildren()) {
+                removeDbNodeDataRecursive(child);
+            }
+            hostItem.getChildren().clear();
+            handleRocketmqHostDoubleClick(hostItem, config);
+            return;
+        }
         if (config.getPassword() == null) {
             handleDbHostDoubleClick(hostItem, config);
             return;
@@ -2038,6 +2264,14 @@ public class ConnectModule implements Module {
             TreeItem<String> hostItem = findItemById(root, config.getId());
             if (hostItem != null) {
                 handleRedisHostDoubleClick(hostItem, config);
+            }
+            return;
+        }
+
+        if (config.getType() == ConnectType.ROCKETMQ) {
+            TreeItem<String> hostItem = findItemById(root, config.getId());
+            if (hostItem != null) {
+                handleRocketmqHostDoubleClick(hostItem, config);
             }
             return;
         }
