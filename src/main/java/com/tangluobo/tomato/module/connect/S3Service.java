@@ -33,6 +33,9 @@ public class S3Service {
         // 设置自定义端点（MinIO等S3兼容服务）
         String endpoint = config.getEndpoint();
         if (endpoint != null && !endpoint.isEmpty()) {
+            if (!endpoint.startsWith("http://") && !endpoint.startsWith("https://")) {
+                endpoint = "http://" + endpoint;
+            }
             builder.endpointOverride(URI.create(endpoint));
         }
 
