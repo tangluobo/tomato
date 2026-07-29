@@ -24,6 +24,22 @@ module tomato {
     requires redis.clients.jedis;
     requires org.apache.commons.lang3;
     requires slf4j.api;
+    requires org.apache.xmlgraphics.batik.transcoder;
+    requires org.apache.xmlgraphics.batik.codec;
+    requires org.apache.xmlgraphics.batik.dom;
+    requires org.apache.xmlgraphics.batik.svgdom;
+    requires org.apache.xmlgraphics.batik.brdige;
+    requires org.apache.xmlgraphics.batik.gvt;
+    requires org.apache.xmlgraphics.batik.util;
+    requires org.apache.xmlgraphics.batik.css;
+    requires org.apache.xmlgraphics.batik.parser;
+    requires org.apache.xmlgraphics.batik.anim;
+    requires org.apache.xmlgraphics.batik.awt.util;
+    requires org.apache.xmlgraphics.batik.constants;
+    requires org.apache.xmlgraphics.batik.ext;
+    requires org.apache.xmlgraphics.batik.i18n;
+    requires org.apache.xmlgraphics.batik.script;
+    requires org.apache.xmlgraphics.batik.xml;
 
     opens com.tangluobo.tomato to javafx.fxml;
     exports com.tangluobo.tomato;

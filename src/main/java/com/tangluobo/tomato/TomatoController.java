@@ -15,6 +15,7 @@ import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.scene.layout.Region;
+import javafx.geometry.Insets;
 import javafx.geometry.Rectangle2D;
 import javafx.scene.Cursor;
 import javafx.stage.Screen;
@@ -134,6 +135,10 @@ public class TomatoController {
         }
 
         chatContent.getChildren().clear();
+        chatContent.setPadding(new Insets(0));
+        chatContent.setSpacing(0);
+        chatScrollPane.setFitToWidth(true);
+        chatScrollPane.setFitToHeight(true);
         module.loadContent(chatContent);
     }
 
