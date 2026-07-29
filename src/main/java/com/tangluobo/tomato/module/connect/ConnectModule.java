@@ -3005,7 +3005,7 @@ public class ConnectModule implements Module {
     }
 
     /**
-     * 延迟初始化：将TabPane加入contentPaneVBox（绕过ScrollPane限制）
+     * 延迟初始化：将TabPane加入contentArea或其父级VBox
      */
     private boolean ensureTabPaneInstalled() {
         if (terminalTabPane == null) return false;
@@ -3014,15 +3014,21 @@ public class ConnectModule implements Module {
         // 延迟查找父级结构
         if (contentScrollPane == null || contentPaneVBox == null) {
             Node parent = contentArea.getParent();
-            while (parent != null) {
-                if (parent instanceof ScrollPane sp) {
+            // 先尝试找ScrollPane（旧布局兼容）
+            Node current = parent;
+            while (current != null) {
+                if (current instanceof ScrollPane sp) {
                     contentScrollPane = sp;
                     if (sp.getParent() instanceof VBox vb) {
                         contentPaneVBox = vb;
                     }
                     break;
                 }
-                parent = parent.getParent();
+                current = current.getParent();
+            }
+            // 如果没有找到ScrollPane（新布局），使用contentArea的parent VBox
+            if (contentPaneVBox == null && parent instanceof VBox vb) {
+                contentPaneVBox = vb;
             }
         }
 
@@ -3039,15 +3045,15 @@ public class ConnectModule implements Module {
         contentArea.getChildren().clear();
 
         // 欢迎页
-        welcomePane = new VBox();
-        welcomePane.setPadding(new Insets(30));
-        Label title = new Label("连接管理");
-        title.setStyle("-fx-font-size: 20px; -fx-font-weight: bold;");
-        Label hint = new Label("双击左侧连接以打开终端/文件浏览器");
-        hint.setStyle("-fx-font-size: 13px; -fx-text-fill: #888888;");
-        welcomePane.getChildren().addAll(title, hint);
+//        welcomePane = new VBox();
+//        welcomePane.setPadding(new Insets(30));
+//        Label title = new Label("连接管理");
+//        title.setStyle("-fx-font-size: 20px; -fx-font-weight: bold;");
+//        Label hint = new Label("双击左侧连接以打开终端/文件浏览器");
+//        hint.setStyle("-fx-font-size: 13px; -fx-text-fill: #888888;");
+//        welcomePane.getChildren().addAll(title, hint);
 
-        contentArea.getChildren().add(welcomePane);
+//        contentArea.getChildren().add(welcomePane);
 
         // 终端标签页
         terminalTabPane = new TabPane();

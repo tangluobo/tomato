@@ -28,12 +28,9 @@ public class SvgToPngPane extends VBox {
 
     // 源路径选择
     private TextField sourceField;
-    private Button sourceFileBtn;
-    private Button sourceDirBtn;
 
     // 输出目录选择
     private TextField outputField;
-    private Button outputDirBtn;
 
     // 转换选项
     private TextField widthField;
@@ -41,12 +38,11 @@ public class SvgToPngPane extends VBox {
 
     // 转换按钮
     private Button convertBtn;
-    private Button clearBtn;
+    private Label statusLabel;
 
-    // 进度和结果
+    // 进度
     private ProgressBar progressBar;
     private Label progressLabel;
-    private TextArea logArea;
 
     // 文件列表
     private ObservableList<String> fileData = FXCollections.observableArrayList();
@@ -59,114 +55,92 @@ public class SvgToPngPane extends VBox {
     private List<File> svgFiles = new ArrayList<>();
 
     public SvgToPngPane() {
-        setSpacing(12);
-        setPadding(new Insets(15));
-        setStyle("-fx-background-color: #ffffff;");
-
         initializeUI();
     }
 
     private void initializeUI() {
-        // 源选择区域
-        Label sourceTitle = new Label("选择源文件/目录");
-        sourceTitle.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #333;");
+        setStyle("-fx-background-color: #ffffff;");
+        setFillWidth(true);
+        setMaxWidth(Double.MAX_VALUE);
+        setMaxHeight(Double.MAX_VALUE);
 
+        // 自定义标题栏
+        HBox titleBar = new HBox(10);
+        titleBar.setAlignment(Pos.CENTER_LEFT);
+        titleBar.setPadding(new Insets(14, 20, 14, 20));
+        titleBar.setStyle("-fx-background-color: #f7f8fa; -fx-border-color: #e8e8e8; -fx-border-width: 0 0 1 0;");
+        Label titleIcon = new Label("🖼");
+        titleIcon.setStyle("-fx-font-size: 18px;");
+        Label titleLabel = new Label("图片格式转换");
+        titleLabel.setStyle("-fx-font-size: 16px; -fx-font-weight: bold; -fx-text-fill: #333;");
+        Region titleSpacer = new Region();
+        HBox.setHgrow(titleSpacer, Priority.ALWAYS);
+        Label subtitleLabel = new Label("SVG → PNG");
+        subtitleLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #999;");
+        titleBar.getChildren().addAll(titleIcon, titleLabel, titleSpacer, subtitleLabel);
+
+        // 内容区域（带padding）
+        VBox contentBox = new VBox(20);
+        contentBox.setPadding(new Insets(20, 25, 25, 25));
+        contentBox.setFillWidth(true);
+        contentBox.setMaxWidth(Double.MAX_VALUE);
+
+        // 源选择区域
+        VBox sourceBox = createSection("选择源文件/目录");
         HBox sourceRow = new HBox(8);
         sourceRow.setAlignment(Pos.CENTER_LEFT);
+        sourceRow.setMaxWidth(Double.MAX_VALUE);
 
         sourceField = new TextField();
         sourceField.setPromptText("请选择SVG文件或包含SVG文件的目录...");
-        sourceField.setStyle("-fx-font-size: 12px;");
-        sourceField.setPrefWidth(400);
+        sourceField.setStyle("-fx-font-size: 13px; -fx-padding: 6 10; -fx-border-color: #d0d0d0; -fx-border-radius: 4; -fx-background-radius: 4;");
         HBox.setHgrow(sourceField, Priority.ALWAYS);
 
-        sourceFileBtn = new Button("选择文件");
-        sourceFileBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4 12; -fx-background-color: #1890ff; -fx-text-fill: white; -fx-background-radius: 4;");
+        Button sourceFileBtn = new Button("选择文件");
+        sourceFileBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-size: 13px; -fx-padding: 6 16; -fx-background-radius: 4; -fx-cursor: hand;");
         sourceFileBtn.setOnAction(e -> chooseSourceFile());
 
-        sourceDirBtn = new Button("选择目录");
-        sourceDirBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4 12; -fx-background-color: #07c160; -fx-text-fill: white; -fx-background-radius: 4;");
+        Button sourceDirBtn = new Button("浏览");
+        sourceDirBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-size: 13px; -fx-padding: 6 16; -fx-background-radius: 4; -fx-cursor: hand;");
         sourceDirBtn.setOnAction(e -> chooseSourceDir());
 
         sourceRow.getChildren().addAll(sourceField, sourceFileBtn, sourceDirBtn);
-
-        VBox sourceBox = new VBox(6);
-        sourceBox.getChildren().addAll(sourceTitle, sourceRow);
+        sourceBox.getChildren().add(sourceRow);
 
         // 输出目录选择
-        Label outputTitle = new Label("输出目录");
-        outputTitle.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #333;");
-
-        HBox outputRow = new HBox(8);
-        outputRow.setAlignment(Pos.CENTER_LEFT);
-
-        outputField = new TextField();
-        outputField.setPromptText("请选择PNG输出目录...");
-        outputField.setStyle("-fx-font-size: 12px;");
-        outputField.setPrefWidth(400);
-        HBox.setHgrow(outputField, Priority.ALWAYS);
-
-        outputDirBtn = new Button("选择目录");
-        outputDirBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4 12; -fx-background-color: #07c160; -fx-text-fill: white; -fx-background-radius: 4;");
-        outputDirBtn.setOnAction(e -> chooseOutputDir());
-
-        outputRow.getChildren().addAll(outputField, outputDirBtn);
-
-        VBox outputBox = new VBox(6);
-        outputBox.getChildren().addAll(outputTitle, outputRow);
+        VBox outputBox = createDirectorySection("输出目录", "请选择PNG输出目录...");
 
         // 转换选项
-        Label optionsTitle = new Label("转换选项");
-        optionsTitle.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #333;");
-
+        VBox optionsBox = createSection("转换选项");
         HBox optionsRow = new HBox(12);
         optionsRow.setAlignment(Pos.CENTER_LEFT);
+        optionsRow.setMaxWidth(Double.MAX_VALUE);
 
         Label widthLabel = new Label("宽度:");
-        widthLabel.setStyle("-fx-font-size: 12px;");
+        widthLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: #555;");
         widthField = new TextField();
         widthField.setPromptText("自动");
-        widthField.setPrefWidth(80);
-        widthField.setStyle("-fx-font-size: 12px;");
+        widthField.setPrefWidth(100);
+        widthField.setStyle("-fx-font-size: 13px; -fx-padding: 6 10; -fx-border-color: #d0d0d0; -fx-border-radius: 4; -fx-background-radius: 4;");
 
         Label heightLabel = new Label("高度:");
-        heightLabel.setStyle("-fx-font-size: 12px;");
+        heightLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: #555;");
         heightField = new TextField();
         heightField.setPromptText("自动");
-        heightField.setPrefWidth(80);
-        heightField.setStyle("-fx-font-size: 12px;");
+        heightField.setPrefWidth(100);
+        heightField.setStyle("-fx-font-size: 13px; -fx-padding: 6 10; -fx-border-color: #d0d0d0; -fx-border-radius: 4; -fx-background-radius: 4;");
 
         optionsRow.getChildren().addAll(widthLabel, widthField, heightLabel, heightField);
-
-        VBox optionsBox = new VBox(6);
-        optionsBox.getChildren().addAll(optionsTitle, optionsRow);
+        optionsBox.getChildren().add(optionsRow);
 
         // 文件列表
-        Label fileTitle = new Label("待转换文件列表");
-        fileTitle.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #333;");
-
+        VBox fileBox = createSection("待转换文件列表");
         fileListView = new ListView<>(fileData);
-        fileListView.setStyle("-fx-font-size: 11px;");
-        fileListView.setPrefHeight(150);
+        fileListView.setStyle("-fx-font-size: 12px; -fx-border-color: #d0d0d0; -fx-border-radius: 4; -fx-background-radius: 4;");
+        fileListView.setPrefHeight(120);
         VBox.setVgrow(fileListView, Priority.ALWAYS);
-
-        VBox fileBox = new VBox(6);
-        fileBox.getChildren().addAll(fileTitle, fileListView);
+        fileBox.getChildren().add(fileListView);
         VBox.setVgrow(fileBox, Priority.ALWAYS);
-
-        // 操作按钮
-        HBox actionRow = new HBox(10);
-        actionRow.setAlignment(Pos.CENTER_LEFT);
-
-        convertBtn = new Button("开始转换");
-        convertBtn.setStyle("-fx-font-size: 13px; -fx-padding: 8 24; -fx-background-color: #1890ff; -fx-text-fill: white; -fx-background-radius: 6;");
-        convertBtn.setOnAction(e -> startConvert());
-
-        clearBtn = new Button("清空");
-        clearBtn.setStyle("-fx-font-size: 13px; -fx-padding: 8 24; -fx-background-color: #ff4d4f; -fx-text-fill: white; -fx-background-radius: 6;");
-        clearBtn.setOnAction(e -> clearAll());
-
-        actionRow.getChildren().addAll(convertBtn, clearBtn);
 
         // 进度区域
         progressBar = new ProgressBar();
@@ -175,24 +149,58 @@ public class SvgToPngPane extends VBox {
         progressBar.setVisible(false);
 
         progressLabel = new Label("");
-        progressLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #666;");
+        progressLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: #666;");
 
-        // 日志区域
-        Label logTitle = new Label("转换日志");
-        logTitle.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #333;");
+        // 转换按钮
+        convertBtn = new Button("开始转换");
+        convertBtn.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-size: 14px; -fx-padding: 8 30; -fx-background-radius: 4; -fx-cursor: hand;");
+        convertBtn.setOnAction(e -> startConvert());
 
-        logArea = new TextArea();
-        logArea.setEditable(false);
-        logArea.setStyle("-fx-font-size: 11px; -fx-control-inner-background: #fafafa;");
-        logArea.setPrefRowCount(6);
-        VBox.setVgrow(logArea, Priority.ALWAYS);
+        // 状态标签
+        statusLabel = new Label("");
+        statusLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: #666;");
+        statusLabel.setWrapText(true);
 
-        VBox logBox = new VBox(6);
-        logBox.getChildren().addAll(logTitle, logArea);
-        VBox.setVgrow(logBox, Priority.ALWAYS);
+        HBox buttonBox = new HBox(15);
+        buttonBox.setAlignment(Pos.CENTER_LEFT);
+        buttonBox.setMaxWidth(Double.MAX_VALUE);
+        buttonBox.getChildren().addAll(convertBtn, statusLabel);
 
-        // 组合布局
-        getChildren().addAll(sourceBox, outputBox, optionsBox, fileBox, actionRow, progressBar, progressLabel, logBox);
+        contentBox.getChildren().addAll(sourceBox, outputBox, optionsBox, fileBox, progressBar, progressLabel, buttonBox);
+
+        getChildren().addAll(titleBar, contentBox);
+        VBox.setVgrow(contentBox, Priority.ALWAYS);
+    }
+
+    private VBox createSection(String title) {
+        VBox box = new VBox(8);
+        box.setFillWidth(true);
+        box.setMaxWidth(Double.MAX_VALUE);
+        Label titleLabel = new Label(title);
+        titleLabel.setStyle("-fx-font-size: 15px; -fx-font-weight: bold; -fx-text-fill: #333;");
+        box.getChildren().add(titleLabel);
+        return box;
+    }
+
+    private VBox createDirectorySection(String title, String placeholder) {
+        VBox box = createSection(title);
+
+        HBox pathRow = new HBox(8);
+        pathRow.setAlignment(Pos.CENTER_LEFT);
+        pathRow.setMaxWidth(Double.MAX_VALUE);
+
+        outputField = new TextField();
+        outputField.setPromptText(placeholder);
+        outputField.setStyle("-fx-font-size: 13px; -fx-padding: 6 10; -fx-border-color: #d0d0d0; -fx-border-radius: 4; -fx-background-radius: 4;");
+        HBox.setHgrow(outputField, Priority.ALWAYS);
+
+        Button browseButton = new Button("浏览");
+        browseButton.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-size: 13px; -fx-padding: 6 16; -fx-background-radius: 4; -fx-cursor: hand;");
+        browseButton.setOnAction(e -> chooseOutputDir());
+
+        pathRow.getChildren().addAll(outputField, browseButton);
+        box.getChildren().add(pathRow);
+        return box;
     }
 
     private void chooseSourceFile() {
@@ -237,7 +245,7 @@ public class SvgToPngPane extends VBox {
                 .filter(p -> p.toString().toLowerCase().endsWith(".svg"))
                 .forEach(p -> svgFiles.add(p.toFile()));
         } catch (IOException e) {
-            log("扫描目录失败: " + e.getMessage());
+            updateStatus("扫描目录失败: " + e.getMessage(), true);
         }
     }
 
@@ -247,15 +255,15 @@ public class SvgToPngPane extends VBox {
             fileData.add(f.getAbsolutePath());
         }
         if (svgFiles.isEmpty()) {
-            log("未找到SVG文件");
+            updateStatus("未找到SVG文件", true);
         } else {
-            log("找到 " + svgFiles.size() + " 个SVG文件");
+            updateStatus("找到 " + svgFiles.size() + " 个SVG文件", false);
         }
     }
 
     private void startConvert() {
         if (svgFiles.isEmpty()) {
-            log("请先选择源文件或目录");
+            updateStatus("请先选择源文件或目录", true);
             return;
         }
 
@@ -282,7 +290,7 @@ public class SvgToPngPane extends VBox {
             if (!wText.isEmpty()) w = Integer.parseInt(wText);
             if (!hText.isEmpty()) h = Integer.parseInt(hText);
         } catch (NumberFormatException e) {
-            log("宽度/高度请输入有效数字");
+            updateStatus("宽度/高度请输入有效数字", true);
             return;
         }
 
@@ -292,6 +300,8 @@ public class SvgToPngPane extends VBox {
         convertBtn.setDisable(true);
         progressBar.setVisible(true);
         progressBar.setProgress(0);
+        statusLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: #1976D2;");
+        statusLabel.setText("正在转换...");
 
         int total = svgFiles.size();
         java.util.concurrent.atomic.AtomicInteger successCount = new java.util.concurrent.atomic.AtomicInteger(0);
@@ -320,14 +330,8 @@ public class SvgToPngPane extends VBox {
                 try {
                     convertSvgToPng(svgFile, pngFile, width, height);
                     successCount.incrementAndGet();
-                    String svgName = svgFile.getName();
-                    String pngName = pngFile.getName();
-                    Platform.runLater(() -> log("成功: " + svgName + " -> " + pngName));
                 } catch (Exception e) {
                     failCount.incrementAndGet();
-                    String svgName = svgFile.getName();
-                    String errMsg = e.getMessage();
-                    Platform.runLater(() -> log("失败: " + svgName + " - " + errMsg));
                 }
 
                 int idx = i + 1;
@@ -344,8 +348,14 @@ public class SvgToPngPane extends VBox {
             int finalFail = failCount.get();
             Platform.runLater(() -> {
                 convertBtn.setDisable(false);
-                progressLabel.setText(String.format("转换完成! 总计: %d, 成功: %d, 失败: %d", total, finalSuccess, finalFail));
-                log(String.format("========== 转换完成 ========== 总计: %d, 成功: %d, 失败: %d", total, finalSuccess, finalFail));
+                if (finalFail > 0) {
+                    statusLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: #e53935;");
+                    statusLabel.setText(String.format("转换完成，有失败项！总计: %d, 成功: %d, 失败: %d", total, finalSuccess, finalFail));
+                } else {
+                    statusLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: #388E3C;");
+                    statusLabel.setText(String.format("转换完成！总计: %d, 成功: %d", total, finalSuccess));
+                }
+                progressLabel.setText(String.format("进度: %d/%d (成功: %d, 失败: %d)", total, total, finalSuccess, finalFail));
             });
         }, "SVG-Convert").start();
     }
@@ -380,21 +390,9 @@ public class SvgToPngPane extends VBox {
         }
     }
 
-    private void clearAll() {
-        sourceField.clear();
-        outputField.clear();
-        widthField.clear();
-        heightField.clear();
-        svgFiles.clear();
-        fileData.clear();
-        logArea.clear();
-        progressBar.setProgress(0);
-        progressBar.setVisible(false);
-        progressLabel.setText("");
-    }
-
-    private void log(String message) {
-        logArea.appendText(message + "\n");
+    private void updateStatus(String message, boolean isError) {
+        statusLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: " + (isError ? "#e53935" : "#666") + ";");
+        statusLabel.setText(message);
     }
 
     private Stage getStage() {

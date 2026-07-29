@@ -14,6 +14,7 @@ import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.geometry.Insets;
 import javafx.geometry.Rectangle2D;
@@ -135,11 +136,25 @@ public class TomatoController {
         }
 
         chatContent.getChildren().clear();
-        chatContent.setPadding(new Insets(0));
-        chatContent.setSpacing(0);
-        chatScrollPane.setFitToWidth(true);
-        chatScrollPane.setFitToHeight(true);
-        module.loadContent(chatContent);
+        // 移除contentPane中之前可能添加的模块内容（保留titleBar和chatScrollPane）
+        contentPane.getChildren().removeIf(n -> n != titleBar && n != chatScrollPane);
+
+        // 隐藏ScrollPane，改为直接在contentPane中添加模块内容容器
+        // 这样模块内容可以占满右侧全部空间
+        chatScrollPane.setManaged(false);
+        chatScrollPane.setVisible(false);
+
+        contentPane.setFillWidth(true);
+
+        VBox moduleContent = new VBox();
+        moduleContent.setStyle("-fx-background-color: #ffffff;");
+        moduleContent.setFillWidth(true);
+        moduleContent.setMaxWidth(Double.MAX_VALUE);
+        moduleContent.setMaxHeight(Double.MAX_VALUE);
+        VBox.setVgrow(moduleContent, Priority.ALWAYS);
+        contentPane.getChildren().add(moduleContent);
+
+        module.loadContent(moduleContent);
     }
 
     @FXML

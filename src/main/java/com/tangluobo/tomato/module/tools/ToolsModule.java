@@ -116,13 +116,73 @@ public class ToolsModule implements Module {
 
         // 图片格式置换工具
         Node imageConvertIcon = createImageConvertIcon();
-        toolItems.add(new ToolItem("image_format_converter", "图片格式置换", "SVG转PNG等图片格式转换", imageConvertIcon));
+        toolItems.add(new ToolItem("image_format_converter", "图片格式转换", "SVG转PNG等图片格式转换", imageConvertIcon));
+
+        // 数据集格式转换工具
+        Node datasetConvertIcon = createDatasetConvertIcon();
+        toolItems.add(new ToolItem("dataset_converter", "数据集格式转换", "PASCAL VOC转COCO格式", datasetConvertIcon));
+
+        // JSON处理工具
+        Node jsonToolIcon = createJsonToolIcon();
+        toolItems.add(new ToolItem("json_tool", "JSON处理工具", "格式化、压缩、编码转换", jsonToolIcon));
+
+        // Linux桌面快捷方式创建工具
+        Node shortcutIcon = createShortcutIcon();
+        toolItems.add(new ToolItem("desktop_shortcut", "桌面快捷方式", "创建Linux .desktop快捷方式", shortcutIcon));
+
+        // Hosts 文件管理工具
+        Node hostsFileIcon = createHostsFileIcon();
+        toolItems.add(new ToolItem("hosts_file", "Hosts文件管理", "管理和切换不同环境的Hosts配置", hostsFileIcon));
     }
 
     private Node createImageConvertIcon() {
-        Label iconLabel = new Label("🖼");
-        iconLabel.setStyle("-fx-font-size: 22px;");
-        return iconLabel;
+        // Material Icons: image
+        SVGPath path = new SVGPath();
+        path.setContent("M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z");
+        path.setFill(Color.web("#1976D2"));
+        path.setScaleX(0.9);
+        path.setScaleY(0.9);
+        return path;
+    }
+
+    private Node createDatasetConvertIcon() {
+        // Material Icons: transform (from ironware project)
+        SVGPath path = new SVGPath();
+        path.setContent("M22 2v14H8V2h14zm0-2H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V2c0-1.1-.9-2-2-2zm-9 17v-2h2v-2h-2v-2h2V9h-2V7h2V5H13v14zm-7 0H4V5H2v14c0 1.1.9 2 2 2h14v-2H6z");
+        path.setFill(Color.web("#1976D2"));
+        path.setScaleX(0.9);
+        path.setScaleY(0.9);
+        return path;
+    }
+
+    private Node createJsonToolIcon() {
+        // Material Icons: data_object
+        SVGPath path = new SVGPath();
+        path.setContent("M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 7V3.5L18.5 9H13zM6 20V4h5v7h7v9H6zm2-6h8v2H8v-2zm0 4h5v2H8v-2z");
+        path.setFill(Color.web("#1976D2"));
+        path.setScaleX(0.9);
+        path.setScaleY(0.9);
+        return path;
+    }
+
+    private Node createShortcutIcon() {
+        // Material Icons: shortcut (desktop shortcut icon)
+        SVGPath path = new SVGPath();
+        path.setContent("M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z");
+        path.setFill(Color.web("#1976D2"));
+        path.setScaleX(0.9);
+        path.setScaleY(0.9);
+        return path;
+    }
+
+    private Node createHostsFileIcon() {
+        // Material Icons: dns (域名解析/Hosts 文件图标)
+        SVGPath path = new SVGPath();
+        path.setContent("M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM9 17H7v-5h2v5zm4 0h-2V7h2v10zm4 0h-2v-7h2v7z");
+        path.setFill(Color.web("#1976D2"));
+        path.setScaleX(0.9);
+        path.setScaleY(0.9);
+        return path;
     }
 
     private VBox createToolItemBox(ToolItem item) {
@@ -145,6 +205,13 @@ public class ToolsModule implements Module {
         if (item.icon instanceof Label labelIcon) {
             Label clonedIcon = new Label(labelIcon.getText());
             clonedIcon.setStyle(labelIcon.getStyle());
+            iconContainer.getChildren().add(clonedIcon);
+        } else if (item.icon instanceof SVGPath svgIcon) {
+            SVGPath clonedIcon = new SVGPath();
+            clonedIcon.setContent(svgIcon.getContent());
+            clonedIcon.setFill(svgIcon.getFill());
+            clonedIcon.setScaleX(svgIcon.getScaleX());
+            clonedIcon.setScaleY(svgIcon.getScaleY());
             iconContainer.getChildren().add(clonedIcon);
         } else {
             iconContainer.getChildren().add(item.icon);
@@ -202,18 +269,46 @@ public class ToolsModule implements Module {
         if (contentArea == null) return;
 
         contentArea.getChildren().clear();
+        contentArea.setFillWidth(true);
+        contentArea.setMaxWidth(Double.MAX_VALUE);
+        contentArea.setMaxHeight(Double.MAX_VALUE);
 
         switch (item.id) {
             case "image_format_converter":
-                ImageFormatConverterPane converterPane = new ImageFormatConverterPane();
-                contentArea.getChildren().add(converterPane);
-                VBox.setVgrow(converterPane, Priority.ALWAYS);
+                ImageFormatConverterPane imgPane = new ImageFormatConverterPane();
+                contentArea.getChildren().add(imgPane);
+                VBox.setVgrow(imgPane, Priority.ALWAYS);
+                break;
+            case "dataset_converter":
+                DatasetConverterPane datasetPane = new DatasetConverterPane();
+                contentArea.getChildren().add(datasetPane);
+                VBox.setVgrow(datasetPane, Priority.ALWAYS);
+                break;
+            case "json_tool":
+                JsonToolPane jsonPane = new JsonToolPane();
+                contentArea.getChildren().add(jsonPane);
+                VBox.setVgrow(jsonPane, Priority.ALWAYS);
+                break;
+            case "desktop_shortcut":
+                DesktopShortcutPane shortcutPane = new DesktopShortcutPane();
+                contentArea.getChildren().add(shortcutPane);
+                VBox.setVgrow(shortcutPane, Priority.ALWAYS);
+                break;
+            case "hosts_file":
+                HostsFilePane hostsFilePane = new HostsFilePane();
+                contentArea.getChildren().add(hostsFilePane);
+                VBox.setVgrow(hostsFilePane, Priority.ALWAYS);
                 break;
             default:
+                VBox placeholderBox = new VBox();
+                placeholderBox.setAlignment(Pos.CENTER);
+                placeholderBox.setMaxWidth(Double.MAX_VALUE);
+                placeholderBox.setMaxHeight(Double.MAX_VALUE);
                 Label placeholder = new Label("工具开发中...");
                 placeholder.setStyle("-fx-font-size: 16px; -fx-text-fill: #999;");
-                contentArea.getChildren().add(placeholder);
-                VBox.setVgrow(placeholder, Priority.ALWAYS);
+                placeholderBox.getChildren().add(placeholder);
+                contentArea.getChildren().add(placeholderBox);
+                VBox.setVgrow(placeholderBox, Priority.ALWAYS);
                 break;
         }
     }
