@@ -1,21 +1,16 @@
 package com.tangluobo.tomato.module.connect;
 
-import javafx.animation.KeyFrame;
-import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
-import javafx.scene.Node;
-import javafx.scene.Parent;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Text;
 import javafx.scene.text.TextFlow;
-import javafx.util.Duration;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -87,15 +82,8 @@ public class RocketmqDataView extends VBox {
             this.getStylesheets().add(css);
         }
 
-        // Apply immediately and on skin changes
+        // Apply immediately
         Platform.runLater(this::applyNoGapStyles);
-        mainTabPane.skinProperty().addListener((obs, oldSkin, newSkin) -> {
-            if (newSkin != null) {
-                Platform.runLater(this::applyNoGapStyles);
-            }
-        });
-        mainTabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) ->
-                Platform.runLater(this::applyNoGapStyles));
 
         // 自动加载Topic列表
         loadTopics();
@@ -103,45 +91,16 @@ public class RocketmqDataView extends VBox {
 
     private void applyNoGapStyles() {
         applyNoGapToTabPane(mainTabPane);
-        // Re-apply after delays to catch lazily-created skin nodes
-        Timeline timeline = new Timeline(
-                new KeyFrame(Duration.millis(50), e -> applyNoGapToTabPane(mainTabPane)),
-                new KeyFrame(Duration.millis(200), e -> applyNoGapToTabPane(mainTabPane)),
-                new KeyFrame(Duration.millis(500), e -> applyNoGapToTabPane(mainTabPane)),
-                new KeyFrame(Duration.millis(1000), e -> applyNoGapToTabPane(mainTabPane))
-        );
-        timeline.play();
     }
 
     private void applyNoGapToTabPane(TabPane tabPane) {
-        String noGapStyle = "-fx-padding: 0px 0px 0px 0px; -fx-border-insets: 0; -fx-background-insets: 0;";
+        tabPane.setStyle("-fx-padding: 0; -fx-border-insets: 0; -fx-background-insets: 0;");
 
-        tabPane.setStyle(noGapStyle);
-
-        // Find ALL descendants and set no padding using multiple selectors
-        String[] selectors = {
-                ".tab-content-area",
-                ".tab-header-area",
-                ".headers-region",
-                ".tab-area",
-                ".tab",
-                ".tab-pane",
-                ".scroll-pane",
-                ".content"
-        };
-
-        for (String selector : selectors) {
-            tabPane.lookupAll(selector).forEach(n -> {
-                n.setStyle(noGapStyle);
-                if (n instanceof Region) {
-                    ((Region) n).setPadding(Insets.EMPTY);
-                    ((Region) n).setBorder(Border.EMPTY);
-                }
-            });
-        }
-
-        // Also traverse all children recursively
-        traverseAndRemovePadding(tabPane);
+        // Set zero padding on tab layout containers only (not input controls)
+        tabPane.lookupAll(".tab-content-area").forEach(n -> n.setStyle(
+                "-fx-padding: 0; -fx-background-color: transparent;"));
+        tabPane.lookupAll(".tab-header-area").forEach(n -> n.setStyle(
+                "-fx-padding: 0;"));
 
         // Recursively apply to nested TabPanes
         tabPane.lookupAll(".tab-pane").forEach(n -> {
@@ -149,18 +108,6 @@ public class RocketmqDataView extends VBox {
                 applyNoGapToTabPane((TabPane) n);
             }
         });
-    }
-
-    private void traverseAndRemovePadding(Node node) {
-        if (node instanceof Region) {
-            Region region = (Region) node;
-            region.setPadding(Insets.EMPTY);
-            region.setBorder(Border.EMPTY);
-            region.setStyle("-fx-padding: 0px; -fx-border-insets: 0; -fx-background-insets: 0;");
-        }
-        if (node instanceof Parent) {
-            ((Parent) node).getChildrenUnmodifiable().forEach(this::traverseAndRemovePadding);
-        }
     }
 
     public TabPane getMainTabPane() {
@@ -595,6 +542,10 @@ public class RocketmqDataView extends VBox {
         last7DaysBtn.setStyle("-fx-font-size: 11px;");
         last7DaysBtn.setOnAction(e -> setQuickRange(7));
 
+        Button lastMonthBtn = new Button("近1月");
+        lastMonthBtn.setStyle("-fx-font-size: 11px;");
+        lastMonthBtn.setOnAction(e -> setQuickRange(30));
+
         HBox timeRangeBar = new HBox(5);
         timeRangeBar.setAlignment(Pos.CENTER_LEFT);
         timeRangeBar.getChildren().addAll(
@@ -611,7 +562,7 @@ public class RocketmqDataView extends VBox {
 
         HBox quickRangeBar = new HBox(5);
         quickRangeBar.setAlignment(Pos.CENTER_LEFT);
-        quickRangeBar.getChildren().addAll(new Label("快捷:"), last1DayBtn, last3DaysBtn, last7DaysBtn);
+        quickRangeBar.getChildren().addAll(new Label("快捷:"), last1DayBtn, last3DaysBtn, last7DaysBtn, lastMonthBtn);
 
         timeQueryContent.getChildren().addAll(timeRangeBar, quickRangeBar);
 
