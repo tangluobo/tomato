@@ -16,7 +16,11 @@ public class DatabaseNodeData {
         ROCKETMQ_TOPICS_FOLDER,   // RocketMQ主题文件夹
         ROCKETMQ_CONSUMERS_FOLDER, // RocketMQ消费者组文件夹
         ROCKETMQ_CLUSTER_FOLDER,   // RocketMQ集群文件夹
-        ROCKETMQ_MESSAGES_FOLDER   // RocketMQ消息文件夹
+        ROCKETMQ_MESSAGES_FOLDER,  // RocketMQ消息文件夹
+        ROCKETMQ_TOPIC,            // RocketMQ单个主题
+        ROCKETMQ_CONSUMER,         // RocketMQ单个消费者组
+        ROCKETMQ_BROKER,           // RocketMQ单个Broker
+        ROCKETMQ_MESSAGE           // RocketMQ单条消息
     }
 
     private final NodeType type;

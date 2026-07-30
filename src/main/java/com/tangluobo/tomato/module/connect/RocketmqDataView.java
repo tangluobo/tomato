@@ -1,16 +1,21 @@
 package com.tangluobo.tomato.module.connect;
 
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
+import javafx.scene.Parent;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Text;
 import javafx.scene.text.TextFlow;
+import javafx.util.Duration;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -23,21 +28,30 @@ import java.util.*;
 public class RocketmqDataView extends VBox {
     private final ConnectionConfig config;
     private final TabPane mainTabPane;
+    private final String topicName;
 
     // Topic tab
     private TableView<TopicItem> topicTable;
     private final ObservableList<TopicItem> topicData = FXCollections.observableArrayList();
     private TextArea topicDetailArea;
+    private VBox topicListSection;
+    private HBox topicToolbar;
+    private TableView<TopicOffsetItem> topicOffsetTable;
+    private final ObservableList<TopicOffsetItem> topicOffsetData = FXCollections.observableArrayList();
+    private VBox topicOffsetSection;
 
     // Message tab
-    private ComboBox<String> msgTopicCombo;
+    private String currentMessageTopic;
     private TextField msgKeyField;
-    private ComboBox<String> msgQueryTypeCombo;
+    private TextField msgMsgIdField;
     private DatePicker beginDatePicker;
-    private TextField beginTimeField;
+    private Spinner<Integer> beginHourSpinner;
+    private Spinner<Integer> beginMinuteSpinner;
+    private Spinner<Integer> beginSecondSpinner;
     private DatePicker endDatePicker;
-    private TextField endTimeField;
-    private HBox timeRangeBox;
+    private Spinner<Integer> endHourSpinner;
+    private Spinner<Integer> endMinuteSpinner;
+    private Spinner<Integer> endSecondSpinner;
     private TableView<MessageItem> messageTable;
     private final ObservableList<MessageItem> messageData = FXCollections.observableArrayList();
     private TextArea messageDetailArea;
@@ -50,8 +64,9 @@ public class RocketmqDataView extends VBox {
     private TableView<ClusterItem> clusterTable;
     private final ObservableList<ClusterItem> clusterData = FXCollections.observableArrayList();
 
-    public RocketmqDataView(ConnectionConfig config) {
+    public RocketmqDataView(ConnectionConfig config, String topicName) {
         this.config = config;
+        this.topicName = topicName;
         this.mainTabPane = new TabPane();
         this.mainTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
 
@@ -63,23 +78,168 @@ public class RocketmqDataView extends VBox {
         this.getChildren().add(mainTabPane);
         VBox.setVgrow(mainTabPane, Priority.ALWAYS);
 
+        // Apply no-gap styling
+        String css = getClass().getResource("/css/tab-nogap.css") != null
+                ? getClass().getResource("/css/tab-nogap.css").toExternalForm()
+                : null;
+        if (css != null) {
+            mainTabPane.getStylesheets().add(css);
+            this.getStylesheets().add(css);
+        }
+
+        // Apply immediately and on skin changes
+        Platform.runLater(this::applyNoGapStyles);
+        mainTabPane.skinProperty().addListener((obs, oldSkin, newSkin) -> {
+            if (newSkin != null) {
+                Platform.runLater(this::applyNoGapStyles);
+            }
+        });
+        mainTabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) ->
+                Platform.runLater(this::applyNoGapStyles));
+
         // 自动加载Topic列表
         loadTopics();
+    }
+
+    private void applyNoGapStyles() {
+        applyNoGapToTabPane(mainTabPane);
+        // Re-apply after delays to catch lazily-created skin nodes
+        Timeline timeline = new Timeline(
+                new KeyFrame(Duration.millis(50), e -> applyNoGapToTabPane(mainTabPane)),
+                new KeyFrame(Duration.millis(200), e -> applyNoGapToTabPane(mainTabPane)),
+                new KeyFrame(Duration.millis(500), e -> applyNoGapToTabPane(mainTabPane)),
+                new KeyFrame(Duration.millis(1000), e -> applyNoGapToTabPane(mainTabPane))
+        );
+        timeline.play();
+    }
+
+    private void applyNoGapToTabPane(TabPane tabPane) {
+        String noGapStyle = "-fx-padding: 0px 0px 0px 0px; -fx-border-insets: 0; -fx-background-insets: 0;";
+
+        tabPane.setStyle(noGapStyle);
+
+        // Find ALL descendants and set no padding using multiple selectors
+        String[] selectors = {
+                ".tab-content-area",
+                ".tab-header-area",
+                ".headers-region",
+                ".tab-area",
+                ".tab",
+                ".tab-pane",
+                ".scroll-pane",
+                ".content"
+        };
+
+        for (String selector : selectors) {
+            tabPane.lookupAll(selector).forEach(n -> {
+                n.setStyle(noGapStyle);
+                if (n instanceof Region) {
+                    ((Region) n).setPadding(Insets.EMPTY);
+                    ((Region) n).setBorder(Border.EMPTY);
+                }
+            });
+        }
+
+        // Also traverse all children recursively
+        traverseAndRemovePadding(tabPane);
+
+        // Recursively apply to nested TabPanes
+        tabPane.lookupAll(".tab-pane").forEach(n -> {
+            if (n instanceof TabPane && n != tabPane) {
+                applyNoGapToTabPane((TabPane) n);
+            }
+        });
+    }
+
+    private void traverseAndRemovePadding(Node node) {
+        if (node instanceof Region) {
+            Region region = (Region) node;
+            region.setPadding(Insets.EMPTY);
+            region.setBorder(Border.EMPTY);
+            region.setStyle("-fx-padding: 0px; -fx-border-insets: 0; -fx-background-insets: 0;");
+        }
+        if (node instanceof Parent) {
+            ((Parent) node).getChildrenUnmodifiable().forEach(this::traverseAndRemovePadding);
+        }
     }
 
     public TabPane getMainTabPane() {
         return mainTabPane;
     }
 
+    public void selectTopicTab(String topicName) {
+        mainTabPane.getSelectionModel().select(0);
+        String t = (topicName != null && !topicName.isEmpty()) ? topicName : this.topicName;
+        if (t != null && !t.isEmpty()) {
+            showTopicOffsetSection(t);
+            currentMessageTopic = t;
+        } else {
+            showTopicListSection();
+        }
+    }
+
+    public void selectConsumerTab(String groupName) {
+        mainTabPane.getSelectionModel().select(2);
+        if (groupName != null && !groupName.isEmpty()) {
+            loadConsumerDetail(groupName);
+        }
+    }
+
+    public void selectClusterTab() {
+        mainTabPane.getSelectionModel().select(3);
+    }
+
+    public void selectMessageTab(String topicName) {
+        mainTabPane.getSelectionModel().select(1);
+        String t = (topicName != null && !topicName.isEmpty()) ? topicName : this.topicName;
+        currentMessageTopic = t;
+    }
+
+    private void loadConsumerDetail(String groupName) {
+        new Thread(() -> {
+            try {
+                Map<String, Object> detail = RocketmqService.getConsumerGroupDetail(config, groupName);
+                StringBuilder sb = new StringBuilder();
+                sb.append("消费者组: ").append(groupName).append("\n\n");
+
+                sb.append("消费TPS: ").append(detail.getOrDefault("consumeTps", "N/A")).append("\n");
+                sb.append("积压总量: ").append(detail.getOrDefault("totalDiff", "N/A")).append("\n\n");
+
+                Object offsetTable = detail.get("offsetTable");
+                if (offsetTable instanceof List) {
+                    List<?> list = (List<?>) offsetTable;
+                    sb.append("队列消费详情 (共").append(list.size()).append("条):\n");
+                    for (Object item : list) {
+                        sb.append("  ").append(item).append("\n");
+                    }
+                }
+
+                String result = sb.toString();
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                    alert.setTitle("消费者组详情");
+                    alert.setHeaderText(null);
+                    TextArea textArea = new TextArea(result);
+                    textArea.setEditable(false);
+                    textArea.setPrefSize(500, 400);
+                    alert.getDialogPane().setContent(textArea);
+                    alert.showAndWait();
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> showError("获取消费者组详情失败: " + e.getMessage()));
+            }
+        }, "RocketMQ-ConsumerDetail").start();
+    }
+
     // ==================== Topic Tab ====================
 
     private void setupTopicTab() {
-        VBox content = new VBox(8);
-        content.setPadding(new Insets(8));
+        VBox content = new VBox(0);
+        content.setPadding(Insets.EMPTY);
 
         // 工具栏
-        HBox toolbar = new HBox(8);
-        toolbar.setAlignment(Pos.CENTER_LEFT);
+        topicToolbar = new HBox(8);
+        topicToolbar.setAlignment(Pos.CENTER_LEFT);
 
         Button refreshBtn = new Button("刷新");
         refreshBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-font-size: 12px;");
@@ -97,7 +257,7 @@ public class RocketmqDataView extends VBox {
         statsBtn.setStyle("-fx-font-size: 12px;");
         statsBtn.setOnAction(e -> showTopicStats());
 
-        toolbar.getChildren().addAll(refreshBtn, createBtn, deleteBtn, statsBtn);
+        topicToolbar.getChildren().addAll(refreshBtn, createBtn, deleteBtn, statsBtn);
 
         // Topic表格
         topicTable = new TableView<>();
@@ -132,12 +292,113 @@ public class RocketmqDataView extends VBox {
         topicDetailArea.setEditable(false);
         topicDetailArea.setStyle("-fx-font-family: monospace; -fx-font-size: 12px;");
 
-        content.getChildren().addAll(toolbar, topicTable, new Label("统计信息:"), topicDetailArea);
+        topicListSection = new VBox(8);
+        topicListSection.getChildren().addAll(topicToolbar, topicTable, new Label("统计信息:"), topicDetailArea);
         VBox.setVgrow(topicTable, Priority.ALWAYS);
+
+        // 偏移信息表格（用于从树节点双击打开时直接展示）
+        topicOffsetTable = new TableView<>();
+        topicOffsetTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
+
+        TableColumn<TopicOffsetItem, String> brokerNameCol = new TableColumn<>("BrokerName");
+        brokerNameCol.setCellValueFactory(new PropertyValueFactory<>("brokerName"));
+        brokerNameCol.setPrefWidth(150);
+
+        TableColumn<TopicOffsetItem, String> queueIdCol = new TableColumn<>("QueueId");
+        queueIdCol.setCellValueFactory(new PropertyValueFactory<>("queueId"));
+        queueIdCol.setPrefWidth(80);
+
+        TableColumn<TopicOffsetItem, String> minOffsetCol = new TableColumn<>("MinOffset");
+        minOffsetCol.setCellValueFactory(new PropertyValueFactory<>("minOffset"));
+        minOffsetCol.setPrefWidth(120);
+
+        TableColumn<TopicOffsetItem, String> maxOffsetCol = new TableColumn<>("MaxOffset");
+        maxOffsetCol.setCellValueFactory(new PropertyValueFactory<>("maxOffset"));
+        maxOffsetCol.setPrefWidth(120);
+
+        TableColumn<TopicOffsetItem, String> lastUpdateCol = new TableColumn<>("最后更新时间");
+        lastUpdateCol.setCellValueFactory(new PropertyValueFactory<>("lastUpdateTimestamp"));
+        lastUpdateCol.setPrefWidth(180);
+
+        topicOffsetTable.getColumns().addAll(brokerNameCol, queueIdCol, minOffsetCol, maxOffsetCol, lastUpdateCol);
+        topicOffsetTable.setItems(topicOffsetData);
+
+        Label topicTitleLabel = new Label();
+        topicTitleLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold;");
+
+        HBox offsetToolbar = new HBox(10);
+        offsetToolbar.setAlignment(Pos.CENTER_LEFT);
+        offsetToolbar.getChildren().addAll(topicTitleLabel);
+
+        topicOffsetSection = new VBox(8);
+        topicOffsetSection.getChildren().addAll(offsetToolbar, topicOffsetTable);
+        VBox.setVgrow(topicOffsetTable, Priority.ALWAYS);
+        topicOffsetSection.setVisible(false);
+        topicOffsetSection.setManaged(false);
+
+        content.getChildren().addAll(topicListSection, topicOffsetSection);
 
         Tab tab = new Tab("主题");
         tab.setContent(content);
         mainTabPane.getTabs().add(tab);
+    }
+
+    private void showTopicListSection() {
+        topicOffsetSection.setVisible(false);
+        topicOffsetSection.setManaged(false);
+        topicListSection.setVisible(true);
+        topicListSection.setManaged(true);
+    }
+
+    private void showTopicOffsetSection(String topicName) {
+        topicListSection.setVisible(false);
+        topicListSection.setManaged(false);
+        topicOffsetSection.setVisible(true);
+        topicOffsetSection.setManaged(true);
+
+        Label titleLabel = (Label) ((HBox) topicOffsetSection.getChildren().get(0)).getChildren().get(0);
+        titleLabel.setText("主题: " + topicName + " - 队列偏移信息");
+
+        loadTopicOffsetData(topicName);
+    }
+
+    private void loadTopicOffsetData(String topicName) {
+        new Thread(() -> {
+            try {
+                Map<String, Object> stats = RocketmqService.getTopicStats(config, topicName);
+                List<Map<String, Object>> offsetList;
+                Object offsetTable = stats.get("offsetTable");
+                if (offsetTable instanceof List) {
+                    offsetList = (List<Map<String, Object>>) offsetTable;
+                } else {
+                    offsetList = null;
+                }
+
+                Platform.runLater(() -> {
+                    topicOffsetData.clear();
+                    if (offsetList != null) {
+                        for (Map<String, Object> offset : offsetList) {
+                            String brokerName = String.valueOf(offset.getOrDefault("brokerName", ""));
+                            String queueId = String.valueOf(offset.getOrDefault("queueId", ""));
+                            String minOffset = String.valueOf(offset.getOrDefault("minOffset", ""));
+                            String maxOffset = String.valueOf(offset.getOrDefault("maxOffset", ""));
+                            Object ts = offset.get("lastUpdateTimestamp");
+                            String lastUpdate = ts != null ? formatTimestamp(ts) : "";
+                            topicOffsetData.add(new TopicOffsetItem(brokerName, queueId, minOffset, maxOffset, lastUpdate));
+                        }
+                    }
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    topicOffsetData.clear();
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("错误");
+                    alert.setHeaderText(null);
+                    alert.setContentText("获取主题统计信息失败: " + e.getMessage());
+                    alert.showAndWait();
+                });
+            }
+        }, "RocketMQ-TopicOffset").start();
     }
 
     private void loadTopics() {
@@ -236,101 +497,115 @@ public class RocketmqDataView extends VBox {
             showWarning("请先选择主题");
             return;
         }
-        new Thread(() -> {
-            try {
-                Map<String, Object> stats = RocketmqService.getTopicStats(config, selected.getTopic());
-                StringBuilder sb = new StringBuilder();
-                sb.append("主题: ").append(selected.getTopic()).append("\n\n");
-
-                Object offsetTable = stats.get("offsetTable");
-                if (offsetTable instanceof List) {
-                    List<?> list = (List<?>) offsetTable;
-                    sb.append("队列偏移信息 (共").append(list.size()).append("条):\n");
-                    for (Object item : list) {
-                        sb.append("  ").append(item).append("\n");
-                    }
-                } else {
-                    sb.append("暂无统计信息\n");
-                }
-
-                String result = sb.toString();
-                Platform.runLater(() -> topicDetailArea.setText(result));
-            } catch (Exception e) {
-                Platform.runLater(() -> topicDetailArea.setText("获取统计信息失败: " + e.getMessage()));
-            }
-        }, "RocketMQ-TopicStats").start();
+        showTopicOffsetSection(selected.getTopic());
     }
 
     // ==================== Message Tab ====================
 
     private void setupMessageTab() {
-        VBox content = new VBox(8);
-        content.setPadding(new Insets(8));
+        VBox content = new VBox(0);
+        content.setPadding(Insets.EMPTY);
 
-        // 搜索表单
-        GridPane searchGrid = new GridPane();
-        searchGrid.setHgap(10);
-        searchGrid.setVgap(8);
+        // 查询方式子标签
+        TabPane queryTabPane = new TabPane();
 
-        // 主题下拉框（可编辑）
-        msgTopicCombo = new ComboBox<>();
-        msgTopicCombo.setPromptText("选择主题");
-        msgTopicCombo.setPrefWidth(220);
-        msgTopicCombo.setEditable(true);
+        // Apply no-gap CSS to nested TabPane
+        String queryCss = getClass().getResource("/css/tab-nogap.css") != null
+                ? getClass().getResource("/css/tab-nogap.css").toExternalForm()
+                : null;
+        if (queryCss != null) {
+            queryTabPane.getStylesheets().add(queryCss);
+        }
+
+        // --- 按Key查询 ---
+        VBox keyQueryContent = new VBox(5);
+        keyQueryContent.setPadding(Insets.EMPTY);
+        keyQueryContent.setAlignment(Pos.CENTER_LEFT);
 
         msgKeyField = new TextField();
-        msgKeyField.setPromptText("Message Key / MsgId");
-        msgKeyField.setPrefWidth(200);
+        msgKeyField.setPromptText("请输入Message Key");
+        msgKeyField.setPrefWidth(300);
 
-        msgQueryTypeCombo = new ComboBox<>();
-        msgQueryTypeCombo.getItems().addAll("按Key查询", "按MsgId查询", "按时间查询");
-        msgQueryTypeCombo.setValue("按Key查询");
+        Button keySearchBtn = new Button("查询");
+        keySearchBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-font-size: 12px;");
+        keySearchBtn.setOnAction(e -> queryByKey());
 
-        Button searchBtn = new Button("查询");
-        searchBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-font-size: 12px;");
-        searchBtn.setOnAction(e -> queryMessages());
+        HBox keyQueryBar = new HBox(10);
+        keyQueryBar.setAlignment(Pos.CENTER_LEFT);
+        keyQueryBar.getChildren().addAll(new Label("Key:"), msgKeyField, keySearchBtn);
+        keyQueryContent.getChildren().add(keyQueryBar);
 
-        // 时间选择器
+        Tab keyQueryTab = new Tab("按Key查询");
+        keyQueryTab.setContent(keyQueryContent);
+        keyQueryTab.setClosable(false);
+
+        // --- 按MsgId查询 ---
+        VBox msgIdQueryContent = new VBox(5);
+        msgIdQueryContent.setPadding(Insets.EMPTY);
+        msgIdQueryContent.setAlignment(Pos.CENTER_LEFT);
+
+        msgMsgIdField = new TextField();
+        msgMsgIdField.setPromptText("请输入MsgId");
+        msgMsgIdField.setPrefWidth(400);
+
+        Button msgIdSearchBtn = new Button("查询");
+        msgIdSearchBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-font-size: 12px;");
+        msgIdSearchBtn.setOnAction(e -> queryByMsgId());
+
+        HBox msgIdQueryBar = new HBox(10);
+        msgIdQueryBar.setAlignment(Pos.CENTER_LEFT);
+        msgIdQueryBar.getChildren().addAll(new Label("MsgId:"), msgMsgIdField, msgIdSearchBtn);
+        msgIdQueryContent.getChildren().add(msgIdQueryBar);
+
+        Tab msgIdQueryTab = new Tab("按MsgId查询");
+        msgIdQueryTab.setContent(msgIdQueryContent);
+        msgIdQueryTab.setClosable(false);
+
+        // --- 按时间查询 ---
+        VBox timeQueryContent = new VBox(5);
+        timeQueryContent.setPadding(Insets.EMPTY);
+        timeQueryContent.setAlignment(Pos.CENTER_LEFT);
+
         beginDatePicker = new DatePicker(LocalDate.now().minusDays(1));
         beginDatePicker.setPrefWidth(130);
-        beginTimeField = new TextField("00:00:00");
-        beginTimeField.setPrefWidth(70);
+        beginHourSpinner = createTimeSpinner(0, 23, 0);
+        beginMinuteSpinner = createTimeSpinner(0, 59, 0);
+        beginSecondSpinner = createTimeSpinner(0, 59, 0);
 
         endDatePicker = new DatePicker(LocalDate.now());
         endDatePicker.setPrefWidth(130);
-        endTimeField = new TextField("23:59:59");
-        endTimeField.setPrefWidth(70);
+        endHourSpinner = createTimeSpinner(0, 23, 23);
+        endMinuteSpinner = createTimeSpinner(0, 59, 59);
+        endSecondSpinner = createTimeSpinner(0, 59, 59);
 
-        timeRangeBox = new HBox(5);
-        timeRangeBox.setAlignment(Pos.CENTER_LEFT);
-        timeRangeBox.getChildren().addAll(
-                new Label("开始:"), beginDatePicker, beginTimeField,
-                new Label("结束:"), endDatePicker, endTimeField
+        Button timeSearchBtn = new Button("查询");
+        timeSearchBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-font-size: 12px;");
+        timeSearchBtn.setOnAction(e -> queryByTime());
+
+        HBox timeRangeBar = new HBox(5);
+        timeRangeBar.setAlignment(Pos.CENTER_LEFT);
+        timeRangeBar.getChildren().addAll(
+                new Label("开始:"), beginDatePicker,
+                new Label("时"), beginHourSpinner,
+                new Label("分"), beginMinuteSpinner,
+                new Label("秒"), beginSecondSpinner,
+                new Label("结束:"), endDatePicker,
+                new Label("时"), endHourSpinner,
+                new Label("分"), endMinuteSpinner,
+                new Label("秒"), endSecondSpinner,
+                timeSearchBtn
         );
-        timeRangeBox.setVisible(false);
-        timeRangeBox.setManaged(false);
+        timeQueryContent.getChildren().add(timeRangeBar);
 
-        // 查询方式切换时，显示/隐藏时间选择器和Key输入框
-        msgQueryTypeCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
-            boolean isTimeQuery = "按时间查询".equals(newVal);
-            timeRangeBox.setVisible(isTimeQuery);
-            timeRangeBox.setManaged(isTimeQuery);
-            msgKeyField.setDisable(isTimeQuery);
-            if (isTimeQuery) {
-                msgKeyField.setPromptText("时间查询不需要Key");
-            } else {
-                msgKeyField.setPromptText("Message Key / MsgId");
-            }
-        });
+        Tab timeQueryTab = new Tab("按时间查询");
+        timeQueryTab.setContent(timeQueryContent);
+        timeQueryTab.setClosable(false);
 
-        searchGrid.add(new Label("主题："), 0, 0);
-        searchGrid.add(msgTopicCombo, 1, 0);
-        searchGrid.add(new Label("查询方式："), 2, 0);
-        searchGrid.add(msgQueryTypeCombo, 3, 0);
-        searchGrid.add(searchBtn, 4, 0);
-        searchGrid.add(new Label("Key/MsgId："), 0, 1);
-        searchGrid.add(msgKeyField, 1, 1);
-        searchGrid.add(timeRangeBox, 2, 1, 3, 1);
+        queryTabPane.getTabs().addAll(keyQueryTab, msgIdQueryTab, timeQueryTab);
+
+        // Re-apply no-gap styles when sub-tabs change
+        queryTabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) ->
+                Platform.runLater(this::applyNoGapStyles));
 
         // 消息表格
         messageTable = new TableView<>();
@@ -376,93 +651,121 @@ public class RocketmqDataView extends VBox {
             return row;
         });
 
-        content.getChildren().addAll(searchGrid, messageTable, new Label("消息详情(双击查看):"), messageDetailArea);
         VBox.setVgrow(messageTable, Priority.ALWAYS);
+        VBox.setVgrow(queryTabPane, Priority.NEVER);
+
+        content.getChildren().addAll(queryTabPane, messageTable, new Label("消息详情(双击查看):"), messageDetailArea);
 
         Tab tab = new Tab("消息");
         tab.setContent(content);
         mainTabPane.getTabs().add(tab);
-
-        // 加载主题到下拉框
-        loadTopicsForCombo();
     }
 
-    private void loadTopicsForCombo() {
-        new Thread(() -> {
-            try {
-                List<Map<String, Object>> topics = RocketmqService.getTopicList(config);
-                Platform.runLater(() -> {
-                    List<String> topicNames = new ArrayList<>();
-                    for (Map<String, Object> t : topics) {
-                        String name = String.valueOf(t.getOrDefault("topic", ""));
-                        if (!name.startsWith("%")) topicNames.add(name);
-                    }
-                    Collections.sort(topicNames);
-                    msgTopicCombo.getItems().setAll(topicNames);
-                    if (!topicNames.isEmpty()) {
-                        msgTopicCombo.setValue(topicNames.get(0));
-                    }
-                });
-            } catch (Exception ignored) {}
-        }, "RocketMQ-LoadTopicsCombo").start();
+    private String getCurrentTopic() {
+        if (currentMessageTopic != null && !currentMessageTopic.isEmpty()) {
+            return currentMessageTopic;
+        }
+        return topicName;
     }
 
-    private void queryMessages() {
-        String topicValue = msgTopicCombo.getValue();
-        if (topicValue == null || topicValue.trim().isEmpty()) {
-            showWarning("请选择或输入主题名称");
+    private void queryByKey() {
+        final String topic = getCurrentTopic();
+        if (topic == null || topic.isEmpty()) {
+            showWarning("当前标签未关联主题");
             return;
         }
-        final String topic = topicValue.trim();
         String key = msgKeyField.getText().trim();
-        String queryType = msgQueryTypeCombo.getValue();
+        if (key.isEmpty()) {
+            showWarning("请输入Key");
+            return;
+        }
 
         new Thread(() -> {
             try {
-                List<Map<String, Object>> messages;
-                if ("按MsgId查询".equals(queryType)) {
-                    if (key.isEmpty()) { Platform.runLater(() -> showWarning("请输入MsgId")); return; }
-                    Map<String, Object> msg = RocketmqService.queryMessageById(config, topic, key);
-                    messages = new ArrayList<>();
-                    if (msg != null && !msg.isEmpty()) messages.add(msg);
-                } else if ("按时间查询".equals(queryType)) {
-                    long begin = parseTimeFromPicker(beginDatePicker, beginTimeField);
-                    long end = parseTimeFromPicker(endDatePicker, endTimeField);
-                    if (begin >= end) { Platform.runLater(() -> showWarning("开始时间必须早于结束时间")); return; }
-                    messages = RocketmqService.queryMessageByTime(config, topic, begin, end);
-                } else {
-                    if (key.isEmpty()) { Platform.runLater(() -> showWarning("请输入Key")); return; }
-                    messages = RocketmqService.queryMessageByKey(config, topic, key);
-                }
-
-                List<Map<String, Object>> finalMessages = messages;
-                Platform.runLater(() -> {
-                    messageData.clear();
-                    if (finalMessages == null || finalMessages.isEmpty()) {
-                        messageDetailArea.setText("没有消息");
-                    } else {
-                        messageDetailArea.setText("");
-                    }
-                    for (Map<String, Object> m : finalMessages) {
-                        String msgId = String.valueOf(m.getOrDefault("msgId", ""));
-                        String tags = String.valueOf(m.getOrDefault("tags", ""));
-                        String keys = String.valueOf(m.getOrDefault("keys", ""));
-                        String storeTime = formatTimestamp(m.get("storeTimestamp"));
-                        String bornHost = String.valueOf(m.getOrDefault("bornHost", ""));
-                        messageData.add(new MessageItem(msgId, tags, keys, storeTime, bornHost, m));
-                    }
-                });
+                List<Map<String, Object>> messages = RocketmqService.queryMessageByKey(config, topic, key);
+                displayQueryResults(messages);
             } catch (Exception e) {
                 Platform.runLater(() -> {
                     messageData.clear();
                     messageDetailArea.setText("查询消息失败: " + e.getMessage());
                 });
             }
-        }, "RocketMQ-QueryMessages").start();
+        }, "RocketMQ-QueryByKey").start();
+    }
+
+    private void queryByMsgId() {
+        final String topic = getCurrentTopic();
+        if (topic == null || topic.isEmpty()) {
+            showWarning("当前标签未关联主题");
+            return;
+        }
+        String msgId = msgMsgIdField.getText().trim();
+        if (msgId.isEmpty()) {
+            showWarning("请输入MsgId");
+            return;
+        }
+
+        new Thread(() -> {
+            try {
+                Map<String, Object> msg = RocketmqService.queryMessageById(config, topic, msgId);
+                List<Map<String, Object>> messages = new ArrayList<>();
+                if (msg != null && !msg.isEmpty()) messages.add(msg);
+                displayQueryResults(messages);
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    messageData.clear();
+                    messageDetailArea.setText("查询消息失败: " + e.getMessage());
+                });
+            }
+        }, "RocketMQ-QueryByMsgId").start();
+    }
+
+    private void queryByTime() {
+        final String topic = getCurrentTopic();
+        if (topic == null || topic.isEmpty()) {
+            showWarning("当前标签未关联主题");
+            return;
+        }
+        long begin = parseTimeFromSpinners(beginDatePicker, beginHourSpinner, beginMinuteSpinner, beginSecondSpinner);
+        long end = parseTimeFromSpinners(endDatePicker, endHourSpinner, endMinuteSpinner, endSecondSpinner);
+        if (begin >= end) {
+            showWarning("开始时间必须早于结束时间");
+            return;
+        }
+
+        new Thread(() -> {
+            try {
+                List<Map<String, Object>> messages = RocketmqService.queryMessageByTime(config, topic, begin, end);
+                displayQueryResults(messages);
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    messageData.clear();
+                    messageDetailArea.setText("查询消息失败: " + e.getMessage());
+                });
+            }
+        }, "RocketMQ-QueryByTime").start();
+    }
+
+    private void displayQueryResults(List<Map<String, Object>> messages) {
+        Platform.runLater(() -> {
+            messageData.clear();
+            if (messages == null || messages.isEmpty()) {
+                messageDetailArea.setText("没有消息");
+            } else {
+                messageDetailArea.setText("");
+            }
+            for (Map<String, Object> m : messages) {
+                String msgId = String.valueOf(m.getOrDefault("msgId", ""));
+                String tags = String.valueOf(m.getOrDefault("tags", ""));
+                String keys = String.valueOf(m.getOrDefault("keys", ""));
+                String storeTime = formatTimestamp(m.get("storeTimestamp"));
+                String bornHost = String.valueOf(m.getOrDefault("bornHost", ""));
+                messageData.add(new MessageItem(msgId, tags, keys, storeTime, bornHost, m));
+            }
+        });
     }
 
     private void showMessageDetail(MessageItem item) {
-        // 优先使用缓存的消息详情（包含body）
         if (item.getDetail() != null && !item.getDetail().isEmpty()) {
             StringBuilder sb = new StringBuilder();
             for (Map.Entry<String, Object> entry : item.getDetail().entrySet()) {
@@ -476,10 +779,8 @@ public class RocketmqDataView extends VBox {
             messageDetailArea.setText(sb.toString());
             return;
         }
-        // 没有缓存时再尝试viewMessage
-        String topicValue = msgTopicCombo.getValue();
-        if (topicValue == null || topicValue.trim().isEmpty() || item.getMsgId().isEmpty()) return;
-        final String topic = topicValue.trim();
+        if (currentMessageTopic == null || currentMessageTopic.isEmpty() || item.getMsgId().isEmpty()) return;
+        final String topic = currentMessageTopic;
         new Thread(() -> {
             try {
                 Map<String, Object> msg = RocketmqService.queryMessageById(config, topic, item.getMsgId());
@@ -503,8 +804,8 @@ public class RocketmqDataView extends VBox {
     // ==================== Consumer Tab ====================
 
     private void setupConsumerTab() {
-        VBox content = new VBox(8);
-        content.setPadding(new Insets(8));
+        VBox content = new VBox(0);
+        content.setPadding(Insets.EMPTY);
 
         HBox toolbar = new HBox(8);
         toolbar.setAlignment(Pos.CENTER_LEFT);
@@ -594,8 +895,8 @@ public class RocketmqDataView extends VBox {
     // ==================== Cluster Tab ====================
 
     private void setupClusterTab() {
-        VBox content = new VBox(8);
-        content.setPadding(new Insets(8));
+        VBox content = new VBox(0);
+        content.setPadding(Insets.EMPTY);
 
         HBox toolbar = new HBox(8);
         toolbar.setAlignment(Pos.CENTER_LEFT);
@@ -674,13 +975,23 @@ public class RocketmqDataView extends VBox {
         }
     }
 
-    private long parseTimeFromPicker(DatePicker datePicker, TextField timeField) {
+    private Spinner<Integer> createTimeSpinner(int min, int max, int defaultValue) {
+        SpinnerValueFactory<Integer> factory = new SpinnerValueFactory.IntegerSpinnerValueFactory(min, max, defaultValue);
+        Spinner<Integer> spinner = new Spinner<>(factory);
+        spinner.setEditable(true);
+        spinner.setPrefWidth(55);
+        spinner.setStyle("-fx-font-size: 12px;");
+        return spinner;
+    }
+
+    private long parseTimeFromSpinners(DatePicker datePicker, Spinner<Integer> hourSpinner, Spinner<Integer> minuteSpinner, Spinner<Integer> secondSpinner) {
         try {
             LocalDate date = datePicker.getValue();
             if (date == null) date = LocalDate.now();
-            String timeStr = timeField.getText().trim();
-            if (timeStr.isEmpty()) timeStr = "00:00:00";
-            LocalTime time = LocalTime.parse(timeStr, DateTimeFormatter.ofPattern("HH:mm:ss"));
+            int hour = hourSpinner.getValue() != null ? hourSpinner.getValue() : 0;
+            int minute = minuteSpinner.getValue() != null ? minuteSpinner.getValue() : 0;
+            int second = secondSpinner.getValue() != null ? secondSpinner.getValue() : 0;
+            LocalTime time = LocalTime.of(hour, minute, second);
             return LocalDateTime.of(date, time)
                     .atZone(ZoneId.systemDefault())
                     .toInstant()
@@ -766,5 +1077,21 @@ public class RocketmqDataView extends VBox {
         public String getBrokerId() { return brokerId; }
         public String getAddress() { return address; }
         public String getRole() { return role; }
+    }
+
+    public static class TopicOffsetItem {
+        private final String brokerName;
+        private final String queueId;
+        private final String minOffset;
+        private final String maxOffset;
+        private final String lastUpdateTimestamp;
+        public TopicOffsetItem(String brokerName, String queueId, String minOffset, String maxOffset, String lastUpdateTimestamp) {
+            this.brokerName = brokerName; this.queueId = queueId; this.minOffset = minOffset; this.maxOffset = maxOffset; this.lastUpdateTimestamp = lastUpdateTimestamp;
+        }
+        public String getBrokerName() { return brokerName; }
+        public String getQueueId() { return queueId; }
+        public String getMinOffset() { return minOffset; }
+        public String getMaxOffset() { return maxOffset; }
+        public String getLastUpdateTimestamp() { return lastUpdateTimestamp; }
     }
 }

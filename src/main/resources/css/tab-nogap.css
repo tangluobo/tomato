@@ -1,0 +1,67 @@
+/* Remove ALL padding, borders, and spacing from TabPane components */
+/* Using > direct child selectors with explicit pixel values to override Modena defaults */
+
+/* TabPane root */
+.tab-pane {
+    -fx-padding: 0px 0px 0px 0px !important;
+    -fx-border-insets: 0 !important;
+    -fx-background-insets: 0 !important;
+}
+
+/* Tab header area (the row with tab labels) */
+.tab-pane > .tab-header-area {
+    -fx-padding: 0px 0px 0px 0px !important;
+    -fx-background-insets: 0 !important;
+    -fx-border-insets: 0 !important;
+}
+
+.tab-pane > .tab-header-area > .headers-region {
+    -fx-padding: 0px !important;
+    -fx-background-insets: 0 !important;
+}
+
+.tab-pane > .tab-header-area > .tab-area {
+    -fx-padding: 0px !important;
+}
+
+/* Tab content area (the container for tab content) */
+.tab-pane > .tab-content-area {
+    -fx-padding: 0px 0px 0px 0px !important;
+    -fx-background-color: transparent !important;
+    -fx-background-insets: 0 !important;
+    -fx-background-radius: 0 !important;
+    -fx-border-color: transparent !important;
+    -fx-border-width: 0 !important;
+    -fx-border-insets: 0 !important;
+    -fx-border-radius: 0 !important;
+}
+
+/* Tabs themselves */
+.tab-pane > .tab-header-area > .headers-region > .tab {
+    -fx-padding: 3px 10px !important;
+    -fx-background-insets: 0 !important;
+}
+
+/* Nested TabPanes */
+.tab-pane > .tab-content-area > .tab-pane {
+    -fx-padding: 0px !important;
+}
+
+.tab-pane > .tab-content-area > .tab-pane > .tab-header-area {
+    -fx-padding: 0px !important;
+}
+
+.tab-pane > .tab-content-area > .tab-pane > .tab-content-area {
+    -fx-padding: 0px !important;
+}
+
+/* Scrollbars and scroll panes inside tabs */
+.tab-pane .scroll-pane {
+    -fx-padding: 0px !important;
+    -fx-background-insets: 0 !important;
+}
+
+/* Any region inside tab content */
+.tab-pane .tab-content-area .region {
+    -fx-padding: 0px !important;
+}
