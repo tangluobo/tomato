@@ -566,7 +566,7 @@ public class RocketmqDataView extends VBox {
         timeQueryContent.setPadding(Insets.EMPTY);
         timeQueryContent.setAlignment(Pos.CENTER_LEFT);
 
-        beginDatePicker = new DatePicker(LocalDate.now().minusDays(1));
+        beginDatePicker = new DatePicker(LocalDate.now().minusDays(3));
         beginDatePicker.setPrefWidth(130);
         beginHourSpinner = createTimeSpinner(0, 23, 0);
         beginMinuteSpinner = createTimeSpinner(0, 59, 0);
@@ -582,6 +582,19 @@ public class RocketmqDataView extends VBox {
         timeSearchBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-font-size: 12px;");
         timeSearchBtn.setOnAction(e -> queryByTime());
 
+        // 快捷时间选择
+        Button last1DayBtn = new Button("近1天");
+        last1DayBtn.setStyle("-fx-font-size: 11px;");
+        last1DayBtn.setOnAction(e -> setQuickRange(1));
+
+        Button last3DaysBtn = new Button("近3天");
+        last3DaysBtn.setStyle("-fx-font-size: 11px;");
+        last3DaysBtn.setOnAction(e -> setQuickRange(3));
+
+        Button last7DaysBtn = new Button("近7天");
+        last7DaysBtn.setStyle("-fx-font-size: 11px;");
+        last7DaysBtn.setOnAction(e -> setQuickRange(7));
+
         HBox timeRangeBar = new HBox(5);
         timeRangeBar.setAlignment(Pos.CENTER_LEFT);
         timeRangeBar.getChildren().addAll(
@@ -595,7 +608,12 @@ public class RocketmqDataView extends VBox {
                 new Label("秒"), endSecondSpinner,
                 timeSearchBtn
         );
-        timeQueryContent.getChildren().add(timeRangeBar);
+
+        HBox quickRangeBar = new HBox(5);
+        quickRangeBar.setAlignment(Pos.CENTER_LEFT);
+        quickRangeBar.getChildren().addAll(new Label("快捷:"), last1DayBtn, last3DaysBtn, last7DaysBtn);
+
+        timeQueryContent.getChildren().addAll(timeRangeBar, quickRangeBar);
 
         Tab timeQueryTab = new Tab("按时间查询");
         timeQueryTab.setContent(timeQueryContent);
@@ -653,6 +671,8 @@ public class RocketmqDataView extends VBox {
 
         VBox.setVgrow(messageTable, Priority.ALWAYS);
         VBox.setVgrow(queryTabPane, Priority.NEVER);
+        queryTabPane.setMaxHeight(120);
+        queryTabPane.setMinHeight(80);
 
         content.getChildren().addAll(queryTabPane, messageTable, new Label("消息详情(双击查看):"), messageDetailArea);
 
@@ -973,6 +993,17 @@ public class RocketmqDataView extends VBox {
         } catch (Exception e) {
             return String.valueOf(ts);
         }
+    }
+
+    private void setQuickRange(int days) {
+        beginDatePicker.setValue(LocalDate.now().minusDays(days));
+        beginHourSpinner.getValueFactory().setValue(0);
+        beginMinuteSpinner.getValueFactory().setValue(0);
+        beginSecondSpinner.getValueFactory().setValue(0);
+        endDatePicker.setValue(LocalDate.now());
+        endHourSpinner.getValueFactory().setValue(23);
+        endMinuteSpinner.getValueFactory().setValue(59);
+        endSecondSpinner.getValueFactory().setValue(59);
     }
 
     private Spinner<Integer> createTimeSpinner(int min, int max, int defaultValue) {
