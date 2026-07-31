@@ -9,6 +9,7 @@ import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.*;
 import javafx.scene.text.Text;
+import javafx.scene.text.TextFlow;
 import javafx.util.StringConverter;
 
 import java.time.Instant;
@@ -41,7 +42,13 @@ public class RocketmqDataView extends VBox {
     private DatePicker endDatePicker;
     private TableView<MessageItem> messageTable;
     private final ObservableList<MessageItem> messageData = FXCollections.observableArrayList();
-    private TextArea messageDetailArea;
+    private GridPane messageInfoGrid;
+    private TextFlow messageBodyFlow;
+    private ScrollPane messageBodyScroll;
+    private Button formatBodyBtn;
+    private Button compressBodyBtn;
+    private String rawBodyText = "";
+    private boolean bodyFormatted = false;
 
     public RocketmqDataView(ConnectionConfig config, String topicName) {
         this.config = config;
@@ -529,13 +536,6 @@ public class RocketmqDataView extends VBox {
         messageTable.getColumns().addAll(msgIdCol, tagsCol, keysCol, timeCol, hostCol);
         messageTable.setItems(messageData);
 
-        // 消息详情
-        messageDetailArea = new TextArea();
-        messageDetailArea.setPromptText("选择消息查看详情");
-        messageDetailArea.setPrefHeight(200);
-        messageDetailArea.setEditable(false);
-        messageDetailArea.setStyle("-fx-font-family: monospace; -fx-font-size: 12px;");
-
         messageTable.setRowFactory(tv -> {
             TableRow<MessageItem> row = new TableRow<>();
             row.setOnMouseClicked(e -> {
@@ -546,12 +546,66 @@ public class RocketmqDataView extends VBox {
             return row;
         });
 
+        // 右侧详情面板
+        VBox detailPanel = new VBox(5);
+        detailPanel.setPadding(new Insets(5));
+
+        // 基本信息标签区域
+        messageInfoGrid = new GridPane();
+        messageInfoGrid.setHgap(8);
+        messageInfoGrid.setVgap(4);
+        messageInfoGrid.setStyle("-fx-background-color: #f8f8f8; -fx-padding: 8; -fx-border-color: #e0e0e0; -fx-border-radius: 4;");
+
+        Label infoTitle = new Label("基本信息");
+        infoTitle.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
+
+        // Body区域
+        HBox bodyToolbar = new HBox(8);
+        bodyToolbar.setAlignment(Pos.CENTER_LEFT);
+        Label bodyTitle = new Label("Body");
+        bodyTitle.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
+        formatBodyBtn = new Button("格式化");
+        formatBodyBtn.setStyle("-fx-font-size: 11px;");
+        formatBodyBtn.setDisable(true);
+        formatBodyBtn.setOnAction(e -> toggleFormatBody());
+        compressBodyBtn = new Button("压缩");
+        compressBodyBtn.setStyle("-fx-font-size: 11px;");
+        compressBodyBtn.setDisable(true);
+        compressBodyBtn.setOnAction(e -> toggleFormatBody());
+        bodyToolbar.getChildren().addAll(bodyTitle, formatBodyBtn, compressBodyBtn);
+
+        messageBodyFlow = new TextFlow();
+        messageBodyFlow.setPadding(new Insets(5));
+        messageBodyFlow.setStyle("-fx-font-family: monospace; -fx-font-size: 12px; -fx-background-color: #fafafa;");
+
+        messageBodyScroll = new ScrollPane(messageBodyFlow);
+        messageBodyScroll.setFitToWidth(true);
+        messageBodyScroll.setFitToHeight(true);
+        messageBodyScroll.setStyle("-fx-background-color: transparent;");
+
+        Label bodyPlaceholder = new Label("双击消息查看Body");
+        bodyPlaceholder.setStyle("-fx-text-fill: #999; -fx-font-size: 12px; -fx-padding: 20;");
+        messageBodyFlow.getChildren().add(bodyPlaceholder);
+
+        detailPanel.getChildren().addAll(infoTitle, messageInfoGrid, bodyToolbar, messageBodyScroll);
+        VBox.setVgrow(messageBodyScroll, Priority.ALWAYS);
+
+        // 使用SplitPane水平分割：左侧消息列表，右侧详情
+        SplitPane splitPane = new SplitPane();
+        splitPane.setOrientation(javafx.geometry.Orientation.HORIZONTAL);
+
+        VBox leftPane = new VBox(0);
+        leftPane.getChildren().addAll(queryTabPane, messageTable);
         VBox.setVgrow(messageTable, Priority.ALWAYS);
         VBox.setVgrow(queryTabPane, Priority.NEVER);
         queryTabPane.setMaxHeight(120);
         queryTabPane.setMinHeight(80);
 
-        content.getChildren().addAll(queryTabPane, messageTable, new Label("消息详情(双击查看):"), messageDetailArea);
+        splitPane.getItems().addAll(leftPane, detailPanel);
+        splitPane.setDividerPositions(0.55);
+
+        content.getChildren().add(splitPane);
+        VBox.setVgrow(splitPane, Priority.ALWAYS);
 
         Tab tab = new Tab("消息");
         tab.setContent(content);
@@ -584,7 +638,7 @@ public class RocketmqDataView extends VBox {
             } catch (Exception e) {
                 Platform.runLater(() -> {
                     messageData.clear();
-                    messageDetailArea.setText("查询消息失败: " + e.getMessage());
+                    showErrorInBody("查询消息失败: " + e.getMessage());
                 });
             }
         }, "RocketMQ-QueryByKey").start();
@@ -611,7 +665,7 @@ public class RocketmqDataView extends VBox {
             } catch (Exception e) {
                 Platform.runLater(() -> {
                     messageData.clear();
-                    messageDetailArea.setText("查询消息失败: " + e.getMessage());
+                    showErrorInBody("查询消息失败: " + e.getMessage());
                 });
             }
         }, "RocketMQ-QueryByMsgId").start();
@@ -641,7 +695,7 @@ public class RocketmqDataView extends VBox {
             } catch (Exception e) {
                 Platform.runLater(() -> {
                     messageData.clear();
-                    messageDetailArea.setText("查询消息失败: " + e.getMessage());
+                    showErrorInBody("查询消息失败: " + e.getMessage());
                 });
             }
         }, "RocketMQ-QueryByTime").start();
@@ -651,9 +705,9 @@ public class RocketmqDataView extends VBox {
         Platform.runLater(() -> {
             messageData.clear();
             if (messages == null || messages.isEmpty()) {
-                messageDetailArea.setText("没有消息");
+                showErrorInBody("没有消息");
             } else {
-                messageDetailArea.setText("");
+                clearBody();
             }
             for (Map<String, Object> m : messages) {
                 String msgId = String.valueOf(m.getOrDefault("msgId", ""));
@@ -668,16 +722,7 @@ public class RocketmqDataView extends VBox {
 
     private void showMessageDetail(MessageItem item) {
         if (item.getDetail() != null && !item.getDetail().isEmpty()) {
-            StringBuilder sb = new StringBuilder();
-            for (Map.Entry<String, Object> entry : item.getDetail().entrySet()) {
-                String key = entry.getKey();
-                Object value = entry.getValue();
-                if ("storeTimestamp".equals(key) || "bornTimestamp".equals(key)) {
-                    value = formatTimestamp(value);
-                }
-                sb.append(key).append(": ").append(value).append("\n");
-            }
-            messageDetailArea.setText(sb.toString());
+            fillMessageDetailPanel(item.getDetail());
             return;
         }
         if (currentMessageTopic == null || currentMessageTopic.isEmpty() || item.getMsgId().isEmpty()) return;
@@ -685,24 +730,214 @@ public class RocketmqDataView extends VBox {
         new Thread(() -> {
             try {
                 Map<String, Object> msg = RocketmqService.queryMessageById(config, topic, item.getMsgId());
-                StringBuilder sb = new StringBuilder();
-                for (Map.Entry<String, Object> entry : msg.entrySet()) {
-                    sb.append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
-                }
-                Platform.runLater(() -> messageDetailArea.setText(sb.toString()));
+                Platform.runLater(() -> fillMessageDetailPanel(msg));
             } catch (Exception e) {
-                StringBuilder sb = new StringBuilder();
-                sb.append("MsgId: ").append(item.getMsgId()).append("\n");
-                sb.append("Tags: ").append(item.getTags()).append("\n");
-                sb.append("Keys: ").append(item.getKeys()).append("\n");
-                sb.append("StoreTime: ").append(item.getStoreTime()).append("\n");
-                sb.append("BornHost: ").append(item.getBornHost()).append("\n");
-                Platform.runLater(() -> messageDetailArea.setText(sb.toString()));
+                Map<String, Object> fallback = new LinkedHashMap<>();
+                fallback.put("MsgId", item.getMsgId());
+                fallback.put("Tags", item.getTags());
+                fallback.put("Keys", item.getKeys());
+                fallback.put("StoreTime", item.getStoreTime());
+                fallback.put("BornHost", item.getBornHost());
+                Platform.runLater(() -> fillMessageDetailPanel(fallback));
             }
         }, "RocketMQ-MessageDetail").start();
     }
 
+    private void fillMessageDetailPanel(Map<String, Object> detail) {
+        messageInfoGrid.getChildren().clear();
+        int row = 0;
+        String bodyText = null;
+        for (Map.Entry<String, Object> entry : detail.entrySet()) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+            if ("body".equals(key)) {
+                bodyText = value != null ? String.valueOf(value) : "";
+                continue;
+            }
+            if ("storeTimestamp".equals(key) || "bornTimestamp".equals(key)) {
+                value = formatTimestamp(value);
+            }
+            Label keyLabel = new Label(key + ":");
+            keyLabel.setStyle("-fx-font-weight: bold; -fx-font-size: 12px;");
+            Label valueLabel = new Label(String.valueOf(value));
+            valueLabel.setWrapText(true);
+            valueLabel.setMaxWidth(Double.MAX_VALUE);
+            valueLabel.setStyle("-fx-font-size: 12px;");
+            messageInfoGrid.add(keyLabel, 0, row);
+            messageInfoGrid.add(valueLabel, 1, row);
+            row++;
+        }
+
+        if (bodyText != null) {
+            rawBodyText = bodyText;
+            boolean isJson = isJsonString(bodyText);
+            bodyFormatted = false;
+            if (isJson) {
+                formatBodyBtn.setDisable(false);
+                compressBodyBtn.setDisable(true);
+                // 默认显示格式化的JSON
+                try {
+                    String formatted = formatJson(bodyText);
+                    renderJsonHighlighted(formatted);
+                    bodyFormatted = true;
+                    compressBodyBtn.setDisable(false);
+                } catch (Exception e) {
+                    renderPlainText(bodyText);
+                }
+            } else {
+                formatBodyBtn.setDisable(true);
+                compressBodyBtn.setDisable(true);
+                renderPlainText(bodyText);
+            }
+        } else {
+            rawBodyText = "";
+            bodyFormatted = false;
+            messageBodyFlow.getChildren().clear();
+            formatBodyBtn.setDisable(true);
+            compressBodyBtn.setDisable(true);
+        }
+    }
+
+    private void toggleFormatBody() {
+        if (rawBodyText == null || rawBodyText.isEmpty()) return;
+        if (bodyFormatted) {
+            // 切换为压缩
+            bodyFormatted = false;
+            renderJsonHighlighted(rawBodyText);
+        } else {
+            // 切换为格式化
+            try {
+                String formatted = formatJson(rawBodyText);
+                renderJsonHighlighted(formatted);
+                bodyFormatted = true;
+            } catch (Exception e) {
+                renderPlainText(rawBodyText);
+            }
+        }
+    }
+
+    private void renderJsonHighlighted(String json) {
+        messageBodyFlow.getChildren().clear();
+        // JSON语法高亮：key=紫色，string值=绿色，number/boolean/null=蓝色，符号=灰色
+        String pattern = "(\"[^\"]*\")\\s*(:)?";
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(pattern).matcher(json);
+        int lastEnd = 0;
+        while (matcher.find()) {
+            if (matcher.start() > lastEnd) {
+                String between = json.substring(lastEnd, matcher.start());
+                addColoredText(between, "#666666"); // 符号/空白
+            }
+            String quoted = matcher.group(1);
+            String colon = matcher.group(2);
+            if (colon != null) {
+                // 这是一个key
+                addColoredText(quoted, "#a31515"); // key - 深红色
+                addColoredText(":", "#333333");
+            } else {
+                // 这是一个string值
+                addColoredText(quoted, "#008000"); // string值 - 绿色
+            }
+            lastEnd = matcher.end();
+        }
+        if (lastEnd < json.length()) {
+            String remaining = json.substring(lastEnd);
+            // 处理剩余文本中的number/boolean/null
+            renderRemainingJson(remaining);
+        }
+    }
+
+    private void renderRemainingJson(String text) {
+        // 匹配 number, boolean, null
+        String tokenPattern = "(\\b(?:true|false|null)\\b)|(\\b-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\b)";
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(tokenPattern).matcher(text);
+        int lastEnd = 0;
+        while (m.find()) {
+            if (m.start() > lastEnd) {
+                String between = text.substring(lastEnd, m.start());
+                addColoredText(between, "#666666"); // 普通文本
+            }
+            String match = m.group();
+            addColoredText(match, "#0451a5"); // number/boolean/null - 蓝色
+            lastEnd = m.end();
+        }
+        if (lastEnd < text.length()) {
+            addColoredText(text.substring(lastEnd), "#666666");
+        }
+    }
+
+    private void addColoredText(String text, String color) {
+        if (text.isEmpty()) return;
+        Text t = new Text(text);
+        t.setStyle("-fx-fill: " + color + "; -fx-font-family: monospace; -fx-font-size: 12px;");
+        messageBodyFlow.getChildren().add(t);
+    }
+
+    private void renderPlainText(String text) {
+        messageBodyFlow.getChildren().clear();
+        Text t = new Text(text);
+        t.setStyle("-fx-fill: #333333; -fx-font-family: monospace; -fx-font-size: 12px;");
+        messageBodyFlow.getChildren().add(t);
+    }
+
+    private boolean isJsonString(String text) {
+        if (text == null || text.trim().isEmpty()) return false;
+        String trimmed = text.trim();
+        return (trimmed.startsWith("{") && trimmed.endsWith("}"))
+                || (trimmed.startsWith("[") && trimmed.endsWith("]"));
+    }
+
+    private String formatJson(String json) {
+        StringBuilder sb = new StringBuilder();
+        int indent = 0;
+        boolean inString = false;
+        char prev = 0;
+        for (int i = 0; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (c == '"' && prev != '\\') {
+                inString = !inString;
+            }
+            if (!inString) {
+                if (c == '{' || c == '[') {
+                    sb.append(c).append('\n');
+                    indent++;
+                    sb.append("  ".repeat(indent));
+                } else if (c == '}' || c == ']') {
+                    sb.append('\n');
+                    indent--;
+                    sb.append("  ".repeat(indent)).append(c);
+                } else if (c == ',') {
+                    sb.append(c).append('\n');
+                    sb.append("  ".repeat(indent));
+                } else if (c == ':') {
+                    sb.append(c).append(' ');
+                } else if (!Character.isWhitespace(c)) {
+                    sb.append(c);
+                }
+            } else {
+                sb.append(c);
+            }
+            prev = c;
+        }
+        return sb.toString();
+    }
+
     // ==================== 辅助方法 ====================
+
+    private void showErrorInBody(String msg) {
+        messageBodyFlow.getChildren().clear();
+        Text t = new Text(msg);
+        t.setStyle("-fx-fill: #cc0000; -fx-font-family: monospace; -fx-font-size: 12px;");
+        messageBodyFlow.getChildren().add(t);
+    }
+
+    private void clearBody() {
+        messageBodyFlow.getChildren().clear();
+        messageInfoGrid.getChildren().clear();
+        formatBodyBtn.setDisable(true);
+        compressBodyBtn.setDisable(true);
+        rawBodyText = "";
+        bodyFormatted = false;
+    }
 
     private String formatTimestamp(Object ts) {
         if (ts == null) return "";
