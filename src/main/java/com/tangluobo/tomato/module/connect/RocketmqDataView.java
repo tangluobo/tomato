@@ -54,6 +54,8 @@ public class RocketmqDataView extends VBox {
     private String rawBodyText = "";
     private boolean bodyFormatted = false;
     private Map<String, Object> currentMessageDetail;
+    private javafx.collections.ObservableList<ObservableList<String>> consumeStatusData;
+    private Label infoTitle;
 
     public RocketmqDataView(ConnectionConfig config, String topicName) {
         this.config = config;
@@ -561,7 +563,7 @@ public class RocketmqDataView extends VBox {
         messageInfoGrid.setVgap(4);
         messageInfoGrid.setStyle("-fx-background-color: #f8f8f8; -fx-padding: 8; -fx-border-color: #e0e0e0; -fx-border-radius: 4;");
 
-        Label infoTitle = new Label("基本信息");
+        infoTitle = new Label("基本信息");
         infoTitle.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
 
         // Body区域
@@ -701,7 +703,7 @@ public class RocketmqDataView extends VBox {
 
         consumeStatusTable.getColumns().addAll(groupCol, trackTypeCol, actionCol);
 
-        javafx.collections.ObservableList<ObservableList<String>> consumeStatusData = javafx.collections.FXCollections.observableArrayList();
+        consumeStatusData = javafx.collections.FXCollections.observableArrayList();
         consumeStatusTable.setItems(consumeStatusData);
 
         // 选中的消费者组（用于查看未消费消息）
@@ -717,44 +719,8 @@ public class RocketmqDataView extends VBox {
             return row;
         });
 
-        // 刷新消费状态 - 改为用getMessageTrack查询消息消费轨迹
-        refreshConsumeBtn.setOnAction(e -> {
-            if (currentMessageDetail == null) {
-                Alert warn = new Alert(Alert.AlertType.WARNING);
-                warn.setTitle("提示");
-                warn.setHeaderText(null);
-                warn.setContentText("请先双击选择一条消息");
-                warn.showAndWait();
-                return;
-            }
-            String topic = String.valueOf(currentMessageDetail.getOrDefault("topic", ""));
-            String msgId = String.valueOf(currentMessageDetail.getOrDefault("msgId", ""));
-            new Thread(() -> {
-                try {
-                    // 查询消息消费轨迹
-                    List<Map<String, Object>> tracks = RocketmqService.getMessageTrack(config, topic, msgId);
-                    Platform.runLater(() -> {
-                        consumeStatusData.clear();
-                        for (Map<String, Object> t : tracks) {
-                            String group = String.valueOf(t.getOrDefault("group", ""));
-                            ObservableList<String> row = javafx.collections.FXCollections.observableArrayList();
-                            row.add(group);
-                            row.add(String.valueOf(t.getOrDefault("trackType", "UNKNOWN")));
-                            row.add(String.valueOf(t.getOrDefault("exceptionDesc", "")));
-                            consumeStatusData.add(row);
-                        }
-                    });
-                } catch (Exception ex) {
-                    Platform.runLater(() -> {
-                        Alert alert = new Alert(Alert.AlertType.ERROR);
-                        alert.setTitle("加载失败");
-                        alert.setHeaderText(null);
-                        alert.setContentText("加载消费状态失败: " + ex.getMessage());
-                        alert.showAndWait();
-                    });
-                }
-            }, "RocketMQ-ConsumeStatus").start();
-        });
+        // 刷新消费状态
+        refreshConsumeBtn.setOnAction(e -> loadConsumeStatus());
 
         // 查看未消费消息
         viewUnconsumedBtn.setOnAction(e -> {
@@ -957,14 +923,28 @@ public class RocketmqDataView extends VBox {
 
     private void fillMessageDetailPanel(Map<String, Object> detail) {
         currentMessageDetail = detail;
+        // 自动加载消费状态
+        loadConsumeStatus();
         messageInfoGrid.getChildren().clear();
         int row = 0;
         String bodyText = null;
+        boolean isDelayed = Boolean.TRUE.equals(detail.get("delayed"));
+        if (isDelayed) {
+            infoTitle.setText("基本信息  [延迟消息]");
+            infoTitle.setStyle("-fx-font-weight: bold; -fx-font-size: 13px; -fx-text-fill: #FF9800;");
+        } else {
+            infoTitle.setText("基本信息");
+            infoTitle.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
+        }
         for (Map.Entry<String, Object> entry : detail.entrySet()) {
             String key = entry.getKey();
             Object value = entry.getValue();
             if ("body".equals(key)) {
                 bodyText = value != null ? String.valueOf(value) : "";
+                continue;
+            }
+            if ("delayed".equals(key)) {
+                // 延迟消息标识 - 在标题旁显示
                 continue;
             }
             if ("storeTimestamp".equals(key) || "bornTimestamp".equals(key)) {
@@ -1033,6 +1013,36 @@ public class RocketmqDataView extends VBox {
             expandAllBtn.setDisable(true);
             collapseAllBtn.setDisable(true);
         }
+    }
+
+    private void loadConsumeStatus() {
+        if (currentMessageDetail == null) return;
+        String topic = String.valueOf(currentMessageDetail.getOrDefault("topic", ""));
+        String msgId = String.valueOf(currentMessageDetail.getOrDefault("msgId", ""));
+        new Thread(() -> {
+            try {
+                List<Map<String, Object>> tracks = RocketmqService.getMessageTrack(config, topic, msgId);
+                Platform.runLater(() -> {
+                    consumeStatusData.clear();
+                    for (Map<String, Object> t : tracks) {
+                        String group = String.valueOf(t.getOrDefault("group", ""));
+                        ObservableList<String> row = javafx.collections.FXCollections.observableArrayList();
+                        row.add(group);
+                        row.add(String.valueOf(t.getOrDefault("trackType", "UNKNOWN")));
+                        row.add(String.valueOf(t.getOrDefault("exceptionDesc", "")));
+                        consumeStatusData.add(row);
+                    }
+                });
+            } catch (Exception ex) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("加载失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("加载消费状态失败: " + ex.getMessage());
+                    alert.showAndWait();
+                });
+            }
+        }, "RocketMQ-ConsumeStatus").start();
     }
 
     private void doReconsume(String group) {

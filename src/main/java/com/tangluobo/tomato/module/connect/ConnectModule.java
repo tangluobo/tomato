@@ -1289,14 +1289,20 @@ public class ConnectModule implements Module {
         Button refreshBtn = new Button("刷新");
         refreshBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-font-size: 12px;");
 
-        Button deleteBtn = new Button("删除消费者组");
+        TextField filterField = new TextField();
+        filterField.setPromptText("过滤消费者组...");
+        filterField.setPrefWidth(200);
+        filterField.setStyle("-fx-font-size: 12px;");
+
+        Button deleteBtn = new Button("批量删除");
         deleteBtn.setStyle("-fx-font-size: 12px; -fx-text-fill: #cc0000;");
 
-        toolbar.getChildren().addAll(refreshBtn, deleteBtn);
+        toolbar.getChildren().addAll(refreshBtn, filterField, deleteBtn);
 
         TableView<ObservableList<String>> consumerTable = new TableView<>();
         consumerTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
         consumerTable.setPlaceholder(new Label("无数据"));
+        consumerTable.getSelectionModel().setSelectionMode(javafx.scene.control.SelectionMode.MULTIPLE);
 
         TableColumn<ObservableList<String>, String> groupCol = new TableColumn<>("消费者组");
         groupCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(0)));
@@ -1312,8 +1318,20 @@ public class ConnectModule implements Module {
 
         consumerTable.getColumns().addAll(groupCol, tpsCol, diffCol);
 
-        javafx.collections.ObservableList<ObservableList<String>> consumerData = javafx.collections.FXCollections.observableArrayList();
-        consumerTable.setItems(consumerData);
+        javafx.collections.ObservableList<ObservableList<String>> consumerAllData = javafx.collections.FXCollections.observableArrayList();
+        javafx.collections.ObservableList<ObservableList<String>> consumerFilteredData = javafx.collections.FXCollections.observableArrayList();
+        consumerTable.setItems(consumerFilteredData);
+
+        // 过滤逻辑
+        filterField.textProperty().addListener((obs, oldVal, newVal) -> {
+            consumerFilteredData.clear();
+            String keyword = newVal == null ? "" : newVal.trim().toLowerCase();
+            for (ObservableList<String> row : consumerAllData) {
+                if (keyword.isEmpty() || row.get(0).toLowerCase().contains(keyword)) {
+                    consumerFilteredData.add(row);
+                }
+            }
+        });
 
         // 详情区域
         TextArea consumerDetailArea = new TextArea();
@@ -1339,13 +1357,21 @@ public class ConnectModule implements Module {
                 try {
                     List<Map<String, Object>> consumers = RocketmqService.getConsumerGroupList(config);
                     Platform.runLater(() -> {
-                        consumerData.clear();
+                        consumerAllData.clear();
                         for (Map<String, Object> c : consumers) {
                             ObservableList<String> row = javafx.collections.FXCollections.observableArrayList();
                             row.add(String.valueOf(c.getOrDefault("group", "")));
                             row.add(String.valueOf(c.getOrDefault("consumeTps", "0")));
                             row.add(String.valueOf(c.getOrDefault("diffTotal", "0")));
-                            consumerData.add(row);
+                            consumerAllData.add(row);
+                        }
+                        // 触发过滤刷新
+                        String keyword = filterField.getText() == null ? "" : filterField.getText().trim().toLowerCase();
+                        consumerFilteredData.clear();
+                        for (ObservableList<String> row : consumerAllData) {
+                            if (keyword.isEmpty() || row.get(0).toLowerCase().contains(keyword)) {
+                                consumerFilteredData.add(row);
+                            }
                         }
                     });
                 } catch (Exception e) {
@@ -1363,43 +1389,56 @@ public class ConnectModule implements Module {
         refreshBtn.setOnAction(e -> loadConsumers.run());
 
         deleteBtn.setOnAction(e -> {
-            ObservableList<String> selected = consumerTable.getSelectionModel().getSelectedItem();
-            if (selected == null) {
+            javafx.collections.ObservableList<ObservableList<String>> selectedItems = consumerTable.getSelectionModel().getSelectedItems();
+            if (selectedItems.isEmpty()) {
                 Alert warn = new Alert(Alert.AlertType.WARNING);
                 warn.setTitle("提示");
                 warn.setHeaderText(null);
-                warn.setContentText("请先选择要删除的消费者组");
+                warn.setContentText("请先选择要删除的消费者组（支持Ctrl/Shift多选）");
                 warn.showAndWait();
                 return;
             }
-            String group = selected.get(0);
+            List<String> groups = new ArrayList<>();
+            for (ObservableList<String> row : selectedItems) {
+                groups.add(row.get(0));
+            }
+            String groupListStr = String.join("\n", groups);
             Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-            confirm.setTitle("确认删除");
-            confirm.setHeaderText("删除消费者组: " + group);
-            confirm.setContentText("删除后不可恢复，确定要删除吗？");
+            confirm.setTitle("确认批量删除");
+            confirm.setHeaderText("删除 " + groups.size() + " 个消费者组");
+            confirm.setContentText(groupListStr + "\n\n删除后不可恢复，确定要删除吗？");
             confirm.showAndWait().ifPresent(btn -> {
                 if (btn == ButtonType.OK) {
                     new Thread(() -> {
-                        try {
-                            RocketmqService.deleteConsumerGroup(config, group);
-                            Platform.runLater(() -> {
+                        List<String> failed = new ArrayList<>();
+                        for (String group : groups) {
+                            try {
+                                RocketmqService.deleteConsumerGroup(config, group);
+                            } catch (Exception ex) {
+                                failed.add(group + ": " + ex.getMessage());
+                            }
+                        }
+                        Platform.runLater(() -> {
+                            if (failed.isEmpty()) {
                                 Alert info = new Alert(Alert.AlertType.INFORMATION);
                                 info.setTitle("成功");
                                 info.setHeaderText(null);
-                                info.setContentText("消费者组 " + group + " 已删除");
+                                info.setContentText("已删除 " + groups.size() + " 个消费者组");
                                 info.showAndWait();
-                                loadConsumers.run();
-                            });
-                        } catch (Exception ex) {
-                            Platform.runLater(() -> {
+                            } else {
                                 Alert err = new Alert(Alert.AlertType.ERROR);
-                                err.setTitle("删除失败");
+                                err.setTitle("部分删除失败");
                                 err.setHeaderText(null);
-                                err.setContentText("删除消费者组失败: " + ex.getMessage());
+                                TextArea area = new TextArea(String.join("\n", failed));
+                                area.setEditable(false);
+                                area.setWrapText(true);
+                                area.setPrefRowCount(Math.min(failed.size() + 1, 10));
+                                err.getDialogPane().setContent(area);
                                 err.showAndWait();
-                            });
-                        }
-                    }, "RocketMQ-DeleteConsumer").start();
+                            }
+                            loadConsumers.run();
+                        });
+                    }, "RocketMQ-BatchDeleteConsumer").start();
                 }
             });
         });

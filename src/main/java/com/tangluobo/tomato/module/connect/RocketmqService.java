@@ -211,23 +211,39 @@ public class RocketmqService {
      */
     public static Map<String, Object> queryMessageById(ConnectionConfig config, String topic, String msgId) throws Exception {
         DefaultMQAdminExt admin = getAdmin(config);
-        MessageExt msg = admin.viewMessage(topic, msgId);
-        Map<String, Object> result = new LinkedHashMap<>();
-        if (msg != null) {
-            result.put("msgId", msg.getMsgId());
-            result.put("keys", msg.getKeys());
-            result.put("tags", msg.getTags());
-            result.put("topic", msg.getTopic());
-            result.put("queueId", msg.getQueueId());
-            result.put("queueOffset", msg.getQueueOffset());
-            result.put("storeSize", msg.getStoreSize());
-            result.put("bornTimestamp", msg.getBornTimestamp());
-            result.put("storeTimestamp", msg.getStoreTimestamp());
-            result.put("bornHost", String.valueOf(msg.getBornHost()));
-            result.put("storeHost", String.valueOf(msg.getStoreHost()));
-            result.put("body", new String(msg.getBody(), "UTF-8"));
-            result.put("reconsumeTimes", msg.getReconsumeTimes());
+        MessageExt msg = null;
+        // 先按原topic查
+        try {
+            msg = admin.viewMessage(topic, msgId);
+        } catch (Exception ignored) {}
+        // 延迟消息可能在SCHEDULE_TOPIC中，按msgId全局搜索
+        if (msg == null) {
+            try {
+                long end = System.currentTimeMillis();
+                long begin = end - 7 * 24 * 3600 * 1000L;
+                QueryResult qr = admin.queryMessage(null, topic, msgId, 1, begin, end);
+                if (qr != null && !qr.getMessageList().isEmpty()) {
+                    msg = qr.getMessageList().get(0);
+                }
+            } catch (Exception ignored) {}
         }
+        if (msg == null) {
+            throw new RuntimeException("未找到消息: " + msgId);
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("msgId", msg.getMsgId());
+        result.put("keys", msg.getKeys());
+        result.put("tags", msg.getTags());
+        result.put("topic", msg.getTopic());
+        result.put("queueId", msg.getQueueId());
+        result.put("queueOffset", msg.getQueueOffset());
+        result.put("storeSize", msg.getStoreSize());
+        result.put("bornTimestamp", msg.getBornTimestamp());
+        result.put("storeTimestamp", msg.getStoreTimestamp());
+        result.put("bornHost", String.valueOf(msg.getBornHost()));
+        result.put("storeHost", String.valueOf(msg.getStoreHost()));
+        result.put("body", new String(msg.getBody(), "UTF-8"));
+        result.put("reconsumeTimes", msg.getReconsumeTimes());
         return result;
     }
 
@@ -249,6 +265,8 @@ public class RocketmqService {
     public static List<Map<String, Object>> queryMessageByTime(ConnectionConfig config, String topic, long begin, long end) throws Exception {
         List<Map<String, Object>> result = new ArrayList<>();
         tryPullMessages(config, topic, begin, end, result);
+        // 额外查询SCHEDULE_TOPIC中的延迟消息（属于该topic的）
+        tryPullDelayedMessages(config, topic, begin, end, result);
         return result;
     }
 
@@ -260,7 +278,7 @@ public class RocketmqService {
         TopicStatsTable statsTable = admin.examineTopicStats(topic);
         if (statsTable == null || statsTable.getOffsetTable() == null) return;
 
-        String consumerGroup = "tomato_query_" + System.currentTimeMillis();
+        String consumerGroup = "tomato_query";
         DefaultMQPullConsumer pullConsumer = new DefaultMQPullConsumer(consumerGroup);
         pullConsumer.setNamesrvAddr(config.getHost() + ":" + config.getPort());
         pullConsumer.start();
@@ -308,7 +326,9 @@ public class RocketmqService {
         item.put("msgId", msg.getMsgId());
         item.put("keys", msg.getKeys());
         item.put("tags", msg.getTags());
-        item.put("topic", msg.getTopic());
+        // 延迟消息还原原始topic
+        String realTopic = msg.getProperty(org.apache.rocketmq.common.message.MessageConst.PROPERTY_REAL_TOPIC);
+        item.put("topic", (realTopic != null && !realTopic.isEmpty()) ? realTopic : msg.getTopic());
         item.put("queueId", msg.getQueueId());
         item.put("queueOffset", msg.getQueueOffset());
         item.put("storeTimestamp", msg.getStoreTimestamp());
@@ -317,6 +337,10 @@ public class RocketmqService {
         item.put("storeHost", String.valueOf(msg.getStoreHost()));
         item.put("storeSize", msg.getStoreSize());
         item.put("reconsumeTimes", msg.getReconsumeTimes());
+        // 延迟消息标记
+        if (realTopic != null && !realTopic.isEmpty()) {
+            item.put("delayed", true);
+        }
         if (includeBody) {
             try {
                 item.put("body", new String(msg.getBody(), "UTF-8"));
@@ -325,6 +349,73 @@ public class RocketmqService {
             }
         }
         return item;
+    }
+
+    /**
+     * 从SCHEDULE_TOPIC中查询属于指定topic的延迟消息
+     */
+    private static void tryPullDelayedMessages(ConnectionConfig config, String topic, long begin, long end, List<Map<String, Object>> result) {
+        try {
+            DefaultMQAdminExt admin = getAdmin(config);
+            // SCHEDULE_TOPIC的队列格式: SCHEDULE_TOPIC_XXXX
+            // 遍历所有SCHEDULE_TOPIC开头的topic
+            TopicList allTopics = admin.fetchAllTopicList();
+            if (allTopics == null || allTopics.getTopicList() == null) return;
+
+            for (String scheduleTopic : allTopics.getTopicList()) {
+                if (!scheduleTopic.startsWith("SCHEDULE_TOPIC")) continue;
+
+                try {
+                    TopicStatsTable statsTable = admin.examineTopicStats(scheduleTopic);
+                    if (statsTable == null || statsTable.getOffsetTable() == null) continue;
+
+                    String consumerGroup = "tomato_delayed";
+                    DefaultMQPullConsumer pullConsumer = new DefaultMQPullConsumer(consumerGroup);
+                    pullConsumer.setNamesrvAddr(config.getHost() + ":" + config.getPort());
+                    pullConsumer.start();
+
+                    try {
+                        for (Map.Entry<MessageQueue, TopicOffset> entry : statsTable.getOffsetTable().entrySet()) {
+                            MessageQueue mq = entry.getKey();
+                            long minOffset = entry.getValue().getMinOffset();
+                            long maxOffset = entry.getValue().getMaxOffset();
+                            if (minOffset >= maxOffset) continue;
+
+                            long offset = minOffset;
+                            boolean foundInRange = false;
+
+                            while (offset < maxOffset && result.size() < 256) {
+                                PullResult pullResult = pullConsumer.pull(mq, "*", offset, 32);
+                                if (pullResult == null) break;
+
+                                if (pullResult.getPullStatus() == PullStatus.FOUND) {
+                                    for (MessageExt msg : pullResult.getMsgFoundList()) {
+                                        if (msg.getStoreTimestamp() >= begin && msg.getStoreTimestamp() <= end) {
+                                            foundInRange = true;
+                                            // 只添加属于目标topic的延迟消息
+                                            String realTopic = msg.getProperty(org.apache.rocketmq.common.message.MessageConst.PROPERTY_REAL_TOPIC);
+                                            if (topic.equals(realTopic)) {
+                                                result.add(convertMessage(msg));
+                                            }
+                                        } else if (foundInRange && msg.getStoreTimestamp() > end) {
+                                            return;
+                                        }
+                                    }
+                                    offset = pullResult.getNextBeginOffset();
+                                } else if (pullResult.getPullStatus() == PullStatus.NO_NEW_MSG
+                                        || pullResult.getPullStatus() == PullStatus.OFFSET_ILLEGAL) {
+                                    break;
+                                } else {
+                                    offset = pullResult.getNextBeginOffset();
+                                }
+                            }
+                        }
+                    } finally {
+                        pullConsumer.shutdown();
+                    }
+                } catch (Exception ignored) {}
+            }
+        } catch (Exception ignored) {}
     }
 
     private static Map<String, Object> convertMessage(MessageExt msg) {
@@ -606,7 +697,21 @@ public class RocketmqService {
      */
     public static List<Map<String, Object>> getMessageTrack(ConnectionConfig config, String topic, String msgId) throws Exception {
         DefaultMQAdminExt admin = getAdmin(config);
-        MessageExt msg = admin.viewMessage(topic, msgId);
+        MessageExt msg = null;
+        try { msg = admin.viewMessage(topic, msgId); } catch (Exception ignored) {}
+        if (msg == null) {
+            try {
+                long end = System.currentTimeMillis();
+                long begin = end - 7 * 24 * 3600 * 1000L;
+                QueryResult qr = admin.queryMessage(null, topic, msgId, 1, begin, end);
+                if (qr != null && !qr.getMessageList().isEmpty()) {
+                    msg = qr.getMessageList().get(0);
+                }
+            } catch (Exception ignored) {}
+        }
+        if (msg == null) {
+            throw new RuntimeException("未找到消息，无法查询消费轨迹: " + msgId);
+        }
         List<org.apache.rocketmq.tools.admin.api.MessageTrack> tracks = admin.messageTrackDetail(msg);
         List<Map<String, Object>> result = new ArrayList<>();
         if (tracks != null) {
