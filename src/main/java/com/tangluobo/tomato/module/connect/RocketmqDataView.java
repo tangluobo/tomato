@@ -7,10 +7,12 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.layout.*;
-import javafx.scene.text.Text;
-import javafx.scene.text.TextFlow;
 import javafx.util.StringConverter;
+
+import com.tangluobo.tomato.module.tools.JsonFoldableTextView;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -43,10 +45,12 @@ public class RocketmqDataView extends VBox {
     private TableView<MessageItem> messageTable;
     private final ObservableList<MessageItem> messageData = FXCollections.observableArrayList();
     private GridPane messageInfoGrid;
-    private TextFlow messageBodyFlow;
-    private ScrollPane messageBodyScroll;
+    private JsonFoldableTextView jsonBodyView;
     private Button formatBodyBtn;
     private Button compressBodyBtn;
+    private Button copyAllBodyBtn;
+    private Button expandAllBtn;
+    private Button collapseAllBtn;
     private String rawBodyText = "";
     private boolean bodyFormatted = false;
 
@@ -572,23 +576,24 @@ public class RocketmqDataView extends VBox {
         compressBodyBtn.setStyle("-fx-font-size: 11px;");
         compressBodyBtn.setDisable(true);
         compressBodyBtn.setOnAction(e -> toggleFormatBody());
-        bodyToolbar.getChildren().addAll(bodyTitle, formatBodyBtn, compressBodyBtn);
+        copyAllBodyBtn = new Button("复制全部");
+        copyAllBodyBtn.setStyle("-fx-font-size: 11px;");
+        copyAllBodyBtn.setDisable(true);
+        copyAllBodyBtn.setOnAction(e -> jsonBodyView.copyAll());
+        expandAllBtn = new Button("展开全部");
+        expandAllBtn.setStyle("-fx-font-size: 11px;");
+        expandAllBtn.setDisable(true);
+        expandAllBtn.setOnAction(e -> jsonBodyView.expandAll());
+        collapseAllBtn = new Button("折叠全部");
+        collapseAllBtn.setStyle("-fx-font-size: 11px;");
+        collapseAllBtn.setDisable(true);
+        collapseAllBtn.setOnAction(e -> jsonBodyView.collapseAll());
+        bodyToolbar.getChildren().addAll(bodyTitle, formatBodyBtn, compressBodyBtn, copyAllBodyBtn, expandAllBtn, collapseAllBtn);
 
-        messageBodyFlow = new TextFlow();
-        messageBodyFlow.setPadding(new Insets(5));
-        messageBodyFlow.setStyle("-fx-font-family: monospace; -fx-font-size: 12px; -fx-background-color: #fafafa;");
+        jsonBodyView = new JsonFoldableTextView();
 
-        messageBodyScroll = new ScrollPane(messageBodyFlow);
-        messageBodyScroll.setFitToWidth(true);
-        messageBodyScroll.setFitToHeight(true);
-        messageBodyScroll.setStyle("-fx-background-color: transparent;");
-
-        Label bodyPlaceholder = new Label("双击消息查看Body");
-        bodyPlaceholder.setStyle("-fx-text-fill: #999; -fx-font-size: 12px; -fx-padding: 20;");
-        messageBodyFlow.getChildren().add(bodyPlaceholder);
-
-        detailPanel.getChildren().addAll(infoTitle, messageInfoGrid, bodyToolbar, messageBodyScroll);
-        VBox.setVgrow(messageBodyScroll, Priority.ALWAYS);
+        detailPanel.getChildren().addAll(infoTitle, messageInfoGrid, bodyToolbar, jsonBodyView);
+        VBox.setVgrow(jsonBodyView, Priority.ALWAYS);
 
         // 使用SplitPane水平分割：左侧消息列表，右侧详情
         SplitPane splitPane = new SplitPane();
@@ -763,7 +768,30 @@ public class RocketmqDataView extends VBox {
             valueLabel.setWrapText(true);
             valueLabel.setMaxWidth(Double.MAX_VALUE);
             valueLabel.setStyle("-fx-font-size: 12px;");
-            messageInfoGrid.add(keyLabel, 0, row);
+            // 消息ID行在key列放复制按钮
+            if ("msgId".equals(key)) {
+                HBox keyBox = new HBox(2);
+                keyBox.setAlignment(Pos.CENTER_LEFT);
+                keyBox.getChildren().add(keyLabel);
+                ImageView copyIcon = new ImageView(new Image(getClass().getResourceAsStream("/images/copy.png")));
+                copyIcon.setFitWidth(14);
+                copyIcon.setFitHeight(14);
+                Button copyBtn = new Button();
+                copyBtn.setGraphic(copyIcon);
+                copyBtn.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-padding: 1 2; -fx-cursor: hand;");
+                copyBtn.setTooltip(new Tooltip("复制"));
+                String copyValue = String.valueOf(value);
+                copyBtn.setOnAction(e -> {
+                    javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
+                    javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
+                    content.putString(copyValue);
+                    clipboard.setContent(content);
+                });
+                keyBox.getChildren().add(copyBtn);
+                messageInfoGrid.add(keyBox, 0, row);
+            } else {
+                messageInfoGrid.add(keyLabel, 0, row);
+            }
             messageInfoGrid.add(valueLabel, 1, row);
             row++;
         }
@@ -771,112 +799,51 @@ public class RocketmqDataView extends VBox {
         if (bodyText != null) {
             rawBodyText = bodyText;
             boolean isJson = isJsonString(bodyText);
-            bodyFormatted = false;
+            bodyFormatted = true; // JsonFoldableTextView 默认格式化显示
             if (isJson) {
                 formatBodyBtn.setDisable(false);
-                compressBodyBtn.setDisable(true);
-                // 默认显示格式化的JSON
-                try {
-                    String formatted = formatJson(bodyText);
-                    renderJsonHighlighted(formatted);
-                    bodyFormatted = true;
-                    compressBodyBtn.setDisable(false);
-                } catch (Exception e) {
-                    renderPlainText(bodyText);
-                }
+                compressBodyBtn.setDisable(false);
+                copyAllBodyBtn.setDisable(false);
+                expandAllBtn.setDisable(false);
+                collapseAllBtn.setDisable(false);
+                jsonBodyView.setText(bodyText);
             } else {
                 formatBodyBtn.setDisable(true);
                 compressBodyBtn.setDisable(true);
-                renderPlainText(bodyText);
+                copyAllBodyBtn.setDisable(false);
+                expandAllBtn.setDisable(true);
+                collapseAllBtn.setDisable(true);
+                jsonBodyView.setText(bodyText);
             }
         } else {
             rawBodyText = "";
             bodyFormatted = false;
-            messageBodyFlow.getChildren().clear();
+            jsonBodyView.clear();
             formatBodyBtn.setDisable(true);
             compressBodyBtn.setDisable(true);
+            copyAllBodyBtn.setDisable(true);
+            expandAllBtn.setDisable(true);
+            collapseAllBtn.setDisable(true);
         }
     }
 
     private void toggleFormatBody() {
         if (rawBodyText == null || rawBodyText.isEmpty()) return;
         if (bodyFormatted) {
-            // 切换为压缩
+            // 切换为压缩：用压缩后的JSON重新设置
             bodyFormatted = false;
-            renderJsonHighlighted(rawBodyText);
+            try {
+                com.google.gson.JsonElement element = new com.google.gson.JsonParser().parseString(rawBodyText);
+                String compact = new com.google.gson.Gson().toJson(element);
+                jsonBodyView.setText(compact);
+            } catch (Exception e) {
+                jsonBodyView.setText(rawBodyText);
+            }
         } else {
             // 切换为格式化
-            try {
-                String formatted = formatJson(rawBodyText);
-                renderJsonHighlighted(formatted);
-                bodyFormatted = true;
-            } catch (Exception e) {
-                renderPlainText(rawBodyText);
-            }
+            bodyFormatted = true;
+            jsonBodyView.setText(rawBodyText);
         }
-    }
-
-    private void renderJsonHighlighted(String json) {
-        messageBodyFlow.getChildren().clear();
-        // JSON语法高亮：key=紫色，string值=绿色，number/boolean/null=蓝色，符号=灰色
-        String pattern = "(\"[^\"]*\")\\s*(:)?";
-        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(pattern).matcher(json);
-        int lastEnd = 0;
-        while (matcher.find()) {
-            if (matcher.start() > lastEnd) {
-                String between = json.substring(lastEnd, matcher.start());
-                addColoredText(between, "#666666"); // 符号/空白
-            }
-            String quoted = matcher.group(1);
-            String colon = matcher.group(2);
-            if (colon != null) {
-                // 这是一个key
-                addColoredText(quoted, "#a31515"); // key - 深红色
-                addColoredText(":", "#333333");
-            } else {
-                // 这是一个string值
-                addColoredText(quoted, "#008000"); // string值 - 绿色
-            }
-            lastEnd = matcher.end();
-        }
-        if (lastEnd < json.length()) {
-            String remaining = json.substring(lastEnd);
-            // 处理剩余文本中的number/boolean/null
-            renderRemainingJson(remaining);
-        }
-    }
-
-    private void renderRemainingJson(String text) {
-        // 匹配 number, boolean, null
-        String tokenPattern = "(\\b(?:true|false|null)\\b)|(\\b-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\b)";
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile(tokenPattern).matcher(text);
-        int lastEnd = 0;
-        while (m.find()) {
-            if (m.start() > lastEnd) {
-                String between = text.substring(lastEnd, m.start());
-                addColoredText(between, "#666666"); // 普通文本
-            }
-            String match = m.group();
-            addColoredText(match, "#0451a5"); // number/boolean/null - 蓝色
-            lastEnd = m.end();
-        }
-        if (lastEnd < text.length()) {
-            addColoredText(text.substring(lastEnd), "#666666");
-        }
-    }
-
-    private void addColoredText(String text, String color) {
-        if (text.isEmpty()) return;
-        Text t = new Text(text);
-        t.setStyle("-fx-fill: " + color + "; -fx-font-family: monospace; -fx-font-size: 12px;");
-        messageBodyFlow.getChildren().add(t);
-    }
-
-    private void renderPlainText(String text) {
-        messageBodyFlow.getChildren().clear();
-        Text t = new Text(text);
-        t.setStyle("-fx-fill: #333333; -fx-font-family: monospace; -fx-font-size: 12px;");
-        messageBodyFlow.getChildren().add(t);
     }
 
     private boolean isJsonString(String text) {
@@ -886,55 +853,20 @@ public class RocketmqDataView extends VBox {
                 || (trimmed.startsWith("[") && trimmed.endsWith("]"));
     }
 
-    private String formatJson(String json) {
-        StringBuilder sb = new StringBuilder();
-        int indent = 0;
-        boolean inString = false;
-        char prev = 0;
-        for (int i = 0; i < json.length(); i++) {
-            char c = json.charAt(i);
-            if (c == '"' && prev != '\\') {
-                inString = !inString;
-            }
-            if (!inString) {
-                if (c == '{' || c == '[') {
-                    sb.append(c).append('\n');
-                    indent++;
-                    sb.append("  ".repeat(indent));
-                } else if (c == '}' || c == ']') {
-                    sb.append('\n');
-                    indent--;
-                    sb.append("  ".repeat(indent)).append(c);
-                } else if (c == ',') {
-                    sb.append(c).append('\n');
-                    sb.append("  ".repeat(indent));
-                } else if (c == ':') {
-                    sb.append(c).append(' ');
-                } else if (!Character.isWhitespace(c)) {
-                    sb.append(c);
-                }
-            } else {
-                sb.append(c);
-            }
-            prev = c;
-        }
-        return sb.toString();
-    }
-
     // ==================== 辅助方法 ====================
 
     private void showErrorInBody(String msg) {
-        messageBodyFlow.getChildren().clear();
-        Text t = new Text(msg);
-        t.setStyle("-fx-fill: #cc0000; -fx-font-family: monospace; -fx-font-size: 12px;");
-        messageBodyFlow.getChildren().add(t);
+        jsonBodyView.setError(msg);
     }
 
     private void clearBody() {
-        messageBodyFlow.getChildren().clear();
+        jsonBodyView.clear();
         messageInfoGrid.getChildren().clear();
         formatBodyBtn.setDisable(true);
         compressBodyBtn.setDisable(true);
+        copyAllBodyBtn.setDisable(true);
+        expandAllBtn.setDisable(true);
+        collapseAllBtn.setDisable(true);
         rawBodyText = "";
         bodyFormatted = false;
     }
