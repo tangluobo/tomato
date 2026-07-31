@@ -348,25 +348,40 @@ public class RocketmqService {
      */
     public static List<Map<String, Object>> getConsumerGroupList(ConnectionConfig config) throws Exception {
         DefaultMQAdminExt admin = getAdmin(config);
-        // 使用getAllSubscriptionGroup获取所有消费者组
-        SubscriptionGroupWrapper wrapper = admin.getAllSubscriptionGroup(config.getHost() + ":" + config.getPort(), 3000L);
-        List<Map<String, Object>> result = new ArrayList<>();
-        if (wrapper != null && wrapper.getSubscriptionGroupTable() != null) {
-            for (Map.Entry<String, SubscriptionGroupConfig> entry : wrapper.getSubscriptionGroupTable().entrySet()) {
-                Map<String, Object> item = new LinkedHashMap<>();
-                item.put("group", entry.getKey());
+        // getAllSubscriptionGroup是Broker级别操作，需要传入Broker地址
+        ClusterInfo clusterInfo = admin.examineBrokerClusterInfo();
+        if (clusterInfo == null || clusterInfo.getBrokerAddrTable() == null) {
+            throw new RuntimeException("无法获取集群信息");
+        }
+        Set<String> groupSet = new LinkedHashSet<>();
+        for (BrokerData brokerData : clusterInfo.getBrokerAddrTable().values()) {
+            String masterAddr = brokerData.getBrokerAddrs().get(0L);
+            if (masterAddr != null) {
                 try {
-                    ConsumeStats stats = admin.examineConsumeStats(entry.getKey());
-                    if (stats != null) {
-                        item.put("consumeTps", String.format("%.2f", stats.getConsumeTps()));
-                        item.put("diffTotal", stats.computeTotalDiff());
+                    SubscriptionGroupWrapper wrapper = admin.getAllSubscriptionGroup(masterAddr, 3000L);
+                    if (wrapper != null && wrapper.getSubscriptionGroupTable() != null) {
+                        groupSet.addAll(wrapper.getSubscriptionGroupTable().keySet());
                     }
                 } catch (Exception ignored) {
-                    item.put("consumeTps", "0");
-                    item.put("diffTotal", 0);
+                    // 某个Broker获取失败不影响其他Broker
                 }
-                result.add(item);
             }
+        }
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (String group : groupSet) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("group", group);
+            try {
+                ConsumeStats stats = admin.examineConsumeStats(group);
+                if (stats != null) {
+                    item.put("consumeTps", String.format("%.2f", stats.getConsumeTps()));
+                    item.put("diffTotal", stats.computeTotalDiff());
+                }
+            } catch (Exception ignored) {
+                item.put("consumeTps", "0");
+                item.put("diffTotal", 0);
+            }
+            result.add(item);
         }
         return result;
     }
