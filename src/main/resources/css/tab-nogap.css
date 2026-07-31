@@ -1,16 +1,16 @@
-/* Remove ALL padding, borders, and spacing from TabPane components */
-/* Using > direct child selectors with explicit pixel values to override Modena defaults */
+/* Remove padding, borders, and spacing from TabPane layout containers only */
+/* Input controls (TextField, Button, etc.) are NOT affected */
 
 /* TabPane root */
 .tab-pane {
-    -fx-padding: 0px 0px 0px 0px !important;
+    -fx-padding: 0px !important;
     -fx-border-insets: 0 !important;
     -fx-background-insets: 0 !important;
 }
 
 /* Tab header area (the row with tab labels) */
 .tab-pane > .tab-header-area {
-    -fx-padding: 0px 0px 0px 0px !important;
+    -fx-padding: 0px !important;
     -fx-background-insets: 0 !important;
     -fx-border-insets: 0 !important;
 }
@@ -26,7 +26,7 @@
 
 /* Tab content area (the container for tab content) */
 .tab-pane > .tab-content-area {
-    -fx-padding: 0px 0px 0px 0px !important;
+    -fx-padding: 0px !important;
     -fx-background-color: transparent !important;
     -fx-background-insets: 0 !important;
     -fx-background-radius: 0 !important;
@@ -61,57 +61,39 @@
     -fx-background-insets: 0 !important;
 }
 
-/* Any region inside tab content - but NOT input controls */
-.tab-pane .tab-content-area .region {
-    -fx-padding: 0px !important;
+/* Ensure text fields are visible with proper height */
+.tab-pane .tab-content-area .text-field {
+    -fx-padding: 4px 6px !important;
+    -fx-min-height: 26px !important;
+    -fx-pref-height: 26px !important;
+    -fx-font-size: 12px !important;
 }
 
-/* Restore padding for input controls */
-.tab-pane .tab-content-area .spinner,
-.tab-pane .tab-content-area .text-field,
 .tab-pane .tab-content-area .text-area,
 .tab-pane .tab-content-area .combo-box,
 .tab-pane .tab-content-area .button {
     -fx-padding: 4px 6px !important;
-}
-
-/* DatePicker - make it square like TextField, no extra border */
-.tab-pane .tab-content-area .date-picker {
-    -fx-padding: 0 !important;
-    -fx-border-color: #bcbcbc !important;
-    -fx-border-radius: 3px !important;
-    -fx-background-radius: 3px !important;
-    -fx-background-color: white !important;
-    -fx-min-height: 26px !important;
-    -fx-max-height: 26px !important;
-}
-
-.tab-pane .tab-content-area .date-picker .text-field {
-    -fx-padding: 4px 6px !important;
-    -fx-border-color: transparent !important;
-    -fx-background-color: transparent !important;
-    -fx-background-insets: 0 !important;
     -fx-font-size: 12px !important;
 }
 
-.tab-pane .tab-content-area .date-picker .arrow-button {
+/* DatePicker with datetime - ensure visible and aligned */
+.tab-pane .tab-content-area .date-picker {
+    -fx-font-size: 12px !important;
+    -fx-min-height: 26px !important;
+    -fx-pref-height: 26px !important;
     -fx-padding: 0 !important;
-    -fx-background-color: transparent !important;
     -fx-background-insets: 0 !important;
-    -fx-border-color: transparent !important;
+}
+
+.tab-pane .tab-content-area .date-picker > .text-field {
+    -fx-padding: 4px 6px !important;
+    -fx-min-height: 26px !important;
+    -fx-pref-height: 26px !important;
+    -fx-font-size: 12px !important;
+}
+
+.tab-pane .tab-content-area .date-picker > .arrow-button {
+    -fx-padding: 0 6px !important;
+    -fx-background-insets: 0 !important;
     -fx-min-width: 24px !important;
-    -fx-max-width: 24px !important;
-}
-
-.tab-pane .tab-content-area .date-picker .arrow {
-    -fx-background-color: #666 !important;
-    -fx-padding: 0 !important;
-}
-
-.tab-pane .tab-content-area .date-picker:hover {
-    -fx-border-color: #7eb4ea !important;
-}
-
-.tab-pane .tab-content-area .date-picker:focused {
-    -fx-border-color: #07c160 !important;
 }

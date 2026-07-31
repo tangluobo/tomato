@@ -8,14 +8,12 @@ import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.*;
-import javafx.scene.paint.Color;
 import javafx.scene.text.Text;
-import javafx.scene.text.TextFlow;
+import javafx.util.StringConverter;
 
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -40,13 +38,7 @@ public class RocketmqDataView extends VBox {
     private TextField msgKeyField;
     private TextField msgMsgIdField;
     private DatePicker beginDatePicker;
-    private Spinner<Integer> beginHourSpinner;
-    private Spinner<Integer> beginMinuteSpinner;
-    private Spinner<Integer> beginSecondSpinner;
     private DatePicker endDatePicker;
-    private Spinner<Integer> endHourSpinner;
-    private Spinner<Integer> endMinuteSpinner;
-    private Spinner<Integer> endSecondSpinner;
     private TableView<MessageItem> messageTable;
     private final ObservableList<MessageItem> messageData = FXCollections.observableArrayList();
     private TextArea messageDetailArea;
@@ -54,6 +46,7 @@ public class RocketmqDataView extends VBox {
     // Consumer tab
     private TableView<ConsumerItem> consumerTable;
     private final ObservableList<ConsumerItem> consumerData = FXCollections.observableArrayList();
+    private TextArea consumerDetailArea;
 
     // Cluster tab
     private TableView<ClusterItem> clusterTable;
@@ -85,8 +78,9 @@ public class RocketmqDataView extends VBox {
         // Apply immediately
         Platform.runLater(this::applyNoGapStyles);
 
-        // 自动加载Topic列表
+        // 自动加载数据
         loadTopics();
+        loadConsumers();
     }
 
     private void applyNoGapStyles() {
@@ -157,23 +151,26 @@ public class RocketmqDataView extends VBox {
                     List<?> list = (List<?>) offsetTable;
                     sb.append("队列消费详情 (共").append(list.size()).append("条):\n");
                     for (Object item : list) {
-                        sb.append("  ").append(item).append("\n");
+                        if (item instanceof Map) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> offsetInfo = (Map<String, Object>) item;
+                            sb.append("  Topic: ").append(offsetInfo.getOrDefault("topic", ""))
+                              .append(", Broker: ").append(offsetInfo.getOrDefault("brokerName", ""))
+                              .append(", QueueId: ").append(offsetInfo.getOrDefault("queueId", ""))
+                              .append(", BrokerOffset: ").append(offsetInfo.getOrDefault("brokerOffset", ""))
+                              .append(", ConsumerOffset: ").append(offsetInfo.getOrDefault("consumerOffset", ""))
+                              .append(", Diff: ").append(offsetInfo.getOrDefault("diff", ""))
+                              .append("\n");
+                        } else {
+                            sb.append("  ").append(item).append("\n");
+                        }
                     }
                 }
 
                 String result = sb.toString();
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.INFORMATION);
-                    alert.setTitle("消费者组详情");
-                    alert.setHeaderText(null);
-                    TextArea textArea = new TextArea(result);
-                    textArea.setEditable(false);
-                    textArea.setPrefSize(500, 400);
-                    alert.getDialogPane().setContent(textArea);
-                    alert.showAndWait();
-                });
+                Platform.runLater(() -> consumerDetailArea.setText(result));
             } catch (Exception e) {
-                Platform.runLater(() -> showError("获取消费者组详情失败: " + e.getMessage()));
+                Platform.runLater(() -> consumerDetailArea.setText("获取消费者组详情失败: " + e.getMessage()));
             }
         }, "RocketMQ-ConsumerDetail").start();
     }
@@ -209,6 +206,7 @@ public class RocketmqDataView extends VBox {
         // Topic表格
         topicTable = new TableView<>();
         topicTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
+        topicTable.setPlaceholder(new Label("无数据"));
 
         TableColumn<TopicItem, String> nameCol = new TableColumn<>("主题名称");
         nameCol.setCellValueFactory(new PropertyValueFactory<>("topic"));
@@ -246,6 +244,7 @@ public class RocketmqDataView extends VBox {
         // 偏移信息表格（用于从树节点双击打开时直接展示）
         topicOffsetTable = new TableView<>();
         topicOffsetTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
+        topicOffsetTable.setPlaceholder(new Label("无数据"));
 
         TableColumn<TopicOffsetItem, String> brokerNameCol = new TableColumn<>("BrokerName");
         brokerNameCol.setCellValueFactory(new PropertyValueFactory<>("brokerName"));
@@ -513,17 +512,11 @@ public class RocketmqDataView extends VBox {
         timeQueryContent.setPadding(Insets.EMPTY);
         timeQueryContent.setAlignment(Pos.CENTER_LEFT);
 
-        beginDatePicker = new DatePicker(LocalDate.now().minusDays(3));
-        beginDatePicker.setPrefWidth(130);
-        beginHourSpinner = createTimeSpinner(0, 23, 0);
-        beginMinuteSpinner = createTimeSpinner(0, 59, 0);
-        beginSecondSpinner = createTimeSpinner(0, 59, 0);
+        beginDatePicker = createDateTimePicker(LocalDate.now().minusDays(3).atStartOfDay());
+        beginDatePicker.setPrefWidth(190);
 
-        endDatePicker = new DatePicker(LocalDate.now());
-        endDatePicker.setPrefWidth(130);
-        endHourSpinner = createTimeSpinner(0, 23, 23);
-        endMinuteSpinner = createTimeSpinner(0, 59, 59);
-        endSecondSpinner = createTimeSpinner(0, 59, 59);
+        endDatePicker = createDateTimePicker(LocalDate.now().atTime(23, 59, 59));
+        endDatePicker.setPrefWidth(190);
 
         Button timeSearchBtn = new Button("查询");
         timeSearchBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-font-size: 12px;");
@@ -550,13 +543,7 @@ public class RocketmqDataView extends VBox {
         timeRangeBar.setAlignment(Pos.CENTER_LEFT);
         timeRangeBar.getChildren().addAll(
                 new Label("开始:"), beginDatePicker,
-                new Label("时"), beginHourSpinner,
-                new Label("分"), beginMinuteSpinner,
-                new Label("秒"), beginSecondSpinner,
                 new Label("结束:"), endDatePicker,
-                new Label("时"), endHourSpinner,
-                new Label("分"), endMinuteSpinner,
-                new Label("秒"), endSecondSpinner,
                 timeSearchBtn
         );
 
@@ -579,6 +566,7 @@ public class RocketmqDataView extends VBox {
         // 消息表格
         messageTable = new TableView<>();
         messageTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
+        messageTable.setPlaceholder(new Label("无数据"));
 
         TableColumn<MessageItem, String> msgIdCol = new TableColumn<>("MsgId");
         msgIdCol.setCellValueFactory(new PropertyValueFactory<>("msgId"));
@@ -697,8 +685,12 @@ public class RocketmqDataView extends VBox {
             showWarning("当前标签未关联主题");
             return;
         }
-        long begin = parseTimeFromSpinners(beginDatePicker, beginHourSpinner, beginMinuteSpinner, beginSecondSpinner);
-        long end = parseTimeFromSpinners(endDatePicker, endHourSpinner, endMinuteSpinner, endSecondSpinner);
+        long begin = getDateTimeFromPicker(beginDatePicker);
+        long end = getDateTimeFromPicker(endDatePicker);
+        if (begin == 0 || end == 0) {
+            showWarning("请输入正确的时间格式 (yyyy-MM-dd HH:mm:ss)");
+            return;
+        }
         if (begin >= end) {
             showWarning("开始时间必须早于结束时间");
             return;
@@ -793,6 +785,7 @@ public class RocketmqDataView extends VBox {
 
         consumerTable = new TableView<>();
         consumerTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
+        consumerTable.setPlaceholder(new Label("无数据"));
 
         TableColumn<ConsumerItem, String> groupCol = new TableColumn<>("消费者组");
         groupCol.setCellValueFactory(new PropertyValueFactory<>("group"));
@@ -809,7 +802,25 @@ public class RocketmqDataView extends VBox {
         consumerTable.getColumns().addAll(groupCol, tpsCol, diffCol);
         consumerTable.setItems(consumerData);
 
-        content.getChildren().addAll(toolbar, consumerTable);
+        // 双击查看详情
+        consumerTable.setRowFactory(tv -> {
+            TableRow<ConsumerItem> row = new TableRow<>();
+            row.setOnMouseClicked(e -> {
+                if (e.getClickCount() == 2 && !row.isEmpty()) {
+                    loadConsumerDetail(row.getItem().getGroup());
+                }
+            });
+            return row;
+        });
+
+        // 详情区域
+        consumerDetailArea = new TextArea();
+        consumerDetailArea.setPromptText("选择消费者组后点击\"查看详情\"或双击行查看消费详情");
+        consumerDetailArea.setPrefHeight(200);
+        consumerDetailArea.setEditable(false);
+        consumerDetailArea.setStyle("-fx-font-family: monospace; -fx-font-size: 12px;");
+
+        content.getChildren().addAll(toolbar, consumerTable, new Label("消费详情:"), consumerDetailArea);
         VBox.setVgrow(consumerTable, Priority.ALWAYS);
 
         Tab tab = new Tab("消费者组");
@@ -880,6 +891,7 @@ public class RocketmqDataView extends VBox {
 
         clusterTable = new TableView<>();
         clusterTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
+        clusterTable.setPlaceholder(new Label("无数据"));
 
         TableColumn<ClusterItem, String> brokerNameCol = new TableColumn<>("BrokerName");
         brokerNameCol.setCellValueFactory(new PropertyValueFactory<>("brokerName"));
@@ -946,41 +958,63 @@ public class RocketmqDataView extends VBox {
         }
     }
 
-    private void setQuickRange(int days) {
-        beginDatePicker.setValue(LocalDate.now().minusDays(days));
-        beginHourSpinner.getValueFactory().setValue(0);
-        beginMinuteSpinner.getValueFactory().setValue(0);
-        beginSecondSpinner.getValueFactory().setValue(0);
-        endDatePicker.setValue(LocalDate.now());
-        endHourSpinner.getValueFactory().setValue(23);
-        endMinuteSpinner.getValueFactory().setValue(59);
-        endSecondSpinner.getValueFactory().setValue(59);
+    private static final DateTimeFormatter DATETIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    private DatePicker createDateTimePicker(LocalDateTime defaultDateTime) {
+        DatePicker picker = new DatePicker();
+        picker.setPrefWidth(190);
+        picker.setConverter(new StringConverter<LocalDate>() {
+            @Override
+            public String toString(LocalDate date) {
+                if (date == null) return "";
+                // 保留编辑框中的时分秒
+                String editorText = picker.getEditor().getText();
+                String timePart = " 00:00:00";
+                if (editorText != null && editorText.trim().length() >= 19) {
+                    timePart = " " + editorText.trim().substring(11);
+                }
+                return date.format(DateTimeFormatter.ISO_LOCAL_DATE) + timePart;
+            }
+
+            @Override
+            public LocalDate fromString(String string) {
+                if (string == null || string.trim().isEmpty()) return null;
+                String trimmed = string.trim();
+                try {
+                    return LocalDateTime.parse(trimmed, DATETIME_FORMATTER).toLocalDate();
+                } catch (Exception e) {
+                    try {
+                        return LocalDate.parse(trimmed);
+                    } catch (Exception e2) {
+                        return null;
+                    }
+                }
+            }
+        });
+        picker.setValue(defaultDateTime.toLocalDate());
+        picker.getEditor().setText(defaultDateTime.format(DATETIME_FORMATTER));
+        return picker;
     }
 
-    private Spinner<Integer> createTimeSpinner(int min, int max, int defaultValue) {
-        SpinnerValueFactory<Integer> factory = new SpinnerValueFactory.IntegerSpinnerValueFactory(min, max, defaultValue);
-        Spinner<Integer> spinner = new Spinner<>(factory);
-        spinner.setEditable(true);
-        spinner.setPrefWidth(55);
-        spinner.setStyle("-fx-font-size: 12px;");
-        return spinner;
+    private void setDateTimePickerValue(DatePicker picker, LocalDateTime dateTime) {
+        picker.setValue(dateTime.toLocalDate());
+        picker.getEditor().setText(dateTime.format(DATETIME_FORMATTER));
     }
 
-    private long parseTimeFromSpinners(DatePicker datePicker, Spinner<Integer> hourSpinner, Spinner<Integer> minuteSpinner, Spinner<Integer> secondSpinner) {
+    private long getDateTimeFromPicker(DatePicker picker) {
         try {
-            LocalDate date = datePicker.getValue();
-            if (date == null) date = LocalDate.now();
-            int hour = hourSpinner.getValue() != null ? hourSpinner.getValue() : 0;
-            int minute = minuteSpinner.getValue() != null ? minuteSpinner.getValue() : 0;
-            int second = secondSpinner.getValue() != null ? secondSpinner.getValue() : 0;
-            LocalTime time = LocalTime.of(hour, minute, second);
-            return LocalDateTime.of(date, time)
-                    .atZone(ZoneId.systemDefault())
-                    .toInstant()
-                    .toEpochMilli();
+            String text = picker.getEditor().getText();
+            if (text == null || text.trim().isEmpty()) return 0;
+            LocalDateTime dt = LocalDateTime.parse(text.trim(), DATETIME_FORMATTER);
+            return dt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
         } catch (Exception e) {
-            return System.currentTimeMillis();
+            return 0;
         }
+    }
+
+    private void setQuickRange(int days) {
+        setDateTimePickerValue(beginDatePicker, LocalDate.now().minusDays(days).atStartOfDay());
+        setDateTimePickerValue(endDatePicker, LocalDate.now().atTime(23, 59, 59));
     }
 
     private void showError(String msg) {
