@@ -43,15 +43,6 @@ public class RocketmqDataView extends VBox {
     private final ObservableList<MessageItem> messageData = FXCollections.observableArrayList();
     private TextArea messageDetailArea;
 
-    // Consumer tab
-    private TableView<ConsumerItem> consumerTable;
-    private final ObservableList<ConsumerItem> consumerData = FXCollections.observableArrayList();
-    private TextArea consumerDetailArea;
-
-    // Cluster tab
-    private TableView<ClusterItem> clusterTable;
-    private final ObservableList<ClusterItem> clusterData = FXCollections.observableArrayList();
-
     public RocketmqDataView(ConnectionConfig config, String topicName) {
         this.config = config;
         this.topicName = topicName;
@@ -60,8 +51,6 @@ public class RocketmqDataView extends VBox {
 
         setupTopicTab();
         setupMessageTab();
-        setupConsumerTab();
-        setupClusterTab();
 
         this.getChildren().add(mainTabPane);
         VBox.setVgrow(mainTabPane, Priority.ALWAYS);
@@ -80,7 +69,6 @@ public class RocketmqDataView extends VBox {
 
         // 自动加载数据
         loadTopics();
-        loadConsumers();
     }
 
     private void applyNoGapStyles() {
@@ -119,60 +107,10 @@ public class RocketmqDataView extends VBox {
         }
     }
 
-    public void selectConsumerTab(String groupName) {
-        mainTabPane.getSelectionModel().select(2);
-        if (groupName != null && !groupName.isEmpty()) {
-            loadConsumerDetail(groupName);
-        }
-    }
-
-    public void selectClusterTab() {
-        mainTabPane.getSelectionModel().select(3);
-    }
-
     public void selectMessageTab(String topicName) {
         mainTabPane.getSelectionModel().select(1);
         String t = (topicName != null && !topicName.isEmpty()) ? topicName : this.topicName;
         currentMessageTopic = t;
-    }
-
-    private void loadConsumerDetail(String groupName) {
-        new Thread(() -> {
-            try {
-                Map<String, Object> detail = RocketmqService.getConsumerGroupDetail(config, groupName);
-                StringBuilder sb = new StringBuilder();
-                sb.append("消费者组: ").append(groupName).append("\n\n");
-
-                sb.append("消费TPS: ").append(detail.getOrDefault("consumeTps", "N/A")).append("\n");
-                sb.append("积压总量: ").append(detail.getOrDefault("totalDiff", "N/A")).append("\n\n");
-
-                Object offsetTable = detail.get("offsetTable");
-                if (offsetTable instanceof List) {
-                    List<?> list = (List<?>) offsetTable;
-                    sb.append("队列消费详情 (共").append(list.size()).append("条):\n");
-                    for (Object item : list) {
-                        if (item instanceof Map) {
-                            @SuppressWarnings("unchecked")
-                            Map<String, Object> offsetInfo = (Map<String, Object>) item;
-                            sb.append("  Topic: ").append(offsetInfo.getOrDefault("topic", ""))
-                              .append(", Broker: ").append(offsetInfo.getOrDefault("brokerName", ""))
-                              .append(", QueueId: ").append(offsetInfo.getOrDefault("queueId", ""))
-                              .append(", BrokerOffset: ").append(offsetInfo.getOrDefault("brokerOffset", ""))
-                              .append(", ConsumerOffset: ").append(offsetInfo.getOrDefault("consumerOffset", ""))
-                              .append(", Diff: ").append(offsetInfo.getOrDefault("diff", ""))
-                              .append("\n");
-                        } else {
-                            sb.append("  ").append(item).append("\n");
-                        }
-                    }
-                }
-
-                String result = sb.toString();
-                Platform.runLater(() -> consumerDetailArea.setText(result));
-            } catch (Exception e) {
-                Platform.runLater(() -> consumerDetailArea.setText("获取消费者组详情失败: " + e.getMessage()));
-            }
-        }, "RocketMQ-ConsumerDetail").start();
     }
 
     // ==================== Topic Tab ====================
@@ -764,182 +702,6 @@ public class RocketmqDataView extends VBox {
         }, "RocketMQ-MessageDetail").start();
     }
 
-    // ==================== Consumer Tab ====================
-
-    private void setupConsumerTab() {
-        VBox content = new VBox(0);
-        content.setPadding(Insets.EMPTY);
-
-        HBox toolbar = new HBox(8);
-        toolbar.setAlignment(Pos.CENTER_LEFT);
-
-        Button refreshBtn = new Button("刷新");
-        refreshBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-font-size: 12px;");
-        refreshBtn.setOnAction(e -> loadConsumers());
-
-        Button deleteBtn = new Button("删除消费者组");
-        deleteBtn.setStyle("-fx-font-size: 12px; -fx-text-fill: #cc0000;");
-        deleteBtn.setOnAction(e -> deleteSelectedConsumer());
-
-        toolbar.getChildren().addAll(refreshBtn, deleteBtn);
-
-        consumerTable = new TableView<>();
-        consumerTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
-        consumerTable.setPlaceholder(new Label("无数据"));
-
-        TableColumn<ConsumerItem, String> groupCol = new TableColumn<>("消费者组");
-        groupCol.setCellValueFactory(new PropertyValueFactory<>("group"));
-        groupCol.setPrefWidth(400);
-
-        TableColumn<ConsumerItem, String> tpsCol = new TableColumn<>("消费TPS");
-        tpsCol.setCellValueFactory(new PropertyValueFactory<>("consumeTps"));
-        tpsCol.setPrefWidth(150);
-
-        TableColumn<ConsumerItem, String> diffCol = new TableColumn<>("积压量");
-        diffCol.setCellValueFactory(new PropertyValueFactory<>("diffTotal"));
-        diffCol.setPrefWidth(150);
-
-        consumerTable.getColumns().addAll(groupCol, tpsCol, diffCol);
-        consumerTable.setItems(consumerData);
-
-        // 双击查看详情
-        consumerTable.setRowFactory(tv -> {
-            TableRow<ConsumerItem> row = new TableRow<>();
-            row.setOnMouseClicked(e -> {
-                if (e.getClickCount() == 2 && !row.isEmpty()) {
-                    loadConsumerDetail(row.getItem().getGroup());
-                }
-            });
-            return row;
-        });
-
-        // 详情区域
-        consumerDetailArea = new TextArea();
-        consumerDetailArea.setPromptText("选择消费者组后点击\"查看详情\"或双击行查看消费详情");
-        consumerDetailArea.setPrefHeight(200);
-        consumerDetailArea.setEditable(false);
-        consumerDetailArea.setStyle("-fx-font-family: monospace; -fx-font-size: 12px;");
-
-        content.getChildren().addAll(toolbar, consumerTable, new Label("消费详情:"), consumerDetailArea);
-        VBox.setVgrow(consumerTable, Priority.ALWAYS);
-
-        Tab tab = new Tab("消费者组");
-        tab.setContent(content);
-        mainTabPane.getTabs().add(tab);
-    }
-
-    private void loadConsumers() {
-        new Thread(() -> {
-            try {
-                List<Map<String, Object>> consumers = RocketmqService.getConsumerGroupList(config);
-                Platform.runLater(() -> {
-                    consumerData.clear();
-                    for (Map<String, Object> c : consumers) {
-                        String group = String.valueOf(c.getOrDefault("group", ""));
-                        String tps = String.valueOf(c.getOrDefault("consumeTps", "0"));
-                        String diff = String.valueOf(c.getOrDefault("diffTotal", "0"));
-                        consumerData.add(new ConsumerItem(group, tps, diff));
-                    }
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> showError("加载消费者组失败: " + e.getMessage()));
-            }
-        }, "RocketMQ-LoadConsumers").start();
-    }
-
-    private void deleteSelectedConsumer() {
-        ConsumerItem selected = consumerTable.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            showWarning("请先选择要删除的消费者组");
-            return;
-        }
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("确认删除");
-        confirm.setHeaderText("删除消费者组: " + selected.getGroup());
-        confirm.setContentText("删除后不可恢复，确定要删除吗？");
-        confirm.showAndWait().ifPresent(btn -> {
-            if (btn == ButtonType.OK) {
-                new Thread(() -> {
-                    try {
-                        RocketmqService.deleteConsumerGroup(config, selected.getGroup());
-                        Platform.runLater(() -> {
-                            showInfo("消费者组 " + selected.getGroup() + " 已删除");
-                            loadConsumers();
-                        });
-                    } catch (Exception e) {
-                        Platform.runLater(() -> showError("删除消费者组失败: " + e.getMessage()));
-                    }
-                }, "RocketMQ-DeleteConsumer").start();
-            }
-        });
-    }
-
-    // ==================== Cluster Tab ====================
-
-    private void setupClusterTab() {
-        VBox content = new VBox(0);
-        content.setPadding(Insets.EMPTY);
-
-        HBox toolbar = new HBox(8);
-        toolbar.setAlignment(Pos.CENTER_LEFT);
-
-        Button refreshBtn = new Button("刷新");
-        refreshBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-font-size: 12px;");
-        refreshBtn.setOnAction(e -> loadCluster());
-
-        toolbar.getChildren().add(refreshBtn);
-
-        clusterTable = new TableView<>();
-        clusterTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
-        clusterTable.setPlaceholder(new Label("无数据"));
-
-        TableColumn<ClusterItem, String> brokerNameCol = new TableColumn<>("BrokerName");
-        brokerNameCol.setCellValueFactory(new PropertyValueFactory<>("brokerName"));
-        brokerNameCol.setPrefWidth(200);
-
-        TableColumn<ClusterItem, String> brokerIdCol = new TableColumn<>("BrokerId");
-        brokerIdCol.setCellValueFactory(new PropertyValueFactory<>("brokerId"));
-        brokerIdCol.setPrefWidth(100);
-
-        TableColumn<ClusterItem, String> addressCol = new TableColumn<>("地址");
-        addressCol.setCellValueFactory(new PropertyValueFactory<>("address"));
-        addressCol.setPrefWidth(250);
-
-        TableColumn<ClusterItem, String> roleCol = new TableColumn<>("角色");
-        roleCol.setCellValueFactory(new PropertyValueFactory<>("role"));
-        roleCol.setPrefWidth(100);
-
-        clusterTable.getColumns().addAll(brokerNameCol, brokerIdCol, addressCol, roleCol);
-        clusterTable.setItems(clusterData);
-
-        content.getChildren().addAll(toolbar, clusterTable);
-        VBox.setVgrow(clusterTable, Priority.ALWAYS);
-
-        Tab tab = new Tab("集群");
-        tab.setContent(content);
-        mainTabPane.getTabs().add(tab);
-    }
-
-    private void loadCluster() {
-        new Thread(() -> {
-            try {
-                List<Map<String, Object>> cluster = RocketmqService.getClusterInfo(config);
-                Platform.runLater(() -> {
-                    clusterData.clear();
-                    for (Map<String, Object> c : cluster) {
-                        String brokerName = String.valueOf(c.getOrDefault("brokerName", ""));
-                        String brokerId = String.valueOf(c.getOrDefault("brokerId", ""));
-                        String address = String.valueOf(c.getOrDefault("address", ""));
-                        String role = String.valueOf(c.getOrDefault("role", ""));
-                        clusterData.add(new ClusterItem(brokerName, brokerId, address, role));
-                    }
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> showError("加载集群信息失败: " + e.getMessage()));
-            }
-        }, "RocketMQ-LoadCluster").start();
-    }
-
     // ==================== 辅助方法 ====================
 
     private String formatTimestamp(Object ts) {
@@ -1067,32 +829,6 @@ public class RocketmqDataView extends VBox {
         public String getStoreTime() { return storeTime; }
         public String getBornHost() { return bornHost; }
         public Map<String, Object> getDetail() { return detail; }
-    }
-
-    public static class ConsumerItem {
-        private final String group;
-        private final String consumeTps;
-        private final String diffTotal;
-        public ConsumerItem(String group, String consumeTps, String diffTotal) {
-            this.group = group; this.consumeTps = consumeTps; this.diffTotal = diffTotal;
-        }
-        public String getGroup() { return group; }
-        public String getConsumeTps() { return consumeTps; }
-        public String getDiffTotal() { return diffTotal; }
-    }
-
-    public static class ClusterItem {
-        private final String brokerName;
-        private final String brokerId;
-        private final String address;
-        private final String role;
-        public ClusterItem(String brokerName, String brokerId, String address, String role) {
-            this.brokerName = brokerName; this.brokerId = brokerId; this.address = address; this.role = role;
-        }
-        public String getBrokerName() { return brokerName; }
-        public String getBrokerId() { return brokerId; }
-        public String getAddress() { return address; }
-        public String getRole() { return role; }
     }
 
     public static class TopicOffsetItem {
