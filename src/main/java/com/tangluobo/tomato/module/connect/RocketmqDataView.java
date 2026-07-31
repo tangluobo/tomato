@@ -53,6 +53,7 @@ public class RocketmqDataView extends VBox {
     private Button collapseAllBtn;
     private String rawBodyText = "";
     private boolean bodyFormatted = false;
+    private Map<String, Object> currentMessageDetail;
 
     public RocketmqDataView(ConnectionConfig config, String topicName) {
         this.config = config;
@@ -592,7 +593,213 @@ public class RocketmqDataView extends VBox {
 
         jsonBodyView = new JsonFoldableTextView();
 
-        detailPanel.getChildren().addAll(infoTitle, messageInfoGrid, bodyToolbar, jsonBodyView);
+        // 消费状态区域
+        Label consumeTitle = new Label("消费状态");
+        consumeTitle.setStyle("-fx-font-weight: bold; -fx-font-size: 13px;");
+
+        HBox consumeToolbar = new HBox(8);
+        consumeToolbar.setAlignment(Pos.CENTER_LEFT);
+        Button refreshConsumeBtn = new Button("刷新");
+        refreshConsumeBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-font-size: 11px;");
+        Button viewUnconsumedBtn = new Button("查看未消费消息");
+        viewUnconsumedBtn.setStyle("-fx-font-size: 11px;");
+        viewUnconsumedBtn.setDisable(true);
+        consumeToolbar.getChildren().addAll(refreshConsumeBtn, viewUnconsumedBtn);
+
+        TableView<ObservableList<String>> consumeStatusTable = new TableView<>();
+        consumeStatusTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
+        consumeStatusTable.setPlaceholder(new Label("双击消息后点击刷新加载消费状态"));
+        consumeStatusTable.setPrefHeight(140);
+        consumeStatusTable.setMaxHeight(200);
+
+        // 列: 消费者组 | 消费状态 | 操作
+        TableColumn<ObservableList<String>, String> groupCol = new TableColumn<>("消费者组");
+        groupCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(0)));
+        groupCol.setPrefWidth(180);
+
+        TableColumn<ObservableList<String>, String> trackTypeCol = new TableColumn<>("消费状态");
+        trackTypeCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(1)));
+        trackTypeCol.setPrefWidth(130);
+        // 消费状态颜色
+        trackTypeCol.setCellFactory(col -> new TableCell<>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setStyle("");
+                } else {
+                    setText(item);
+                    if ("CONSUMED".equals(item)) {
+                        setStyle("-fx-text-fill: #4CAF50; -fx-font-weight: bold;");
+                    } else if ("NOT_CONSUME_YET".equals(item)) {
+                        setStyle("-fx-text-fill: #FF9800; -fx-font-weight: bold;");
+                    } else if ("CONSUME_BUT_DIED".equals(item)) {
+                        setStyle("-fx-text-fill: #F44336; -fx-font-weight: bold;");
+                    } else {
+                        setStyle("-fx-text-fill: #999;");
+                    }
+                }
+            }
+        });
+
+        // 操作列：重新消费 + 异常查看
+        TableColumn<ObservableList<String>, Void> actionCol = new TableColumn<>("操作");
+        actionCol.setPrefWidth(160);
+        actionCol.setCellFactory(col -> new TableCell<>() {
+            private final Button reconsumeBtn = new Button("重新消费");
+            private final Button exceptionBtn = new Button("异常");
+            private final HBox btnBox = new HBox(4, reconsumeBtn, exceptionBtn);
+            {
+                reconsumeBtn.setStyle("-fx-background-color: #ff9800; -fx-text-fill: white; -fx-font-size: 10px; -fx-padding: 2 6;");
+                exceptionBtn.setStyle("-fx-font-size: 10px; -fx-padding: 2 6;");
+                exceptionBtn.setDisable(true);
+
+                reconsumeBtn.setOnAction(ev -> {
+                    ObservableList<String> rowData = getTableView().getItems().get(getIndex());
+                    String group = rowData.get(0);
+                    doReconsume(group);
+                });
+
+                exceptionBtn.setOnAction(ev -> {
+                    ObservableList<String> rowData = getTableView().getItems().get(getIndex());
+                    String exceptionDesc = rowData.size() > 2 ? rowData.get(2) : "";
+                    if (exceptionDesc == null || exceptionDesc.isEmpty()) {
+                        Alert info = new Alert(Alert.AlertType.INFORMATION);
+                        info.setTitle("异常信息");
+                        info.setHeaderText(null);
+                        info.setContentText("无异常信息");
+                        info.showAndWait();
+                    } else {
+                        TextArea area = new TextArea(exceptionDesc);
+                        area.setEditable(false);
+                        area.setWrapText(true);
+                        area.setPrefRowCount(10);
+                        area.setStyle("-fx-font-family: monospace; -fx-font-size: 12px;");
+                        Alert dialog = new Alert(Alert.AlertType.INFORMATION);
+                        dialog.setTitle("消费异常");
+                        dialog.setHeaderText("消费者组: " + rowData.get(0));
+                        dialog.getDialogPane().setContent(area);
+                        dialog.showAndWait();
+                    }
+                });
+            }
+
+            @Override
+            protected void updateItem(Void item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty) {
+                    setGraphic(null);
+                } else {
+                    ObservableList<String> rowData = getTableView().getItems().get(getIndex());
+                    String exceptionDesc = rowData.size() > 2 ? rowData.get(2) : "";
+                    exceptionBtn.setDisable(exceptionDesc == null || exceptionDesc.isEmpty());
+                    setGraphic(btnBox);
+                }
+            }
+        });
+
+        consumeStatusTable.getColumns().addAll(groupCol, trackTypeCol, actionCol);
+
+        javafx.collections.ObservableList<ObservableList<String>> consumeStatusData = javafx.collections.FXCollections.observableArrayList();
+        consumeStatusTable.setItems(consumeStatusData);
+
+        // 选中的消费者组（用于查看未消费消息）
+        final String[] selectedConsumeGroup = {null};
+        consumeStatusTable.setRowFactory(tv -> {
+            TableRow<ObservableList<String>> row = new TableRow<>();
+            row.setOnMouseClicked(e -> {
+                if (!row.isEmpty()) {
+                    selectedConsumeGroup[0] = row.getItem().get(0);
+                    viewUnconsumedBtn.setDisable(false);
+                }
+            });
+            return row;
+        });
+
+        // 刷新消费状态 - 改为用getMessageTrack查询消息消费轨迹
+        refreshConsumeBtn.setOnAction(e -> {
+            if (currentMessageDetail == null) {
+                Alert warn = new Alert(Alert.AlertType.WARNING);
+                warn.setTitle("提示");
+                warn.setHeaderText(null);
+                warn.setContentText("请先双击选择一条消息");
+                warn.showAndWait();
+                return;
+            }
+            String topic = String.valueOf(currentMessageDetail.getOrDefault("topic", ""));
+            String msgId = String.valueOf(currentMessageDetail.getOrDefault("msgId", ""));
+            new Thread(() -> {
+                try {
+                    // 查询消息消费轨迹
+                    List<Map<String, Object>> tracks = RocketmqService.getMessageTrack(config, topic, msgId);
+                    Platform.runLater(() -> {
+                        consumeStatusData.clear();
+                        for (Map<String, Object> t : tracks) {
+                            String group = String.valueOf(t.getOrDefault("group", ""));
+                            ObservableList<String> row = javafx.collections.FXCollections.observableArrayList();
+                            row.add(group);
+                            row.add(String.valueOf(t.getOrDefault("trackType", "UNKNOWN")));
+                            row.add(String.valueOf(t.getOrDefault("exceptionDesc", "")));
+                            consumeStatusData.add(row);
+                        }
+                    });
+                } catch (Exception ex) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("加载失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("加载消费状态失败: " + ex.getMessage());
+                        alert.showAndWait();
+                    });
+                }
+            }, "RocketMQ-ConsumeStatus").start();
+        });
+
+        // 查看未消费消息
+        viewUnconsumedBtn.setOnAction(e -> {
+            String topic = getCurrentTopic();
+            String group = selectedConsumeGroup[0];
+            if (topic == null || topic.isEmpty() || group == null) return;
+            new Thread(() -> {
+                try {
+                    List<Map<String, Object>> msgs = RocketmqService.queryUnconsumedMessages(config, topic, group, 100);
+                    Platform.runLater(() -> {
+                        if (msgs.isEmpty()) {
+                            Alert info = new Alert(Alert.AlertType.INFORMATION);
+                            info.setTitle("提示");
+                            info.setHeaderText(null);
+                            info.setContentText("消费者组 " + group + " 没有未消费的消息");
+                            info.showAndWait();
+                        } else {
+                            messageData.clear();
+                            for (Map<String, Object> m : msgs) {
+                                messageData.add(new MessageItem(
+                                    String.valueOf(m.getOrDefault("msgId", "")),
+                                    String.valueOf(m.getOrDefault("tags", "")),
+                                    String.valueOf(m.getOrDefault("keys", "")),
+                                    String.valueOf(m.getOrDefault("storeTimestamp", "")),
+                                    String.valueOf(m.getOrDefault("bornHost", "")),
+                                    m
+                                ));
+                            }
+                        }
+                    });
+                } catch (Exception ex) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("查询失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("查询未消费消息失败: " + ex.getMessage());
+                        alert.showAndWait();
+                    });
+                }
+            }, "RocketMQ-Unconsumed").start();
+        });
+
+        detailPanel.getChildren().addAll(infoTitle, messageInfoGrid,
+                bodyToolbar, jsonBodyView,
+                consumeTitle, consumeToolbar, consumeStatusTable);
         VBox.setVgrow(jsonBodyView, Priority.ALWAYS);
 
         // 使用SplitPane水平分割：左侧消息列表，右侧详情
@@ -749,6 +956,7 @@ public class RocketmqDataView extends VBox {
     }
 
     private void fillMessageDetailPanel(Map<String, Object> detail) {
+        currentMessageDetail = detail;
         messageInfoGrid.getChildren().clear();
         int row = 0;
         String bodyText = null;
@@ -825,6 +1033,43 @@ public class RocketmqDataView extends VBox {
             expandAllBtn.setDisable(true);
             collapseAllBtn.setDisable(true);
         }
+    }
+
+    private void doReconsume(String group) {
+        if (currentMessageDetail == null) return;
+        String topic = String.valueOf(currentMessageDetail.getOrDefault("topic", ""));
+        String msgId = String.valueOf(currentMessageDetail.getOrDefault("msgId", ""));
+
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("确认重新消费");
+        confirm.setHeaderText("让消费者组 " + group + " 重新消费此消息");
+        confirm.setContentText("消息ID: " + msgId + "\n此操作不产生新的消息ID，确定吗？");
+        confirm.showAndWait().ifPresent(btn -> {
+            if (btn == ButtonType.OK) {
+                new Thread(() -> {
+                    try {
+                        Map<String, Object> result = RocketmqService.reconsumeMessage(config, group, topic, msgId);
+                        Platform.runLater(() -> {
+                            String consumeResult = String.valueOf(result.getOrDefault("consumeResult", "UNKNOWN"));
+                            String remark = String.valueOf(result.getOrDefault("remark", ""));
+                            Alert info = new Alert(Alert.AlertType.INFORMATION);
+                            info.setTitle("重新消费结果");
+                            info.setHeaderText("消费结果: " + consumeResult);
+                            info.setContentText(remark.isEmpty() ? "消息已重新消费" : remark);
+                            info.showAndWait();
+                        });
+                    } catch (Exception ex) {
+                        Platform.runLater(() -> {
+                            Alert err = new Alert(Alert.AlertType.ERROR);
+                            err.setTitle("重新消费失败");
+                            err.setHeaderText(null);
+                            err.setContentText("重新消费失败: " + ex.getMessage());
+                            err.showAndWait();
+                        });
+                    }
+                }, "RocketMQ-Reconsume").start();
+            }
+        });
     }
 
     private void toggleFormatBody() {

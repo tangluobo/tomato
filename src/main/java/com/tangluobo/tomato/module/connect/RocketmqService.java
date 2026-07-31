@@ -503,4 +503,149 @@ public class RocketmqService {
         }
         return result;
     }
+
+    // ==================== 消息消费状态与重发 ====================
+
+    /**
+     * 获取Topic的消费状态（各消费者组的积压情况）
+     * 返回: [{group, consumeTps, diffTotal, delayTime}]
+     */
+    public static List<Map<String, Object>> getTopicConsumeStatus(ConnectionConfig config, String topic) throws Exception {
+        DefaultMQAdminExt admin = getAdmin(config);
+        List<Map<String, Object>> result = new ArrayList<>();
+        // 获取所有消费者组
+        ClusterInfo clusterInfo = admin.examineBrokerClusterInfo();
+        Set<String> groupSet = new LinkedHashSet<>();
+        if (clusterInfo != null && clusterInfo.getBrokerAddrTable() != null) {
+            for (BrokerData brokerData : clusterInfo.getBrokerAddrTable().values()) {
+                String masterAddr = brokerData.getBrokerAddrs().get(0L);
+                if (masterAddr != null) {
+                    try {
+                        SubscriptionGroupWrapper wrapper = admin.getAllSubscriptionGroup(masterAddr, 3000L);
+                        if (wrapper != null && wrapper.getSubscriptionGroupTable() != null) {
+                            groupSet.addAll(wrapper.getSubscriptionGroupTable().keySet());
+                        }
+                    } catch (Exception ignored) {}
+                }
+            }
+        }
+        // 过滤出订阅了该topic的消费者组
+        for (String group : groupSet) {
+            try {
+                ConsumeStats stats = admin.examineConsumeStats(group);
+                if (stats == null || stats.getOffsetTable() == null) continue;
+                boolean subscribed = false;
+                long totalDiff = 0;
+                for (Map.Entry<MessageQueue, OffsetWrapper> entry : stats.getOffsetTable().entrySet()) {
+                    if (topic.equals(entry.getKey().getTopic())) {
+                        subscribed = true;
+                        totalDiff += entry.getValue().getBrokerOffset() - entry.getValue().getConsumerOffset();
+                    }
+                }
+                if (subscribed) {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("group", group);
+                    item.put("consumeTps", String.format("%.2f", stats.getConsumeTps()));
+                    item.put("diffTotal", totalDiff);
+                    result.add(item);
+                }
+            } catch (Exception ignored) {}
+        }
+        return result;
+    }
+
+    /**
+     * 查询未消费的消息列表（指定消费者组+Topic，拉取consumerOffset到brokerOffset之间的消息）
+     */
+    public static List<Map<String, Object>> queryUnconsumedMessages(ConnectionConfig config, String topic, String group, int maxCount) throws Exception {
+        DefaultMQAdminExt admin = getAdmin(config);
+        ConsumeStats stats = admin.examineConsumeStats(group);
+        if (stats == null || stats.getOffsetTable() == null) {
+            return Collections.emptyList();
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        DefaultMQPullConsumer pullConsumer = new DefaultMQPullConsumer("tomato_unconsumed_" + System.currentTimeMillis());
+        pullConsumer.setNamesrvAddr(config.getHost() + ":" + config.getPort());
+        pullConsumer.start();
+
+        try {
+            for (Map.Entry<MessageQueue, OffsetWrapper> entry : stats.getOffsetTable().entrySet()) {
+                if (!topic.equals(entry.getKey().getTopic())) continue;
+                if (result.size() >= maxCount) break;
+
+                MessageQueue mq = entry.getKey();
+                long consumerOffset = entry.getValue().getConsumerOffset();
+                long brokerOffset = entry.getValue().getBrokerOffset();
+                if (consumerOffset >= brokerOffset) continue;
+
+                long offset = consumerOffset;
+                while (offset < brokerOffset && result.size() < maxCount) {
+                    PullResult pullResult = pullConsumer.pull(mq, "*", offset, Math.min(32, maxCount - result.size()));
+                    if (pullResult == null) break;
+                    if (pullResult.getPullStatus() == PullStatus.FOUND) {
+                        for (MessageExt msg : pullResult.getMsgFoundList()) {
+                            result.add(convertMessage(msg));
+                        }
+                        offset = pullResult.getNextBeginOffset();
+                    } else {
+                        break;
+                    }
+                }
+            }
+        } finally {
+            pullConsumer.shutdown();
+        }
+        return result;
+    }
+
+    /**
+     * 查询消息消费轨迹（每个消费者组的消费状态）
+     * 返回: [{group, trackType, exceptionDesc}]
+     * trackType: CONSUMED / NOT_CONSUME_YET / CONSUME_BUT_DIED / UNKNOWN
+     */
+    public static List<Map<String, Object>> getMessageTrack(ConnectionConfig config, String topic, String msgId) throws Exception {
+        DefaultMQAdminExt admin = getAdmin(config);
+        MessageExt msg = admin.viewMessage(topic, msgId);
+        List<org.apache.rocketmq.tools.admin.api.MessageTrack> tracks = admin.messageTrackDetail(msg);
+        List<Map<String, Object>> result = new ArrayList<>();
+        if (tracks != null) {
+            for (org.apache.rocketmq.tools.admin.api.MessageTrack track : tracks) {
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("group", track.getConsumerGroup());
+                item.put("trackType", track.getTrackType() != null ? track.getTrackType().name() : "UNKNOWN");
+                item.put("exceptionDesc", track.getExceptionDesc() != null ? track.getExceptionDesc() : "");
+                result.add(item);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 重新消费消息（通过consumeMessageDirectly让指定消费者组直接重新消费，不产生新msgId）
+     * 返回消费结果
+     */
+    public static Map<String, Object> reconsumeMessage(ConnectionConfig config, String group, String topic, String msgId) throws Exception {
+        DefaultMQAdminExt admin = getAdmin(config);
+        // 先获取该消费者组的客户端连接，找到可用的clientId
+        ConsumerConnection conn = admin.examineConsumerConnectionInfo(group);
+        if (conn == null || conn.getConnectionSet() == null || conn.getConnectionSet().isEmpty()) {
+            throw new RuntimeException("消费者组 " + group + " 没有在线的消费者实例");
+        }
+        // 取第一个连接的clientId
+        Connection connection = conn.getConnectionSet().iterator().next();
+        String clientId = connection.getClientId();
+
+        // 使用consumeMessageDirectly让消费者直接重新消费
+        var result = admin.consumeMessageDirectly(group, clientId, topic, msgId);
+        Map<String, Object> map = new LinkedHashMap<>();
+        if (result != null) {
+            map.put("consumeResult", result.getConsumeResult() != null ? result.getConsumeResult().name() : "UNKNOWN");
+            map.put("remark", result.getRemark() != null ? result.getRemark() : "");
+        } else {
+            map.put("consumeResult", "FAILED");
+            map.put("remark", "返回结果为空");
+        }
+        return map;
+    }
 }
