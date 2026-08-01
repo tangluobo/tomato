@@ -7,6 +7,7 @@ import javafx.scene.Scene;
 import javafx.scene.image.Image;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
+import com.tangluobo.tomato.module.connect.DdnsService;
 import javafx.stage.StageStyle;
 
 import java.io.IOException;
@@ -14,6 +15,9 @@ import java.io.IOException;
 public class TomatoApplication extends Application {
     @Override
     public void start(Stage stage) throws IOException {
+        // 启动 DDNS 全局服务：加载持久化配置，自动定时更新（不依赖连接面板是否打开）
+        DdnsService.getInstance().start();
+
         FXMLLoader fxmlLoader = new FXMLLoader(TomatoApplication.class.getResource("tomato-view.fxml"));
         Scene scene = new Scene(fxmlLoader.load(), 1200, 900);
         scene.setFill(Color.WHITE);
@@ -25,6 +29,8 @@ public class TomatoApplication extends Application {
 
     @Override
     public void stop() {
+        // 停止 DDNS 全局调度
+        DdnsService.getInstance().stop();
         // 确保所有非守护线程（如JSch SSH连接线程）被清理，使JVM能正常退出
         Platform.exit();
         System.exit(0);

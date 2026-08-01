@@ -4,6 +4,7 @@ module tomato {
     requires javafx.swing;
     requires com.google.gson;
     requires java.desktop;
+    requires java.net.http;
     requires com.jcraft.jsch;
     requires java.sql;
     requires mysql.connector.j;

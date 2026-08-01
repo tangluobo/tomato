@@ -10,6 +10,9 @@ import com.aliyuncs.domain.model.v20180129.QueryDomainListRequest;
 import com.aliyuncs.domain.model.v20180129.QueryDomainListResponse;
 import com.aliyuncs.alidns.model.v20150109.DescribeDomainRecordsRequest;
 import com.aliyuncs.alidns.model.v20150109.DescribeDomainRecordsResponse;
+import com.aliyuncs.alidns.model.v20150109.AddDomainRecordRequest;
+import com.aliyuncs.alidns.model.v20150109.UpdateDomainRecordRequest;
+import com.aliyuncs.alidns.model.v20150109.DeleteDomainRecordRequest;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -228,6 +231,73 @@ public class AliyunService {
                 }
             }
             return records;
+        } finally {
+            if (client instanceof DefaultAcsClient dac) {
+                dac.shutdown();
+            }
+        }
+    }
+
+    /**
+     * 添加解析记录（子域名）
+     */
+    public static String addDomainRecord(ConnectionConfig config, String domainName,
+                                         String rr, String type, String value,
+                                         Long ttl, String line, Long priority) throws Exception {
+        IAcsClient client = createClient(config);
+        try {
+            AddDomainRecordRequest request = new AddDomainRecordRequest();
+            request.setDomainName(domainName);
+            request.setRR(rr);
+            request.setType(type);
+            request.setValue(value);
+            if (ttl != null) request.setTTL(ttl);
+            if (line != null && !line.isEmpty()) request.setLine(line);
+            if (priority != null) request.setPriority(priority);
+            request.setLang("zh");
+            return client.getAcsResponse(request).getRecordId();
+        } finally {
+            if (client instanceof DefaultAcsClient dac) {
+                dac.shutdown();
+            }
+        }
+    }
+
+    /**
+     * 修改解析记录（子域名）
+     */
+    public static void updateDomainRecord(ConnectionConfig config, String recordId,
+                                          String rr, String type, String value,
+                                          Long ttl, String line, Long priority) throws Exception {
+        IAcsClient client = createClient(config);
+        try {
+            UpdateDomainRecordRequest request = new UpdateDomainRecordRequest();
+            request.setRecordId(recordId);
+            request.setRR(rr);
+            request.setType(type);
+            request.setValue(value);
+            if (ttl != null) request.setTTL(ttl);
+            if (line != null && !line.isEmpty()) request.setLine(line);
+            if (priority != null) request.setPriority(priority);
+            request.setLang("zh");
+            client.getAcsResponse(request);
+        } finally {
+            if (client instanceof DefaultAcsClient dac) {
+                dac.shutdown();
+            }
+        }
+    }
+
+    /**
+     * 删除解析记录（子域名）
+     */
+    public static void deleteDomainRecord(ConnectionConfig config, String recordId) throws Exception {
+        IAcsClient client = createClient(config);
+        try {
+            DeleteDomainRecordRequest request = new DeleteDomainRecordRequest();
+            request.setRecordId(recordId);
+            request.setLang("zh");
+            client.getAcsResponse(request);
         } finally {
             if (client instanceof DefaultAcsClient dac) {
                 dac.shutdown();
