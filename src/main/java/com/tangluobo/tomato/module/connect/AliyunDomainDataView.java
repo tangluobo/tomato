@@ -246,6 +246,15 @@ public class AliyunDomainDataView extends BorderPane {
             try {
                 updateRecordValue(item, finalIp);
             } catch (Exception e) {
+                String msg = e.getMessage();
+                // DomainRecordDuplicate: 记录值已等于新IP，视为已是最新
+                if (msg != null && msg.contains("DomainRecordDuplicate")) {
+                    Platform.runLater(() -> {
+                        statusLabel.setText("DDNS: " + item.getRr() + " 已是最新IP " + finalIp);
+                        loadRecords();
+                    });
+                    return;
+                }
                 Platform.runLater(() -> {
                     statusLabel.setText("DDNS: 更新解析记录失败");
                     errorAlert("更新解析记录失败\n记录: " + item.getRr() + "." + domainName

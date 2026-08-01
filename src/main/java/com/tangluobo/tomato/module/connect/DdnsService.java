@@ -34,7 +34,7 @@ public class DdnsService {
     private static final DdnsService INSTANCE = new DdnsService();
     private static final String CONFIG_DIR = System.getProperty("user.home") + "/.tomato";
     private static final String DDNS_FILE = CONFIG_DIR + "/ddns.json";
-    private static final long INTERVAL_MINUTES = 5;
+    private static final long INTERVAL_MINUTES = 1;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Type ENTRY_LIST_TYPE = new TypeToken<List<DdnsEntry>>() {}.getType();
     private static final String[] PUBLIC_IP_URLS = {
@@ -145,18 +145,34 @@ public class DdnsService {
         try {
             ip = fetchPublicIp();
         } catch (Exception e) {
+            System.out.println("[DDNS] 获取公网IP失败: " + e.getMessage());
             return;
         }
-        if (ip.equals(lastPublicIp)) return;
+        if (ip.equals(lastPublicIp)) {
+            System.out.println("[DDNS] 公网IP未变化: " + ip + "，跳过更新");
+            return;
+        }
+        System.out.println("[DDNS] 检测到公网IP变化: " + (lastPublicIp == null ? "(首次)" : lastPublicIp) + " → " + ip
+                + "，开始更新 " + entries.size() + " 条记录");
         lastPublicIp = ip;
         for (DdnsEntry entry : entries) {
             ConnectionConfig config = configCache.get(entry.connectionId);
-            if (config == null) continue;
+            if (config == null) {
+                System.out.println("[DDNS] 跳过 " + entry.rr + "." + entry.domainName + "：连接配置不存在");
+                continue;
+            }
             try {
                 AliyunService.updateDomainRecord(config, entry.recordId, entry.rr, entry.type, ip,
                         parseLong(entry.ttl), nullIfEmpty(entry.line), null);
-            } catch (Exception ignored) {
-                // 单条失败不影响其他记录
+                System.out.println("[DDNS] 已更新 " + entry.rr + "." + entry.domainName + " → " + ip);
+            } catch (Exception e) {
+                String msg = e.getMessage();
+                // DomainRecordDuplicate: 记录值已等于新IP，视为已是最新，不算失败
+                if (msg != null && msg.contains("DomainRecordDuplicate")) {
+                    System.out.println("[DDNS] " + entry.rr + "." + entry.domainName + " 已是最新IP " + ip + "，无需更新");
+                } else {
+                    System.out.println("[DDNS] 更新失败 " + entry.rr + "." + entry.domainName + ": " + msg);
+                }
             }
         }
     }
