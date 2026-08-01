@@ -73,6 +73,7 @@ public class AliyunDomainDataView extends BorderPane {
         recordTable = new TableView<>();
         recordTable.setStyle("-fx-font-size: 12px;");
         recordTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
+        recordTable.setFixedCellSize(34);
 
         TableColumn<RecordItem, String> rrCol = new TableColumn<>("主机记录");
         rrCol.setCellValueFactory(new PropertyValueFactory<>("rr"));
@@ -94,6 +95,12 @@ public class AliyunDomainDataView extends BorderPane {
         lineCol.setCellValueFactory(new PropertyValueFactory<>("line"));
         lineCol.setPrefWidth(80);
 
+        rrCol.setCellFactory(c -> centeredLeftCell());
+        typeCol.setCellFactory(c -> centeredLeftCell());
+        valueCol.setCellFactory(c -> centeredLeftCell());
+        ttlCol.setCellFactory(c -> centeredLeftCell());
+        lineCol.setCellFactory(c -> centeredLeftCell());
+
         TableColumn<RecordItem, String> statusCol = new TableColumn<>("状态");
         statusCol.setCellValueFactory(new PropertyValueFactory<>("status"));
         statusCol.setPrefWidth(55);
@@ -104,10 +111,11 @@ public class AliyunDomainDataView extends BorderPane {
                 if (empty || status == null) {
                     setText(null);
                     setGraphic(null);
+                    setStyle("-fx-alignment: center-left;");
                 } else {
                     setText(status);
                     String color = "Enable".equalsIgnoreCase(status) ? "#4CAF50" : "#9E9E9E";
-                    setStyle("-fx-text-fill: " + color + "; -fx-font-weight: bold; -fx-font-size: 12px;");
+                    setStyle("-fx-alignment: center-left; -fx-text-fill: " + color + "; -fx-font-weight: bold; -fx-font-size: 12px;");
                 }
             }
         });
@@ -116,6 +124,9 @@ public class AliyunDomainDataView extends BorderPane {
         TableColumn<RecordItem, Boolean> ddnsCol = new TableColumn<>("DDNS");
         ddnsCol.setPrefWidth(60);
         ddnsCol.setCellFactory(col -> new TableCell<>() {
+            {
+                setStyle("-fx-alignment: center;");
+            }
             private final Switch sw = new Switch();
             {
                 sw.setOnToggle(() -> {
@@ -146,6 +157,9 @@ public class AliyunDomainDataView extends BorderPane {
         TableColumn<RecordItem, Void> actionCol = new TableColumn<>("操作");
         actionCol.setPrefWidth(120);
         actionCol.setCellFactory(col -> new TableCell<>() {
+            {
+                setStyle("-fx-alignment: center;");
+            }
             private final Button editBtn = new Button("修改");
             private final Button delBtn = new Button("删除");
             private final HBox box = new HBox(4, editBtn, delBtn);
@@ -262,6 +276,19 @@ public class AliyunDomainDataView extends BorderPane {
     private static Long parseLongSafe(String s) {
         if (s == null || s.isEmpty()) return null;
         try { return Long.parseLong(s.trim()); } catch (NumberFormatException e) { return null; }
+    }
+
+    /** 文本列单元格：垂直居中、水平左对齐 */
+    private static <T> TableCell<RecordItem, T> centeredLeftCell() {
+        TableCell<RecordItem, T> cell = new TableCell<>() {
+            @Override
+            protected void updateItem(T item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : String.valueOf(item));
+            }
+        };
+        cell.setStyle("-fx-alignment: center-left;");
+        return cell;
     }
 
     // ==================== 增删改 ====================
