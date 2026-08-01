@@ -202,6 +202,9 @@ public class TerminalView extends Canvas {
         // 键盘输入时重置光标闪烁（立即显示光标）
         resetCursorBlink();
 
+        // 用户按键，清除屏幕修改抑制标志（shell已接管终端）
+        emulator.onUserInput();
+
         byte[] data = null;
         if (event.getCode() == javafx.scene.input.KeyCode.ESCAPE) {
             data = "\033".getBytes();
@@ -297,6 +300,9 @@ public class TerminalView extends Canvas {
         // 键盘输入时重置光标闪烁
         resetCursorBlink();
 
+        // 用户按键，清除屏幕修改抑制标志
+        emulator.onUserInput();
+
         // 过滤Ctrl+Shift组合键（如Ctrl+Shift+C/V复制粘贴），避免在Linux下将大写字母作为普通输入发送
         if (event.isControlDown() && event.isShiftDown()) {
             event.consume();
@@ -324,6 +330,9 @@ public class TerminalView extends Canvas {
 
         // 重置光标闪烁
         resetCursorBlink();
+
+        // 用户按键（输入法提交），清除屏幕修改抑制标志
+        emulator.onUserInput();
 
         // 处理已提交的文本（输入法确认的中文字符）
         String committed = event.getCommitted();

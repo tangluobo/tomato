@@ -458,13 +458,17 @@ public class SSHTerminalPane extends BorderPane {
 
         updateStatusBar("已连接");
 
-        // 启用调试日志（写入/tmp/terminal_debug.log）
+        // 启用调试日志（写入用户目录下的terminal_debug.log）
         try {
-            PrintWriter pw = new PrintWriter(new FileWriter("/tmp/terminal_debug.log"));
+            String logPath = System.getProperty("user.home") + java.io.File.separator + "terminal_debug.log";
+            PrintWriter pw = new PrintWriter(new FileWriter(logPath, false));
             emulator.setDebugWriter(line -> {
                 pw.print(line);
                 pw.flush();
             });
+            emulator.setFileLogger(pw);
+            pw.println("=== SSH Terminal Debug Log - " + new java.util.Date() + " ===");
+            pw.flush();
         } catch (Exception ignored) {}
 
         // 通知SSH服务器终端大小
