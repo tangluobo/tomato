@@ -21,6 +21,9 @@ module tomato {
     requires software.amazon.awssdk.regions;
     requires software.amazon.awssdk.core;
     requires aliyun.sdk.oss;
+    requires aliyun.java.sdk.core;
+    requires aliyun.java.sdk.ecs;
+    requires aliyun.java.sdk.domain;
     requires redis.clients.jedis;
     requires rocketmq.tools;
     requires rocketmq.remoting;

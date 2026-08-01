@@ -205,17 +205,23 @@ public class LocalTerminalPane extends BorderPane {
         terminalView.setKeyInputHandler(data -> {
             if (processOutput != null && running.get()) {
                 try {
+                    // TerminalView.handleKeyTyped中ch.getBytes()使用Java默认编码(UTF-8)
+                    // 需要将UTF-8字节解码为字符串，再用进程编码重新编码后写入
+                    String input = new String(data, java.nio.charset.StandardCharsets.UTF_8);
+
                     // Windows下本地Shell（CMD/PowerShell）没有PTY，stdin是原始管道
                     // 终端模拟器中Enter发送\r，但Windows Shell需要\r\n才能识别为换行
                     // Linux/macOS通过PTY（script命令）会自动将\r转为\n，无需此转换
                     String os = System.getProperty("os.name", "").toLowerCase();
                     if (os.contains("win")) {
-                        String input = new String(data, java.nio.charset.StandardCharsets.ISO_8859_1);
                         if (input.equals("\r")) {
-                            data = "\r\n".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+                            input = "\r\n";
                         }
                     }
-                    processOutput.write(data);
+
+                    // 使用进程编码发送文本，让进程能正确接收中文
+                    Charset sendCharset = processCharset != null ? processCharset : java.nio.charset.StandardCharsets.UTF_8;
+                    processOutput.write(input.getBytes(sendCharset));
                     processOutput.flush();
                 } catch (IOException e) {
                     e.printStackTrace();

@@ -20,7 +20,10 @@ public class DatabaseNodeData {
         ROCKETMQ_TOPIC,            // RocketMQ单个主题
         ROCKETMQ_CONSUMER,         // RocketMQ单个消费者组
         ROCKETMQ_BROKER,           // RocketMQ单个Broker
-        ROCKETMQ_MESSAGE           // RocketMQ单条消息
+        ROCKETMQ_MESSAGE,           // RocketMQ单条消息
+        ALIYUN_PRODUCT_FOLDER,      // 阿里云产品文件夹（如ECS、RDS等）
+        ALIYUN_ECS_INSTANCE,        // 阿里云ECS实例
+        ALIYUN_DOMAIN               // 阿里云域名
     }
 
     private final NodeType type;

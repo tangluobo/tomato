@@ -58,6 +58,9 @@ public class ConnectModule implements Module {
     private Image rocketmqConsumerItemIcon;
     private Image rocketmqBrokerItemIcon;
     private Image rocketmqMessageItemIcon;
+    private Image aliyunProductIcon;
+    private Image aliyunEcsIcon;
+    private Image aliyunDomainIcon;
     private TextField searchField;
 
     // 内容区域
@@ -138,6 +141,9 @@ public class ConnectModule implements Module {
         try { rocketmqConsumerItemIcon = new Image(getClass().getResourceAsStream("/images/connect/user.png")); } catch (Exception e) { rocketmqConsumerItemIcon = null; }
         try { rocketmqBrokerItemIcon = new Image(getClass().getResourceAsStream("/images/connect/monitor.png")); } catch (Exception e) { rocketmqBrokerItemIcon = null; }
         try { rocketmqMessageItemIcon = new Image(getClass().getResourceAsStream("/images/connect/code.png")); } catch (Exception e) { rocketmqMessageItemIcon = null; }
+        try { aliyunProductIcon = new Image(getClass().getResourceAsStream("/images/connect/monitor.png")); } catch (Exception e) { aliyunProductIcon = null; }
+        try { aliyunEcsIcon = new Image(getClass().getResourceAsStream("/images/connect/server.png")); } catch (Exception e) { aliyunEcsIcon = null; }
+        try { aliyunDomainIcon = new Image(getClass().getResourceAsStream("/images/connect/s3.png")); } catch (Exception e) { aliyunDomainIcon = null; }
     }
 
     private ImageView getDbNodeIcon(DatabaseNodeData data) {
@@ -164,6 +170,9 @@ public class ConnectModule implements Module {
             case ROCKETMQ_CONSUMER -> rocketmqConsumerItemIcon;
             case ROCKETMQ_BROKER -> rocketmqBrokerItemIcon;
             case ROCKETMQ_MESSAGE -> rocketmqMessageItemIcon;
+            case ALIYUN_PRODUCT_FOLDER -> aliyunProductIcon;
+            case ALIYUN_ECS_INSTANCE -> aliyunEcsIcon;
+            case ALIYUN_DOMAIN -> aliyunDomainIcon;
         };
         if (icon != null) iv.setImage(icon);
         return iv;
@@ -364,7 +373,7 @@ public class ConnectModule implements Module {
                             openItem.setOnAction(e -> handleRedisDbDoubleClick(targetItem, dbData));
                             contextMenu.getItems().add(openItem);
                         }
-                        case ROCKETMQ_TOPICS_FOLDER, ROCKETMQ_CONSUMERS_FOLDER, ROCKETMQ_CLUSTER_FOLDER -> {
+                        case ROCKETMQ_TOPICS_FOLDER, ROCKETMQ_CONSUMERS_FOLDER, ROCKETMQ_CLUSTER_FOLDER, ALIYUN_PRODUCT_FOLDER -> {
                             MenuItem refreshItem = new MenuItem("刷新");
                             refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
                             contextMenu.getItems().addAll(refreshItem);
@@ -443,6 +452,7 @@ public class ConnectModule implements Module {
                                 || targetConfig.getType() == ConnectType.ORACLE;
                         boolean isRedis = targetConfig.getType() == ConnectType.REDIS;
                         boolean isRocketmq = targetConfig.getType() == ConnectType.ROCKETMQ;
+                        boolean isAliyun = targetConfig.getType() == ConnectType.ALIYUN;
                         if (isDatabase) {
                             MenuItem createDbItem = new MenuItem("新建数据库");
                             createDbItem.setOnAction(e -> handleCreateDatabase(targetItem, targetConfig));
@@ -461,6 +471,13 @@ public class ConnectModule implements Module {
                             }
                         }
                         if (isRocketmq) {
+                            if (!targetItem.getChildren().isEmpty()) {
+                                MenuItem refreshItem = new MenuItem("刷新");
+                                refreshItem.setOnAction(e -> handleRefreshDbHost(targetItem, targetConfig));
+                                contextMenu.getItems().add(refreshItem);
+                            }
+                        }
+                        if (isAliyun) {
                             if (!targetItem.getChildren().isEmpty()) {
                                 MenuItem refreshItem = new MenuItem("刷新");
                                 refreshItem.setOnAction(e -> handleRefreshDbHost(targetItem, targetConfig));
@@ -609,12 +626,15 @@ public class ConnectModule implements Module {
                             || config.getType() == ConnectType.ORACLE;
                     boolean isRedis = config.getType() == ConnectType.REDIS;
                     boolean isRocketmq = config.getType() == ConnectType.ROCKETMQ;
+                    boolean isAliyun = config.getType() == ConnectType.ALIYUN;
                     if (isDatabase) {
                         handleDbHostDoubleClick(selectedItem, config);
                     } else if (isRedis) {
                         handleRedisHostDoubleClick(selectedItem, config);
                     } else if (isRocketmq) {
                         handleRocketmqHostDoubleClick(selectedItem, config);
+                    } else if (isAliyun) {
+                        handleAliyunHostDoubleClick(selectedItem, config);
                     } else {
                         handleConnect(config);
                     }
@@ -1127,6 +1147,82 @@ public class ConnectModule implements Module {
         }, "RocketMQ-Connect").start();
     }
 
+    private void handleAliyunHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
+        if (!hostItem.getChildren().isEmpty()) {
+            hostItem.setExpanded(!hostItem.isExpanded());
+            return;
+        }
+
+        // 如果SK未保存，弹窗输入
+        if (config.getPassword() == null || config.getPassword().isEmpty()) {
+            Dialog<String> skDialog = new Dialog<>();
+            skDialog.setTitle("输入Secret Key");
+            skDialog.setHeaderText(config.getName() + " (" + config.getUsername() + ")");
+            skDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+            GridPane grid = new GridPane();
+            grid.setHgap(10);
+            grid.setVgap(10);
+            grid.setPadding(new Insets(20, 10, 10, 10));
+            PasswordField pf = new PasswordField();
+            pf.setPrefWidth(250);
+            pf.setPromptText("AccessKey Secret");
+            grid.add(new Label("Secret Key："), 0, 0);
+            grid.add(pf, 1, 0);
+            skDialog.getDialogPane().setContent(grid);
+            skDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
+            final String[] skHolder = new String[1];
+            skDialog.showAndWait().ifPresentOrElse(sk -> skHolder[0] = sk, () -> {});
+            if (skHolder[0] == null || skHolder[0].isEmpty()) return;
+            config.setPassword(skHolder[0]);
+        }
+
+        ProgressIndicator loadingIndicator = new ProgressIndicator();
+        loadingIndicator.setPrefSize(16, 16);
+        loadingIndicator.setMaxSize(16, 16);
+        loadingIndicator.setStyle("-fx-progress-color: #4CAF50;");
+        hostItem.setGraphic(loadingIndicator);
+
+        new Thread(() -> {
+            try {
+                boolean authenticated = AliyunService.verifyCredentials(config);
+                if (!authenticated) {
+                    Platform.runLater(() -> {
+                        hostItem.setGraphic(getIconForConfig(config));
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("认证失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("阿里云OAuth2认证失败，请检查AccessKey和SecretKey是否正确");
+                        alert.showAndWait();
+                    });
+                    return;
+                }
+                Platform.runLater(() -> {
+                    updateHostIcon(hostItem, config, true);
+                    hostItem.getChildren().clear();
+
+                    // 加载可访问的云服务产品列表为子节点
+                    for (AliyunService.AliyunProduct product : AliyunService.getSupportedProducts()) {
+                        TreeItem<String> productItem = new TreeItem<>(product.getName());
+                        productItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ALIYUN_PRODUCT_FOLDER, product.getName(), config, product.getCode())));
+                        dbNodeDataMap.put(productItem, new DatabaseNodeData(DatabaseNodeData.NodeType.ALIYUN_PRODUCT_FOLDER, product.getName(), config, product.getCode()));
+                        hostItem.getChildren().add(productItem);
+                    }
+                    hostItem.setExpanded(true);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    hostItem.setGraphic(getIconForConfig(config));
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("连接失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法连接到阿里云 " + config.getName() + ": " + e.getMessage());
+                    alert.showAndWait();
+                });
+                e.printStackTrace();
+            }
+        }, "Aliyun-Connect").start();
+    }
+
     private void handleRocketmqFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
         ConnectionConfig config = data.getConnectionConfig();
 
@@ -1218,6 +1314,114 @@ public class ConnectModule implements Module {
                 });
             }
         }, "RocketMQ-LoadCluster").start();
+    }
+
+    private void handleAliyunProductFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
+        if (!folderItem.getChildren().isEmpty()) {
+            folderItem.setExpanded(!folderItem.isExpanded());
+            return;
+        }
+        loadAliyunProductChildren(folderItem, data);
+        folderItem.setExpanded(true);
+    }
+
+    private void loadAliyunProductChildren(TreeItem<String> productItem, DatabaseNodeData data) {
+        String productCode = data.getDatabaseName(); // product code stored in databaseName field
+        ConnectionConfig config = data.getConnectionConfig();
+
+        new Thread(() -> {
+            try {
+                switch (productCode) {
+                    case "ecs" -> {
+                        List<Map<String, Object>> instances = AliyunService.getEcsInstances(config, "cn-hangzhou");
+                        Platform.runLater(() -> {
+                            productItem.getChildren().clear();
+                            for (Map<String, Object> instance : instances) {
+                                String name = (String) instance.getOrDefault("instanceName", instance.get("instanceId"));
+                                String status = (String) instance.getOrDefault("status", "");
+                                String displayName = name + " (" + status + ")";
+                                TreeItem<String> instanceItem = new TreeItem<>(displayName);
+                                instanceItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ALIYUN_ECS_INSTANCE, displayName, config, (String) instance.get("instanceId"))));
+                                dbNodeDataMap.put(instanceItem, new DatabaseNodeData(DatabaseNodeData.NodeType.ALIYUN_ECS_INSTANCE, displayName, config, (String) instance.get("instanceId")));
+                                productItem.getChildren().add(instanceItem);
+                            }
+                            productItem.setExpanded(true);
+                        });
+                    }
+                    case "domain" -> {
+                        List<Map<String, Object>> domains = AliyunService.getDomainList(config);
+                        Platform.runLater(() -> {
+                            productItem.getChildren().clear();
+                            for (Map<String, Object> domain : domains) {
+                                String domainName = String.valueOf(domain.getOrDefault("domainName", ""));
+                                TreeItem<String> domainItem = new TreeItem<>(domainName);
+                                domainItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ALIYUN_DOMAIN, domainName, config, String.valueOf(domain.getOrDefault("instanceId", "")))));
+                                dbNodeDataMap.put(domainItem, new DatabaseNodeData(DatabaseNodeData.NodeType.ALIYUN_DOMAIN, domainName, config, String.valueOf(domain.getOrDefault("instanceId", ""))));
+                                productItem.getChildren().add(domainItem);
+                            }
+                            productItem.setExpanded(true);
+                        });
+                    }
+                    default -> {
+                        // 其他产品暂不支持展开
+                        Platform.runLater(() -> {
+                            Label placeholder = new Label("暂不支持查看" + data.getName() + "详情");
+                            placeholder.setStyle("-fx-text-fill: #999; -fx-font-size: 11px;");
+                        });
+                    }
+                }
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("加载失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法加载" + data.getName() + "列表: " + e.getMessage());
+                    alert.showAndWait();
+                });
+            }
+        }, "Aliyun-LoadProduct").start();
+    }
+
+    private void handleAliyunDomainDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
+        if (contentArea == null || terminalTabPane == null) return;
+        if (!ensureTabPaneInstalled()) return;
+
+        ConnectionConfig config = data.getConnectionConfig();
+        String tabId = "aliyun_domain_" + config.getId();
+
+        // 如果已有该标签，直接选中
+        for (Tab tab : terminalTabPane.getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                terminalTabPane.getSelectionModel().select(tab);
+                showDataView();
+                return;
+            }
+        }
+
+        AliyunDomainDataView domainView = new AliyunDomainDataView(config);
+
+        String tabTitle = "域名管理(" + config.getName() + ")";
+        Tab tab = new Tab(tabTitle);
+
+        try {
+            Image aliyunIcon = new Image(getClass().getResourceAsStream("/images/connect/aliyun.png"));
+            ImageView tabIconView = new ImageView(aliyunIcon);
+            tabIconView.setFitWidth(18);
+            tabIconView.setFitHeight(18);
+            tab.setGraphic(tabIconView);
+        } catch (Exception ignored) {}
+
+        tab.setContent(domainView);
+        tab.setUserData(tabId);
+        tab.setOnClosed(e -> {
+            if (terminalTabPane.getTabs().isEmpty()) {
+                showWelcomeView();
+            }
+        });
+
+        terminalTabPane.getTabs().add(tab);
+        terminalTabPane.getSelectionModel().select(tab);
+        showDataView();
     }
 
     private void handleRocketmqTopicDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
@@ -1737,6 +1941,9 @@ public class ConnectModule implements Module {
             case ROCKETMQ_TOPIC -> handleRocketmqTopicDoubleClick(item, data);
             case ROCKETMQ_CONSUMER -> handleRocketmqConsumerDoubleClick(item, data);
             case ROCKETMQ_BROKER -> handleRocketmqBrokerDoubleClick(item, data);
+            case ALIYUN_PRODUCT_FOLDER -> handleAliyunProductFolderDoubleClick(item, data);
+            case ALIYUN_ECS_INSTANCE -> { /* TODO: show ECS instance detail */ }
+            case ALIYUN_DOMAIN -> handleAliyunDomainDoubleClick(item, data);
         }
     }
 
@@ -2617,6 +2824,14 @@ public class ConnectModule implements Module {
             handleRocketmqHostDoubleClick(hostItem, config);
             return;
         }
+        if (config.getType() == ConnectType.ALIYUN) {
+            for (TreeItem<String> child : hostItem.getChildren()) {
+                removeDbNodeDataRecursive(child);
+            }
+            hostItem.getChildren().clear();
+            handleAliyunHostDoubleClick(hostItem, config);
+            return;
+        }
         if (config.getPassword() == null) {
             handleDbHostDoubleClick(hostItem, config);
             return;
@@ -2692,6 +2907,11 @@ public class ConnectModule implements Module {
                 item.getChildren().clear();
                 loadRocketmqClusterForFolder(item, config);
             }
+            case ALIYUN_PRODUCT_FOLDER -> {
+                item.getChildren().clear();
+                loadAliyunProductChildren(item, data);
+            }
+            case ALIYUN_DOMAIN -> handleAliyunDomainDoubleClick(item, data);
             default -> {}
         }
     }
@@ -2827,6 +3047,14 @@ public class ConnectModule implements Module {
         boolean isS3orOSS = config.getType() == ConnectType.S3 || config.getType() == ConnectType.ALIYUN_OSS;
         if (isS3orOSS) {
             doS3Connect(config);
+            return;
+        }
+
+        if (config.getType() == ConnectType.ALIYUN) {
+            TreeItem<String> hostItem = findItemById(root, config.getId());
+            if (hostItem != null) {
+                handleAliyunHostDoubleClick(hostItem, config);
+            }
             return;
         }
 
@@ -2995,14 +3223,6 @@ public class ConnectModule implements Module {
     }
 
     private void doLocalTerminalConnect(ConnectionConfig config) {
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (config.getId().equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showTerminalView();
-                return;
-            }
-        }
-
         LocalTerminalPane localTerminalPane = new LocalTerminalPane();
 
         int scrollback = config.getScrollbackLines() != null ?
