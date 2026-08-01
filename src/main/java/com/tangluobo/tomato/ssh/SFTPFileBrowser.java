@@ -15,7 +15,6 @@ import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
-import javafx.geometry.Side;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.stage.FileChooser;
 import javafx.stage.DirectoryChooser;
@@ -220,16 +219,7 @@ public class SFTPFileBrowser extends BorderPane {
 
         Button uploadBtn = new Button("↑");
         uploadBtn.setStyle("-fx-font-size: 12px; -fx-padding: 2 6; -fx-background-color: transparent; -fx-border-color: #ccc; -fx-border-radius: 3;");
-        uploadBtn.setTooltip(new Tooltip("上传文件/目录"));
-        uploadBtn.setOnAction(e -> {
-            ContextMenu uploadMenu = new ContextMenu();
-            MenuItem fileItem = new MenuItem("上传文件...");
-            fileItem.setOnAction(ev -> uploadFiles());
-            MenuItem dirItem = new MenuItem("上传目录...");
-            dirItem.setOnAction(ev -> uploadDirectory());
-            uploadMenu.getItems().addAll(fileItem, dirItem);
-            uploadMenu.show(uploadBtn, Side.BOTTOM, 0, 0);
-        });
+        uploadBtn.setOnAction(e -> uploadFiles());
 
         topBar.getChildren().addAll(followTerminalCheck, spacer, refreshBtn, uploadBtn);
 
@@ -268,6 +258,7 @@ public class SFTPFileBrowser extends BorderPane {
         // 文件列表
         fileTable = new TableView<>();
         fileTable.setStyle("-fx-font-size: 11px; -fx-background-color: #fff;");
+        fileTable.getStyleClass().add("sftp-file-table");
         fileTable.setPlaceholder(new Label("空目录"));
 
         TableColumn<FileItem, String> nameCol = new TableColumn<>("名称");
@@ -301,15 +292,17 @@ public class SFTPFileBrowser extends BorderPane {
             row.setOnDragDetected(e -> {
                 if (row.isEmpty()) return;
                 FileItem item = row.getItem();
-                // 先下载到临时目录（支持文件和目录）
-                File tempFile = downloadToTemp(item);
-                if (tempFile != null) {
-                    Dragboard db = row.startDragAndDrop(TransferMode.COPY);
-                    ClipboardContent content = new ClipboardContent();
-                    List<File> files = new ArrayList<>();
-                    files.add(tempFile);
-                    content.putFiles(files);
-                    db.setContent(content);
+                if (!item.isDirectory()) {
+                    // 先下载到临时目录
+                    File tempFile = downloadToTemp(item);
+                    if (tempFile != null) {
+                        Dragboard db = row.startDragAndDrop(TransferMode.COPY);
+                        ClipboardContent content = new ClipboardContent();
+                        List<File> files = new ArrayList<>();
+                        files.add(tempFile);
+                        content.putFiles(files);
+                        db.setContent(content);
+                    }
                 }
                 e.consume();
             });
@@ -375,13 +368,13 @@ public class SFTPFileBrowser extends BorderPane {
         MenuItem uploadItem = new MenuItem("上传文件...");
         uploadItem.setOnAction(e -> uploadFiles());
 
-        MenuItem uploadDirItem = new MenuItem("上传目录...");
-        uploadDirItem.setOnAction(e -> uploadDirectory());
+        MenuItem uploadDirItem = new MenuItem("上传到当前目录...");
+        uploadDirItem.setOnAction(e -> uploadFiles());
 
         MenuItem downloadItem = new MenuItem("下载");
         downloadItem.setOnAction(e -> {
             FileItem selected = fileTable.getSelectionModel().getSelectedItem();
-            if (selected != null) {
+            if (selected != null && !selected.isDirectory()) {
                 downloadFile(selected);
             }
         });
@@ -468,21 +461,10 @@ public class SFTPFileBrowser extends BorderPane {
             items.add(new FileItem(entry.getName(), entry.getPath(), entry.isDirectory(), entry.getSize(), entry.getModifyTime()));
         }
         fileTable.setItems(items);
-        // 滚动到最底部
-        if (!items.isEmpty()) {
-            Platform.runLater(() -> {
-                fileTable.layout();
-                fileTable.scrollTo(items.size() - 1);
-                ScrollBar vBar = (ScrollBar) fileTable.lookup(".scroll-bar:vertical");
-                if (vBar != null) {
-                    vBar.setValue(vBar.getMax());
-                }
-            });
-        }
     }
 
     /**
-     * 下载文件或目录到本地
+     * 下载文件到本地
      */
     private void downloadFile(FileItem item) {
         DirectoryChooser chooser = new DirectoryChooser();
@@ -526,19 +508,6 @@ public class SFTPFileBrowser extends BorderPane {
         chooser.setTitle("选择要上传的文件");
         List<File> files = chooser.showOpenMultipleDialog(getStage());
         if (files == null || files.isEmpty()) return;
-        uploadLocalFiles(files);
-    }
-
-    /**
-     * 上传本地目录
-     */
-    private void uploadDirectory() {
-        DirectoryChooser chooser = new DirectoryChooser();
-        chooser.setTitle("选择要上传的目录");
-        File dir = chooser.showDialog(getStage());
-        if (dir == null) return;
-        List<File> files = new ArrayList<>();
-        files.add(dir);
         uploadLocalFiles(files);
     }
 
@@ -679,3 +648,4 @@ public class SFTPFileBrowser extends BorderPane {
         }
     }
 }
+

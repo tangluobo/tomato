@@ -508,3 +508,15 @@
     -fx-border-color: transparent;
     -fx-padding: 0;
 }
+
+/* SFTP 文件表：文件较少时，下方空白区域仍属于表格的一部分，
+   保持纯白背景、无边框，看起来是空白，而不是独立的面板。 */
+.sftp-file-table .table-row-cell:empty {
+    -fx-background-color: #fff;
+    -fx-border-color: transparent;
+}
+
+.sftp-file-table .table-row-cell:empty .table-cell {
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+}

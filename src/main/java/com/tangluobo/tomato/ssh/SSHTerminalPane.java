@@ -353,6 +353,9 @@ public class SSHTerminalPane extends BorderPane {
                 sftpClient = new SFTPClient();
                 fileBrowser = new SFTPFileBrowser(sshSession, sftpClient);
             }
+            // 让文件浏览器撑满右侧面板高度，表格随之填满，
+            // 文件较少时下方空白区域仍属于表格，滚动条也能到达面板底部
+            javafx.scene.layout.VBox.setVgrow(fileBrowser, javafx.scene.layout.Priority.ALWAYS);
             ensureRightPanelVisible();
             if (!rightPanel.getChildren().contains(fileBrowser)) {
                 rightPanel.getChildren().add(0, fileBrowser);
