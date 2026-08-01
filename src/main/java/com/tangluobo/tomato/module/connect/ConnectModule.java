@@ -28,8 +28,10 @@ import java.nio.file.Paths;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 public class ConnectModule implements Module {
     private TreeView<String> treeView;
@@ -38,6 +40,7 @@ public class ConnectModule implements Module {
     private Map<TreeItem<String>, ConnectionConfig> itemConfigMap;
     private Map<TreeItem<String>, DatabaseNodeData> dbNodeDataMap;
     private Map<TreeItem<String>, Boolean> connectionStateMap;
+    private Set<TreeItem<String>> connectingHosts;
     private TreeItem<String> editingItem;
     private TreeItem<String> selectedItemBeforeClick;
     private TreeItem<String> recentlyEditedItem;
@@ -105,6 +108,7 @@ public class ConnectModule implements Module {
         itemConfigMap = new HashMap<>();
         dbNodeDataMap = new HashMap<>();
         connectionStateMap = new HashMap<>();
+        connectingHosts = new HashSet<>();
         connections = ConfigManager.loadConnections();
         loadTree();
 
@@ -961,6 +965,9 @@ public class ConnectModule implements Module {
     }
 
     private void handleDbHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
+        if (connectingHosts.contains(hostItem)) {
+            return;
+        }
         if (!hostItem.getChildren().isEmpty()) {
             hostItem.setExpanded(!hostItem.isExpanded());
             return;
@@ -987,16 +994,20 @@ public class ConnectModule implements Module {
             config.setPassword(passwordHolder[0]);
         }
 
+        connectingHosts.add(hostItem);
+
         ProgressIndicator loadingIndicator = new ProgressIndicator();
         loadingIndicator.setPrefSize(16, 16);
         loadingIndicator.setMaxSize(16, 16);
         loadingIndicator.setStyle("-fx-progress-color: #4CAF50;");
         hostItem.setGraphic(loadingIndicator);
+        treeView.refresh();
 
         new Thread(() -> {
             try {
                 List<String> databases = DatabaseService.getDatabases(config);
                 Platform.runLater(() -> {
+                    connectingHosts.remove(hostItem);
                     updateHostIcon(hostItem, config, true);
 
                     hostItem.getChildren().clear();
@@ -1010,7 +1021,9 @@ public class ConnectModule implements Module {
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> {
+                    connectingHosts.remove(hostItem);
                     hostItem.setGraphic(getIconForConfig(config));
+                    treeView.refresh();
                     Alert alert = new Alert(Alert.AlertType.ERROR);
                     alert.setTitle("连接失败");
                     alert.setHeaderText(null);
