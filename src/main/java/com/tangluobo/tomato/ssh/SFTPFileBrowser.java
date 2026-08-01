@@ -468,6 +468,17 @@ public class SFTPFileBrowser extends BorderPane {
             items.add(new FileItem(entry.getName(), entry.getPath(), entry.isDirectory(), entry.getSize(), entry.getModifyTime()));
         }
         fileTable.setItems(items);
+        // 滚动到最底部
+        if (!items.isEmpty()) {
+            Platform.runLater(() -> {
+                fileTable.layout();
+                fileTable.scrollTo(items.size() - 1);
+                ScrollBar vBar = (ScrollBar) fileTable.lookup(".scroll-bar:vertical");
+                if (vBar != null) {
+                    vBar.setValue(vBar.getMax());
+                }
+            });
+        }
     }
 
     /**
