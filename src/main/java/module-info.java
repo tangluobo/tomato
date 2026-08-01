@@ -24,6 +24,7 @@ module tomato {
     requires aliyun.java.sdk.core;
     requires aliyun.java.sdk.ecs;
     requires aliyun.java.sdk.domain;
+    requires aliyun.java.sdk.alidns;
     requires redis.clients.jedis;
     requires rocketmq.tools;
     requires rocketmq.remoting;

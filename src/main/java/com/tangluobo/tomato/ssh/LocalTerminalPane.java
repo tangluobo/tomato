@@ -64,6 +64,9 @@ public class LocalTerminalPane extends BorderPane {
     private String shellType;
     private OutputStream processOutput;
 
+    // Windows ConPTY 伪控制台（支持Tab补全等控制台功能）
+    private WindowsConPTY conPTY;
+
     // 本地进程输出编码（Windows中文系统为GBK，Linux/macOS为UTF-8）
     private Charset processCharset;
 
@@ -156,19 +159,24 @@ public class LocalTerminalPane extends BorderPane {
             });
         });
 
-        // 终端大小变化时通知本地Shell进程（Linux/macOS）
-        // 更新PTY窗口大小，使top/vim等全屏程序能正确响应窗口调整
+        // 终端大小变化时通知Shell进程
+        // Windows: ConPTY支持ResizePseudoConsole
+        // Linux/macOS: 向script进程发送SIGWINCH信号
         terminalView.setResizeHandler((cols, rows, width, height) -> {
-            if (shellProcess != null && running.get()) {
-                String os = System.getProperty("os.name", "").toLowerCase();
-                if (!os.contains("win")) {
-                    // Linux/macOS: 向script进程及其子进程发送SIGWINCH信号
-                    // 信号28 = SIGWINCH，通知进程终端窗口大小已改变
+            if (!running.get()) return;
+            String os = System.getProperty("os.name", "").toLowerCase();
+            if (os.contains("win")) {
+                // Windows: ConPTY 支持窗口大小调整
+                if (conPTY != null) {
+                    conPTY.resize(cols, rows);
+                }
+            } else {
+                // Linux/macOS: 向script进程及其子进程发送SIGWINCH信号
+                // 信号28 = SIGWINCH，通知进程终端窗口大小已改变
+                if (shellProcess != null) {
                     try {
                         long pid = shellProcess.pid();
-                        // 使用ProcessHandle遍历子进程并发送SIGWINCH
                         ProcessHandle.of(pid).ifPresent(ph -> {
-                            // 向script进程发送SIGWINCH
                             sendSignalToProcessTree(ph, 28);
                         });
                     } catch (Exception e) {
@@ -188,13 +196,15 @@ public class LocalTerminalPane extends BorderPane {
 
         // 设置终端响应回调
         emulator.setResponseHandler(data -> {
-            if (processOutput != null) {
-                try {
+            try {
+                if (conPTY != null) {
+                    conPTY.write(data);
+                } else if (processOutput != null) {
                     processOutput.write(data);
                     processOutput.flush();
-                } catch (IOException e) {
-                    e.printStackTrace();
                 }
+            } catch (IOException e) {
+                e.printStackTrace();
             }
         });
 
@@ -203,8 +213,13 @@ public class LocalTerminalPane extends BorderPane {
 
         // 设置键盘输入回调
         terminalView.setKeyInputHandler(data -> {
-            if (processOutput != null && running.get()) {
-                try {
+            if (!running.get()) return;
+            try {
+                if (conPTY != null) {
+                    // ConPTY: 直接写入UTF-8数据，ConPTY像真实终端一样处理换行符
+                    conPTY.write(data);
+                } else if (processOutput != null) {
+                    // 管道方式: 需要编码转换和\r→\r\n转换
                     // TerminalView.handleKeyTyped中ch.getBytes()使用Java默认编码(UTF-8)
                     // 需要将UTF-8字节解码为字符串，再用进程编码重新编码后写入
                     String input = new String(data, java.nio.charset.StandardCharsets.UTF_8);
@@ -223,9 +238,9 @@ public class LocalTerminalPane extends BorderPane {
                     Charset sendCharset = processCharset != null ? processCharset : java.nio.charset.StandardCharsets.UTF_8;
                     processOutput.write(input.getBytes(sendCharset));
                     processOutput.flush();
-                } catch (IOException e) {
-                    e.printStackTrace();
                 }
+            } catch (IOException e) {
+                e.printStackTrace();
             }
         });
 
@@ -276,6 +291,21 @@ public class LocalTerminalPane extends BorderPane {
         String os = System.getProperty("os.name", "").toLowerCase();
 
         try {
+            // Windows: 优先使用 ConPTY 伪控制台（支持 Tab 补全、ANSI 转义序列等控制台功能）
+            if (os.contains("win") && WindowsConPTY.isAvailable()) {
+                conPTY = new WindowsConPTY();
+                String command = "powershell".equalsIgnoreCase(terminalType) ? "powershell.exe" : "cmd.exe";
+                this.shellType = "powershell".equalsIgnoreCase(terminalType) ? "PowerShell" : "CMD";
+                // ConPTY 管道通信使用 UTF-8 编码
+                processCharset = StandardCharsets.UTF_8;
+                conPTY.start(command, emulator.getCols(), emulator.getRows());
+                running.set(true);
+                updateStatusBar("已连接");
+                startReadThread();
+                Platform.runLater(() -> terminalView.requestFocus());
+                return;
+            }
+
             ProcessBuilder pb;
             if (os.contains("win")) {
                 // Windows: cmd.exe 和 powershell.exe 自带控制台，可直接使用
@@ -383,22 +413,27 @@ public class LocalTerminalPane extends BorderPane {
     }
 
     private void doPaste() {
-        if (processOutput == null || !running.get()) return;
+        if (!running.get()) return;
+        if (conPTY == null && processOutput == null) return;
         Clipboard clipboard = Clipboard.getSystemClipboard();
         if (clipboard.hasString()) {
             String text = clipboard.getString();
             if (text != null && !text.isEmpty()) {
                 text = text.replace("\r\n", "\r").replace("\n", "\r");
-                // Windows下本地Shell没有PTY，需要\r\n作为换行符
-                String os = System.getProperty("os.name", "").toLowerCase();
-                if (os.contains("win")) {
-                    text = text.replace("\r", "\r\n");
-                }
                 try {
-                    // 使用进程编码发送文本，让进程能正确接收中文
-                    Charset sendCharset = processCharset != null ? processCharset : StandardCharsets.UTF_8;
-                    processOutput.write(text.getBytes(sendCharset));
-                    processOutput.flush();
+                    if (conPTY != null) {
+                        // ConPTY: 直接发送UTF-8，ConPTY像真实终端一样处理换行符
+                        conPTY.write(text.getBytes(StandardCharsets.UTF_8));
+                    } else {
+                        // 管道方式: Windows需要\r\n作为换行符
+                        String os = System.getProperty("os.name", "").toLowerCase();
+                        if (os.contains("win")) {
+                            text = text.replace("\r", "\r\n");
+                        }
+                        Charset sendCharset = processCharset != null ? processCharset : StandardCharsets.UTF_8;
+                        processOutput.write(text.getBytes(sendCharset));
+                        processOutput.flush();
+                    }
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
@@ -410,6 +445,11 @@ public class LocalTerminalPane extends BorderPane {
     public void disconnect() {
         running.set(false);
         terminalView.stopBlink();
+
+        if (conPTY != null) {
+            conPTY.close();
+            conPTY = null;
+        }
 
         if (shellProcess != null) {
             // 先尝试正常终止，再强制杀掉
@@ -430,27 +470,42 @@ public class LocalTerminalPane extends BorderPane {
         readThread = new Thread(() -> {
             byte[] buffer = new byte[4096];
             Charset readCharset = processCharset != null ? processCharset : StandardCharsets.UTF_8;
+            final boolean useConPTY = conPTY != null;
 
-            while (running.get() && shellProcess != null && shellProcess.isAlive()) {
+            while (running.get()) {
+                if (useConPTY) {
+                    if (!conPTY.isAlive()) break;
+                } else {
+                    if (shellProcess == null || !shellProcess.isAlive()) break;
+                }
+
                 try {
-                    InputStream is = shellProcess.getInputStream();
-                    int len = is.read(buffer);
-                    if (len == -1) break;
-
-                    // 将进程输出的字节按进程编码解码，再转为UTF-8传给TerminalEmulator
+                    int len;
                     byte[] utf8Data;
-                    if (readCharset.equals(StandardCharsets.UTF_8)) {
-                        // UTF-8无需转码，直接使用
+
+                    if (useConPTY) {
+                        // ConPTY 输出已是 UTF-8 VT 序列
+                        len = conPTY.read(buffer);
+                        if (len == -1) break;
                         utf8Data = new byte[len];
                         System.arraycopy(buffer, 0, utf8Data, 0, len);
                     } else {
-                        // GBK等编码 → String → UTF-8字节
-                        String text = new String(buffer, 0, len, readCharset);
-                        utf8Data = text.getBytes(StandardCharsets.UTF_8);
+                        InputStream is = shellProcess.getInputStream();
+                        len = is.read(buffer);
+                        if (len == -1) break;
+                        // 将进程输出的字节按进程编码解码，再转为UTF-8传给TerminalEmulator
+                        if (readCharset.equals(StandardCharsets.UTF_8)) {
+                            utf8Data = new byte[len];
+                            System.arraycopy(buffer, 0, utf8Data, 0, len);
+                        } else {
+                            String text = new String(buffer, 0, len, readCharset);
+                            utf8Data = text.getBytes(StandardCharsets.UTF_8);
+                        }
                     }
 
+                    final byte[] finalData = utf8Data;
                     Platform.runLater(() -> {
-                        emulator.process(utf8Data);
+                        emulator.process(finalData);
                         scheduleRender();
                     });
 

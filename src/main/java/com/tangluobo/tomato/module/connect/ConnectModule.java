@@ -1387,7 +1387,8 @@ public class ConnectModule implements Module {
         if (!ensureTabPaneInstalled()) return;
 
         ConnectionConfig config = data.getConnectionConfig();
-        String tabId = "aliyun_domain_" + config.getId();
+        String domainName = data.getName();
+        String tabId = "aliyun_domain_" + config.getId() + "_" + domainName;
 
         // 如果已有该标签，直接选中
         for (Tab tab : terminalTabPane.getTabs()) {
@@ -1398,9 +1399,9 @@ public class ConnectModule implements Module {
             }
         }
 
-        AliyunDomainDataView domainView = new AliyunDomainDataView(config);
+        AliyunDomainDataView domainView = new AliyunDomainDataView(config, domainName);
 
-        String tabTitle = "域名管理(" + config.getName() + ")";
+        String tabTitle = "子域名(" + domainName + ")";
         Tab tab = new Tab(tabTitle);
 
         try {

@@ -8,6 +8,8 @@ import com.aliyuncs.ecs.model.v20140526.DescribeRegionsRequest;
 import com.aliyuncs.ecs.model.v20140526.DescribeRegionsResponse;
 import com.aliyuncs.domain.model.v20180129.QueryDomainListRequest;
 import com.aliyuncs.domain.model.v20180129.QueryDomainListResponse;
+import com.aliyuncs.alidns.model.v20150109.DescribeDomainRecordsRequest;
+import com.aliyuncs.alidns.model.v20150109.DescribeDomainRecordsResponse;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -189,6 +191,43 @@ public class AliyunService {
                 }
             }
             return domains;
+        } finally {
+            if (client instanceof DefaultAcsClient dac) {
+                dac.shutdown();
+            }
+        }
+    }
+
+    /**
+     * 获取指定域名下的解析记录（子域名列表）
+     */
+    public static List<Map<String, Object>> getDomainRecords(ConnectionConfig config, String domainName) throws Exception {
+        IAcsClient client = createClient(config);
+        try {
+            DescribeDomainRecordsRequest request = new DescribeDomainRecordsRequest();
+            request.setDomainName(domainName);
+            request.setPageSize(500L);
+            request.setLang("zh");
+            DescribeDomainRecordsResponse response = client.getAcsResponse(request);
+
+            List<Map<String, Object>> records = new ArrayList<>();
+            List<DescribeDomainRecordsResponse.Record> recordList = response.getDomainRecords();
+            if (recordList != null) {
+                for (DescribeDomainRecordsResponse.Record record : recordList) {
+                    Map<String, Object> info = new LinkedHashMap<>();
+                    info.put("recordId", record.getRecordId());
+                    info.put("rr", record.getRR());
+                    info.put("type", record.getType());
+                    info.put("value", record.getValue());
+                    info.put("ttl", record.getTTL());
+                    info.put("status", record.getStatus());
+                    info.put("priority", record.getPriority());
+                    info.put("domainName", record.getDomainName());
+                    info.put("line", record.getLine());
+                    records.add(info);
+                }
+            }
+            return records;
         } finally {
             if (client instanceof DefaultAcsClient dac) {
                 dac.shutdown();
