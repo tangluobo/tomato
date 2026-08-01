@@ -7,6 +7,8 @@ import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.InputMethodEvent;
+import javafx.scene.input.InputMethodTextRun;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
@@ -89,6 +91,9 @@ public class TerminalView extends Canvas {
         setFocusTraversable(true);
         setOnKeyPressed(this::handleKeyPressed);
         setOnKeyTyped(this::handleKeyTyped);
+
+        // 输入法事件（Linux下fcitx/ibus等输入法通过InputMethodEvent提交中文）
+        setOnInputMethodTextChanged(this::handleInputMethodTextChanged);
 
         // 鼠标事件处理
         setOnMousePressed(this::handleMousePressed);
@@ -305,6 +310,26 @@ public class TerminalView extends Canvas {
                 keyInputHandler.handleInput(ch.getBytes());
                 event.consume();
             }
+        }
+    }
+
+    /**
+     * 输入法事件处理（Linux下fcitx/ibus等输入法通过此事件提交中文）
+     * InputMethodEvent携带两类文本：
+     * - committed: 已确认提交的文本（如五笔选字后确认的中文字符）
+     * - composed: 正在组合的文本（如五笔输入编码时的预编辑文本，终端不显示）
+     */
+    private void handleInputMethodTextChanged(InputMethodEvent event) {
+        if (keyInputHandler == null) return;
+
+        // 重置光标闪烁
+        resetCursorBlink();
+
+        // 处理已提交的文本（输入法确认的中文字符）
+        String committed = event.getCommitted();
+        if (committed != null && !committed.isEmpty()) {
+            keyInputHandler.handleInput(committed.getBytes());
+            event.consume();
         }
     }
 
