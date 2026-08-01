@@ -94,17 +94,71 @@ public class SFTPClient {
     }
 
     /**
-     * 下载文件
+     * 下载文件或目录（自动递归处理目录）
      */
     public void download(String remotePath, String localPath) throws SftpException {
-        channel.get(remotePath, localPath);
+        SftpATTRS attrs = channel.stat(remotePath);
+        if (attrs.isDir()) {
+            downloadDir(remotePath, localPath);
+        } else {
+            channel.get(remotePath, localPath);
+        }
     }
 
     /**
-     * 上传文件
+     * 递归下载远程目录到本地
+     */
+    public void downloadDir(String remotePath, String localPath) throws SftpException {
+        File localDir = new File(localPath);
+        if (!localDir.exists()) localDir.mkdirs();
+
+        Vector<ChannelSftp.LsEntry> entries = channel.ls(remotePath);
+        for (ChannelSftp.LsEntry entry : entries) {
+            String name = entry.getFilename();
+            if (name.equals(".") || name.equals("..")) continue;
+            String remoteChild = remotePath.endsWith("/") ? remotePath + name : remotePath + "/" + name;
+            String localChild = new File(localDir, name).getAbsolutePath();
+            if (entry.getAttrs().isDir()) {
+                downloadDir(remoteChild, localChild);
+            } else {
+                channel.get(remoteChild, localChild);
+            }
+        }
+    }
+
+    /**
+     * 上传文件或目录（自动递归处理目录）
      */
     public void upload(String localPath, String remotePath) throws SftpException {
-        channel.put(localPath, remotePath);
+        File localFile = new File(localPath);
+        if (localFile.isDirectory()) {
+            uploadDir(localPath, remotePath);
+        } else {
+            channel.put(localPath, remotePath);
+        }
+    }
+
+    /**
+     * 递归上传本地目录到远程
+     */
+    public void uploadDir(String localPath, String remotePath) throws SftpException {
+        File localDir = new File(localPath);
+        // 确保远程目录存在
+        try {
+            channel.stat(remotePath);
+        } catch (SftpException e) {
+            channel.mkdir(remotePath);
+        }
+        File[] children = localDir.listFiles();
+        if (children == null) return;
+        for (File child : children) {
+            String remoteChild = remotePath.endsWith("/") ? remotePath + child.getName() : remotePath + "/" + child.getName();
+            if (child.isDirectory()) {
+                uploadDir(child.getAbsolutePath(), remoteChild);
+            } else {
+                channel.put(child.getAbsolutePath(), remoteChild);
+            }
+        }
     }
 
     /**
