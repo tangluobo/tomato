@@ -17,6 +17,8 @@ module tomato {
     requires org.apache.commons.codec;
     requires org.apache.commons.io;
     requires rdp;
+    requires org.bouncycastle.provider;
+    requires org.bouncycastle.tls;
     requires software.amazon.awssdk.services.s3;
     requires software.amazon.awssdk.auth;
     requires software.amazon.awssdk.regions;

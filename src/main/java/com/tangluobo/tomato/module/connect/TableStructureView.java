@@ -11,6 +11,7 @@ import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.input.KeyCode;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
@@ -38,6 +39,43 @@ public class TableStructureView extends BorderPane {
     private TableView<ObservableList<String>> tableView;
     private ProgressIndicator loadingIndicator;
     private Label statusLabel;
+
+    /** 索引/外键/触发器/SQL预览 各标签页的组件 */
+    private TableView<ObservableList<String>> indexesTableView;
+    private ProgressIndicator indexesLoadingIndicator;
+    private TableView<ObservableList<String>> foreignKeysTableView;
+    private ProgressIndicator foreignKeysLoadingIndicator;
+    private TableView<ObservableList<String>> triggersTableView;
+    private ProgressIndicator triggersLoadingIndicator;
+
+    /** 选项标签页组件 */
+    private ComboBox<String> engineComboBox;
+    private ComboBox<String> charsetComboBox;
+    private ComboBox<String> collationComboBox;
+    private TextField autoIncrementField;
+    private Label autoIncrementLabel;
+    private ComboBox<String> rowFormatComboBox;
+    private TextField avgRowLengthField;
+    private Label rowFormatLabel;
+    private Label avgRowLengthLabel;
+    private ProgressIndicator optionsLoadingIndicator;
+
+    /** 注释标签页 */
+    private TextArea commentTextArea;
+
+    /** SQL预览标签页 */
+    private TextArea sqlPreviewArea;
+
+    /** 缓存的字符集->排序规则映射（用于选项标签页字符集联动，避免在FX线程查询数据库） */
+    private Map<String, List<String>> cachedCharsets;
+
+    /** 已加载标签页状态标记，避免重复加载 */
+    private boolean indexesLoaded = false;
+    private boolean foreignKeysLoaded = false;
+    private boolean triggersLoaded = false;
+    private boolean optionsLoaded = false;
+    private boolean commentLoaded = false;
+    private boolean sqlPreviewLoaded = false;
 
     /** 数据列数量（不含行选择器列） */
     private int dataColumnCount;
@@ -124,16 +162,16 @@ public class TableStructureView extends BorderPane {
         fieldsTab.setContent(fieldsPane);
 
         Tab indexesTab = new Tab("索引");
-        indexesTab.setContent(createPlaceholderPane("索引"));
+        indexesTab.setContent(createIndexesPane());
 
         Tab foreignKeysTab = new Tab("外键");
-        foreignKeysTab.setContent(createPlaceholderPane("外键"));
+        foreignKeysTab.setContent(createForeignKeysPane());
 
         Tab triggersTab = new Tab("触发器");
-        triggersTab.setContent(createPlaceholderPane("触发器"));
+        triggersTab.setContent(createTriggersPane());
 
         Tab optionsTab = new Tab("选项");
-        optionsTab.setContent(createPlaceholderPane("选项"));
+        optionsTab.setContent(createOptionsPane());
 
         Tab commentTab = new Tab("注释");
         commentTab.setContent(createCommentPane());
@@ -143,6 +181,24 @@ public class TableStructureView extends BorderPane {
 
         tabPane.getTabs().addAll(fieldsTab, indexesTab, foreignKeysTab,
                 triggersTab, optionsTab, commentTab, sqlPreviewTab);
+
+        // 切换标签页时懒加载对应数据
+        tabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
+            if (newTab == null) return;
+            if (newTab == indexesTab && !indexesLoaded) {
+                loadIndexes();
+            } else if (newTab == foreignKeysTab && !foreignKeysLoaded) {
+                loadForeignKeys();
+            } else if (newTab == triggersTab && !triggersLoaded) {
+                loadTriggers();
+            } else if (newTab == optionsTab && !optionsLoaded) {
+                loadOptions();
+            } else if (newTab == commentTab && !commentLoaded) {
+                loadComment();
+            } else if (newTab == sqlPreviewTab && !sqlPreviewLoaded) {
+                loadSqlPreview();
+            }
+        });
 
         // 状态栏
         statusLabel = new Label();
@@ -299,16 +355,201 @@ public class TableStructureView extends BorderPane {
     }
 
     /**
-     * 创建占位面板（索引/外键/触发器/选项等待实现的标签页内容）
+     * 创建只读信息表格的通用方法（用于索引/外键/触发器标签页）
      */
-    private VBox createPlaceholderPane(String featureName) {
-        VBox box = new VBox(8);
-        box.setPadding(new Insets(20));
-        box.setAlignment(Pos.CENTER);
-        Label label = new Label(featureName + "（待实现）");
-        label.setStyle("-fx-font-size: 14px; -fx-text-fill: #888;");
-        box.getChildren().add(label);
-        return box;
+    private TableView<ObservableList<String>> createInfoTableView() {
+        TableView<ObservableList<String>> tv = new TableView<>();
+        tv.setEditable(false);
+        tv.setFixedCellSize(28);
+        GlobalConfig globalConfig = GlobalConfig.getInstance();
+        String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
+                globalConfig.getTableFontName(), globalConfig.getTableFontSize());
+        tv.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0;");
+        tv.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+        tv.setPlaceholder(new Label("暂无数据"));
+        return tv;
+    }
+
+    /**
+     * 创建小型工具栏（添加/删除/刷新）
+     */
+    private HBox createInfoToolBar(Button addBtn, Button deleteBtn, Button refreshBtn) {
+        HBox toolBar = new HBox(2);
+        toolBar.setPadding(new Insets(4, 8, 4, 8));
+        toolBar.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #ddd; -fx-border-width: 0 0 1 0;");
+        toolBar.setAlignment(Pos.CENTER_LEFT);
+        if (addBtn != null) toolBar.getChildren().add(addBtn);
+        if (deleteBtn != null) toolBar.getChildren().add(deleteBtn);
+        if (refreshBtn != null) toolBar.getChildren().add(refreshBtn);
+        return toolBar;
+    }
+
+    /**
+     * 索引标签页：工具栏 + 表格 + 加载指示器
+     */
+    private BorderPane createIndexesPane() {
+        Button addBtn = createToolBarButton("添加索引", createAddIcon());
+        addBtn.setOnAction(e -> statusLabel.setText("添加索引功能待实现"));
+        Button deleteBtn = createToolBarButton("删除", createDeleteIcon());
+        deleteBtn.setOnAction(e -> statusLabel.setText("删除索引功能待实现"));
+        Button refreshBtn = createToolBarButton("刷新", createRefreshIcon());
+        refreshBtn.setOnAction(e -> { indexesLoaded = false; loadIndexes(); });
+
+        indexesTableView = createInfoTableView();
+        indexesLoadingIndicator = new ProgressIndicator();
+        indexesLoadingIndicator.setMaxSize(40, 40);
+        indexesLoadingIndicator.setVisible(false);
+        StackPane center = new StackPane(indexesTableView, indexesLoadingIndicator);
+
+        BorderPane pane = new BorderPane();
+        pane.setTop(createInfoToolBar(addBtn, deleteBtn, refreshBtn));
+        pane.setCenter(center);
+        return pane;
+    }
+
+    /**
+     * 外键标签页：工具栏 + 表格 + 加载指示器
+     */
+    private BorderPane createForeignKeysPane() {
+        Button addBtn = createToolBarButton("添加外键", createAddIcon());
+        addBtn.setOnAction(e -> statusLabel.setText("添加外键功能待实现"));
+        Button deleteBtn = createToolBarButton("删除", createDeleteIcon());
+        deleteBtn.setOnAction(e -> statusLabel.setText("删除外键功能待实现"));
+        Button refreshBtn = createToolBarButton("刷新", createRefreshIcon());
+        refreshBtn.setOnAction(e -> { foreignKeysLoaded = false; loadForeignKeys(); });
+
+        foreignKeysTableView = createInfoTableView();
+        foreignKeysLoadingIndicator = new ProgressIndicator();
+        foreignKeysLoadingIndicator.setMaxSize(40, 40);
+        foreignKeysLoadingIndicator.setVisible(false);
+        StackPane center = new StackPane(foreignKeysTableView, foreignKeysLoadingIndicator);
+
+        BorderPane pane = new BorderPane();
+        pane.setTop(createInfoToolBar(addBtn, deleteBtn, refreshBtn));
+        pane.setCenter(center);
+        return pane;
+    }
+
+    /**
+     * 触发器标签页：工具栏 + 表格 + 加载指示器
+     */
+    private BorderPane createTriggersPane() {
+        Button addBtn = createToolBarButton("添加触发器", createAddIcon());
+        addBtn.setOnAction(e -> statusLabel.setText("添加触发器功能待实现"));
+        Button deleteBtn = createToolBarButton("删除", createDeleteIcon());
+        deleteBtn.setOnAction(e -> statusLabel.setText("删除触发器功能待实现"));
+        Button refreshBtn = createToolBarButton("刷新", createRefreshIcon());
+        refreshBtn.setOnAction(e -> { triggersLoaded = false; loadTriggers(); });
+
+        triggersTableView = createInfoTableView();
+        triggersLoadingIndicator = new ProgressIndicator();
+        triggersLoadingIndicator.setMaxSize(40, 40);
+        triggersLoadingIndicator.setVisible(false);
+        StackPane center = new StackPane(triggersTableView, triggersLoadingIndicator);
+
+        BorderPane pane = new BorderPane();
+        pane.setTop(createInfoToolBar(addBtn, deleteBtn, refreshBtn));
+        pane.setCenter(center);
+        return pane;
+    }
+
+    /**
+     * 选项标签页：表选项表单（引擎、字符集、排序规则、自增值、行格式等）
+     */
+    private StackPane createOptionsPane() {
+        VBox formBox = new VBox(8);
+        formBox.setPadding(new Insets(12));
+        formBox.setStyle("-fx-background-color: white;");
+
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(8);
+
+        // 引擎
+        Label engineLabel = new Label("引擎:");
+        engineLabel.setStyle("-fx-font-size: 12px;");
+        engineComboBox = new ComboBox<>();
+        engineComboBox.setEditable(true);
+        engineComboBox.setPrefWidth(220);
+        engineComboBox.setVisibleRowCount(15);
+
+        // 字符集
+        Label charsetLabel = new Label("字符集:");
+        charsetLabel.setStyle("-fx-font-size: 12px;");
+        charsetComboBox = new ComboBox<>();
+        charsetComboBox.setEditable(true);
+        charsetComboBox.setPrefWidth(220);
+        charsetComboBox.setVisibleRowCount(15);
+        // 字符集变化时联动更新排序规则下拉项
+        charsetComboBox.valueProperty().addListener((obs, oldVal, newVal) -> {
+            if (newVal == null) return;
+            String currentCollation = collationComboBox.getValue();
+            collationComboBox.getItems().clear();
+            if (cachedCharsets != null) {
+                List<String> collations = cachedCharsets.get(newVal);
+                if (collations != null) {
+                    collationComboBox.getItems().addAll(collations);
+                }
+                if (currentCollation != null && collationComboBox.getItems().contains(currentCollation)) {
+                    collationComboBox.setValue(currentCollation);
+                } else if (!collationComboBox.getItems().isEmpty()) {
+                    collationComboBox.setValue(collationComboBox.getItems().get(0));
+                }
+            }
+        });
+
+        // 排序规则
+        Label collationLabel = new Label("排序规则:");
+        collationLabel.setStyle("-fx-font-size: 12px;");
+        collationComboBox = new ComboBox<>();
+        collationComboBox.setEditable(true);
+        collationComboBox.setPrefWidth(220);
+        collationComboBox.setVisibleRowCount(15);
+
+        // 自增值
+        autoIncrementLabel = new Label("自增值:");
+        autoIncrementLabel.setStyle("-fx-font-size: 12px;");
+        autoIncrementField = new TextField();
+        autoIncrementField.setPrefWidth(220);
+        autoIncrementField.setStyle("-fx-font-size: 12px;");
+
+        // 行格式
+        rowFormatLabel = new Label("行格式:");
+        rowFormatLabel.setStyle("-fx-font-size: 12px;");
+        rowFormatComboBox = new ComboBox<>();
+        rowFormatComboBox.setEditable(true);
+        rowFormatComboBox.setPrefWidth(220);
+        rowFormatComboBox.getItems().addAll("Compact", "Dynamic", "Fixed", "Compressed", "Redundant", "Default");
+
+        // 平均行长
+        avgRowLengthLabel = new Label("平均行长:");
+        avgRowLengthLabel.setStyle("-fx-font-size: 12px;");
+        avgRowLengthField = new TextField();
+        avgRowLengthField.setPrefWidth(220);
+        avgRowLengthField.setStyle("-fx-font-size: 12px;");
+
+        int row = 0;
+        grid.add(engineLabel, 0, row);
+        grid.add(engineComboBox, 1, row++);
+        grid.add(charsetLabel, 0, row);
+        grid.add(charsetComboBox, 1, row++);
+        grid.add(collationLabel, 0, row);
+        grid.add(collationComboBox, 1, row++);
+        grid.add(autoIncrementLabel, 0, row);
+        grid.add(autoIncrementField, 1, row++);
+        grid.add(rowFormatLabel, 0, row);
+        grid.add(rowFormatComboBox, 1, row++);
+        grid.add(avgRowLengthLabel, 0, row);
+        grid.add(avgRowLengthField, 1, row++);
+
+        formBox.getChildren().add(grid);
+
+        // 加载指示器
+        optionsLoadingIndicator = new ProgressIndicator();
+        optionsLoadingIndicator.setMaxSize(40, 40);
+        optionsLoadingIndicator.setVisible(false);
+
+        return new StackPane(formBox, optionsLoadingIndicator);
     }
 
     /**
@@ -320,12 +561,12 @@ public class TableStructureView extends BorderPane {
         box.setStyle("-fx-background-color: white;");
         Label header = new Label("表注释：");
         header.setStyle("-fx-font-size: 12px; -fx-text-fill: #333;");
-        TextArea textArea = new TextArea();
-        textArea.setPromptText("请输入表注释");
-        textArea.setWrapText(true);
-        textArea.setStyle("-fx-font-size: 13px;");
-        VBox.setVgrow(textArea, javafx.scene.layout.Priority.ALWAYS);
-        box.getChildren().addAll(header, textArea);
+        commentTextArea = new TextArea();
+        commentTextArea.setPromptText("请输入表注释");
+        commentTextArea.setWrapText(true);
+        commentTextArea.setStyle("-fx-font-size: 13px;");
+        VBox.setVgrow(commentTextArea, javafx.scene.layout.Priority.ALWAYS);
+        box.getChildren().addAll(header, commentTextArea);
         return box;
     }
 
@@ -338,14 +579,257 @@ public class TableStructureView extends BorderPane {
         box.setStyle("-fx-background-color: white;");
         Label header = new Label("CREATE TABLE / ALTER TABLE 预览：");
         header.setStyle("-fx-font-size: 12px; -fx-text-fill: #333;");
-        TextArea sqlArea = new TextArea();
-        sqlArea.setEditable(false);
-        sqlArea.setWrapText(true);
-        sqlArea.setStyle("-fx-font-family: monospace; -fx-font-size: 13px;");
-        sqlArea.setText("-- SQL预览将在字段修改后生成\n-- 待实现");
-        VBox.setVgrow(sqlArea, javafx.scene.layout.Priority.ALWAYS);
-        box.getChildren().addAll(header, sqlArea);
+        sqlPreviewArea = new TextArea();
+        sqlPreviewArea.setEditable(false);
+        sqlPreviewArea.setWrapText(true);
+        sqlPreviewArea.setStyle("-fx-font-family: monospace; -fx-font-size: 13px;");
+        sqlPreviewArea.setText("-- 加载中...");
+        VBox.setVgrow(sqlPreviewArea, javafx.scene.layout.Priority.ALWAYS);
+        box.getChildren().addAll(header, sqlPreviewArea);
         return box;
+    }
+
+    // ====== 各标签页数据加载 ======
+
+    /**
+     * 加载索引数据并填充表格
+     */
+    private void loadIndexes() {
+        indexesLoadingIndicator.setVisible(true);
+        indexesTableView.setDisable(true);
+        new Thread(() -> {
+            try {
+                List<Map<String, String>> indexes = DatabaseService.getTableIndexes(config, databaseName, tableName);
+                Platform.runLater(() -> {
+                    populateInfoTable(indexesTableView, indexes, java.util.List.of("名称", "字段", "类型", "方法", "唯一", "注释"),
+                            java.util.Map.of("名称", 180, "字段", 200, "类型", 100, "方法", 100, "唯一", 60, "注释", 200));
+                    indexesLoaded = true;
+                    indexesLoadingIndicator.setVisible(false);
+                    indexesTableView.setDisable(false);
+                    statusLabel.setText("共 " + indexes.size() + " 个索引");
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    indexesLoadingIndicator.setVisible(false);
+                    indexesTableView.setDisable(false);
+                    statusLabel.setText("加载索引失败: " + e.getMessage());
+                });
+            }
+        }, "DB-LoadIndexes").start();
+    }
+
+    /**
+     * 加载外键数据并填充表格
+     */
+    private void loadForeignKeys() {
+        foreignKeysLoadingIndicator.setVisible(true);
+        foreignKeysTableView.setDisable(true);
+        new Thread(() -> {
+            try {
+                List<Map<String, String>> fks = DatabaseService.getTableForeignKeys(config, databaseName, tableName);
+                Platform.runLater(() -> {
+                    populateInfoTable(foreignKeysTableView, fks,
+                            java.util.List.of("名称", "字段", "参考数据库", "参考表", "参考字段", "删除时", "更新时"),
+                            java.util.Map.of("名称", 160, "字段", 150, "参考数据库", 120, "参考表", 150, "参考字段", 150, "删除时", 100, "更新时", 100));
+                    foreignKeysLoaded = true;
+                    foreignKeysLoadingIndicator.setVisible(false);
+                    foreignKeysTableView.setDisable(false);
+                    statusLabel.setText("共 " + fks.size() + " 个外键");
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    foreignKeysLoadingIndicator.setVisible(false);
+                    foreignKeysTableView.setDisable(false);
+                    statusLabel.setText("加载外键失败: " + e.getMessage());
+                });
+            }
+        }, "DB-LoadForeignKeys").start();
+    }
+
+    /**
+     * 加载触发器数据并填充表格
+     */
+    private void loadTriggers() {
+        triggersLoadingIndicator.setVisible(true);
+        triggersTableView.setDisable(true);
+        new Thread(() -> {
+            try {
+                List<Map<String, String>> triggers = DatabaseService.getTableTriggers(config, databaseName, tableName);
+                Platform.runLater(() -> {
+                    populateInfoTable(triggersTableView, triggers,
+                            java.util.List.of("名称", "时机", "事件", "语句"),
+                            java.util.Map.of("名称", 180, "时机", 100, "事件", 100, "语句", 500));
+                    triggersLoaded = true;
+                    triggersLoadingIndicator.setVisible(false);
+                    triggersTableView.setDisable(false);
+                    statusLabel.setText("共 " + triggers.size() + " 个触发器");
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    triggersLoadingIndicator.setVisible(false);
+                    triggersTableView.setDisable(false);
+                    statusLabel.setText("加载触发器失败: " + e.getMessage());
+                });
+            }
+        }, "DB-LoadTriggers").start();
+    }
+
+    /**
+     * 加载表选项并填充表单控件
+     */
+    private void loadOptions() {
+        optionsLoadingIndicator.setVisible(true);
+        engineComboBox.setDisable(true);
+        charsetComboBox.setDisable(true);
+        collationComboBox.setDisable(true);
+        new Thread(() -> {
+            try {
+                Map<String, String> options = DatabaseService.getTableOptions(config, databaseName, tableName);
+                // 加载可用引擎列表
+                List<String> engines = DatabaseService.getEngines(config);
+                // 加载字符集列表
+                Map<String, List<String>> charsets = DatabaseService.getCharsets(config);
+                Platform.runLater(() -> {
+                    // 先缓存字符集映射，供字符集联动监听器使用
+                    cachedCharsets = charsets;
+
+                    // 引擎
+                    engineComboBox.getItems().setAll(engines);
+                    engineComboBox.setValue(options.getOrDefault("引擎", ""));
+
+                    // 字符集（设置value会触发监听器自动填充排序规则下拉项）
+                    charsetComboBox.getItems().setAll(charsets.keySet());
+                    String charset = options.getOrDefault("字符集", "");
+                    if (!charset.isEmpty()) {
+                        charsetComboBox.setValue(charset);
+                    }
+
+                    // 排序规则（监听器已填充下拉项，这里仅设置当前值）
+                    String collation = options.getOrDefault("排序规则", "");
+                    if (!collation.isEmpty()) {
+                        collationComboBox.setValue(collation);
+                    }
+
+                    // 自增值
+                    autoIncrementField.setText(options.getOrDefault("自增值", ""));
+
+                    // 行格式
+                    rowFormatComboBox.setValue(options.getOrDefault("行格式", ""));
+
+                    // 平均行长
+                    avgRowLengthField.setText(options.getOrDefault("平均行长", ""));
+
+                    optionsLoaded = true;
+                    optionsLoadingIndicator.setVisible(false);
+                    engineComboBox.setDisable(false);
+                    charsetComboBox.setDisable(false);
+                    collationComboBox.setDisable(false);
+                    statusLabel.setText("表选项已加载");
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    optionsLoadingIndicator.setVisible(false);
+                    engineComboBox.setDisable(false);
+                    charsetComboBox.setDisable(false);
+                    collationComboBox.setDisable(false);
+                    statusLabel.setText("加载表选项失败: " + e.getMessage());
+                    e.printStackTrace();
+                });
+            }
+        }, "DB-LoadOptions").start();
+    }
+
+    /**
+     * 加载表注释
+     */
+    private void loadComment() {
+        new Thread(() -> {
+            try {
+                String comment = DatabaseService.getTableComment(config, databaseName, tableName);
+                Platform.runLater(() -> {
+                    commentTextArea.setText(comment != null ? comment : "");
+                    commentLoaded = true;
+                    statusLabel.setText("表注释已加载");
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> statusLabel.setText("加载表注释失败: " + e.getMessage()));
+            }
+        }, "DB-LoadComment").start();
+    }
+
+    /**
+     * 加载SQL预览（SHOW CREATE TABLE）
+     */
+    private void loadSqlPreview() {
+        sqlPreviewArea.setText("-- 加载中...");
+        new Thread(() -> {
+            try {
+                String ddl = DatabaseService.getTableDdl(config, databaseName, tableName);
+                Platform.runLater(() -> {
+                    sqlPreviewArea.setText(ddl != null ? ddl : "-- 无法获取DDL");
+                    sqlPreviewLoaded = true;
+                    statusLabel.setText("SQL预览已加载");
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    sqlPreviewArea.setText("-- 加载失败: " + e.getMessage());
+                    statusLabel.setText("加载SQL预览失败: " + e.getMessage());
+                });
+            }
+        }, "DB-LoadSqlPreview").start();
+    }
+
+    /**
+     * 填充只读信息表格（索引/外键/触发器通用方法）
+     * @param tv 目标TableView
+     * @param data 数据列表（每个元素为属性Map）
+     * @param columnTitles 列标题顺序
+     * @param columnWidths 列宽映射
+     */
+    private void populateInfoTable(TableView<ObservableList<String>> tv, List<Map<String, String>> data,
+                                    List<String> columnTitles, Map<String, Integer> columnWidths) {
+        tv.getColumns().clear();
+        tv.getItems().clear();
+        if (data.isEmpty()) return;
+
+        for (int i = 0; i < columnTitles.size(); i++) {
+            final int colIndex = i;
+            String title = columnTitles.get(i);
+            TableColumn<ObservableList<String>, String> col = new TableColumn<>(title);
+            col.setPrefWidth(columnWidths.getOrDefault(title, 100));
+            col.setMinWidth(50);
+            col.setCellValueFactory(param -> {
+                ObservableList<String> row = param.getValue();
+                if (colIndex < row.size()) {
+                    return new SimpleStringProperty(row.get(colIndex));
+                }
+                return new SimpleStringProperty("");
+            });
+            col.setCellFactory(tc -> new TableCell<>() {
+                @Override
+                protected void updateItem(String item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) {
+                        setText(null);
+                        setStyle("");
+                    } else {
+                        setText(item);
+                        setStyle("-fx-alignment: CENTER_LEFT;");
+                    }
+                }
+            });
+            tv.getColumns().add(col);
+        }
+
+        ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
+        for (Map<String, String> map : data) {
+            ObservableList<String> row = FXCollections.observableArrayList();
+            for (String title : columnTitles) {
+                row.add(map.getOrDefault(title, ""));
+            }
+            rows.add(row);
+        }
+        tv.setItems(rows);
     }
 
     // ====== 工具栏动作处理（占位实现，后续对接业务逻辑） ======
@@ -484,6 +968,14 @@ public class TableStructureView extends BorderPane {
     public void loadStructure() {
         loadingIndicator.setVisible(true);
         tableView.setDisable(true);
+
+        // 重置各标签页加载状态，刷新后需重新加载
+        indexesLoaded = false;
+        foreignKeysLoaded = false;
+        triggersLoaded = false;
+        optionsLoaded = false;
+        commentLoaded = false;
+        sqlPreviewLoaded = false;
 
         new Thread(() -> {
             try {

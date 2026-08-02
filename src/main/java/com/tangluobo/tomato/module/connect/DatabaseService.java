@@ -1299,6 +1299,473 @@ public class DatabaseService {
     }
 
     /**
+     * 获取表的索引信息列表
+     * @return 索引信息列表，每个元素为一个索引的属性Map（键：名称、字段、类型、方法、注释、可空、唯一）
+     */
+    public static List<Map<String, String>> getTableIndexes(ConnectionConfig config, String databaseName, String tableName) throws Exception {
+        Connection conn = getConnection(config);
+        List<Map<String, String>> indexes = new ArrayList<>();
+
+        if (config.getType() == ConnectType.MYSQL) {
+            // 查询STATISTICS获取索引列信息，按索引名聚合
+            String sql = "SELECT INDEX_NAME, GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',') AS COLUMNS, "
+                    + "NON_UNIQUE, INDEX_TYPE, COMMENT, INDEX_COMMENT "
+                    + "FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? "
+                    + "GROUP BY INDEX_NAME, NON_UNIQUE, INDEX_TYPE, COMMENT, INDEX_COMMENT ORDER BY INDEX_NAME";
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, databaseName);
+                stmt.setString(2, tableName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, String> idx = new LinkedHashMap<>();
+                        String indexName = rs.getString("INDEX_NAME");
+                        boolean isPrimaryKey = "PRIMARY".equals(indexName);
+                        idx.put("名称", indexName);
+                        idx.put("字段", rs.getString("COLUMNS"));
+                        idx.put("方法", isPrimaryKey ? "BTREE" : rs.getString("INDEX_TYPE"));
+                        boolean nonUnique = rs.getBoolean("NON_UNIQUE");
+                        idx.put("类型", isPrimaryKey ? "PRIMARY" : (nonUnique ? "NORMAL" : "UNIQUE"));
+                        idx.put("唯一", nonUnique ? "否" : "是");
+                        String comment = rs.getString("INDEX_COMMENT");
+                        idx.put("注释", comment != null ? comment : "");
+                        indexes.add(idx);
+                    }
+                }
+            }
+        } else if (config.getType() == ConnectType.POSTGRESQL) {
+            String sql = "SELECT i.relname AS index_name, "
+                    + "string_agg(a.attname, ',' ORDER BY array_position(unnest(string_to_array(substring(pg_get_indexdef(i.oid) from '\\((.+)\\)'), ',')), a.attname)) AS columns, "
+                    + "CASE WHEN ix.indisunique THEN 'UNIQUE' WHEN ix.indisprimary THEN 'PRIMARY' ELSE 'NORMAL' END AS index_type, "
+                    + "am.amname AS index_method "
+                    + "FROM pg_index ix "
+                    + "JOIN pg_class t ON t.oid = ix.indrelid "
+                    + "JOIN pg_class i ON i.oid = ix.indexrelid "
+                    + "JOIN pg_namespace n ON n.oid = t.relnamespace "
+                    + "JOIN pg_am am ON am.oid = i.relam "
+                    + "JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey) "
+                    + "WHERE n.nspname = ? AND t.relname = ? "
+                    + "GROUP BY i.relname, ix.indisunique, ix.indisprimary, am.amname ORDER BY i.relname";
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, databaseName);
+                stmt.setString(2, tableName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, String> idx = new LinkedHashMap<>();
+                        idx.put("名称", rs.getString("index_name"));
+                        idx.put("字段", rs.getString("columns"));
+                        idx.put("方法", rs.getString("index_method"));
+                        String idxType = rs.getString("index_type");
+                        idx.put("类型", idxType);
+                        idx.put("唯一", "UNIQUE".equals(idxType) || "PRIMARY".equals(idxType) ? "是" : "否");
+                        idx.put("注释", "");
+                        indexes.add(idx);
+                    }
+                }
+            }
+        } else if (config.getType() == ConnectType.ORACLE) {
+            String sql = "SELECT i.INDEX_NAME, "
+                    + "LISTAGG(c.COLUMN_NAME, ',') WITHIN GROUP (ORDER BY c.COLUMN_POSITION) AS COLUMNS, "
+                    + "i.UNIQUENESS, i.INDEX_TYPE "
+                    + "FROM ALL_INDEXES i "
+                    + "JOIN ALL_IND_COLUMNS c ON i.INDEX_NAME = c.INDEX_NAME AND i.OWNER = c.INDEX_OWNER "
+                    + "WHERE i.TABLE_OWNER = ? AND i.TABLE_NAME = ? "
+                    + "GROUP BY i.INDEX_NAME, i.UNIQUENESS, i.INDEX_TYPE ORDER BY i.INDEX_NAME";
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, databaseName);
+                stmt.setString(2, tableName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, String> idx = new LinkedHashMap<>();
+                        idx.put("名称", rs.getString("INDEX_NAME"));
+                        idx.put("字段", rs.getString("COLUMNS"));
+                        idx.put("方法", rs.getString("INDEX_TYPE"));
+                        String uniqueness = rs.getString("UNIQUENESS");
+                        idx.put("类型", "UNIQUE".equals(uniqueness) ? "UNIQUE" : "NORMAL");
+                        idx.put("唯一", "UNIQUE".equals(uniqueness) ? "是" : "否");
+                        idx.put("注释", "");
+                        indexes.add(idx);
+                    }
+                }
+            }
+        }
+
+        return indexes;
+    }
+
+    /**
+     * 获取表的外键信息列表
+     * @return 外键信息列表，每个元素为一个外键的属性Map
+     */
+    public static List<Map<String, String>> getTableForeignKeys(ConnectionConfig config, String databaseName, String tableName) throws Exception {
+        Connection conn = getConnection(config);
+        List<Map<String, String>> foreignKeys = new ArrayList<>();
+
+        if (config.getType() == ConnectType.MYSQL) {
+            String sql = "SELECT kcu.CONSTRAINT_NAME, "
+                    + "GROUP_CONCAT(kcu.COLUMN_NAME ORDER BY kcu.ORDINAL_POSITION SEPARATOR ',') AS COLUMNS, "
+                    + "kcu.REFERENCED_TABLE_SCHEMA AS REF_DB, "
+                    + "kcu.REFERENCED_TABLE_NAME AS REF_TABLE, "
+                    + "GROUP_CONCAT(kcu.REFERENCED_COLUMN_NAME ORDER BY kcu.ORDINAL_POSITION SEPARATOR ',') AS REF_COLUMNS, "
+                    + "rc.DELETE_RULE, rc.UPDATE_RULE "
+                    + "FROM information_schema.KEY_COLUMN_USAGE kcu "
+                    + "JOIN information_schema.REFERENTIAL_CONSTRAINTS rc "
+                    + "ON kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND kcu.TABLE_SCHEMA = rc.CONSTRAINT_SCHEMA "
+                    + "WHERE kcu.TABLE_SCHEMA = ? AND kcu.TABLE_NAME = ? AND kcu.REFERENCED_TABLE_NAME IS NOT NULL "
+                    + "GROUP BY kcu.CONSTRAINT_NAME, kcu.REFERENCED_TABLE_SCHEMA, kcu.REFERENCED_TABLE_NAME, rc.DELETE_RULE, rc.UPDATE_RULE "
+                    + "ORDER BY kcu.CONSTRAINT_NAME";
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, databaseName);
+                stmt.setString(2, tableName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, String> fk = new LinkedHashMap<>();
+                        fk.put("名称", rs.getString("CONSTRAINT_NAME"));
+                        fk.put("字段", rs.getString("COLUMNS"));
+                        fk.put("参考数据库", rs.getString("REF_DB"));
+                        fk.put("参考表", rs.getString("REF_TABLE"));
+                        fk.put("参考字段", rs.getString("REF_COLUMNS"));
+                        fk.put("删除时", rs.getString("DELETE_RULE"));
+                        fk.put("更新时", rs.getString("UPDATE_RULE"));
+                        foreignKeys.add(fk);
+                    }
+                }
+            }
+        } else if (config.getType() == ConnectType.POSTGRESQL) {
+            String sql = "SELECT con.conname AS constraint_name, "
+                    + "string_agg(a.attname, ',' ORDER BY u.ord) AS columns, "
+                    + "rn.nspname AS ref_schema, cl.relname AS ref_table, "
+                    + "string_agg(af.attname, ',' ORDER BY uf.ord) AS ref_columns, "
+                    + "con.confdeltype AS delete_rule, con.confupdtype AS update_rule "
+                    + "FROM pg_constraint con "
+                    + "JOIN pg_class c ON c.oid = con.conrelid "
+                    + "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    + "JOIN pg_class cl ON cl.oid = con.confrelid "
+                    + "JOIN pg_namespace rn ON rn.oid = cl.relnamespace "
+                    + "JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS u(attnum, ord) ON true "
+                    + "JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = u.attnum "
+                    + "JOIN LATERAL unnest(con.confkey) WITH ORDINALITY AS uf(attnum, ord) ON uf.ord = u.ord "
+                    + "JOIN pg_attribute af ON af.attrelid = cl.oid AND af.attnum = uf.attnum "
+                    + "WHERE n.nspname = ? AND c.relname = ? AND con.contype = 'f' "
+                    + "GROUP BY con.conname, rn.nspname, cl.relname, con.confdeltype, con.confupdtype "
+                    + "ORDER BY con.conname";
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, databaseName);
+                stmt.setString(2, tableName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, String> fk = new LinkedHashMap<>();
+                        fk.put("名称", rs.getString("constraint_name"));
+                        fk.put("字段", rs.getString("columns"));
+                        fk.put("参考数据库", rs.getString("ref_schema"));
+                        fk.put("参考表", rs.getString("ref_table"));
+                        fk.put("参考字段", rs.getString("ref_columns"));
+                        fk.put("删除时", mapPgRule(rs.getString("delete_rule")));
+                        fk.put("更新时", mapPgRule(rs.getString("update_rule")));
+                        foreignKeys.add(fk);
+                    }
+                }
+            }
+        } else if (config.getType() == ConnectType.ORACLE) {
+            String sql = "SELECT c.CONSTRAINT_NAME, "
+                    + "LISTAGG(col.COLUMN_NAME, ',') WITHIN GROUP (ORDER BY col.POSITION) AS COLUMNS, "
+                    + "rc.OWNER AS REF_OWNER, rc.TABLE_NAME AS REF_TABLE, "
+                    + "LISTAGG(rcol.COLUMN_NAME, ',') WITHIN GROUP (ORDER BY rcol.POSITION) AS REF_COLUMNS, "
+                    + "c.DELETE_RULE "
+                    + "FROM ALL_CONSTRAINTS c "
+                    + "JOIN ALL_CONS_COLUMNS col ON c.OWNER = col.OWNER AND c.CONSTRAINT_NAME = col.CONSTRAINT_NAME "
+                    + "JOIN ALL_CONSTRAINTS rc ON c.R_OWNER = rc.OWNER AND c.R_CONSTRAINT_NAME = rc.CONSTRAINT_NAME "
+                    + "JOIN ALL_CONS_COLUMNS rcol ON rc.OWNER = rcol.OWNER AND rc.CONSTRAINT_NAME = rcol.CONSTRAINT_NAME "
+                    + "WHERE c.OWNER = ? AND c.TABLE_NAME = ? AND c.CONSTRAINT_TYPE = 'R' "
+                    + "GROUP BY c.CONSTRAINT_NAME, rc.OWNER, rc.TABLE_NAME, c.DELETE_RULE ORDER BY c.CONSTRAINT_NAME";
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, databaseName);
+                stmt.setString(2, tableName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, String> fk = new LinkedHashMap<>();
+                        fk.put("名称", rs.getString("CONSTRAINT_NAME"));
+                        fk.put("字段", rs.getString("COLUMNS"));
+                        fk.put("参考数据库", rs.getString("REF_OWNER"));
+                        fk.put("参考表", rs.getString("REF_TABLE"));
+                        fk.put("参考字段", rs.getString("REF_COLUMNS"));
+                        String delRule = rs.getString("DELETE_RULE");
+                        fk.put("删除时", delRule != null ? delRule : "NO ACTION");
+                        fk.put("更新时", "NO ACTION");
+                        foreignKeys.add(fk);
+                    }
+                }
+            }
+        }
+
+        return foreignKeys;
+    }
+
+    /**
+     * PostgreSQL外键规则代码映射
+     */
+    private static String mapPgRule(String code) {
+        if (code == null) return "NO ACTION";
+        return switch (code) {
+            case "a" -> "NO ACTION";
+            case "r" -> "RESTRICT";
+            case "c" -> "CASCADE";
+            case "n" -> "SET NULL";
+            case "d" -> "SET DEFAULT";
+            default -> "NO ACTION";
+        };
+    }
+
+    /**
+     * 获取表的触发器信息列表
+     * @return 触发器信息列表，每个元素为一个触发器的属性Map
+     */
+    public static List<Map<String, String>> getTableTriggers(ConnectionConfig config, String databaseName, String tableName) throws Exception {
+        Connection conn = getConnection(config);
+        List<Map<String, String>> triggers = new ArrayList<>();
+
+        if (config.getType() == ConnectType.MYSQL) {
+            String sql = "SELECT TRIGGER_NAME, ACTION_TIMING, EVENT_MANIPULATION, ACTION_STATEMENT, EVENT_OBJECT_TABLE "
+                    + "FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = ? AND EVENT_OBJECT_TABLE = ? ORDER BY TRIGGER_NAME";
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, databaseName);
+                stmt.setString(2, tableName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, String> trg = new LinkedHashMap<>();
+                        trg.put("名称", rs.getString("TRIGGER_NAME"));
+                        trg.put("时机", rs.getString("ACTION_TIMING"));
+                        trg.put("事件", rs.getString("EVENT_MANIPULATION"));
+                        trg.put("语句", rs.getString("ACTION_STATEMENT"));
+                        triggers.add(trg);
+                    }
+                }
+            }
+        } else if (config.getType() == ConnectType.POSTGRESQL) {
+            String sql = "SELECT t.tgname AS trigger_name, "
+                    + "CASE WHEN (t.tgtype & 2) > 0 THEN 'BEFORE' ELSE 'AFTER' END AS timing, "
+                    + "CASE WHEN (t.tgtype & 4) > 0 THEN 'INSERT' "
+                    + "WHEN (t.tgtype & 16) > 0 THEN 'UPDATE' "
+                    + "WHEN (t.tgtype & 8) > 0 THEN 'DELETE' END AS event, "
+                    + "pg_get_triggerdef(t.oid) AS statement "
+                    + "FROM pg_trigger t "
+                    + "JOIN pg_class c ON c.oid = t.tgrelid "
+                    + "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    + "WHERE n.nspname = ? AND c.relname = ? AND NOT t.tgisinternal "
+                    + "ORDER BY t.tgname";
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, databaseName);
+                stmt.setString(2, tableName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, String> trg = new LinkedHashMap<>();
+                        trg.put("名称", rs.getString("trigger_name"));
+                        trg.put("时机", rs.getString("timing"));
+                        trg.put("事件", rs.getString("event"));
+                        trg.put("语句", rs.getString("statement"));
+                        triggers.add(trg);
+                    }
+                }
+            }
+        } else if (config.getType() == ConnectType.ORACLE) {
+            String sql = "SELECT TRIGGER_NAME, TRIGGERING_EVENT, TRIGGER_TYPE, TRIGGER_BODY "
+                    + "FROM ALL_TRIGGERS WHERE OWNER = ? AND TABLE_NAME = ? ORDER BY TRIGGER_NAME";
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, databaseName);
+                stmt.setString(2, tableName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, String> trg = new LinkedHashMap<>();
+                        String trigType = rs.getString("TRIGGER_TYPE");
+                        trg.put("名称", rs.getString("TRIGGER_NAME"));
+                        trg.put("时机", trigType != null && trigType.contains("BEFORE") ? "BEFORE" : "AFTER");
+                        trg.put("事件", rs.getString("TRIGGERING_EVENT"));
+                        trg.put("语句", rs.getString("TRIGGER_BODY"));
+                        triggers.add(trg);
+                    }
+                }
+            }
+        }
+
+        return triggers;
+    }
+
+    /**
+     * 获取表选项信息（引擎、字符集、排序规则、自增值、行格式、注释、自动递增等）
+     * @return 表选项Map
+     */
+    public static Map<String, String> getTableOptions(ConnectionConfig config, String databaseName, String tableName) throws Exception {
+        Connection conn = getConnection(config);
+        Map<String, String> options = new LinkedHashMap<>();
+
+        if (config.getType() == ConnectType.MYSQL) {
+            String sql = "SELECT ENGINE, TABLE_COLLATION, AUTO_INCREMENT, TABLE_COMMENT, ROW_FORMAT, "
+                    + "CREATE_OPTIONS, AVG_ROW_LENGTH, TABLE_ROWS "
+                    + "FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?";
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, databaseName);
+                stmt.setString(2, tableName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        options.put("引擎", rs.getString("ENGINE"));
+                        options.put("排序规则", rs.getString("TABLE_COLLATION"));
+                        options.put("自增值", rs.getString("AUTO_INCREMENT"));
+                        options.put("注释", rs.getString("TABLE_COMMENT"));
+                        options.put("行格式", rs.getString("ROW_FORMAT"));
+                        options.put("平均行长", rs.getString("AVG_ROW_LENGTH"));
+                        options.put("行数", rs.getString("TABLE_ROWS"));
+                    }
+                }
+            }
+            // 根据排序规则推导字符集（排序规则格式: charset_language_ci，取第一个下划线前的部分）
+            String collation = options.get("排序规则");
+            if (collation != null && collation.contains("_")) {
+                options.put("字符集", collation.substring(0, collation.indexOf('_')));
+            } else {
+                options.put("字符集", "");
+            }
+        } else if (config.getType() == ConnectType.POSTGRESQL) {
+            String sql = "SELECT c.relkind, c.reloptions, "
+                    + "pg_catalog.obj_description(c.oid) AS comment, "
+                    + "(SELECT count(*) FROM pg_class WHERE relname = c.relname) AS table_rows "
+                    + "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    + "WHERE n.nspname = ? AND c.relname = ?";
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, databaseName);
+                stmt.setString(2, tableName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        options.put("引擎", "");
+                        options.put("字符集", "");
+                        options.put("排序规则", "");
+                        options.put("自增值", "");
+                        options.put("注释", rs.getString("comment") != null ? rs.getString("comment") : "");
+                        options.put("行格式", "");
+                        options.put("行数", rs.getString("table_rows"));
+                    }
+                }
+            }
+        } else if (config.getType() == ConnectType.ORACLE) {
+            try (PreparedStatement stmt = conn.prepareStatement(
+                     "SELECT comments FROM all_tab_comments WHERE owner = ? AND table_name = ?")) {
+                stmt.setString(1, databaseName);
+                stmt.setString(2, tableName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        options.put("注释", rs.getString("comments") != null ? rs.getString("comments") : "");
+                    }
+                }
+            }
+            options.putIfAbsent("注释", "");
+        }
+
+        return options;
+    }
+
+    /**
+     * 获取MySQL可用的存储引擎列表
+     */
+    public static List<String> getEngines(ConnectionConfig config) throws Exception {
+        if (config.getType() != ConnectType.MYSQL) {
+            return Collections.emptyList();
+        }
+        Connection conn = getConnection(config);
+        List<String> engines = new ArrayList<>();
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT ENGINE FROM information_schema.ENGINES WHERE SUPPORT IN ('YES','DEFAULT') ORDER BY ENGINE")) {
+            while (rs.next()) {
+                engines.add(rs.getString("ENGINE"));
+            }
+        }
+        return engines;
+    }
+
+    /**
+     * 获取表的DDL（CREATE TABLE语句）
+     * @return DDL字符串
+     */
+    public static String getTableDdl(ConnectionConfig config, String databaseName, String tableName) throws Exception {
+        Connection conn = getConnection(config);
+
+        if (config.getType() == ConnectType.MYSQL) {
+            try (PreparedStatement stmt = conn.prepareStatement(
+                     "SHOW CREATE TABLE `" + databaseName + "`.`" + tableName + "`")) {
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        return rs.getString(2);
+                    }
+                }
+            }
+        } else if (config.getType() == ConnectType.POSTGRESQL) {
+            // PostgreSQL 没有直接的 SHOW CREATE TABLE，使用 pg_get_tabledef 不可用，构造简化版DDL
+            return generatePostgresDdl(config, databaseName, tableName);
+        } else if (config.getType() == ConnectType.ORACLE) {
+            try (PreparedStatement stmt = conn.prepareStatement(
+                     "SELECT DBMS_METADATA.GET_DDL('TABLE', ?, ?) FROM DUAL")) {
+                stmt.setString(1, tableName);
+                stmt.setString(2, databaseName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        java.io.Reader reader = rs.getCharacterStream(1);
+                        if (reader != null) {
+                            StringBuilder sb = new StringBuilder();
+                            char[] buf = new char[4096];
+                            int len;
+                            while ((len = reader.read(buf)) >= 0) {
+                                sb.append(buf, 0, len);
+                            }
+                            return sb.toString().trim();
+                        }
+                    }
+                }
+            }
+        }
+        return "-- 当前数据库类型不支持获取DDL";
+    }
+
+    /**
+     * 为PostgreSQL生成简化的CREATE TABLE DDL
+     */
+    private static String generatePostgresDdl(ConnectionConfig config, String databaseName, String tableName) throws Exception {
+        List<Map<String, String>> columns = getTableColumns(config, databaseName, tableName);
+        List<String> primaryKeys = getPrimaryKeys(config, databaseName, tableName);
+        StringBuilder sb = new StringBuilder();
+        sb.append("CREATE TABLE \"").append(databaseName).append("\".\"").append(tableName).append("\" (\n");
+        for (int i = 0; i < columns.size(); i++) {
+            Map<String, String> col = columns.get(i);
+            sb.append("    \"").append(col.get("字段名")).append("\" ");
+            sb.append(col.get("类型"));
+            if (col.get("长度") != null && !col.get("长度").isEmpty()) {
+                sb.append("(").append(col.get("长度")).append(")");
+            }
+            if ("是".equals(col.get("非空"))) {
+                sb.append(" NOT NULL");
+            }
+            if (i < columns.size() - 1 || !primaryKeys.isEmpty()) {
+                sb.append(",");
+            }
+            sb.append("\n");
+        }
+        if (!primaryKeys.isEmpty()) {
+            sb.append("    PRIMARY KEY (");
+            for (int i = 0; i < primaryKeys.size(); i++) {
+                if (i > 0) sb.append(", ");
+                sb.append("\"").append(primaryKeys.get(i)).append("\"");
+            }
+            sb.append(")\n");
+        }
+        sb.append(");");
+        return sb.toString();
+    }
+
+    /**
+     * 获取表的注释
+     */
+    public static String getTableComment(ConnectionConfig config, String databaseName, String tableName) throws Exception {
+        Map<String, String> options = getTableOptions(config, databaseName, tableName);
+        return options.getOrDefault("注释", "");
+    }
+
+    /**
      * 构建JDBC URL
      */
     private static String buildJdbcUrl(ConnectionConfig config, String host, int port, String database) {
@@ -1316,7 +1783,7 @@ public class DatabaseService {
             //   connectTimeout=5000            连接握手超时 5s
             //   socketTimeout=30000            socket 读超时 30s
             case MYSQL -> "jdbc:mysql://" + host + ":" + port + "/" + db
-                    + "?useSSL=false&serverTimezone=UTC"
+                    + "?useSSL=false&serverTimezone=Asia/Shanghai"
                     + "&useLocalSessionState=true&cacheDefaultDatabase=true&cacheServerConfiguration=true"
                     + "&maintainTimeStats=false&prepStmtCacheEnabled=true&prepStmtCacheSize=250"
                     + "&useServerPrepStmts=true&rewriteBatchedStatements=true"
