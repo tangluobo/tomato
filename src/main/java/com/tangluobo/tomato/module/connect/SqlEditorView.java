@@ -12,6 +12,8 @@ import javafx.scene.image.ImageView;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.*;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.Polygon;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -27,6 +29,9 @@ import java.util.function.Consumer;
  * 优先使用 RichTextFX CodeArea（语法高亮），加载失败时回退到 TextArea
  */
 public class SqlEditorView extends BorderPane {
+
+    /** 行选择器列的标识名，用于在获取数据列名时跳过 */
+    private static final String ROW_SELECTOR_COL = "__ROW_SELECTOR__";
 
     private final SqlEditor editor;
 
@@ -681,6 +686,77 @@ public class SqlEditorView extends BorderPane {
         });
 
         List<String> columns = result.getColumnNames();
+
+        // 创建行选择器列：选中行显示黑色实心三角箭头
+        TableColumn<ObservableList<String>, String> selectorCol = new TableColumn<>();
+        selectorCol.setPrefWidth(15);
+        selectorCol.setMaxWidth(15);
+        selectorCol.setMinWidth(15);
+        selectorCol.setSortable(false);
+        selectorCol.setReorderable(false);
+        selectorCol.setStyle("-fx-alignment: CENTER;");
+        selectorCol.setUserData(ROW_SELECTOR_COL);
+        selectorCol.setCellFactory(col -> new TableCell<>() {
+            private final Polygon arrow = new Polygon(0, -0.5, 5, 4.5, 0, 9.5);
+            private javafx.beans.InvalidationListener selectionListener;
+
+            {
+                arrow.setFill(Color.BLACK);
+                setGraphic(arrow);
+                setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+                setAlignment(Pos.CENTER);
+                arrow.setVisible(false);
+                setStyle("-fx-border-color: transparent #BEBEBC transparent #BEBEBC; -fx-border-width: 0 1 0 1;");
+                addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
+                    if (getTableRow() != null && getTableRow().getItem() != null) {
+                        int row = getTableRow().getIndex();
+                        if (event.isControlDown()) {
+                            if (tableView.getSelectionModel().isSelected(row)) {
+                                tableView.getSelectionModel().clearSelection(row);
+                            } else {
+                                tableView.getSelectionModel().select(row);
+                            }
+                        } else if (event.isShiftDown()) {
+                            int anchor = tableView.getSelectionModel().getFocusedIndex();
+                            if (anchor >= 0) {
+                                int start = Math.min(row, anchor);
+                                int end = Math.max(row, anchor);
+                                tableView.getSelectionModel().clearSelection();
+                                tableView.getSelectionModel().selectRange(start, end + 1);
+                            } else {
+                                tableView.getSelectionModel().clearSelection();
+                                tableView.getSelectionModel().select(row);
+                            }
+                        } else {
+                            tableView.getSelectionModel().clearSelection();
+                            tableView.getSelectionModel().select(row);
+                        }
+                        event.consume();
+                    }
+                });
+            }
+
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                if (selectionListener != null) {
+                    tableView.getSelectionModel().getSelectedItems().removeListener(selectionListener);
+                    selectionListener = null;
+                }
+                super.updateItem(item, empty);
+                if (empty || getTableRow() == null || getTableRow().getItem() == null) {
+                    arrow.setVisible(false);
+                    return;
+                }
+                arrow.setVisible(tableView.getSelectionModel().getSelectedIndices().contains(getTableRow().getIndex()));
+                selectionListener = obs -> {
+                    if (getTableRow() != null) {
+                        arrow.setVisible(tableView.getSelectionModel().getSelectedIndices().contains(getTableRow().getIndex()));
+                    }
+                };
+                tableView.getSelectionModel().getSelectedItems().addListener(selectionListener);
+            }
+        });
+        tableView.getColumns().add(selectorCol);
         for (int i = 0; i < columns.size(); i++) {
             final int colIndex = i;
             TableColumn<ObservableList<String>, String> col = new TableColumn<>(columns.get(i));
