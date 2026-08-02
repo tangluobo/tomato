@@ -436,11 +436,11 @@
     -fx-padding: 0;
 }
 
-/* 表头背景透明（让 filler 区域显示底层背景），列头背景色交给每个column-header */
+/* 表头背景白色（与数据行一致），列头边框由每个column-header处理 */
 .table-view .column-header-background {
     -fx-padding: 0;
     -fx-background-insets: 0;
-    -fx-background-color: transparent;
+    -fx-background-color: white;
     -fx-border-color: transparent;
     -fx-border-width: 0;
 }
@@ -460,11 +460,11 @@
     -fx-border-width: 0 0 1 0;
 }
 
-/* filler：完全透明，无背景无边框，看起来是空白区域 */
+/* filler：白色背景，无无边框，与数据行背景一致 */
 .table-view .column-header-background .filler {
     -fx-padding: 0;
     -fx-background-insets: 0;
-    -fx-background-color: transparent;
+    -fx-background-color: white;
     -fx-border-color: transparent;
     -fx-border-width: 0;
 }
@@ -512,10 +512,10 @@
     -fx-border-width: 0 0 1 0;
 }
 
-/* TableRow背景透明且无边框，由cell自己设置背景色和边框。
-   这样列总宽小于视口时，数据行右侧空白区域也是透明无边框，与表头filler一致，融入背景。 */
+/* TableRow背景白色且无边框，与cell背景一致；
+   cell边框透明覆盖即可，右侧空白区域也是白色，与表头filler一致。 */
 .table-view .table-row-cell {
-    -fx-background-color: transparent;
+    -fx-background-color: white;
     -fx-border-color: transparent;
     -fx-border-width: 0;
     -fx-background-insets: 0, 0, 0, 0;
@@ -523,7 +523,7 @@
 }
 
 .table-view .table-row-cell:empty {
-    -fx-background-color: transparent;
+    -fx-background-color: white;
     -fx-border-color: transparent;
 }
 
