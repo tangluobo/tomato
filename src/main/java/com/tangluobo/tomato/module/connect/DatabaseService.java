@@ -61,7 +61,9 @@ public class DatabaseService {
             }
 
             String url = buildJdbcUrl(config, host, port, null);
+            long time=System.currentTimeMillis();
             Connection conn = DriverManager.getConnection(url, config.getUsername(), config.getPassword());
+            System.out.println(System.currentTimeMillis()-time);
             connectionCache.put(key, conn);
             return conn;
         }
@@ -1302,7 +1304,7 @@ public class DatabaseService {
             //   connectTimeout=5000            连接握手超时 5s
             //   socketTimeout=30000            socket 读超时 30s
             case MYSQL -> "jdbc:mysql://" + host + ":" + port + "/" + db
-                    + "?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+                    + "?useSSL=false&serverTimezone=UTC"
                     + "&useLocalSessionState=true&cacheDefaultDatabase=true&cacheServerConfiguration=true"
                     + "&maintainTimeStats=false&prepStmtCacheEnabled=true&prepStmtCacheSize=250"
                     + "&useServerPrepStmts=true&rewriteBatchedStatements=true"
