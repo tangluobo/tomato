@@ -524,12 +524,6 @@ public class TableDataView extends BorderPane {
         tableScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         // TableView宽度跟随视口（让垂直滚动条位于面板最右，右侧空白属于表格）
         tableView.minWidthProperty().bind(tableScrollPane.widthProperty());
-        // 列顺序/增删变化时，重新标记最后一个数据列的表头和cell
-        tableView.getColumns().addListener((javafx.collections.ListChangeListener<TableColumn>) c ->
-                Platform.runLater(() -> {
-                    updateLastColumnHeaderStyle();
-                    tableView.refresh();
-                }));
 
         centerPane = new StackPane(tableScrollPane, loadingIndicator);
         centerPane.setPadding(Insets.EMPTY);
@@ -1075,42 +1069,7 @@ public class TableDataView extends BorderPane {
                     }
                 }
             });
-
-            // 更新最后一个数据列的表头样式（去掉右边框，让 filler 融入背景）
-            updateLastColumnHeaderStyle();
         });
-    }
-
-    /**
-     * 标记最后一个可见数据列的表头，让它的右边框透明，
-     * 使 filler 区域（列总宽小于视口时的右侧空白）与背景融为一体。
-     */
-    private void updateLastColumnHeaderStyle() {
-        final TableColumn<ObservableList<String>, ?> finalLast = getLastVisibleDataColumn();
-        for (Node node : tableView.lookupAll(".column-header")) {
-            if (node instanceof TableColumnHeader tch) {
-                boolean isLast = finalLast != null && tch.getTableColumn() == finalLast;
-                boolean has = tch.getStyleClass().contains("last-data-column-header");
-                if (isLast && !has) {
-                    tch.getStyleClass().add("last-data-column-header");
-                } else if (!isLast && has) {
-                    tch.getStyleClass().remove("last-data-column-header");
-                }
-            }
-        }
-    }
-
-    /**
-     * 获取最后一个可见的数据列（跳过行选择器列）。
-     */
-    private TableColumn<ObservableList<String>, ?> getLastVisibleDataColumn() {
-        TableColumn<ObservableList<String>, ?> lastDataCol = null;
-        for (TableColumn<ObservableList<String>, ?> col : tableView.getColumns()) {
-            if (col.isVisible() && !ROW_SELECTOR_COL.equals(col.getUserData())) {
-                lastDataCol = col;
-            }
-        }
-        return lastDataCol;
     }
 
     /**
@@ -1287,8 +1246,6 @@ public class TableDataView extends BorderPane {
         @Override
         protected void updateItem(String item, boolean empty) {
             super.updateItem(item, empty);
-            // 标记是否为最后一个数据列的cell，用于隐藏右边框
-            updateLastColumnCellStyle();
             if (empty) {
                 setText(null);
                 setGraphic(null);
@@ -1306,21 +1263,6 @@ public class TableDataView extends BorderPane {
                     setGraphic(null);
                     applyRowStateStyle();
                 }
-            }
-        }
-
-        /**
-         * 当前cell属于最后一个数据列时添加样式类，CSS隐藏其右边框，
-         * 使右侧空白区域不再被竖线框成"占位列"。
-         */
-        private void updateLastColumnCellStyle() {
-            TableColumn<ObservableList<String>, ?> last = getLastVisibleDataColumn();
-            boolean isLast = last != null && getTableColumn() == last;
-            boolean has = getStyleClass().contains("last-data-column-cell");
-            if (isLast && !has) {
-                getStyleClass().add("last-data-column-cell");
-            } else if (!isLast && has) {
-                getStyleClass().remove("last-data-column-cell");
             }
         }
 
