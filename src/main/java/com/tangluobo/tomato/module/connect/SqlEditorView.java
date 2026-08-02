@@ -708,6 +708,8 @@ public class SqlEditorView extends BorderPane {
         scrollPane.setFitToWidth(false);
         scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
         scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        // TableView宽度跟随视口（让垂直滚动条位于面板最右，右侧空白属于表格）
+        tableView.minWidthProperty().bind(scrollPane.widthProperty());
         return scrollPane;
     }
 
