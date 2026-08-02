@@ -436,24 +436,37 @@
     -fx-padding: 0;
 }
 
-/* 去掉表头区域左侧padding */
+/* 表头背景透明（让 filler 区域显示底层背景），列头背景色交给每个column-header */
 .table-view .column-header-background {
     -fx-padding: 0;
     -fx-background-insets: 0;
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+}
+
+/* 每个列头：设置表头背景色，右边框为列分隔线，底部边框为表头与数据区分隔线 */
+.table-view .column-header {
+    -fx-padding: 0;
+    -fx-background-insets: 0;
+    -fx-background-color: -fx-body-color;
+    -fx-border-color: transparent #DADAD8 #cccccc transparent;
+    -fx-border-width: 0 1 1 0;
+}
+
+/* 最后一个数据列的表头：去掉右边框，保留底部边框 */
+.table-view .column-header.last-data-column-header {
     -fx-border-color: transparent transparent #cccccc transparent;
     -fx-border-width: 0 0 1 0;
 }
 
-.table-view .column-header {
-    -fx-padding: 0;
-    -fx-background-insets: 0;
-    -fx-border-color: transparent #DADAD8 transparent transparent;
-    -fx-border-width: 0 1 0 0;
-}
-
+/* filler：完全透明，无背景无边框，看起来是空白区域 */
 .table-view .column-header-background .filler {
     -fx-padding: 0;
     -fx-background-insets: 0;
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
 }
 
 .table-view .column-header-background .nested-column-header {
@@ -487,14 +500,24 @@
 }
 
 .table-view .table-cell {
-    -fx-border-color: transparent #e0e0e0 transparent transparent;
-    -fx-border-width: 0 1 0 0;
+    -fx-background-color: white;
+    -fx-border-color: transparent #e0e0e0 #e0e0e0 transparent;
+    -fx-border-width: 0 1 1 0;
     -fx-padding: 4 6;
 }
 
-.table-view .table-row-cell {
+/* 最后一个数据列的cell：去掉右边框，保留底部边框 */
+.table-view .table-cell.last-data-column-cell {
     -fx-border-color: transparent transparent #e0e0e0 transparent;
     -fx-border-width: 0 0 1 0;
+}
+
+/* TableRow背景透明且无边框，由cell自己设置背景色和边框。
+   这样列总宽小于视口时，数据行右侧空白区域也是透明无边框，与表头filler一致，融入背景。 */
+.table-view .table-row-cell {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
     -fx-background-insets: 0, 0, 0, 0;
     -fx-padding: 0;
 }

@@ -2,6 +2,7 @@ package com.tangluobo.tomato.module.connect;
 
 import java.sql.*;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -11,13 +12,19 @@ import javafx.collections.ObservableList;
  */
 public class DatabaseService {
 
-    // 缓存：ConnectionConfig.id -> JDBC Connection
-    private static final Map<String, Connection> connectionCache = new HashMap<>();
+    // 缓存：ConnectionConfig.id -> JDBC Connection（主连接，不绑定具体数据库）
+    private static final Map<String, Connection> connectionCache = new ConcurrentHashMap<>();
+    // 缓存：ConnectionConfig.id + "_" + databaseName -> JDBC Connection（仅用于必须绑定数据库的场景，如用户自定义SQL）
+    private static final Map<String, Connection> databaseConnectionCache = new ConcurrentHashMap<>();
     // 缓存：ConnectionConfig.id -> SshTunnel
-    private static final Map<String, SshTunnel> tunnelCache = new HashMap<>();
+    private static final Map<String, SshTunnel> tunnelCache = new ConcurrentHashMap<>();
+    // 连接建立锁：保证同一 key 的连接建立互斥，避免并发重复建连
+    private static final Map<String, Object> connectionLocks = new ConcurrentHashMap<>();
 
     /**
-     * 获取或创建JDBC连接（带SSH隧道支持）
+     * 获取或创建JDBC主连接（不绑定具体数据库，带SSH隧道支持）。
+     * 多数数据库操作（SHOW DATABASES、使用全限定名的SQL、JDBC元数据API）均复用此主连接，
+     * 避免为每个数据库建立独立连接导致的握手开销。
      */
     public static Connection getConnection(ConnectionConfig config) throws Exception {
         String key = config.getId();
@@ -26,28 +33,38 @@ public class DatabaseService {
             return existing;
         }
 
-        // 建立SSH隧道（如果启用）
-        String host = config.getHost();
-        int port = config.getPort();
-
-        if (config.isUseSshTunnel()) {
-            SshTunnel oldTunnel = tunnelCache.get(key);
-            if (oldTunnel != null && oldTunnel.isActive()) {
-                port = oldTunnel.getForwardedLocalPort();
-                host = "127.0.0.1";
-            } else {
-                SshTunnel tunnel = SshTunnel.fromConfig(config);
-                int localPort = tunnel.connect();
-                tunnelCache.put(key, tunnel);
-                host = "127.0.0.1";
-                port = localPort;
+        // 同一 key 互斥建连，避免并发线程重复建立连接
+        Object lock = connectionLocks.computeIfAbsent(key, k -> new Object());
+        synchronized (lock) {
+            // 双重检查
+            existing = connectionCache.get(key);
+            if (existing != null && !existing.isClosed()) {
+                return existing;
             }
-        }
 
-        String url = buildJdbcUrl(config, host, port, null);
-        Connection conn = DriverManager.getConnection(url, config.getUsername(), config.getPassword());
-        connectionCache.put(key, conn);
-        return conn;
+            // 建立SSH隧道（如果启用）
+            String host = config.getHost();
+            int port = config.getPort();
+
+            if (config.isUseSshTunnel()) {
+                SshTunnel oldTunnel = tunnelCache.get(key);
+                if (oldTunnel != null && oldTunnel.isActive()) {
+                    port = oldTunnel.getForwardedLocalPort();
+                    host = "127.0.0.1";
+                } else {
+                    SshTunnel tunnel = SshTunnel.fromConfig(config);
+                    int localPort = tunnel.connect();
+                    tunnelCache.put(key, tunnel);
+                    host = "127.0.0.1";
+                    port = localPort;
+                }
+            }
+
+            String url = buildJdbcUrl(config, host, port, null);
+            Connection conn = DriverManager.getConnection(url, config.getUsername(), config.getPassword());
+            connectionCache.put(key, conn);
+            return conn;
+        }
     }
 
     /**
@@ -223,7 +240,8 @@ public class DatabaseService {
     }
 
     public static TableRowData queryTableData(ConnectionConfig config, String databaseName, String tableName, int page, int pageSize, String sortColumn, boolean sortDescending) throws Exception {
-        Connection conn = getConnection(config, databaseName);
+        // SQL 使用全限定名（database.table），复用主连接避免为每个数据库建立独立连接
+        Connection conn = getConnection(config);
         TableRowData result = new TableRowData();
 
         // 获取总行数
@@ -271,37 +289,47 @@ public class DatabaseService {
     }
 
     /**
-     * 获取指定数据库的JDBC连接
+     * 获取指定数据库的JDBC连接（绑定到具体数据库，用于用户自定义SQL等需要当前数据库上下文的场景）。
+     * 注意：表数据查询、表结构查询、主键查询等使用全限定名或JDBC元数据API的操作应改用
+     * {@link #getConnection(ConnectionConfig)} 复用主连接，避免每个数据库都建立独立连接。
      */
     public static Connection getConnection(ConnectionConfig config, String databaseName) throws Exception {
         String key = config.getId() + "_" + databaseName;
-        Connection existing = connectionCache.get(key);
+        Connection existing = databaseConnectionCache.get(key);
         if (existing != null && !existing.isClosed()) {
             return existing;
         }
 
-        String host = config.getHost();
-        int port = config.getPort();
-
-        if (config.isUseSshTunnel()) {
-            String tunnelKey = config.getId();
-            SshTunnel oldTunnel = tunnelCache.get(tunnelKey);
-            if (oldTunnel != null && oldTunnel.isActive()) {
-                port = oldTunnel.getForwardedLocalPort();
-                host = "127.0.0.1";
-            } else {
-                SshTunnel tunnel = SshTunnel.fromConfig(config);
-                int localPort = tunnel.connect();
-                tunnelCache.put(tunnelKey, tunnel);
-                host = "127.0.0.1";
-                port = localPort;
+        Object lock = connectionLocks.computeIfAbsent(key, k -> new Object());
+        synchronized (lock) {
+            existing = databaseConnectionCache.get(key);
+            if (existing != null && !existing.isClosed()) {
+                return existing;
             }
-        }
 
-        String url = buildJdbcUrl(config, host, port, databaseName);
-        Connection conn = DriverManager.getConnection(url, config.getUsername(), config.getPassword());
-        connectionCache.put(key, conn);
-        return conn;
+            String host = config.getHost();
+            int port = config.getPort();
+
+            if (config.isUseSshTunnel()) {
+                String tunnelKey = config.getId();
+                SshTunnel oldTunnel = tunnelCache.get(tunnelKey);
+                if (oldTunnel != null && oldTunnel.isActive()) {
+                    port = oldTunnel.getForwardedLocalPort();
+                    host = "127.0.0.1";
+                } else {
+                    SshTunnel tunnel = SshTunnel.fromConfig(config);
+                    int localPort = tunnel.connect();
+                    tunnelCache.put(tunnelKey, tunnel);
+                    host = "127.0.0.1";
+                    port = localPort;
+                }
+            }
+
+            String url = buildJdbcUrl(config, host, port, databaseName);
+            Connection conn = DriverManager.getConnection(url, config.getUsername(), config.getPassword());
+            databaseConnectionCache.put(key, conn);
+            return conn;
+        }
     }
 
     /**
@@ -404,7 +432,8 @@ public class DatabaseService {
      * @return 成功删除的表名列表
      */
     public static List<String> dropTables(ConnectionConfig config, String databaseName, List<String> tableNames) throws Exception {
-        Connection conn = getConnection(config, databaseName);
+        // SQL 使用全限定名，复用主连接
+        Connection conn = getConnection(config);
         List<String> dropped = new ArrayList<>();
         List<String> errors = new ArrayList<>();
         for (String tableName : tableNames) {
@@ -427,7 +456,8 @@ public class DatabaseService {
      * @return 成功删除的视图名列表
      */
     public static List<String> dropViews(ConnectionConfig config, String databaseName, List<String> viewNames) throws Exception {
-        Connection conn = getConnection(config, databaseName);
+        // SQL 使用全限定名，复用主连接
+        Connection conn = getConnection(config);
         List<String> dropped = new ArrayList<>();
         List<String> errors = new ArrayList<>();
         for (String viewName : viewNames) {
@@ -461,7 +491,8 @@ public class DatabaseService {
      * 重命名表
      */
     public static void renameTable(ConnectionConfig config, String databaseName, String oldTableName, String newTableName) throws Exception {
-        Connection conn = getConnection(config, databaseName);
+        // SQL 使用全限定名，复用主连接
+        Connection conn = getConnection(config);
         String sql = switch (config.getType()) {
             case MYSQL -> "RENAME TABLE `" + databaseName + "`.`" + oldTableName + "` TO `" + databaseName + "`.`" + newTableName + "`";
             case POSTGRESQL -> "ALTER TABLE \"" + databaseName + "\".\"" + oldTableName + "\" RENAME TO \"" + newTableName + "\"";
@@ -477,7 +508,8 @@ public class DatabaseService {
      * 重命名视图
      */
     public static void renameView(ConnectionConfig config, String databaseName, String oldViewName, String newViewName) throws Exception {
-        Connection conn = getConnection(config, databaseName);
+        // SQL 使用全限定名，复用主连接
+        Connection conn = getConnection(config);
         String sql = switch (config.getType()) {
             case MYSQL -> "RENAME TABLE `" + databaseName + "`.`" + oldViewName + "` TO `" + databaseName + "`.`" + newViewName + "`";
             case POSTGRESQL -> "ALTER VIEW \"" + databaseName + "\".\"" + oldViewName + "\" RENAME TO \"" + newViewName + "\"";
@@ -557,7 +589,8 @@ public class DatabaseService {
      * 获取数据库的当前字符集和排序规则
      */
     public static String[] getDatabaseCharsetCollation(ConnectionConfig config, String databaseName) throws Exception {
-        Connection conn = getConnection(config, databaseName);
+        // 查询 information_schema 并通过参数传入 databaseName，复用主连接
+        Connection conn = getConnection(config);
         String charset = null;
         String collation = null;
 
@@ -658,21 +691,36 @@ public class DatabaseService {
     }
 
     /**
-     * 关闭指定连接配置的JDBC连接和SSH隧道
+     * 关闭指定连接配置的JDBC连接和SSH隧道。
+     * 会同时关闭主连接、所有数据库专用连接，以及SSH隧道。
      */
     public static void closeConnection(String configId) {
+        // 关闭主连接
         Connection conn = connectionCache.remove(configId);
         if (conn != null) {
             try { conn.close(); } catch (Exception ignored) {}
         }
+        // 关闭该配置下所有数据库专用连接（key 形如 configId_databaseName）
+        String prefix = configId + "_";
+        Iterator<Map.Entry<String, Connection>> it = databaseConnectionCache.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<String, Connection> entry = it.next();
+            if (entry.getKey().startsWith(prefix)) {
+                try { entry.getValue().close(); } catch (Exception ignored) {}
+                it.remove();
+            }
+        }
+        // 关闭SSH隧道
         SshTunnel tunnel = tunnelCache.remove(configId);
         if (tunnel != null) {
             tunnel.disconnect();
         }
+        // 清理锁
+        connectionLocks.remove(configId);
     }
 
     /**
-     * 检查连接是否活跃
+     * 检查连接是否活跃（基于主连接判断）
      */
     public static boolean isConnectionActive(String configId) {
         Connection conn = connectionCache.get(configId);
@@ -816,7 +864,8 @@ public class DatabaseService {
      * @return 主键列名列表，若无主键返回空列表
      */
     public static List<String> getPrimaryKeys(ConnectionConfig config, String databaseName, String tableName) throws Exception {
-        Connection conn = getConnection(config, databaseName);
+        // JDBC 元数据 API 通过参数传入 databaseName，复用主连接
+        Connection conn = getConnection(config);
         List<String> primaryKeys = new ArrayList<>();
 
         try (ResultSet rs = conn.getMetaData().getPrimaryKeys(databaseName, null, tableName)) {
@@ -841,7 +890,8 @@ public class DatabaseService {
     public static int deleteRowsByPrimaryKeys(ConnectionConfig config, String databaseName, String tableName,
                                                List<String> primaryKeyColumns, List<String> columnNames,
                                                List<ObservableList<String>> rows) throws Exception {
-        Connection conn = getConnection(config, databaseName);
+        // SQL 使用全限定名，复用主连接
+        Connection conn = getConnection(config);
         int totalDeleted = 0;
 
         // 构建主键列在columnNames中的索引
@@ -913,7 +963,8 @@ public class DatabaseService {
     public static int updateCell(ConnectionConfig config, String databaseName, String tableName,
                                  List<String> primaryKeyColumns, List<String> columnNames,
                                  ObservableList<String> row, int columnIndex, String newValue) throws Exception {
-        Connection conn = getConnection(config, databaseName);
+        // SQL 使用全限定名，复用主连接
+        Connection conn = getConnection(config);
 
         String qualifiedTable = switch (config.getType()) {
             case MYSQL -> "`" + databaseName + "`.`" + tableName + "`";
@@ -976,7 +1027,8 @@ public class DatabaseService {
      */
     public static void insertEmptyRow(ConnectionConfig config, String databaseName, String tableName,
                                       List<String> columnNames) throws Exception {
-        Connection conn = getConnection(config, databaseName);
+        // SQL 使用全限定名，复用主连接
+        Connection conn = getConnection(config);
 
         String qualifiedTable = switch (config.getType()) {
             case MYSQL -> "`" + databaseName + "`.`" + tableName + "`";
@@ -1016,7 +1068,8 @@ public class DatabaseService {
     public static int insertRows(ConnectionConfig config, String databaseName, String tableName,
                                  List<String> columnNames, List<ObservableList<String>> rows,
                                  List<String> primaryKeyColumns) throws Exception {
-        Connection conn = getConnection(config, databaseName);
+        // SQL 使用全限定名，复用主连接
+        Connection conn = getConnection(config);
         int totalInserted = 0;
 
         String qualifiedTable = switch (config.getType()) {
@@ -1083,7 +1136,8 @@ public class DatabaseService {
                                  List<ObservableList<String>> currentRows,
                                  List<ObservableList<String>> originalRows,
                                  List<java.util.Set<Integer>> modifiedColumnsPerRow) throws Exception {
-        Connection conn = getConnection(config, databaseName);
+        // SQL 使用全限定名，复用主连接
+        Connection conn = getConnection(config);
         int totalUpdated = 0;
 
         String qualifiedTable = switch (config.getType()) {
@@ -1185,7 +1239,8 @@ public class DatabaseService {
      * @return 列信息列表，每个元素为一个列的属性Map
      */
     public static List<Map<String, String>> getTableColumns(ConnectionConfig config, String databaseName, String tableName) throws Exception {
-        Connection conn = getConnection(config, databaseName);
+        // JDBC 元数据 API 通过参数传入 databaseName，复用主连接
+        Connection conn = getConnection(config);
         List<Map<String, String>> columns = new ArrayList<>();
 
         // 获取主键列表
@@ -1235,8 +1290,24 @@ public class DatabaseService {
     private static String buildJdbcUrl(ConnectionConfig config, String host, int port, String database) {
         String db = (database != null && !database.isEmpty()) ? database : "";
         return switch (config.getType()) {
-            case MYSQL -> "jdbc:mysql://" + host + ":" + port + "/" + db + "?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC";
-            case POSTGRESQL -> "jdbc:postgresql://" + host + ":" + port + "/" + db;
+            // MySQL 性能优化参数：
+            //   useLocalSessionState=true      避免每次执行前查询 @@session.tx_* 等变量
+            //   cacheDefaultDatabase=true      缓存当前数据库，避免每次查询 currentDatabase()
+            //   cacheServerConfiguration=true  缓存服务器配置，避免重复查询系统变量
+            //   maintainTimeStats=false        不维护时间统计，减少额外查询
+            //   prepStmtCacheEnabled=true      启用服务端预编译语句缓存
+            //   prepStmtCacheSize=250          预编译语句缓存大小
+            //   useServerPrepStmts=true        使用服务端预编译
+            //   rewriteBatchedStatements=true  批量语句重写优化
+            //   connectTimeout=5000            连接握手超时 5s
+            //   socketTimeout=30000            socket 读超时 30s
+            case MYSQL -> "jdbc:mysql://" + host + ":" + port + "/" + db
+                    + "?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+                    + "&useLocalSessionState=true&cacheDefaultDatabase=true&cacheServerConfiguration=true"
+                    + "&maintainTimeStats=false&prepStmtCacheEnabled=true&prepStmtCacheSize=250"
+                    + "&useServerPrepStmts=true&rewriteBatchedStatements=true"
+                    + "&connectTimeout=5000&socketTimeout=30000";
+            case POSTGRESQL -> "jdbc:postgresql://" + host + ":" + port + "/" + db + "?connectTimeout=5&socketTimeout=30";
             case ORACLE -> "jdbc:oracle:thin:@" + host + ":" + port + ":" + db;
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };

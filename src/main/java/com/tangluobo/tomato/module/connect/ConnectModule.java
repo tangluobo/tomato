@@ -464,21 +464,27 @@ public class ConnectModule implements Module {
                             if (!targetItem.getChildren().isEmpty()) {
                                 MenuItem refreshItem = new MenuItem("刷新");
                                 refreshItem.setOnAction(e -> handleRefreshDbHost(targetItem, targetConfig));
-                                contextMenu.getItems().add(refreshItem);
+                                MenuItem closeConnItem = new MenuItem("关闭连接");
+                                closeConnItem.setOnAction(e -> closeHostConnection(targetItem, targetConfig));
+                                contextMenu.getItems().addAll(refreshItem, closeConnItem);
                             }
                         }
                         if (isRedis) {
                             if (!targetItem.getChildren().isEmpty()) {
                                 MenuItem refreshItem = new MenuItem("刷新");
                                 refreshItem.setOnAction(e -> handleRefreshDbHost(targetItem, targetConfig));
-                                contextMenu.getItems().add(refreshItem);
+                                MenuItem closeConnItem = new MenuItem("关闭连接");
+                                closeConnItem.setOnAction(e -> closeHostConnection(targetItem, targetConfig));
+                                contextMenu.getItems().addAll(refreshItem, closeConnItem);
                             }
                         }
                         if (isRocketmq) {
                             if (!targetItem.getChildren().isEmpty()) {
                                 MenuItem refreshItem = new MenuItem("刷新");
                                 refreshItem.setOnAction(e -> handleRefreshDbHost(targetItem, targetConfig));
-                                contextMenu.getItems().add(refreshItem);
+                                MenuItem closeConnItem = new MenuItem("关闭连接");
+                                closeConnItem.setOnAction(e -> closeHostConnection(targetItem, targetConfig));
+                                contextMenu.getItems().addAll(refreshItem, closeConnItem);
                             }
                         }
                         if (isAliyun) {
@@ -2827,6 +2833,40 @@ public class ConnectModule implements Module {
                 }
             }, "DB-DropDatabase").start();
         });
+    }
+
+    /**
+     * 关闭主机连接：释放底层连接资源（JDBC/Jedis/MQAdmin），清空树子节点并重置图标。
+     * 适用于已展开（已连接）的数据库/Redis/RocketMQ 主机节点。
+     */
+    private void closeHostConnection(TreeItem<String> hostItem, ConnectionConfig config) {
+        // 后台关闭底层连接（避免阻塞UI线程）
+        new Thread(() -> {
+            try {
+                if (config.getType() == ConnectType.MYSQL
+                        || config.getType() == ConnectType.POSTGRESQL
+                        || config.getType() == ConnectType.ORACLE) {
+                    DatabaseService.closeConnection(config.getId());
+                } else if (config.getType() == ConnectType.REDIS) {
+                    RedisService.closeJedisCluster(config);
+                } else if (config.getType() == ConnectType.ROCKETMQ) {
+                    RocketmqService.closeAdmin(config);
+                }
+            } catch (Exception ignored) {
+            }
+        }, "CloseHostConnection").start();
+
+        // 清空子节点及其 dbNodeDataMap 映射
+        for (TreeItem<String> child : hostItem.getChildren()) {
+            removeDbNodeDataRecursive(child);
+        }
+        hostItem.getChildren().clear();
+        hostItem.setExpanded(false);
+
+        // 重置图标为未连接状态
+        connectionStateMap.put(hostItem, false);
+        updateHostIcon(hostItem, config, false);
+        treeView.refresh();
     }
 
     private void handleRefreshDbHost(TreeItem<String> hostItem, ConnectionConfig config) {
