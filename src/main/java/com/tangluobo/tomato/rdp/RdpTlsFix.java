@@ -115,6 +115,68 @@ public class RdpTlsFix {
         }
 
         private static final AtomicInteger recvPktCount = new AtomicInteger(0);
+        private static final AtomicInteger sendPktCount = new AtomicInteger(0);
+        private static volatile java.io.InputStream bcInputStream = null;
+
+        public static int getRecvPktCount() { return recvPktCount.get(); }
+        public static int getSendPktCount() { return sendPktCount.get(); }
+        public static int getBcInAvailable() {
+            try { return bcInputStream != null ? bcInputStream.available() : -1; }
+            catch (Exception e) { return -2; }
+        }
+
+        @Override
+        public void sendPacket(com.sshtools.javardp.Packet buffer) throws IOException {
+            int count = sendPktCount.incrementAndGet();
+            int savePos = buffer.getPosition();
+            int avail = buffer.getEnd() - savePos;
+            int dumpLen = Math.min(avail, 8);
+            StringBuilder hexSb = new StringBuilder("[SEND #" + count + "] len=" + buffer.getEnd() + " hex:");
+            for (int i = 0; i < dumpLen; i++) {
+                hexSb.append(String.format(" %02x", buffer.get8()));
+            }
+            buffer.setPosition(savePos);
+            logger.info(hexSb.toString());
+
+            // 修改ConfirmActive PDU中的General Capability Set
+            // 恢复FASTPATH_OUTPUT_SUPPORTED + refreshRectSupport + suppressOutputSupport
+            // 之前移除FASTPATH_OUTPUT_SUPPORTED后连接在SEND #36就断开
+            try {
+                byte[] packet = new byte[buffer.getEnd()];
+                buffer.copyToByteArray(packet, 0, 0, packet.length);
+                // 只在大包(>150字节，ConfirmActive通常200+字节)中搜索和修改
+                if (packet.length > 150) {
+                    for (int i = 7; i < packet.length - 24; i++) {
+                        if (packet[i] == 0x01 && packet[i+1] == 0x00 &&
+                            packet[i+2] == 0x18 && packet[i+3] == 0x00) {
+                            int field10 = (packet[i+10] & 0xff) | ((packet[i+11] & 0xff) << 8);
+                            int oldFlags = (packet[i+12] & 0xff) | ((packet[i+13] & 0xff) << 8);
+                            int newFlags = oldFlags | 0x0001; // FASTPATH_OUTPUT_SUPPORTED
+                            int field14 = (packet[i+14] & 0xff) | ((packet[i+15] & 0xff) << 8);
+                            int oldRefresh = packet[i+22] & 0xff;
+                            int oldSuppress = packet[i+23] & 0xff;
+                            packet[i+12] = (byte)(newFlags & 0xff);
+                            packet[i+13] = (byte)((newFlags >> 8) & 0xff);
+                            packet[i+22] = 1; // refreshRectSupport = 1
+                            packet[i+23] = 1; // suppressOutputSupport = 1
+                            buffer.setPosition(0);
+                            buffer.copyFromByteArray(packet, 0, 0, packet.length);
+                            buffer.setPosition(savePos);
+                            logger.info(String.format("[CAPS-FIX] General Caps at offset %d: "
+                                    + "pad=0x%04x, extraFlags 0x%04x→0x%04x, field14=0x%04x, "
+                                    + "refreshRect %d→1, suppressOutput %d→1",
+                                    i, field10, oldFlags, newFlags, field14, oldRefresh, oldSuppress));
+                            break;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                logger.warning("[CAPS-FIX] 修改capabilities失败: " + e.getMessage());
+            }
+
+            super.sendPacket(buffer);
+            logger.info("[SEND #" + count + "] flushed, out stream=" + getOut().getClass().getName());
+        }
 
         @Override
         public com.sshtools.javardp.Packet receivePacket(com.sshtools.javardp.Packet p, int length) throws IOException {
@@ -276,6 +338,7 @@ public class RdpTlsFix {
             // 包装Bouncy Castle的流为IO对象
             final java.io.InputStream bcIn = protocol.getInputStream();
             final java.io.OutputStream bcOut = protocol.getOutputStream();
+            bcInputStream = bcIn; // 保存引用用于诊断
             return new IO() {
                 @Override public java.io.InputStream getInputStream() throws java.io.IOException { return bcIn; }
                 @Override public java.io.OutputStream getOutputStream() throws java.io.IOException { return bcOut; }

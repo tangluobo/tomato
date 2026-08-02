@@ -35,7 +35,18 @@ import com.sshtools.javardp.layers.Transport;
 public class RdpIsoFix {
 
     private static final Logger logger = Logger.getLogger(RdpIsoFix.class.getName());
-    private static volatile boolean applied = false;
+    // 注意：不能使用静态applied标志，因为retryWithHybridSecurity会创建新的rdpLayer
+    // （带新的ISO层），需要每次都注入。之前的applied标志导致重连时ISO修复未生效，
+    // 服务器发送的fast-path bitmap更新无法被解析，导致黑屏。
+
+    // 诊断标志：跟踪注入和调用状态
+    private static volatile boolean injected = false;
+    private static volatile String injectError = null;
+    private static volatile boolean receiveCalled = false;
+
+    public static boolean isInjected() { return injected; }
+    public static String getInjectError() { return injectError; }
+    public static boolean isReceiveCalled() { return receiveCalled; }
 
     // X.224 constants (same as in ISO.java)
     private static final int CONNECTION_CONFIRM = 0xD0;
@@ -63,9 +74,17 @@ public class RdpIsoFix {
          * 原始逻辑链：receive() → receiveMessage(type) → receiveMessageex(type, rdpver)
          * 本方法将三层调用合并为一个方法，仅修改fast-path检测条件。
          */
+        private static volatile boolean firstCallLogged = false;
+
         @Override
         public Packet receive() throws IOException, RdesktopException {
             Transport transport = getTransportField();
+
+            if (!firstCallLogged) {
+                firstCallLogged = true;
+                receiveCalled = true;
+                logger.info("[RdpIso] receive()首次调用 - RdpIso已激活, transport=" + transport.getClass().getName());
+            }
 
             // === 完整复制 ISO.receiveMessageex() 逻辑 ===
             Packet s = null;
@@ -74,11 +93,13 @@ public class RdpIsoFix {
             next_packet:
             while (true) {
                 // 读取前4字节（TPKT header 或 fast-path header的开头）
+                logger.info("[RdpIso] 等待读取4字节header...");
                 s = transport.receivePacket(null, 4);
                 if (s == null)
                     return null;
 
                 version = s.get8();
+                logger.info("[RdpIso] 收到header: version=0x" + String.format("%02x", version));
 
                 if (version == 3) {
                     // TPKT格式：version(1) + reserved(1) + length(2)
@@ -177,9 +198,10 @@ public class RdpIsoFix {
      * @param rdpLayer RDP层对象
      */
     public static void injectRdpIso(Object rdpLayer) {
-        if (applied) return;
-
         try {
+            injected = false;
+            injectError = null;
+            receiveCalled = false;
             // 1. 获取secureLayer字段
             Field secureField = rdpLayer.getClass().getSuperclass().getDeclaredField("secureLayer");
             secureField.setAccessible(true);
@@ -217,15 +239,18 @@ public class RdpIsoFix {
             // 7. 替换MCS中的isoLayer字段
             isoField.set(mcsLayer, rdpIso);
 
-            applied = true;
             logger.info("已替换ISO为RdpIso（修复fast-path检测条件 (version&1)==0）");
+            injected = true;
         } catch (NoSuchFieldException e) {
+            injectError = "NoSuchField: " + e.getMessage();
             logger.log(Level.WARNING, "反射替换ISO失败（字段不存在）: " + e.getMessage()
                     + "，fast-path检测修复未生效");
         } catch (IllegalAccessException e) {
+            injectError = "IllegalAccess: " + e.getMessage();
             logger.log(Level.WARNING, "反射替换ISO失败（访问被拒）: " + e.getMessage()
                     + "，fast-path检测修复未生效");
         } catch (Exception e) {
+            injectError = e.getClass().getSimpleName() + ": " + e.getMessage();
             logger.log(Level.WARNING, "反射替换ISO失败: " + e.getMessage()
                     + "，fast-path检测修复未生效");
         }
