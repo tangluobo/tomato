@@ -347,10 +347,23 @@ public class DatabaseService {
     }
 
     /**
+     * 获取用于执行用户SQL的连接：MySQL复用主连接并setCatalog切换数据库，
+     * PostgreSQL/Oracle使用绑定到具体数据库的连接。
+     */
+    private static Connection getConnectionForQuery(ConnectionConfig config, String databaseName) throws Exception {
+        if (config.getType() == ConnectType.MYSQL) {
+            Connection conn = getConnection(config);
+            conn.setCatalog(databaseName);
+            return conn;
+        }
+        return getConnection(config, databaseName);
+    }
+
+    /**
      * 执行自定义SQL查询（SELECT语句），返回结果
      */
     public static TableRowData executeSqlQuery(ConnectionConfig config, String databaseName, String sql, int pageSize) throws Exception {
-        Connection conn = getConnection(config, databaseName);
+        Connection conn = getConnectionForQuery(config, databaseName);
         long startTime = System.currentTimeMillis();
 
         TableRowData result = new TableRowData();
@@ -745,7 +758,7 @@ public class DatabaseService {
         List<SqlStatementResult> results = new ArrayList<>();
 
         long totalStart = System.currentTimeMillis();
-        Connection conn = getConnection(config, databaseName);
+        Connection conn = getConnectionForQuery(config, databaseName);
 
         for (String stmt : statements) {
             SqlStatementResult sr = new SqlStatementResult();
@@ -836,7 +849,6 @@ public class DatabaseService {
      */
     public static TableRowData executeStatusQuery(ConnectionConfig config, String databaseName) {
         try {
-            Connection conn = getConnection(config, databaseName);
             if (config.getType() == ConnectType.MYSQL) {
                 return executeSqlQuery(config, databaseName, "SHOW STATUS", 1000);
             } else if (config.getType() == ConnectType.POSTGRESQL) {
