@@ -154,7 +154,7 @@ public class TomatoController {
 
         if (sidebarChildren == null) {
             // 首次加载该模块：构建其 UI 并缓存
-            sidebarPane.setStyle("-fx-background-color: #ffffff;");
+            sidebarPane.setStyle("-fx-background-color: #ffffff; -fx-border-color: #e5e5e5; -fx-border-width: 0 1 0 0;");
             module.loadSidebar(sidebarPane);
             moduleSidebarChildrenCache.put(moduleId, new ArrayList<>(sidebarPane.getChildren()));
             moduleSidebarStyleCache.put(moduleId, sidebarPane.getStyle());
@@ -169,7 +169,7 @@ public class TomatoController {
             moduleContentCache.put(moduleId, moduleContent);
         } else {
             // 恢复缓存的样式和子节点到 sidebarPane
-            sidebarPane.setStyle(moduleSidebarStyleCache.getOrDefault(moduleId, "-fx-background-color: #ffffff;"));
+            sidebarPane.setStyle(moduleSidebarStyleCache.getOrDefault(moduleId, "-fx-background-color: #ffffff; -fx-border-color: #e5e5e5; -fx-border-width: 0 1 0 0;"));
             sidebarPane.getChildren().addAll(sidebarChildren);
         }
 
