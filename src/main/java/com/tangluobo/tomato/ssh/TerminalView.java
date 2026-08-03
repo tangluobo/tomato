@@ -3,11 +3,13 @@ package com.tangluobo.tomato.ssh;
 import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
+import javafx.geometry.Point2D;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.InputMethodEvent;
+import javafx.scene.input.InputMethodRequests;
 import javafx.scene.input.InputMethodTextRun;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
@@ -94,6 +96,35 @@ public class TerminalView extends Canvas {
 
         // 输入法事件（Linux下fcitx/ibus等输入法通过InputMethodEvent提交中文）
         setOnInputMethodTextChanged(this::handleInputMethodTextChanged);
+
+        // 设置输入法请求处理器（关键：Linux下必须设置此项，输入法才能激活并正确定位候选词窗口）
+        // InputMethodRequests 被输入法（fcitx/ibus）调用以获取文本插入点位置等信息
+        // 未设置时输入法无法激活，导致终端无法输入中文
+        setInputMethodRequests(new InputMethodRequests() {
+            @Override
+            public Point2D getTextLocation(int offset) {
+                // 返回光标在屏幕上的位置，用于输入法候选词窗口定位
+                double x = 2 + emulator.getCursorX() * charWidth;
+                double y = 2 + emulator.getCursorY() * charHeight + fontAscent;
+                Point2D screenPos = localToScreen(x, y);
+                return screenPos != null ? screenPos : new Point2D(x, y);
+            }
+
+            @Override
+            public int getLocationOffset(int x, int y) {
+                return 0;
+            }
+
+            @Override
+            public void cancelLatestCommittedText() {
+                // 终端不支持撤销已提交文本，空实现
+            }
+
+            @Override
+            public String getSelectedText() {
+                return "";
+            }
+        });
 
         // 鼠标事件处理
         setOnMousePressed(this::handleMousePressed);
@@ -337,7 +368,7 @@ public class TerminalView extends Canvas {
         // 处理已提交的文本（输入法确认的中文字符）
         String committed = event.getCommitted();
         if (committed != null && !committed.isEmpty()) {
-            keyInputHandler.handleInput(committed.getBytes());
+            keyInputHandler.handleInput(committed.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             event.consume();
         }
     }
