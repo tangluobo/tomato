@@ -436,24 +436,31 @@
     -fx-padding: 0;
 }
 
-/* 去掉表头区域左侧padding */
+/* 表头背景白色（与数据行一致），列头边框由每个column-header处理 */
 .table-view .column-header-background {
     -fx-padding: 0;
     -fx-background-insets: 0;
-    -fx-border-color: transparent transparent #cccccc transparent;
-    -fx-border-width: 0 0 1 0;
+    -fx-background-color: white;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
 }
 
+/* 每个列头：设置表头背景色，右边框为列分隔线，底部边框为表头与数据区分隔线 */
 .table-view .column-header {
     -fx-padding: 0;
     -fx-background-insets: 0;
-    -fx-border-color: transparent #DADAD8 transparent transparent;
-    -fx-border-width: 0 1 0 0;
+    -fx-background-color: -fx-body-color;
+    -fx-border-color: transparent #DADAD8 #cccccc transparent;
+    -fx-border-width: 0 1 1 0;
 }
 
+/* filler：白色背景，无无边框，与数据行背景一致 */
 .table-view .column-header-background .filler {
     -fx-padding: 0;
     -fx-background-insets: 0;
+    -fx-background-color: white;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
 }
 
 .table-view .column-header-background .nested-column-header {
@@ -471,8 +478,8 @@
 
 .table-view .table-row-cell:selected {
     -fx-background-insets: 0, 0, 0, 0;
-    -fx-background-color: #3592CB;
-    -fx-text-fill: white;
+    -fx-background-color: white;
+    -fx-text-fill: black;
 }
 
 .table-view .table-row-cell:selected .table-cell {
@@ -487,24 +494,40 @@
 }
 
 .table-view .table-cell {
-    -fx-border-color: transparent #e0e0e0 transparent transparent;
-    -fx-border-width: 0 1 0 0;
+    -fx-background-color: white;
+    -fx-border-color: transparent #e0e0e0 #e0e0e0 transparent;
+    -fx-border-width: 0 1 1 0;
     -fx-padding: 4 6;
 }
 
+/* TableRow背景白色且无边框，与cell背景一致；
+   cell边框透明覆盖即可，右侧空白区域也是白色，与表头filler一致。 */
 .table-view .table-row-cell {
-    -fx-border-color: transparent transparent #e0e0e0 transparent;
-    -fx-border-width: 0 0 1 0;
+    -fx-background-color: white;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
     -fx-background-insets: 0, 0, 0, 0;
     -fx-padding: 0;
 }
 
 .table-view .table-row-cell:empty {
-    -fx-background-color: transparent;
+    -fx-background-color: white;
     -fx-border-color: transparent;
 }
 
 .table-view .table-row-cell:empty .table-cell {
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+}
+
+/* SFTP 文件表：文件较少时，下方空白区域仍属于表格的一部分，
+   保持纯白背景、无边框，看起来是空白，而不是独立的面板。 */
+.sftp-file-table .table-row-cell:empty {
+    -fx-background-color: #fff;
+    -fx-border-color: transparent;
+}
+
+.sftp-file-table .table-row-cell:empty .table-cell {
     -fx-border-color: transparent;
     -fx-padding: 0;
 }

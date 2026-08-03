@@ -258,6 +258,7 @@ public class SFTPFileBrowser extends BorderPane {
         // 文件列表
         fileTable = new TableView<>();
         fileTable.setStyle("-fx-font-size: 11px; -fx-background-color: #fff;");
+        fileTable.getStyleClass().add("sftp-file-table");
         fileTable.setPlaceholder(new Label("空目录"));
 
         TableColumn<FileItem, String> nameCol = new TableColumn<>("名称");
@@ -647,3 +648,4 @@ public class SFTPFileBrowser extends BorderPane {
         }
     }
 }
+

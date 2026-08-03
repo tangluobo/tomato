@@ -11,7 +11,10 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
+import javafx.scene.input.MouseButton;
 import javafx.scene.layout.*;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.Polygon;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -27,6 +30,9 @@ import java.util.function.Consumer;
  * 优先使用 RichTextFX CodeArea（语法高亮），加载失败时回退到 TextArea
  */
 public class SqlEditorView extends BorderPane {
+
+    /** 行选择器列的标识名，用于在获取数据列名时跳过 */
+    private static final String ROW_SELECTOR_COL = "__ROW_SELECTOR__";
 
     private final SqlEditor editor;
 
@@ -673,6 +679,7 @@ public class SqlEditorView extends BorderPane {
         tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0;");
         tableView.setPlaceholder(new Label("无数据"));
         tableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+        tableView.getSelectionModel().setCellSelectionEnabled(true);
         // 布局后移除内部节点的默认padding/border，消除左侧间隔
         tableView.skinProperty().addListener((obs, oldSkin, newSkin) -> {
             if (newSkin != null) {
@@ -681,6 +688,77 @@ public class SqlEditorView extends BorderPane {
         });
 
         List<String> columns = result.getColumnNames();
+
+        // 创建行选择器列：选中行显示黑色实心三角箭头
+        TableColumn<ObservableList<String>, String> selectorCol = new TableColumn<>();
+        selectorCol.setPrefWidth(15);
+        selectorCol.setMaxWidth(15);
+        selectorCol.setMinWidth(15);
+        selectorCol.setSortable(false);
+        selectorCol.setReorderable(false);
+        selectorCol.setStyle("-fx-alignment: CENTER;");
+        selectorCol.setUserData(ROW_SELECTOR_COL);
+        selectorCol.setCellFactory(col -> new TableCell<>() {
+            private final Polygon arrow = new Polygon(0, -0.5, 5, 4.5, 0, 9.5);
+            private javafx.beans.InvalidationListener selectionListener;
+
+            {
+                arrow.setFill(Color.BLACK);
+                setGraphic(arrow);
+                setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+                setAlignment(Pos.CENTER);
+                arrow.setVisible(false);
+                setStyle("-fx-border-color: transparent #BEBEBC transparent #BEBEBC; -fx-border-width: 0 1 0 1;");
+                addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
+                    if (getTableRow() != null && getTableRow().getItem() != null) {
+                        int row = getTableRow().getIndex();
+                        if (event.isControlDown()) {
+                            if (tableView.getSelectionModel().isSelected(row)) {
+                                tableView.getSelectionModel().clearSelection(row);
+                            } else {
+                                tableView.getSelectionModel().select(row);
+                            }
+                        } else if (event.isShiftDown()) {
+                            int anchor = tableView.getSelectionModel().getFocusedIndex();
+                            if (anchor >= 0) {
+                                int start = Math.min(row, anchor);
+                                int end = Math.max(row, anchor);
+                                tableView.getSelectionModel().clearSelection();
+                                tableView.getSelectionModel().selectRange(start, end + 1);
+                            } else {
+                                tableView.getSelectionModel().clearSelection();
+                                tableView.getSelectionModel().select(row);
+                            }
+                        } else {
+                            tableView.getSelectionModel().clearSelection();
+                            tableView.getSelectionModel().select(row);
+                        }
+                        event.consume();
+                    }
+                });
+            }
+
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                if (selectionListener != null) {
+                    tableView.getSelectionModel().getSelectedItems().removeListener(selectionListener);
+                    selectionListener = null;
+                }
+                super.updateItem(item, empty);
+                if (empty || getTableRow() == null || getTableRow().getItem() == null) {
+                    arrow.setVisible(false);
+                    return;
+                }
+                arrow.setVisible(tableView.getSelectionModel().getSelectedIndices().contains(getTableRow().getIndex()));
+                selectionListener = obs -> {
+                    if (getTableRow() != null) {
+                        arrow.setVisible(tableView.getSelectionModel().getSelectedIndices().contains(getTableRow().getIndex()));
+                    }
+                };
+                tableView.getSelectionModel().getSelectedItems().addListener(selectionListener);
+            }
+        });
+        tableView.getColumns().add(selectorCol);
         for (int i = 0; i < columns.size(); i++) {
             final int colIndex = i;
             TableColumn<ObservableList<String>, String> col = new TableColumn<>(columns.get(i));
@@ -708,6 +786,12 @@ public class SqlEditorView extends BorderPane {
         scrollPane.setFitToWidth(false);
         scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
         scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        // TableView宽度跟随视口（让垂直滚动条位于面板最右，右侧空白属于表格）
+        tableView.minWidthProperty().bind(scrollPane.widthProperty());
+        // 鼠标拖拽选中多个cell
+        setupDragSelection(tableView);
+        // Ctrl+C 复制选中cell
+        setupKeyboardShortcuts(tableView);
         return scrollPane;
     }
 
@@ -733,7 +817,7 @@ public class SqlEditorView extends BorderPane {
 
                     // 右键时根据选中行数动态更新菜单文字
                     tableView.setOnContextMenuRequested(event -> {
-                        int count = tableView.getSelectionModel().getSelectedItems().size();
+                        int count = (int) tableView.getSelectionModel().getSelectedItems().stream().distinct().count();
                         deleteItem.setText("删除" + (count > 0 ? count : 1) + "条数据");
                     });
                 });
@@ -752,7 +836,8 @@ public class SqlEditorView extends BorderPane {
         String dbName = databaseCombo.getValue();
         if (config == null || dbName == null) return;
 
-        ObservableList<ObservableList<String>> selectedRows = tableView.getSelectionModel().getSelectedItems();
+        List<ObservableList<String>> selectedRows = tableView.getSelectionModel().getSelectedItems()
+                .stream().distinct().toList();
         if (selectedRows.isEmpty()) return;
 
         int count = selectedRows.size();
@@ -1083,6 +1168,174 @@ public class SqlEditorView extends BorderPane {
         public String getSelectedText() {
             return textArea.getSelectedText();
         }
+    }
+
+    /**
+     * 鼠标拖拽选中多个cell + Shift点击范围选中
+     */
+    private void setupDragSelection(TableView<ObservableList<String>> tableView) {
+        final int[] dragStart = {-1, -1};
+        final int[] anchorCell = {-1, -1};
+
+        tableView.setOnMousePressed(event -> {
+            if (event.getButton() != MouseButton.PRIMARY) return;
+            int[] cellPos = getCellPositionAt(tableView, event);
+            if (cellPos == null) return;
+
+            if (event.isShiftDown() && anchorCell[0] >= 0) {
+                int minRow = Math.min(anchorCell[0], cellPos[0]);
+                int maxRow = Math.max(anchorCell[0], cellPos[0]);
+                int minCol = Math.min(anchorCell[1], cellPos[1]);
+                int maxCol = Math.max(anchorCell[1], cellPos[1]);
+                tableView.getSelectionModel().clearSelection();
+                for (int r = minRow; r <= maxRow; r++) {
+                    for (int c = minCol; c <= maxCol; c++) {
+                        TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(c);
+                        tableView.getSelectionModel().select(r, col);
+                    }
+                }
+                event.consume();
+                return;
+            }
+
+            dragStart[0] = cellPos[0];
+            dragStart[1] = cellPos[1];
+            anchorCell[0] = cellPos[0];
+            anchorCell[1] = cellPos[1];
+            tableView.getSelectionModel().clearSelection();
+            TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(cellPos[1]);
+            tableView.getSelectionModel().select(cellPos[0], col);
+        });
+
+        tableView.setOnMouseDragged(event -> {
+            if (event.getButton() != MouseButton.PRIMARY) return;
+            if (dragStart[0] < 0) return;
+            int[] cellPos = getCellPositionAt(tableView, event);
+            if (cellPos == null) return;
+            int endRow = cellPos[0];
+            int endCol = cellPos[1];
+            int minRow = Math.min(dragStart[0], endRow);
+            int maxRow = Math.max(dragStart[0], endRow);
+            int minCol = Math.min(dragStart[1], endCol);
+            int maxCol = Math.max(dragStart[1], endCol);
+            tableView.getSelectionModel().clearSelection();
+            for (int r = minRow; r <= maxRow; r++) {
+                for (int c = minCol; c <= maxCol; c++) {
+                    TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(c);
+                    tableView.getSelectionModel().select(r, col);
+                }
+            }
+        });
+
+        tableView.setOnMouseReleased(event -> {
+            dragStart[0] = -1;
+        });
+    }
+
+    /**
+     * 根据鼠标事件位置获取对应的cell坐标 [row, colIndex]
+     * 点击右侧空白区域（TableRow 但非 TableCell）时返回该行和最后一列
+     */
+    private int[] getCellPositionAt(TableView<ObservableList<String>> tableView, javafx.scene.input.MouseEvent event) {
+        Node target = event.getPickResult().getIntersectedNode();
+        TableRow<?> clickedRow = null;
+        while (target != null && target != tableView) {
+            if (clickedRow == null && target instanceof TableRow<?> row) {
+                clickedRow = row;
+            }
+            if (target instanceof TableCell<?, ?> cell) {
+                if (cell.getTableColumn() != null && cell.getTableRow() != null) {
+                    int row = cell.getTableRow().getIndex();
+                    int col = tableView.getColumns().indexOf(cell.getTableColumn());
+                    if (col >= 0) {
+                        return new int[]{row, col};
+                    }
+                }
+            }
+            target = target.getParent();
+        }
+        if (clickedRow != null) {
+            int rowIndex = clickedRow.getIndex();
+            int lastCol = getLastVisibleDataColumnIndex(tableView);
+            if (lastCol >= 0) {
+                return new int[]{rowIndex, lastCol};
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 获取最后一个可见数据列在 tableView.getColumns() 中的索引
+     */
+    private int getLastVisibleDataColumnIndex(TableView<ObservableList<String>> tableView) {
+        for (int i = tableView.getColumns().size() - 1; i >= 0; i--) {
+            TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(i);
+            if (col.isVisible() && !ROW_SELECTOR_COL.equals(col.getUserData())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * 键盘快捷键：Ctrl+C复制
+     */
+    private void setupKeyboardShortcuts(TableView<ObservableList<String>> tableView) {
+        tableView.setOnKeyPressed(event -> {
+            if (event.isControlDown() && event.getCode() == javafx.scene.input.KeyCode.C) {
+                handleCopySelectedCells(tableView);
+                event.consume();
+            }
+        });
+    }
+
+    /**
+     * 复制选中的cell到剪贴板，按行列排列，Tab分隔列，换行分隔行
+     */
+    private void handleCopySelectedCells(TableView<ObservableList<String>> tableView) {
+        @SuppressWarnings("unchecked")
+        ObservableList<TablePosition<ObservableList<String>, ?>> selectedCells =
+                (ObservableList<TablePosition<ObservableList<String>, ?>>) (ObservableList<?>) tableView.getSelectionModel().getSelectedCells();
+        if (selectedCells.isEmpty()) return;
+
+        int minRow = Integer.MAX_VALUE, maxRow = -1;
+        int minCol = Integer.MAX_VALUE, maxCol = -1;
+        for (TablePosition<?, ?> pos : selectedCells) {
+            int row = pos.getRow();
+            int col = tableView.getColumns().indexOf(pos.getTableColumn());
+            minRow = Math.min(minRow, row);
+            maxRow = Math.max(maxRow, row);
+            minCol = Math.min(minCol, col);
+            maxCol = Math.max(maxCol, col);
+        }
+
+        java.util.Set<String> selectedSet = new java.util.HashSet<>();
+        for (TablePosition<?, ?> pos : selectedCells) {
+            int col = tableView.getColumns().indexOf(pos.getTableColumn());
+            selectedSet.add(pos.getRow() + "," + col);
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (int r = minRow; r <= maxRow; r++) {
+            ObservableList<String> rowData = tableView.getItems().get(r);
+            boolean firstCol = true;
+            for (int c = minCol; c <= maxCol; c++) {
+                if (!selectedSet.contains(r + "," + c)) continue;
+                if (!firstCol) sb.append('\t');
+                firstCol = false;
+                int dataColIndex = c - 1; // 减去行选择器列
+                if (dataColIndex >= 0 && dataColIndex < rowData.size()) {
+                    String value = rowData.get(dataColIndex);
+                    sb.append(value != null ? value : "");
+                }
+            }
+            if (r < maxRow) sb.append('\n');
+        }
+
+        javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
+        javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
+        content.putString(sb.toString());
+        clipboard.setContent(content);
     }
 
     private void stripPaddingRecursive(Node node) {

@@ -12,7 +12,18 @@ public class DatabaseNodeData {
         QUERY_FOLDER,   // "查询"文件夹节点
         TABLE,          // 表节点
         VIEW,           // 视图节点
-        FUNCTION_FOLDER, BACKUP_FOLDER, QUERY, BACKUP
+        FUNCTION_FOLDER, BACKUP_FOLDER, QUERY, BACKUP,
+        ROCKETMQ_TOPICS_FOLDER,   // RocketMQ主题文件夹
+        ROCKETMQ_CONSUMERS_FOLDER, // RocketMQ消费者组文件夹
+        ROCKETMQ_CLUSTER_FOLDER,   // RocketMQ集群文件夹
+        ROCKETMQ_MESSAGES_FOLDER,  // RocketMQ消息文件夹
+        ROCKETMQ_TOPIC,            // RocketMQ单个主题
+        ROCKETMQ_CONSUMER,         // RocketMQ单个消费者组
+        ROCKETMQ_BROKER,           // RocketMQ单个Broker
+        ROCKETMQ_MESSAGE,           // RocketMQ单条消息
+        ALIYUN_PRODUCT_FOLDER,      // 阿里云产品文件夹（如ECS、RDS等）
+        ALIYUN_ECS_INSTANCE,        // 阿里云ECS实例
+        ALIYUN_DOMAIN               // 阿里云域名
     }
 
     private final NodeType type;

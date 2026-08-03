@@ -259,7 +259,9 @@ public class RdpClient {
         // RdpTransport覆盖negotiateSSL()方法，强制使用TLS 1.2协议
         // 这解决了Transport.negotiateSSL()未调用setEnabledProtocols()
         // 导致SSLSocket尝试TLS 1.3而被Windows RDP服务器Connection Reset的问题
-        RdpTlsFix.injectRdpTransport(rdpLayer);
+        // 同时传入hostname用于SNI（Server Name Indication），避免Windows Server 2012 R2+
+        // 因缺少SNI扩展而重置TLS连接
+        RdpTlsFix.injectRdpTransport(rdpLayer, host);
 
         // 核心修复2：通过反射替换ISO为RdpIso
         // RdpIso修复ISO层的fast-path包检测条件：(version & 3) == 0 → (version & 1) == 0
@@ -314,10 +316,17 @@ public class RdpClient {
                     notifyDisconnected("连接中断: " + e.getMessage());
                 }
             } catch (java.io.IOException e) {
-                // SSL_NOT_ALLOWED_BY_SERVER错误：服务器不支持SSL
-                if (useSsl && e.getMessage() != null && e.getMessage().contains("SSL_NOT_ALLOWED_BY_SERVER")) {
+                String msg = e.getMessage();
+                // SSL_NOT_ALLOWED_BY_SERVER错误：服务器不支持SSL，回退到Standard RDP Security
+                if (useSsl && msg != null && msg.contains("SSL_NOT_ALLOWED_BY_SERVER")) {
                     logger.warning("服务器不支持SSL，回退到Standard RDP Security重连...");
                     retryWithStandardSecurity(host, port, dcp);
+                    return;
+                }
+                // SSL_REQUIRED_BY_SERVER错误：服务器要求SSL/TLS，回退到SSL/TLS加密重连
+                if (!useSsl && msg != null && msg.contains("SSL_REQUIRED_BY_SERVER")) {
+                    logger.warning("服务器要求Enhanced RDP Security（TLS），回退到SSL/TLS加密重连...");
+                    retryWithSslSecurity(host, port, dcp);
                     return;
                 }
                 logger.log(Level.SEVERE, "IO错误: " + e.getMessage());
@@ -332,24 +341,27 @@ public class RdpClient {
         rdpThread.setDaemon(true);
         rdpThread.start();
 
-        // 诊断：3秒后报告RDP Patch状态
+        // 诊断：定期报告RDP状态（持续30秒，每5秒一次）
         java.util.Timer diagTimer = new java.util.Timer("RDP-Diag", true);
         final int[] count = {0};
         diagTimer.scheduleAtFixedRate(new java.util.TimerTask() {
             @Override
             public void run() {
-                if (count[0]++ >= 3 || rdpThread == null || !rdpThread.isAlive()) {
+                count[0]++;
+                if (count[0] > 6 || rdpThread == null || !rdpThread.isAlive()) {
                     cancel();
                     return;
                 }
                 if (rdpLayer instanceof RdpPatch) {
                     RdpPatch patch = (RdpPatch) rdpLayer;
-                    logger.info(String.format("[DIAG #%d] totalPDUs=%d, bitmapUpdates=%d, rdp5Packets=%d, connected=%b, active=%b, rdp5=%b",
+                    logger.info(String.format("[DIAG #%d] totalPDUs=%d, bitmapUpdates=%d, rdp5Packets=%d, sent=%d, recv=%d, connected=%b, active=%b, rdp5=%b, licenceIssued=%b, securityType=%s",
                             count[0], patch.getTotalPduCount(), patch.getBitmapUpdateCount(), patch.getRdp5PacketCount(),
-                            rdpLayer.isConnected(), state.isActive(), state.isRDP5()));
+                            RdpTlsFix.RdpTransport.getSendPktCount(), RdpTlsFix.RdpTransport.getRecvPktCount(),
+                            rdpLayer.isConnected(), state.isActive(), state.isRDP5(), state.isLicenceIssued(),
+                            state.getSecurityType()));
                 }
             }
-        }, 3000, 3000);
+        }, 5000, 5000);
     }
 
     private void notifyDisconnected(String reason) {
@@ -407,7 +419,7 @@ public class RdpClient {
             rdpLayer = new RdpPatch(context, state, channels);
 
             // 注入RdpTransport（仅当服务器支持SSL时才需要）
-            RdpTlsFix.injectRdpTransport(rdpLayer);
+            RdpTlsFix.injectRdpTransport(rdpLayer, host);
 
             // 注入RdpIso（修复fast-path检测）
             RdpIsoFix.injectRdpIso(rdpLayer);
@@ -424,6 +436,135 @@ public class RdpClient {
         } catch (Exception e) {
             logger.log(Level.SEVERE, "Standard RDP Security重连也失败: " + e.getMessage(), e);
             notifyDisconnected("连接失败（SSL和Standard均不可用）: " + e.getMessage());
+        } finally {
+            connected = false;
+        }
+    }
+
+    /**
+     * 服务器要求SSL/TLS（SSL_REQUIRED_BY_SERVER）时，回退到SSL/TLS加密重试连接。
+     * 重新创建所有RDP层对象，使用SSL作为优先安全类型。
+     */
+    private void retryWithSslSecurity(String host, int port, CredentialProvider dcp) {
+        try {
+            // 断开之前的连接
+            if (rdpLayer != null && rdpLayer.isConnected()) {
+                try { rdpLayer.disconnect(); } catch (Exception ignored) {}
+            }
+
+            // 重新配置：STANDARD在前，SSL在末尾（State构造函数取最后一个元素作为初始securityType）
+            options.getSecurityTypes().clear();
+            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.STANDARD);
+            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.SSL);
+
+            // 重新创建状态
+            RdpState rdpState = new RdpState(options);
+            rdpState.lockRdp5();
+            state = rdpState;
+
+            // 重新创建画布
+            EmbeddedContext context = new EmbeddedContext();
+            canvas = new RdesktopCanvas(context, state);
+            state.setCanvas(canvas);
+
+            // 重新创建RDP层
+            VChannels channels = new VChannels(state);
+            rdpLayer = new RdpPatch(context, state, channels);
+
+            // 注入RdpTransport（强制TLS 1.2 + SNI，修复SSLSocket默认TLS 1.3被服务器Reset的问题）
+            RdpTlsFix.injectRdpTransport(rdpLayer, host);
+
+            // 注入RdpIso（修复fast-path检测）
+            RdpIsoFix.injectRdpIso(rdpLayer);
+
+            logger.info("回退重连: " + host + ":" + port + " securityType=SSL");
+            rdpLayer.connect(new DefaultIO(InetAddress.getByName(host), port),
+                    dcp, options.getCommand(), options.getDirectory());
+
+            // SSL模式下connect()后必须强制设置licenceIssued=true：
+            // SSL接收侧数据已被TLS层加密，不存在Secure层sec_flags header，
+            // 若licenceIssued=false会错误消费4字节RDP有效数据，导致PDU解析失败。
+            if (!state.isLicenceIssued()) {
+                logger.info("SSL模式：在connect()后强制设置licenceIssued=true（接收侧无Secure层header）");
+                state.setLicenceIssued(true);
+            }
+            logger.info("SSL/TLS连接成功，进入主循环");
+            rdpLayer.mainLoop();
+            logger.info("RDP主循环正常退出");
+        } catch (RdesktopDisconnectException e) {
+            logger.info("RDP连接断开: " + e.getMessage());
+            notifyDisconnected(e.getMessage() != null ? e.getMessage() : "连接已断开");
+        } catch (Exception e) {
+            // SSL/TLS握手失败时，尝试使用HYBRID（CredSSP/NLA）重连
+            // 很多Windows服务器要求NLA（网络级别认证），不支持纯TLS连接
+            String msg = e.getMessage();
+            if (msg != null && msg.contains("SSL negotiation failed")) {
+                logger.warning("SSL/TLS握手失败，尝试使用HYBRID（CredSSP/NLA）重连...");
+                retryWithHybridSecurity(host, port, dcp);
+                return;
+            }
+            logger.log(Level.SEVERE, "SSL/TLS重连也失败: " + e.getMessage(), e);
+            notifyDisconnected("连接失败（Standard和SSL均不可用）: " + e.getMessage());
+        } finally {
+            connected = false;
+        }
+    }
+
+    /**
+     * 使用HYBRID（CredSSP/NLA）安全类型重试连接。
+     * 当SSL/TLS握手失败时，服务器可能要求NLA（网络级别认证）而非纯TLS。
+     * HYBRID在TLS握手后进行CredSSP（NTLM/Kerberos）认证。
+     */
+    private void retryWithHybridSecurity(String host, int port, CredentialProvider dcp) {
+        try {
+            // 断开之前的连接
+            if (rdpLayer != null && rdpLayer.isConnected()) {
+                try { rdpLayer.disconnect(); } catch (Exception ignored) {}
+            }
+
+            // 重新配置：使用HYBRID（CredSSP/NLA）
+            options.getSecurityTypes().clear();
+            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.STANDARD);
+            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.HYBRID);
+
+            // 重新创建状态
+            RdpState rdpState = new RdpState(options);
+            rdpState.lockRdp5();
+            state = rdpState;
+
+            // 重新创建画布
+            EmbeddedContext context = new EmbeddedContext();
+            canvas = new RdesktopCanvas(context, state);
+            state.setCanvas(canvas);
+
+            // 重新创建RDP层
+            VChannels channels = new VChannels(state);
+            rdpLayer = new RdpPatch(context, state, channels);
+
+            // 注入RdpTransport（强制TLS 1.2 + SNI + 全量密码套件）
+            RdpTlsFix.injectRdpTransport(rdpLayer, host);
+
+            // 注入RdpIso（修复fast-path检测）
+            RdpIsoFix.injectRdpIso(rdpLayer);
+
+            logger.info("回退重连: " + host + ":" + port + " securityType=HYBRID (CredSSP/NLA)");
+            rdpLayer.connect(new DefaultIO(InetAddress.getByName(host), port),
+                    dcp, options.getCommand(), options.getDirectory());
+
+            // HYBRID模式下connect()后也需设置licenceIssued=true（与SSL相同，TLS接收侧无Secure层header）
+            if (!state.isLicenceIssued()) {
+                logger.info("HYBRID模式：在connect()后强制设置licenceIssued=true");
+                state.setLicenceIssued(true);
+            }
+            logger.info("HYBRID (CredSSP/NLA) 连接成功，进入主循环");
+            rdpLayer.mainLoop();
+            logger.info("RDP主循环正常退出");
+        } catch (RdesktopDisconnectException e) {
+            logger.info("RDP连接断开: " + e.getMessage());
+            notifyDisconnected(e.getMessage() != null ? e.getMessage() : "连接已断开");
+        } catch (Exception e) {
+            logger.log(Level.SEVERE, "HYBRID (CredSSP/NLA) 重连也失败: " + e.getMessage(), e);
+            notifyDisconnected("连接失败（Standard、SSL和HYBRID均不可用）: " + e.getMessage());
         } finally {
             connected = false;
         }

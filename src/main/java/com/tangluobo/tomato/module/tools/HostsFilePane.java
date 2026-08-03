@@ -1,12 +1,17 @@
 package com.tangluobo.tomato.module.tools;
 
+import javafx.animation.KeyFrame;
+import javafx.animation.KeyValue;
 import javafx.animation.PauseTransition;
+import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
+import javafx.scene.effect.DropShadow;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
+import javafx.scene.shape.Circle;
 import javafx.scene.shape.SVGPath;
 import javafx.util.Duration;
 
@@ -75,17 +80,23 @@ public class HostsFilePane extends VBox {
     // 当前选中的组
     private HostsGroup selectedGroup;
 
+    // 是否正在查看系统 Hosts 文件
+    private boolean viewingSystemHosts = false;
+
     // 分组列表 UI
     private VBox groupListContainer;
     private ScrollPane groupScrollPane;
 
     // 编辑器
-    private TextArea editorArea;
+    private NumberedTextArea editorArea;
     private Label titleLabel;
+    private HBox buttonBar;
 
     // 条目编辑区域
     private VBox entriesContainer;
     private ScrollPane entriesScrollPane;
+    private Label entriesLabel;
+    private HBox addEntryBox;
 
     // 状态标签
     private Label statusLabel;
@@ -211,7 +222,7 @@ public class HostsFilePane extends VBox {
         titleLabel.setPadding(new Insets(5, 0, 5, 0));
 
         // 条目编辑区域
-        Label entriesLabel = new Label("Hosts 条目");
+        entriesLabel = new Label("Hosts 条目");
         entriesLabel.setStyle("-fx-font-size: 13px; -fx-font-weight: bold; -fx-text-fill: #555;");
         entriesLabel.setPadding(new Insets(5, 0, 0, 0));
 
@@ -230,22 +241,33 @@ public class HostsFilePane extends VBox {
         addEntryBtn.setMaxWidth(Double.MAX_VALUE);
         addEntryBtn.setOnAction(e -> addNewEntry());
 
-        HBox addEntryBox = new HBox();
+        addEntryBox = new HBox();
         addEntryBox.setPadding(new Insets(5, 0, 0, 0));
         addEntryBox.getChildren().add(addEntryBtn);
 
-        // 系统 Hosts 编辑器
-        Label editorLabel = new Label("系统 Hosts 文件预览");
-        editorLabel.setStyle("-fx-font-size: 13px; -fx-font-weight: bold; -fx-text-fill: #555;");
-        editorLabel.setPadding(new Insets(10, 0, 0, 0));
-
-        editorArea = new TextArea();
+        // 带行号的编辑器
+        editorArea = new NumberedTextArea();
         editorArea.setEditable(false);
-        editorArea.setStyle("-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 12px; -fx-padding: 8;");
-        editorArea.setPrefRowCount(5);
+        editorArea.setOnSave(() -> {
+            if (viewingSystemHosts) {
+                if (writeHostsFile(editorArea.getText())) {
+                    showSuccess("Hosts 文件已保存");
+                }
+            } else if (selectedGroup != null) {
+                saveCurrentEditorToGroup();
+                if (selectedGroup.isEnabled()) {
+                    if (updateHostsFile()) {
+                        showSuccess("分组已保存并更新系统 Hosts");
+                    }
+                } else {
+                    showSuccess("分组已保存");
+                }
+            }
+        });
+        VBox.setVgrow(editorArea, Priority.ALWAYS);
 
         // 按钮区
-        HBox buttonBar = new HBox(10);
+        buttonBar = new HBox(10);
         buttonBar.setAlignment(Pos.CENTER_RIGHT);
         buttonBar.setPadding(new Insets(5, 0, 0, 0));
 
@@ -260,11 +282,9 @@ public class HostsFilePane extends VBox {
         buttonBar.getChildren().addAll(refreshBtn, saveBtn);
 
         panel.getChildren().addAll(
-                titleLabel,
                 entriesLabel,
                 entriesScrollPane,
                 addEntryBox,
-                editorLabel,
                 editorArea,
                 buttonBar
         );
@@ -346,9 +366,9 @@ public class HostsFilePane extends VBox {
     private VBox createGroupItemBox(HostsGroup group) {
         VBox itemBox = new VBox(0);
 
-        HBox row = new HBox(10);
+        HBox row = new HBox(12);
         row.setAlignment(Pos.CENTER_LEFT);
-        row.setPadding(new Insets(10, 12, 10, 12));
+        row.setPadding(new Insets(12, 12, 12, 12));
         row.setStyle("-fx-background-color: transparent; -fx-cursor: hand;");
 
         // 选中样式
@@ -356,41 +376,45 @@ public class HostsFilePane extends VBox {
             row.setStyle("-fx-background-color: #e8f4ff; -fx-cursor: hand;");
         }
 
-        // 分组名
-        Label nameLabel = new Label(group.getName());
-        nameLabel.setStyle("-fx-font-size: 14px; -fx-text-fill: #333;");
+        // 左侧：名称 + 条目数（上下结构）
+        VBox leftContent = new VBox(2);
+        leftContent.setAlignment(Pos.CENTER_LEFT);
 
-        // 条目数量
-        Label countLabel = new Label("(" + group.getEntries().size() + ")");
-        countLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #888;");
+        Label nameLabel = new Label(group.getName());
+        nameLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #333;");
+
+        Label countLabel = new Label(group.getEntries().size() + " 个条目");
+        countLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #999;");
+
+        leftContent.getChildren().addAll(nameLabel, countLabel);
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-//        // 启用开关
-//        ToggleSwitch enableSwitch = new ToggleSwitch();
-//        enableSwitch.setSelected(group.isEnabled());
-//        enableSwitch.setStyle("-fx-cursor: hand;");
-//        enableSwitch.setOnAction(e -> {
-//            group.setEnabled(enableSwitch.isSelected());
-//            toggleGroupEnabled(group);
-//        });
+        // 启用开关（iOS 风格）
+        Switch enableSwitch = new Switch();
+        enableSwitch.syncSelected(group.isEnabled());
+        enableSwitch.setOnToggle(() -> {
+            group.setEnabled(enableSwitch.isSelected());
+            toggleGroupEnabled(group);
+        });
 
-        // 删除按钮
-        Button deleteBtn = new Button("✕");
-        deleteBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #999; -fx-font-size: 12px; -fx-padding: 2 6; -fx-cursor: hand;");
-        deleteBtn.setOnAction(e -> {
+        row.getChildren().addAll(leftContent, spacer, enableSwitch);
+
+        // 右键菜单
+        ContextMenu contextMenu = new ContextMenu();
+        MenuItem editItem = new MenuItem("编辑分组名");
+        editItem.setOnAction(e -> editGroupName(group));
+        MenuItem deleteItem = new MenuItem("删除分组");
+        deleteItem.setStyle("-fx-text-fill: #e53935;");
+        deleteItem.setOnAction(e -> {
             if (showConfirm("删除确认", "确定要删除分组 \"" + group.getName() + "\" 吗？")) {
                 deleteGroup(group);
             }
         });
+        contextMenu.getItems().addAll(editItem, deleteItem);
 
-        // 编辑按钮
-        Button editBtn = new Button("✎");
-        editBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #666; -fx-font-size: 12px; -fx-padding: 2 6; -fx-cursor: hand;");
-        editBtn.setOnAction(e -> editGroupName(group));
-
-//        row.getChildren().addAll(nameLabel, countLabel, spacer, enableSwitch, editBtn, deleteBtn);
+        row.setOnContextMenuRequested(e -> contextMenu.show(row, e.getScreenX(), e.getScreenY()));
 
         Region separator = new Region();
         separator.setStyle("-fx-background-color: #f0f0f0; -fx-pref-height: 1px;");
@@ -416,6 +440,8 @@ public class HostsFilePane extends VBox {
     // ==================== 分组操作 ====================
 
     private void selectGroup(HostsGroup group) {
+        // 切换前保存当前编辑器内容
+        saveCurrentEditorToGroup();
         selectedGroup = group;
         refreshGroupList();
         updateRightPanel();
@@ -473,8 +499,28 @@ public class HostsFilePane extends VBox {
     }
 
     private void toggleGroupEnabled(HostsGroup group) {
+        // 先保存当前编辑器内容（如果有选中的分组正在编辑）
+        if (selectedGroup == group) {
+            saveCurrentEditorToGroup();
+        }
         saveGroups();
-        updateHostsFile();
+        boolean success = updateHostsFile();
+
+        if (!success) {
+            // 写入失败，回滚开关状态
+            group.setEnabled(!group.isEnabled());
+            refreshGroupList();
+            if (selectedGroup == group) {
+                editorArea.setText(buildGroupContent(group));
+            }
+            return;
+        }
+
+        // 刷新编辑器显示
+        if (selectedGroup == group) {
+            editorArea.setText(buildGroupContent(group));
+        }
+        refreshGroupList();
         showSuccess(group.isEnabled() ? "分组已启用" : "分组已禁用");
     }
 
@@ -482,17 +528,23 @@ public class HostsFilePane extends VBox {
 
     private void updateRightPanel() {
         if (selectedGroup == null) {
+            viewingSystemHosts = false;
             titleLabel.setText("请选择或创建一个分组");
-            entriesContainer.getChildren().clear();
+            setEntriesVisible(false);
             editorArea.clear();
+            editorArea.setEditable(false);
             editorArea.setDisable(true);
             return;
         }
 
+        viewingSystemHosts = false;
         titleLabel.setText(selectedGroup.getName() + " 配置");
+        setEntriesVisible(false);
+
+        // 显示当前分组的条目内容（可编辑）
+        editorArea.setEditable(true);
         editorArea.setDisable(false);
-        renderEntries();
-        refreshEditorPreview();
+        editorArea.setText(buildGroupContent(selectedGroup));
     }
 
     /**
@@ -613,63 +665,174 @@ public class HostsFilePane extends VBox {
     }
 
     /**
-     * 写入系统 hosts 文件
+     * 写入系统 hosts 文件（权限不足时提示 sudo 密码）
+     * @return true 表示写入成功
      */
-    private void writeHostsFile(String content) {
+    private boolean writeHostsFile(String content) {
+        // 先尝试直接写入
         try {
             Path path = Paths.get(getHostsFilePath());
             Files.writeString(path, content);
+            return true;
         } catch (Exception e) {
-            showError("写入 hosts 文件失败: " + e.getMessage() + "\n可能需要管理员权限");
+            // 直接写入失败，尝试 sudo
         }
+
+        // 非 Linux 系统直接报错
+        String os = System.getProperty("os.name").toLowerCase();
+        if (!os.contains("nix") && !os.contains("nux") && !os.contains("mac")) {
+            showError("写入 hosts 文件失败，可能需要管理员权限");
+            return false;
+        }
+
+        // 弹出 sudo 密码输入框
+        Dialog<String> dialog = new Dialog<>();
+        dialog.setTitle("需要管理员权限");
+        dialog.setHeaderText("写入系统 hosts 文件需要管理员权限");
+
+        ButtonType okButtonType = new ButtonType("确认", ButtonBar.ButtonData.OK_DONE);
+        dialog.getDialogPane().getButtonTypes().addAll(okButtonType, ButtonType.CANCEL);
+
+        PasswordField passwordField = new PasswordField();
+        passwordField.setPromptText("sudo 密码");
+        passwordField.setStyle("-fx-font-size: 13px;");
+
+        VBox dialogContent = new VBox(8);
+        dialogContent.setPadding(new Insets(10));
+        Label label = new Label("请输入 sudo 密码:");
+        label.setStyle("-fx-font-size: 13px;");
+        dialogContent.getChildren().addAll(label, passwordField);
+        dialog.getDialogPane().setContent(dialogContent);
+
+        dialog.setResultConverter(button -> {
+            if (button == okButtonType) {
+                return passwordField.getText();
+            }
+            return null;
+        });
+
+        return dialog.showAndWait().map(password -> {
+            try {
+                // 写入临时文件
+                Path tempFile = Files.createTempFile("hosts_tmp_", ".txt");
+                Files.writeString(tempFile, content);
+
+                // 用 sudo cp 覆盖 hosts 文件
+                ProcessBuilder pb = new ProcessBuilder("sudo", "-S", "cp", tempFile.toString(), getHostsFilePath());
+                Process process = pb.start();
+                process.getOutputStream().write((password + "\n").getBytes());
+                process.getOutputStream().flush();
+                process.getOutputStream().close();
+
+                int exitCode = process.waitFor();
+                Files.deleteIfExists(tempFile);
+
+                if (exitCode == 0) {
+                    return true;
+                } else {
+                    String errorMsg = new String(process.getErrorStream().readAllBytes()).trim();
+                    showError("写入失败: " + (errorMsg.isEmpty() ? "密码错误或权限不足" : errorMsg));
+                    return false;
+                }
+            } catch (Exception ex) {
+                showError("写入 hosts 文件失败: " + ex.getMessage());
+                return false;
+            }
+        }).orElse(false);
     }
 
     /**
      * 显示系统 Hosts 文件
      */
     private void showSystemHosts() {
+        // 切换前保存当前编辑器内容
+        saveCurrentEditorToGroup();
         selectedGroup = null;
+        viewingSystemHosts = true;
         titleLabel.setText("系统 Hosts 文件");
-        editorArea.setDisable(false);
-        editorArea.setEditable(true);
-        entriesContainer.getChildren().clear();
 
+        // 隐藏条目编辑区域
+        setEntriesVisible(false);
+
+        // 显示完整系统文件（带行号）
+        editorArea.setEditable(true);
+        editorArea.setDisable(false);
         String content = readHostsFile();
         editorArea.setText(content);
+    }
+
+    /**
+     * 切换条目编辑区域的可见性
+     */
+    private void setEntriesVisible(boolean visible) {
+        entriesLabel.setVisible(visible);
+        entriesLabel.setManaged(visible);
+        entriesScrollPane.setVisible(visible);
+        entriesScrollPane.setManaged(visible);
+        addEntryBox.setVisible(visible);
+        addEntryBox.setManaged(visible);
+
+        buttonBar.setVisible(visible);
+        buttonBar.setManaged(visible);
     }
 
     /**
      * 刷新编辑器预览
      */
     private void refreshEditorPreview() {
-        String preview = buildHostsContent();
-        editorArea.setText(preview);
+        if (viewingSystemHosts) {
+            editorArea.setText(readHostsFile());
+        } else if (selectedGroup != null) {
+            editorArea.setText(buildGroupContent(selectedGroup));
+        }
     }
 
     /**
-     * 构建完整的 hosts 内容（系统默认 + 启用的分组）
+     * 构建单个分组的 hosts 内容
      */
-    private String buildHostsContent() {
+    private String buildGroupContent(HostsGroup group) {
         StringBuilder content = new StringBuilder();
+        content.append("# ").append(group.getName()).append("\n");
+        for (HostsEntry entry : group.getEntries()) {
+            content.append(entry.getIp()).append(" ").append(entry.getDomain()).append("\n");
+        }
+        content.append("# End ").append(group.getName());
+        return content.toString();
+    }
 
-        // 添加启用的分组内容
-        for (HostsGroup group : hostsGroups) {
-            if (group.isEnabled() && !group.getEntries().isEmpty()) {
-                content.append("\n# ").append(group.getName()).append("\n");
-                for (HostsEntry entry : group.getEntries()) {
-                    content.append(entry.getIp()).append(" ").append(entry.getDomain()).append("\n");
-                }
-                content.append("# End ").append(group.getName()).append("\n");
+    /**
+     * 从文本解析条目（忽略注释行和空行）
+     */
+    private List<HostsEntry> parseEntriesFromText(String text) {
+        List<HostsEntry> entries = new ArrayList<>();
+        if (text == null || text.isEmpty()) return entries;
+
+        for (String line : text.split("\n")) {
+            line = line.trim();
+            if (line.isEmpty() || line.startsWith("#")) continue;
+
+            String[] parts = line.split("\\s+", 2);
+            if (parts.length >= 2) {
+                entries.add(new HostsEntry(parts[0].trim(), parts[1].trim()));
             }
         }
+        return entries;
+    }
 
-        return content.toString().trim();
+    /**
+     * 保存当前编辑器内容到分组
+     */
+    private void saveCurrentEditorToGroup() {
+        if (selectedGroup == null || viewingSystemHosts) return;
+        selectedGroup.setEntries(parseEntriesFromText(editorArea.getText()));
+        saveGroups();
     }
 
     /**
      * 更新 hosts 文件（在启用/禁用分组时调用）
+     * @return true 表示写入成功
      */
-    private void updateHostsFile() {
+    private boolean updateHostsFile() {
         String newContent = readHostsFile();
 
         // 移除旧的分组内容
@@ -699,30 +862,33 @@ public class HostsFilePane extends VBox {
         }
 
         newContent = newContent.trim() + enabledContent;
-        writeHostsFile(newContent);
+        boolean success = writeHostsFile(newContent);
 
-        // 如果当前选中了某个分组，更新预览
-        if (selectedGroup != null) {
+        // 根据当前视图刷新显示
+        if (viewingSystemHosts) {
+            editorArea.setText(readHostsFile());
+        } else if (selectedGroup != null) {
             refreshEditorPreview();
         }
+
+        return success;
     }
 
     /**
      * 保存到系统 hosts 文件
      */
     private void saveToHostsFile() {
-        if (selectedGroup == null) {
+        if (viewingSystemHosts || selectedGroup == null) {
             // 保存系统 hosts 编辑
-            try {
-                writeHostsFile(editorArea.getText());
+            if (writeHostsFile(editorArea.getText())) {
                 showSuccess("Hosts 文件已保存");
-            } catch (Exception e) {
-                showError("保存失败: " + e.getMessage());
             }
         } else {
-            // 保存当前分组到系统
-            updateHostsFile();
-            showSuccess("配置已保存到系统 Hosts 文件");
+            // 保存当前分组内容并更新系统
+            saveCurrentEditorToGroup();
+            if (updateHostsFile()) {
+                showSuccess("配置已保存到系统 Hosts 文件");
+            }
         }
     }
 
@@ -962,5 +1128,158 @@ public class HostsFilePane extends VBox {
             }
         });
         pause.play();
+    }
+
+    // ==================== 自定义控件 ====================
+
+    /**
+     * 带行号的文本编辑器
+     */
+    private static class NumberedTextArea extends BorderPane {
+        private final TextArea textArea;
+        private final VBox lineNumbersBox;
+        private Runnable onSave;
+
+        NumberedTextArea() {
+            textArea = new TextArea();
+            textArea.setStyle("-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 12px; -fx-padding: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-width: 0; -fx-focus-color: transparent; -fx-faint-focus-color: transparent;");
+            HBox.setHgrow(textArea, Priority.ALWAYS);
+
+            lineNumbersBox = new VBox(2);
+            lineNumbersBox.setStyle("-fx-background-color: #f5f5f5; -fx-padding: 8 5 8 5;");
+            lineNumbersBox.setMinWidth(45);
+            lineNumbersBox.setPrefWidth(45);
+            lineNumbersBox.setMaxWidth(45);
+
+            HBox container = new HBox();
+            container.getChildren().addAll(lineNumbersBox, textArea);
+            container.setStyle("-fx-background-color: #ffffff; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0;");
+
+            ScrollPane scrollPane = new ScrollPane(container);
+            scrollPane.setFitToWidth(true);
+            scrollPane.setFitToHeight(true);
+            scrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0;");
+            VBox.setVgrow(scrollPane, Priority.ALWAYS);
+            HBox.setHgrow(scrollPane, Priority.ALWAYS);
+
+            setCenter(scrollPane);
+            setStyle("-fx-background-color: #ffffff; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0;");
+            setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
+
+            updateLineNumbers();
+            textArea.textProperty().addListener((obs, oldVal, newVal) -> updateLineNumbers());
+
+            // Ctrl+D 复制当前行, Ctrl+S 保存
+            textArea.setOnKeyPressed(e -> {
+                if (e.isControlDown() && e.getCode() == javafx.scene.input.KeyCode.D) {
+                    e.consume();
+                    duplicateCurrentLine();
+                } else if (e.isControlDown() && e.getCode() == javafx.scene.input.KeyCode.S) {
+                    e.consume();
+                    if (onSave != null) onSave.run();
+                }
+            });
+        }
+
+        /**
+         * 复制当前行到下一行
+         */
+        private void duplicateCurrentLine() {
+            String text = textArea.getText();
+            int caret = textArea.getCaretPosition();
+
+            int lineStart = text.lastIndexOf('\n', caret - 1) + 1;
+            int lineEnd = text.indexOf('\n', caret);
+            if (lineEnd == -1) lineEnd = text.length();
+
+            String currentLine = text.substring(lineStart, lineEnd);
+            String insertText = currentLine + "\n";
+
+            textArea.insertText(lineStart, insertText);
+            // 移动光标到新行对应位置
+            textArea.positionCaret(lineStart + insertText.length() + (caret - lineStart));
+        }
+
+        private void updateLineNumbers() {
+            String text = textArea.getText();
+            int lineCount = text.isEmpty() ? 1 : text.split("\n", -1).length;
+            lineNumbersBox.getChildren().clear();
+            for (int i = 1; i <= lineCount; i++) {
+                Label label = new Label(String.valueOf(i));
+                label.setStyle("-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 12px; -fx-text-fill: #999;");
+                lineNumbersBox.getChildren().add(label);
+            }
+        }
+
+        void setText(String text) { textArea.setText(text); }
+        String getText() { return textArea.getText(); }
+        void clear() { textArea.clear(); }
+        void setEditable(boolean b) { textArea.setEditable(b); }
+        void setOnSave(Runnable r) { this.onSave = r; }
+        javafx.beans.value.ObservableValue<String> textProperty() { return textArea.textProperty(); }
+    }
+
+    /**
+     * iOS 风格的开关控件（参考域名列表中的 DDNS 开关样式）
+     */
+    private static class Switch extends StackPane {
+        private static final double W = 38, H = 20, THUMB = 16;
+        private final Region track = new Region();
+        private final Circle thumb = new Circle(THUMB / 2.0);
+        private boolean selected = false;
+        private Runnable onToggle;
+
+        Switch() {
+            setPrefSize(W, H);
+            setMinSize(W, H);
+            setMaxSize(W, H);
+
+            track.setPrefSize(W, H);
+            track.setStyle("-fx-background-radius: 10;");
+
+            thumb.setFill(Color.WHITE);
+            thumb.setEffect(new DropShadow(4, 0, 1, Color.rgb(0, 0, 0, 0.25)));
+            thumb.setTranslateX(-9);
+
+            getChildren().addAll(track, thumb);
+            updateVisual(false);
+
+            disabledProperty().addListener((o, a, d) -> updateVisual(false));
+
+            setOnMouseClicked(e -> {
+                if (isDisabled()) return;
+                e.consume();
+                toggle();
+            });
+        }
+
+        private void toggle() {
+            selected = !selected;
+            updateVisual(true);
+            if (onToggle != null) onToggle.run();
+        }
+
+        void syncSelected(boolean s) {
+            this.selected = s;
+            updateVisual(false);
+        }
+
+        boolean isSelected() { return selected; }
+
+        void setOnToggle(Runnable r) { this.onToggle = r; }
+
+        private void updateVisual(boolean animate) {
+            String bg = selected ? "#4CAF50" : "#bdbdbd";
+            if (isDisabled()) bg = "#e0e0e0";
+            track.setStyle("-fx-background-color: " + bg + "; -fx-background-radius: 10;");
+            double tx = selected ? 9 : -9;
+            if (animate) {
+                Timeline tl = new Timeline(new KeyFrame(javafx.util.Duration.millis(150),
+                        new KeyValue(thumb.translateXProperty(), tx)));
+                tl.play();
+            } else {
+                thumb.setTranslateX(tx);
+            }
+        }
     }
 }

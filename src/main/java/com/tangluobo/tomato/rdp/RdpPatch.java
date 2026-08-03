@@ -28,10 +28,17 @@ public class RdpPatch extends Rdp {
     private final AtomicInteger bitmapUpdateCount = new AtomicInteger(0);
     private final AtomicInteger rdp5PacketCount = new AtomicInteger(0);
     private final AtomicInteger totalPduCount = new AtomicInteger(0);
+    private volatile long lastReceiveEnterTime = 0;
+    private volatile int lastReasonSeen = 0;
+    private volatile int lastServerStatusSeen = 0;
+    private volatile boolean refreshSent = false;
+    private final java.util.List<String> pduHistory = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
 
     // 反射访问Rdp的private方法/字段
     private final Method receiveMethod;
     private final Method processPacketMethod;
+    private final Method initDataMethod;
+    private final Method sendDataMethod;
     private final Field streamField;
     private final Field nextPacketField;
 
@@ -40,13 +47,17 @@ public class RdpPatch extends Rdp {
         this.stateRef = state;
 
         // 反射获取private方法和字段
-        Method rm = null, pm = null;
+        Method rm = null, pm = null, im = null, sm = null;
         Field sf = null, npf = null;
         try {
             rm = Rdp.class.getDeclaredMethod("receive", int[].class);
             rm.setAccessible(true);
             pm = Rdp.class.getDeclaredMethod("processPacket", int[].class, com.sshtools.javardp.Packet.class);
             pm.setAccessible(true);
+            im = Rdp.class.getDeclaredMethod("initData", int.class);
+            im.setAccessible(true);
+            sm = Rdp.class.getDeclaredMethod("sendData", com.sshtools.javardp.Packet.class, int.class);
+            sm.setAccessible(true);
             sf = Rdp.class.getDeclaredField("stream");
             sf.setAccessible(true);
             npf = Rdp.class.getDeclaredField("next_packet");
@@ -56,6 +67,8 @@ public class RdpPatch extends Rdp {
         }
         receiveMethod = rm;
         processPacketMethod = pm;
+        initDataMethod = im;
+        sendDataMethod = sm;
         streamField = sf;
         nextPacketField = npf;
     }
@@ -173,14 +186,38 @@ public class RdpPatch extends Rdp {
             return;
         }
 
-        boolean inputSyncSent = false;
+        // 看门狗线程：每10秒检查mainLoop是否卡在receive()
+        Thread watchdog = new Thread(() -> {
+            try {
+                while (!Thread.currentThread().isInterrupted()) {
+                    Thread.sleep(10000);
+                    long stuckMs = System.currentTimeMillis() - lastReceiveEnterTime;
+                    if (stuckMs > 10000 && lastReceiveEnterTime > 0) {
+                        logger.warning(String.format(
+                            "[WATCHDOG] mainLoop已卡在receive() %.1f秒, totalPDUs=%d, bitmaps=%d, rdp5=%d, sent=%d, recv=%d, bcInAvailable=%d, active=%b, licenceIssued=%b, lastReason=0x%x, isoInjected=%b, isoRecvCalled=%b, isoError=%s, PDU历史=%s",
+                            stuckMs / 1000.0, totalPduCount.get(), bitmapUpdateCount.get(),
+                            rdp5PacketCount.get(), RdpTlsFix.RdpTransport.getSendPktCount(),
+                            RdpTlsFix.RdpTransport.getRecvPktCount(),
+                            RdpTlsFix.RdpTransport.getBcInAvailable(),
+                            stateRef.isActive(), stateRef.isLicenceIssued(),
+                            stateRef.getLastReason(),
+                            RdpIsoFix.isInjected(), RdpIsoFix.isReceiveCalled(),
+                            RdpIsoFix.getInjectError(),
+                            String.join(",", pduHistory)));
+                    }
+                }
+            } catch (InterruptedException e) { /* 正常退出 */ }
+        }, "RDP-Watchdog");
+        watchdog.setDaemon(true);
+        watchdog.start();
+
         int[] type = new int[1];
         com.sshtools.javardp.Packet data;
         while (true) {
             // 调用private receive()
             data = null;
+            lastReceiveEnterTime = System.currentTimeMillis();
             try {
-                logger.info("[MAINLOOP] 等待下一个PDU...");
                 data = (com.sshtools.javardp.Packet) receiveMethod.invoke(this, (Object) type);
                 if (data == null) {
                     logger.info("[MAINLOOP] receive() returned null, exiting");
@@ -219,8 +256,43 @@ public class RdpPatch extends Rdp {
             default: pduName = "UNKNOWN(" + pduType + ")"; break;
             }
             int dataAvail = data.getEnd() - data.getPosition();
-            logger.info(String.format("[MAINLOOP] PDU #%d: type=%s(%d), dataSize=%d, pos=%d, end=%d",
-                    pduCount, pduName, pduType, dataAvail, data.getPosition(), data.getEnd()));
+            // 对DATA PDU(type=7)，解析子类型(shareDataHeader中的dataType)
+            String dataSubType = "";
+            if (pduType == 7 && dataAvail >= 9) {
+                int savePos = data.getPosition();
+                data.incrementPosition(6); // skip shareid(4)+pad(1)+streamid(1)
+                data.getLittleEndian16(); // len
+                int dataType = data.get8();
+                data.setPosition(savePos);
+                dataSubType = " subType=" + dataType;
+                switch (dataType) {
+                    case 0: dataSubType += "(UPDATE)"; break;
+                    case 2: dataSubType += "(UPDATE_BITMAP)"; break; 
+                    case 3: dataSubType += "(PALETTE)"; break;
+                    case 20: dataSubType += "(CONTROL)"; break;
+                    case 27: dataSubType += "(POINTER)"; break;
+                    case 31: dataSubType += "(SYNCHRONISE)"; break;
+                    case 33: dataSubType += "(REFRESH_RECT)"; break;
+                    case 34: dataSubType += "(PLAY_SOUND)"; break;
+                    case 36: dataSubType += "(SUPPRESS_OUTPUT)"; break;
+                    case 37: dataSubType += "(SAVE_SESSION_INFO)"; break;
+                    case 38: dataSubType += "(FONTLIST)"; break;
+                    case 39: dataSubType += "(FONTMAP)"; break;
+                    case 40: dataSubType += "(SET_KEYBOARD_INDICATORS)"; break;
+                    case 47: dataSubType += "(SET_ERROR_INFO)"; break;
+                    default: break;
+                }
+            }
+            pduHistory.add(String.format("#%d:%s%s", pduCount, pduName, dataSubType.isEmpty() ? "" : dataSubType.split("=")[1].replace(")", "").replace("(", "")));
+            logger.info(String.format("[MAINLOOP] PDU #%d: type=%s(%d)%s, dataSize=%d",
+                    pduCount, pduName, pduType, dataSubType, dataAvail));
+
+            // DEMAND_ACTIVE处理后，记录关键状态
+            if (pduType == 1) {
+                logger.info(String.format("[CAPS] serverBpp=%d, width=%d, height=%d, rdp5=%b, serverChannelId=%d, shareId=%d",
+                        stateRef.getServerBpp(), stateRef.getWidth(), stateRef.getHeight(),
+                        stateRef.isRDP5(), stateRef.getServerChannelId(), stateRef.getShareId()));
+            }
 
             // 诊断：输出data的前16字节hex
             if (dataAvail > 0) {
@@ -235,6 +307,9 @@ public class RdpPatch extends Rdp {
             }
 
             // 调用private processPacket()
+            // DEMAND_ACTIVE(type=1)会触发processDemandActive，内部接收4个PDU(SYNCHRONIZE/COOPERATE/GRANT_CONTROL/FONT_MAP)
+            // 如果服务器不发送这些PDU，processPacket会阻塞在这里
+            long processStart = System.currentTimeMillis();
             try {
                 processPacketMethod.invoke(this, (Object) type, data);
             } catch (java.lang.reflect.InvocationTargetException e) {
@@ -249,6 +324,43 @@ public class RdpPatch extends Rdp {
                 throw new RdesktopException("processPacket failed: " + cause.getMessage(), cause);
             } catch (Exception e) {
                 throw new RdesktopException("reflective processPacket failed: " + e.getMessage(), e);
+            }
+            long processMs = System.currentTimeMillis() - processStart;
+            if (processMs > 100) {
+                logger.info(String.format("[MAINLOOP] PDU #%d (%s) processPacket耗时 %dms", pduCount, pduName, processMs));
+            }
+
+            // DEMAND_ACTIVE处理后，发送REFRESH_RECT请求全屏刷新
+            // 注意：之前尝试发送SUPPRESS_OUTPUT PDU导致服务器关闭连接(SEND #36断开)
+            // 可能是服务器不期望在此时收到此PDU，已移除
+            if (pduType == 1 && !refreshSent) {
+                refreshSent = true;
+                try {
+                    logger.info("[REFRESH] 发送TS_REFRESH_RECT_PDU请求全屏刷新");
+                    com.sshtools.javardp.Packet refreshData = (com.sshtools.javardp.Packet) initDataMethod.invoke(this, 4);
+                    refreshData.set8(0); // numAreas = 0 (全屏刷新)
+                    refreshData.set8(0); // pad
+                    refreshData.setLittleEndian16(0); // pad
+                    refreshData.markEnd(); // 关键：必须调用markEnd设置数据结束位置
+                    sendDataMethod.invoke(this, refreshData, 33); // 33 = PDUTYPE2_REFRESH_RECT
+                    logger.info("[REFRESH] 刷新请求已发送");
+                } catch (Exception e) {
+                    logger.warning("[REFRESH] 发送刷新请求失败: " + e.getMessage());
+                }
+            }
+
+            // 检测服务器是否发送了错误PDU (RDP_DATA_PDU_SET_ERROR)
+            int lastReason = stateRef.getLastReason();
+            if (lastReason != 0 && lastReason != lastReasonSeen) {
+                lastReasonSeen = lastReason;
+                logger.warning("[MAINLOOP] 服务器发送错误PDU! lastReason=0x" + Integer.toHexString(lastReason)
+                        + " (" + lastReason + ")");
+            }
+            // 记录服务器状态
+            int serverStatus = stateRef.getServerStatus();
+            if (serverStatus != 0 && serverStatus != lastServerStatusSeen) {
+                lastServerStatusSeen = serverStatus;
+                logger.info("[MAINLOOP] 服务器状态变更: serverStatus=0x" + Integer.toHexString(serverStatus));
             }
 
             // 诊断：processPacket后stream状态
@@ -266,17 +378,12 @@ public class RdpPatch extends Rdp {
                 // 忽略诊断错误
             }
 
-            // 在DEMAND_ACTIVE（PDU type=1）处理完毕后发送Input Synchronize Event
-            if (!inputSyncSent && pduType == 1) {
-                inputSyncSent = true;
-                try {
-                    logger.info("[MAINLOOP] ===== 准备发送Input Synchronize Event =====");
-                    this.sendInput(0, 0x0000, 0, 0, 0);
-                    logger.info("[MAINLOOP] ===== Input Synchronize Event已发送 =====");
-                } catch (Exception e) {
-                    logger.log(Level.SEVERE, "[MAINLOOP] ===== 发送Input Synchronize Event失败: " + e.getMessage(), e);
-                }
-            }
+            // DEMAND_ACTIVE处理完毕后，processDemandActive内部已经发送了：
+            // sendConfirmActive（含capabilities + ready(INPUT) → doLockKeys同步键状态）
+            // sendSynchronize、sendControl、sendFonts，并接收了4个响应PDU。
+            // doLockKeys已发送CapsLock/NumLock/ScrollLock同步事件，服务器应开始推送画面。
+            // 注意：不再额外发送sendInput(0,0,0,0,0)——RDP_INPUT_SYNCHRONIZE在库中定义为0，
+            // 但MS-RDPBCGR规范中INPUT_EVENT_SYNC=3，值0会被服务器当作未知事件忽略。
         }
     }
 

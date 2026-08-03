@@ -353,6 +353,9 @@ public class SSHTerminalPane extends BorderPane {
                 sftpClient = new SFTPClient();
                 fileBrowser = new SFTPFileBrowser(sshSession, sftpClient);
             }
+            // 让文件浏览器撑满右侧面板高度，表格随之填满，
+            // 文件较少时下方空白区域仍属于表格，滚动条也能到达面板底部
+            javafx.scene.layout.VBox.setVgrow(fileBrowser, javafx.scene.layout.Priority.ALWAYS);
             ensureRightPanelVisible();
             if (!rightPanel.getChildren().contains(fileBrowser)) {
                 rightPanel.getChildren().add(0, fileBrowser);
@@ -458,13 +461,17 @@ public class SSHTerminalPane extends BorderPane {
 
         updateStatusBar("已连接");
 
-        // 启用调试日志（写入/tmp/terminal_debug.log）
+        // 启用调试日志（写入用户目录下的terminal_debug.log）
         try {
-            PrintWriter pw = new PrintWriter(new FileWriter("/tmp/terminal_debug.log"));
+            String logPath = System.getProperty("user.home") + java.io.File.separator + "terminal_debug.log";
+            PrintWriter pw = new PrintWriter(new FileWriter(logPath, false));
             emulator.setDebugWriter(line -> {
                 pw.print(line);
                 pw.flush();
             });
+            emulator.setFileLogger(pw);
+            pw.println("=== SSH Terminal Debug Log - " + new java.util.Date() + " ===");
+            pw.flush();
         } catch (Exception ignored) {}
 
         // 通知SSH服务器终端大小

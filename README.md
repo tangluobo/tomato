@@ -66,7 +66,13 @@
 六、Redis连接实现
 ```
 
-
+账号管理
+192.168.0.143   tangluobo   Amz20191010^squirrel   15214100934 许伟博
+192.168.0.143   caijiyun    Amz20191010^           18693588219 蔡吉云
+192.168.0.143   caixiaolong    Amz20191010^           18693588219 蔡吉云
+192.168.0.110   tangluobo   Amz20191010^           15336518164 刘丽
+192.168.0.135   tangluobo   Amz20180324            15381069399 石培泽
+192.168.0.102   tangluobo   Amz20191010            15968822600 何鹏
 #### 特技
 
 1.  使用 Readme\_XXX.md 来支持不同的语言，例如 Readme\_en.md, Readme\_zh.md
@@ -75,3 +81,11 @@
 4.  [GVP](https://gitee.com/gvp) 全称是 Gitee 最有价值开源项目，是综合评定出的优秀开源项目
 5.  Gitee 官方提供的使用手册 [https://gitee.com/help](https://gitee.com/help)
 6.  Gitee 封面人物是一档用来展示 Gitee 会员风采的栏目 [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
+
+
+踩坑：
+１、五笔输入法在linux下无法上屏：从上面版本换成下面的版本，直接好了
+```xml
+<!--        <javafx.version>25.0.3-ea+3</javafx.version>-->
+        <javafx.version>27-ea+24</javafx.version>
+```

@@ -102,7 +102,6 @@ public class ConnectionConfigDialog {
     private TextField s3NameField;
     private TextField s3EndpointField;
     private TextField s3RegionField;
-    private TextField s3PortField;
     private TextField s3AccessKeyField;
     private PasswordField s3SecretKeyField;
     private CheckBox s3SaveSecretKeyCheckBox;
@@ -122,6 +121,21 @@ public class ConnectionConfigDialog {
     private TextField redisClusterNodesField;
     private TextField redisDatabaseField;
     private TextField redisDescriptionField;
+
+    // ===== RocketMQ专属字段 =====
+    private VBox rocketmqConfigContent;
+    private TextField rocketmqNameField;
+    private TextField rocketmqHostField;
+    private TextField rocketmqPortField;
+    private TextField rocketmqDescriptionField;
+
+    // ===== 阿里云专属字段 =====
+    private VBox aliyunConfigContent;
+    private TextField aliyunNameField;
+    private TextField aliyunAccessKeyField;
+    private PasswordField aliyunSecretKeyField;
+    private CheckBox aliyunSaveSecretKeyCheckBox;
+    private TextField aliyunDescriptionField;
 
     /**
      * 密钥条目：每行一个密钥文件（复选框 + 路径 + 浏览 + 删除）
@@ -266,6 +280,12 @@ public class ConnectionConfigDialog {
         // ---- 构建Redis类型的配置 ----
         buildRedisConfigContent();
 
+        // ---- 构建RocketMQ类型的配置 ----
+        buildRocketmqConfigContent();
+
+        // ---- 构建阿里云类型的配置 ----
+        buildAliyunConfigContent();
+
         // 按钮区域
         HBox configButtons = new HBox(10);
         configButtons.setAlignment(Pos.CENTER_RIGHT);
@@ -284,7 +304,7 @@ public class ConnectionConfigDialog {
 
         configButtons.getChildren().addAll(backBtn, cancelBtn2, okBtn);
 
-        configPage.getChildren().addAll(configTitle, dbTabPane, sshConfigContent, simpleConfigContent, localTerminalConfigContent, s3ConfigContent, redisConfigContent, configButtons);
+        configPage.getChildren().addAll(configTitle, dbTabPane, sshConfigContent, simpleConfigContent, localTerminalConfigContent, s3ConfigContent, redisConfigContent, rocketmqConfigContent, aliyunConfigContent, configButtons);
 
         // 编辑已有连接时直接显示配置页
         if (existingConfig != null) {
@@ -780,12 +800,6 @@ public class ConnectionConfigDialog {
         s3RegionField.setPrefWidth(280);
         grid.add(s3RegionField, 1, row++);
 
-        grid.add(new Label("端口："), 0, row);
-        s3PortField = new TextField();
-        s3PortField.setPrefWidth(100);
-        s3PortField.setPromptText("留空则使用默认端口");
-        grid.add(s3PortField, 1, row++);
-
         grid.add(new Label("Access Key："), 0, row);
         s3AccessKeyField = new TextField();
         s3AccessKeyField.setPromptText("访问密钥ID");
@@ -932,6 +946,103 @@ public class ConnectionConfigDialog {
         redisConfigContent.getChildren().addAll(grid, hint);
     }
 
+    /**
+     * 构建RocketMQ类型的配置内容
+     */
+    private void buildRocketmqConfigContent() {
+        rocketmqConfigContent = new VBox(15);
+        rocketmqConfigContent.setVisible(false);
+        rocketmqConfigContent.setManaged(false);
+
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(10);
+        grid.setPadding(new Insets(10, 0, 0, 0));
+
+        int row = 0;
+
+        grid.add(new Label("名称："), 0, row);
+        rocketmqNameField = new TextField();
+        rocketmqNameField.setPromptText("连接名称");
+        rocketmqNameField.setPrefWidth(280);
+        grid.add(rocketmqNameField, 1, row++);
+
+        grid.add(new Label("NameServer主机："), 0, row);
+        rocketmqHostField = new TextField();
+        rocketmqHostField.setPromptText("NameServer地址");
+        rocketmqHostField.setPrefWidth(280);
+        grid.add(rocketmqHostField, 1, row++);
+
+        grid.add(new Label("NameServer端口："), 0, row);
+        rocketmqPortField = new TextField();
+        rocketmqPortField.setPromptText("9876");
+        rocketmqPortField.setPrefWidth(100);
+        grid.add(rocketmqPortField, 1, row++);
+
+        grid.add(new Label("备注："), 0, row);
+        rocketmqDescriptionField = new TextField();
+        rocketmqDescriptionField.setPromptText("备注信息");
+        rocketmqDescriptionField.setPrefWidth(280);
+        grid.add(rocketmqDescriptionField, 1, row);
+
+        Label hint = new Label("填写RocketMQ NameServer地址，直接连接管理主题、消息、消费者组等");
+        hint.setStyle("-fx-font-size: 10px; -fx-text-fill: #999;");
+        hint.setWrapText(true);
+
+        rocketmqConfigContent.getChildren().addAll(grid, hint);
+    }
+
+    /**
+     * 构建阿里云类型的配置内容
+     */
+    private void buildAliyunConfigContent() {
+        aliyunConfigContent = new VBox(15);
+        aliyunConfigContent.setVisible(false);
+        aliyunConfigContent.setManaged(false);
+
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(10);
+        grid.setPadding(new Insets(10, 0, 0, 0));
+
+        int row = 0;
+
+        grid.add(new Label("名称："), 0, row);
+        aliyunNameField = new TextField();
+        aliyunNameField.setPromptText("连接名称");
+        aliyunNameField.setPrefWidth(280);
+        grid.add(aliyunNameField, 1, row++);
+
+        grid.add(new Label("Access Key："), 0, row);
+        aliyunAccessKeyField = new TextField();
+        aliyunAccessKeyField.setPromptText("阿里云AccessKey ID");
+        aliyunAccessKeyField.setPrefWidth(280);
+        grid.add(aliyunAccessKeyField, 1, row++);
+
+        grid.add(new Label("Secret Key："), 0, row);
+        VBox aliyunSecretBox = new VBox(4);
+        aliyunSecretKeyField = new PasswordField();
+        aliyunSecretKeyField.setPromptText("阿里云AccessKey Secret");
+        aliyunSecretKeyField.setPrefWidth(260);
+        aliyunSaveSecretKeyCheckBox = new CheckBox("保存密钥");
+        aliyunSaveSecretKeyCheckBox.setSelected(true);
+        aliyunSaveSecretKeyCheckBox.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+        aliyunSecretBox.getChildren().addAll(aliyunSecretKeyField, aliyunSaveSecretKeyCheckBox);
+        grid.add(aliyunSecretBox, 1, row++);
+
+        grid.add(new Label("备注："), 0, row);
+        aliyunDescriptionField = new TextField();
+        aliyunDescriptionField.setPromptText("备注信息");
+        aliyunDescriptionField.setPrefWidth(280);
+        grid.add(aliyunDescriptionField, 1, row);
+
+        Label hint = new Label("双击连接时将通过AK/SK进行OAuth2认证，认证通过后加载可访问的云服务列表");
+        hint.setStyle("-fx-font-size: 10px; -fx-text-fill: #999;");
+        hint.setWrapText(true);
+
+        aliyunConfigContent.getChildren().addAll(grid, hint);
+    }
+
     // ==================== 密钥条目管理 ====================
 
     /**
@@ -1055,6 +1166,8 @@ public class ConnectionConfigDialog {
         boolean isLocalTerminal = selectedType == ConnectType.LOCAL_TERMINAL;
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
         boolean isRedis = selectedType == ConnectType.REDIS;
+        boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
+        boolean isAliyun = selectedType == ConnectType.ALIYUN;
 
         // 数据库类型TabPane已有标签标题，隐藏顶部标题避免重复
         configTitle.setVisible(!isDatabase);
@@ -1070,14 +1183,18 @@ public class ConnectionConfigDialog {
         dbTabPane.setManaged(isDatabase);
         sshConfigContent.setVisible(isSSH);
         sshConfigContent.setManaged(isSSH);
-        simpleConfigContent.setVisible(!isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis);
-        simpleConfigContent.setManaged(!isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis);
+        simpleConfigContent.setVisible(!isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis && !isRocketmq && !isAliyun);
+        simpleConfigContent.setManaged(!isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis && !isRocketmq && !isAliyun);
         localTerminalConfigContent.setVisible(isLocalTerminal);
         localTerminalConfigContent.setManaged(isLocalTerminal);
         s3ConfigContent.setVisible(isS3orOSS);
         s3ConfigContent.setManaged(isS3orOSS);
         redisConfigContent.setVisible(isRedis);
         redisConfigContent.setManaged(isRedis);
+        rocketmqConfigContent.setVisible(isRocketmq);
+        rocketmqConfigContent.setManaged(isRocketmq);
+        aliyunConfigContent.setVisible(isAliyun);
+        aliyunConfigContent.setManaged(isAliyun);
 
         if (isDatabase) {
             // 设置默认端口
@@ -1095,9 +1212,6 @@ public class ConnectionConfigDialog {
             if (s3RegionField.getText().isEmpty()) {
                 s3RegionField.setText(selectedType == ConnectType.ALIYUN_OSS ? "cn-hangzhou" : "us-east-1");
             }
-            if (s3PortField.getText().isEmpty()) {
-                s3PortField.setText(String.valueOf(getDefaultPort(selectedType)));
-            }
             // S3类型默认勾选路径风格访问
             if (selectedType == ConnectType.S3 && !s3PathStyleAccessCheckBox.isSelected()) {
                 // 不自动勾选，让用户根据实际情况选择
@@ -1108,6 +1222,10 @@ public class ConnectionConfigDialog {
             }
             if (redisDatabaseField.getText().isEmpty()) {
                 redisDatabaseField.setText("0");
+            }
+        } else if (isRocketmq) {
+            if (rocketmqPortField.getText().isEmpty()) {
+                rocketmqPortField.setText("9876");
             }
         } else {
             if (simplePortField.getText().isEmpty()) {
@@ -1130,6 +1248,8 @@ public class ConnectionConfigDialog {
         boolean isLocalTerminal = selectedType == ConnectType.LOCAL_TERMINAL;
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
         boolean isRedis = selectedType == ConnectType.REDIS;
+        boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
+        boolean isAliyun = selectedType == ConnectType.ALIYUN;
 
         if (isLocalTerminal) {
             localTerminalNameField.setText(existingConfig.getName());
@@ -1214,7 +1334,6 @@ public class ConnectionConfigDialog {
             if (existingConfig.getRegion() != null) {
                 s3RegionField.setText(existingConfig.getRegion());
             }
-            s3PortField.setText(String.valueOf(existingConfig.getPort()));
             s3AccessKeyField.setText(existingConfig.getUsername() != null ? existingConfig.getUsername() : "");
             if (existingConfig.getPassword() != null) {
                 s3SecretKeyField.setText(existingConfig.getPassword());
@@ -1242,6 +1361,19 @@ public class ConnectionConfigDialog {
             }
             redisDatabaseField.setText(String.valueOf(existingConfig.getRedisDatabase()));
             redisDescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
+        } else if (isRocketmq) {
+            rocketmqNameField.setText(existingConfig.getName());
+            rocketmqHostField.setText(existingConfig.getHost());
+            rocketmqPortField.setText(String.valueOf(existingConfig.getPort()));
+            rocketmqDescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
+        } else if (isAliyun) {
+            aliyunNameField.setText(existingConfig.getName());
+            aliyunAccessKeyField.setText(existingConfig.getUsername() != null ? existingConfig.getUsername() : "");
+            if (existingConfig.getPassword() != null) {
+                aliyunSecretKeyField.setText(existingConfig.getPassword());
+            }
+            aliyunSaveSecretKeyCheckBox.setSelected(existingConfig.isSavePassword());
+            aliyunDescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
         } else {
             simpleNameField.setText(existingConfig.getName());
             simpleHostField.setText(existingConfig.getHost());
@@ -1292,6 +1424,8 @@ public class ConnectionConfigDialog {
 
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
         boolean isRedis = selectedType == ConnectType.REDIS;
+        boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
+        boolean isAliyun = selectedType == ConnectType.ALIYUN;
 
         if (isLocalTerminal) {
             config.setName(localTerminalNameField.getText().trim());
@@ -1394,7 +1528,6 @@ public class ConnectionConfigDialog {
             config.setName(s3NameField.getText().trim());
             config.setEndpoint(s3EndpointField.getText().trim());
             config.setRegion(s3RegionField.getText().trim());
-            config.setPort(s3PortField.getText().trim().isEmpty() ? getDefaultPort(selectedType) : Integer.parseInt(s3PortField.getText().trim()));
             config.setUsername(s3AccessKeyField.getText().trim());
             config.setUsePassword(true);
             config.setUseKey(false);
@@ -1424,6 +1557,25 @@ public class ConnectionConfigDialog {
             config.setRedisClusterNodes(redisClusterNodesField.getText().trim());
             config.setRedisDatabase(Integer.parseInt(redisDatabaseField.getText().trim()));
             config.setDescription(redisDescriptionField.getText().trim());
+
+        } else if (isRocketmq) {
+            config.setName(rocketmqNameField.getText().trim());
+            config.setHost(rocketmqHostField.getText().trim());
+            config.setPort(Integer.parseInt(rocketmqPortField.getText().trim()));
+            config.setDescription(rocketmqDescriptionField.getText().trim());
+
+        } else if (isAliyun) {
+            config.setName(aliyunNameField.getText().trim());
+            config.setUsername(aliyunAccessKeyField.getText().trim());
+            config.setUsePassword(true);
+            config.setUseKey(false);
+            config.setSavePassword(aliyunSaveSecretKeyCheckBox.isSelected());
+            if (aliyunSaveSecretKeyCheckBox.isSelected()) {
+                config.setPassword(aliyunSecretKeyField.getText());
+            } else {
+                config.setPassword(null);
+            }
+            config.setDescription(aliyunDescriptionField.getText().trim());
 
         } else {
             config.setName(simpleNameField.getText().trim());
@@ -1474,6 +1626,8 @@ public class ConnectionConfigDialog {
         boolean isLocalTerminal = selectedType == ConnectType.LOCAL_TERMINAL;
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
         boolean isRedis = selectedType == ConnectType.REDIS;
+        boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
+        boolean isAliyun = selectedType == ConnectType.ALIYUN;
 
         if (isLocalTerminal) {
             return validateLocalTerminalInput();
@@ -1485,6 +1639,10 @@ public class ConnectionConfigDialog {
             return validateS3Input();
         } else if (isRedis) {
             return validateRedisInput();
+        } else if (isRocketmq) {
+            return validateRocketmqInput();
+        } else if (isAliyun) {
+            return validateAliyunInput();
         } else {
             return validateSimpleInput();
         }
@@ -1622,14 +1780,6 @@ public class ConnectionConfigDialog {
             showAlert("请输入区域");
             return false;
         }
-        if (!s3PortField.getText().trim().isEmpty()) {
-            try {
-                Integer.parseInt(s3PortField.getText().trim());
-            } catch (NumberFormatException e) {
-                showAlert("端口号必须是数字");
-                return false;
-            }
-        }
         if (s3AccessKeyField.getText().trim().isEmpty()) {
             showAlert("请输入Access Key");
             return false;
@@ -1675,6 +1825,34 @@ public class ConnectionConfigDialog {
         return true;
     }
 
+    private boolean validateRocketmqInput() {
+        if (rocketmqNameField.getText().trim().isEmpty()) {
+            showAlert("请输入连接名称");
+            return false;
+        }
+        if (rocketmqHostField.getText().trim().isEmpty()) {
+            showAlert("请输入NameServer主机地址");
+            return false;
+        }
+        return true;
+    }
+
+    private boolean validateAliyunInput() {
+        if (aliyunNameField.getText().trim().isEmpty()) {
+            showAlert("请输入连接名称");
+            return false;
+        }
+        if (aliyunAccessKeyField.getText().trim().isEmpty()) {
+            showAlert("请输入Access Key");
+            return false;
+        }
+        if (aliyunSecretKeyField.getText().trim().isEmpty()) {
+            showAlert("请输入Secret Key");
+            return false;
+        }
+        return true;
+    }
+
     private boolean validateSimpleInput() {
         if (simpleNameField.getText().trim().isEmpty()) {
             showAlert("请输入连接名称");
@@ -1710,8 +1888,10 @@ public class ConnectionConfigDialog {
             case FTP -> 21;
             case ORACLE -> 1521;
             case S3 -> 9000;
+            case ALIYUN -> 0;
             case ALIYUN_OSS -> 443;
             case REDIS -> 6379;
+            case ROCKETMQ -> 8080;
             case LOCAL_TERMINAL -> 0;
         };
     }

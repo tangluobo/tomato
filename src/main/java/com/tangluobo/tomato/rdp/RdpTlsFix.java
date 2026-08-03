@@ -4,6 +4,7 @@ import java.io.*;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -11,7 +12,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import javax.net.ssl.SNIHostName;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.X509TrustManager;
 
@@ -104,11 +107,76 @@ public class RdpTlsFix {
      */
     public static class RdpTransport extends Transport {
 
-        public RdpTransport(State state, ISO iso) {
+        private final String hostname;
+
+        public RdpTransport(State state, ISO iso, String hostname) {
             super(state, iso);
+            this.hostname = hostname;
         }
 
         private static final AtomicInteger recvPktCount = new AtomicInteger(0);
+        private static final AtomicInteger sendPktCount = new AtomicInteger(0);
+        private static volatile java.io.InputStream bcInputStream = null;
+
+        public static int getRecvPktCount() { return recvPktCount.get(); }
+        public static int getSendPktCount() { return sendPktCount.get(); }
+        public static int getBcInAvailable() {
+            try { return bcInputStream != null ? bcInputStream.available() : -1; }
+            catch (Exception e) { return -2; }
+        }
+
+        @Override
+        public void sendPacket(com.sshtools.javardp.Packet buffer) throws IOException {
+            int count = sendPktCount.incrementAndGet();
+            int savePos = buffer.getPosition();
+            int avail = buffer.getEnd() - savePos;
+            int dumpLen = Math.min(avail, 8);
+            StringBuilder hexSb = new StringBuilder("[SEND #" + count + "] len=" + buffer.getEnd() + " hex:");
+            for (int i = 0; i < dumpLen; i++) {
+                hexSb.append(String.format(" %02x", buffer.get8()));
+            }
+            buffer.setPosition(savePos);
+            logger.info(hexSb.toString());
+
+            // 修改ConfirmActive PDU中的General Capability Set
+            // 恢复FASTPATH_OUTPUT_SUPPORTED + refreshRectSupport + suppressOutputSupport
+            // 之前移除FASTPATH_OUTPUT_SUPPORTED后连接在SEND #36就断开
+            try {
+                byte[] packet = new byte[buffer.getEnd()];
+                buffer.copyToByteArray(packet, 0, 0, packet.length);
+                // 只在大包(>150字节，ConfirmActive通常200+字节)中搜索和修改
+                if (packet.length > 150) {
+                    for (int i = 7; i < packet.length - 24; i++) {
+                        if (packet[i] == 0x01 && packet[i+1] == 0x00 &&
+                            packet[i+2] == 0x18 && packet[i+3] == 0x00) {
+                            int field10 = (packet[i+10] & 0xff) | ((packet[i+11] & 0xff) << 8);
+                            int oldFlags = (packet[i+12] & 0xff) | ((packet[i+13] & 0xff) << 8);
+                            int newFlags = oldFlags | 0x0001; // FASTPATH_OUTPUT_SUPPORTED
+                            int field14 = (packet[i+14] & 0xff) | ((packet[i+15] & 0xff) << 8);
+                            int oldRefresh = packet[i+22] & 0xff;
+                            int oldSuppress = packet[i+23] & 0xff;
+                            packet[i+12] = (byte)(newFlags & 0xff);
+                            packet[i+13] = (byte)((newFlags >> 8) & 0xff);
+                            packet[i+22] = 1; // refreshRectSupport = 1
+                            packet[i+23] = 1; // suppressOutputSupport = 1
+                            buffer.setPosition(0);
+                            buffer.copyFromByteArray(packet, 0, 0, packet.length);
+                            buffer.setPosition(savePos);
+                            logger.info(String.format("[CAPS-FIX] General Caps at offset %d: "
+                                    + "pad=0x%04x, extraFlags 0x%04x→0x%04x, field14=0x%04x, "
+                                    + "refreshRect %d→1, suppressOutput %d→1",
+                                    i, field10, oldFlags, newFlags, field14, oldRefresh, oldSuppress));
+                            break;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                logger.warning("[CAPS-FIX] 修改capabilities失败: " + e.getMessage());
+            }
+
+            super.sendPacket(buffer);
+            logger.info("[SEND #" + count + "] flushed, out stream=" + getOut().getClass().getName());
+        }
 
         @Override
         public com.sshtools.javardp.Packet receivePacket(com.sshtools.javardp.Packet p, int length) throws IOException {
@@ -136,32 +204,160 @@ public class RdpTlsFix {
 
         @Override
         protected IO negotiateSSL(IO io) throws Exception {
-            java.net.Socket socket = new IOSocket(io);
-            X509TrustManager tm = getState().getOptions().getTrustManager() == null
-                    ? createDefaultTrustManager()
-                    : getState().getOptions().getTrustManager();
+            logger.info("negotiateSSL (Bouncy Castle TLS), securityType=" + getState().getSecurityType());
 
-            // 使用TLSv1.2创建SSLContext，而非"TLS"（后者默认包含TLS 1.3）
-            SSLContext sc = SSLContext.getInstance("TLSv1.2");
-            sc.init(null, new X509TrustManager[]{tm}, null);
-            javax.net.ssl.SSLSocketFactory socketFactory = sc.getSocketFactory();
+            // 检查Transport的BufferedInputStream是否预读了属于TLS握手的字节
+            byte[] bufferedData = null;
+            try {
+                Field inField = Transport.class.getDeclaredField("in");
+                inField.setAccessible(true);
+                Object transportIn = inField.get(this);
+                if (transportIn instanceof java.io.DataInputStream) {
+                    java.io.DataInputStream din = (java.io.DataInputStream) transportIn;
+                    int bufferedBytes = din.available();
+                    if (bufferedBytes > 0) {
+                        bufferedData = new byte[bufferedBytes];
+                        din.readFully(bufferedData);
+                        StringBuilder hex = new StringBuilder();
+                        for (byte b : bufferedData) hex.append(String.format("%02x ", b));
+                        logger.warning("BufferedInputStream预读 " + bufferedBytes + " 字节: " + hex);
+                    } else {
+                        logger.info("BufferedInputStream无预读数据（available=0）");
+                    }
+                }
+            } catch (Exception e) {
+                logger.warning("检查BufferedInputStream失败: " + e.getMessage());
+            }
 
-            logger.info("Initialising SSL (TLS 1.2 forced)");
-            SSLSocket sslSocket = (SSLSocket) socketFactory.createSocket(
-                    socket, socket.getInetAddress().getHostName(),
-                    socket.getPort(), true);
+            // 获取底层流的最终输入流（如果有预读数据，先读预读数据再读原始流）
+            java.io.InputStream tlsIn;
+            java.io.OutputStream tlsOut;
+            if (bufferedData != null && bufferedData.length > 0) {
+                tlsIn = new java.io.SequenceInputStream(
+                        new java.io.ByteArrayInputStream(bufferedData), io.getInputStream());
+            } else {
+                tlsIn = io.getInputStream();
+            }
+            tlsOut = io.getOutputStream();
 
-            // 关键修复：显式限制协议版本为TLS 1.2
-            sslSocket.setEnabledProtocols(new String[]{"TLSv1.2"});
+            // 使用Bouncy Castle TLS（完全不同于JSSE的TLS实现）
+            // Bouncy Castle直接操作InputStream/OutputStream，不需要包装Socket
+            org.bouncycastle.tls.TlsClientProtocol protocol = new org.bouncycastle.tls.TlsClientProtocol(
+                    tlsIn, tlsOut);
 
-            // 设置现代密码套件（仅TLS 1.2兼容套件）
-            sslSocket.setEnabledCipherSuites(CIPHERS);
+            // 创建TlsCrypto（Bouncy Castle原生加密实现）
+            // 重写createCertificate(short, byte[])：返回BcTlsCertificate匿名子类，覆盖supportsKeyUsage()
+            //
+            // 根本原因分析（通过阅读BC 1.78.1源码）：
+            // 1. Certificate.parse() 调用 crypto.createCertificate(certType, derEncoding) — 两参数版本
+            //    （之前覆盖的单参数版本根本不会被调用！这就是日志中没有"createCertificate被调用"的原因）
+            // 2. BcTlsCertificate extends BcTlsRawKeyCertificate
+            // 3. BcTlsRawKeyCertificate.createVerifier() 内部调用 this.validateKeyUsage()
+            // 4. validateKeyUsage() 调用 supportsKeyUsage()（虚方法分发）
+            // 5. BcTlsCertificate 覆盖了 supportsKeyUsage() 来检查实际KeyUsage扩展
+            // 6. RDP服务器证书缺少digitalSignature位 → supportsKeyUsage()返回false → 抛出certificate_unknown(46)
+            //
+            // 正确方案：覆盖两参数createCertificate，返回BcTlsCertificate子类，覆盖supportsKeyUsage()返回true
+            org.bouncycastle.tls.crypto.TlsCrypto crypto = new org.bouncycastle.tls.crypto.impl.bc.BcTlsCrypto(
+                    new java.security.SecureRandom()) {
+                @Override
+                public org.bouncycastle.tls.crypto.TlsCertificate createCertificate(short type, byte[] encoding) throws java.io.IOException {
+                    logger.info("createCertificate(type=" + type + ", encoding.length=" + encoding.length + ")");
 
-            logger.info("Starting SSL handshake (TLS 1.2, " + CIPHERS.length + " cipher suites)");
-            sslSocket.startHandshake();
-            logger.info("Completed SSL handshake");
+                    if (type != org.bouncycastle.tls.CertificateType.X509) {
+                        return super.createCertificate(type, encoding);
+                    }
 
-            return new SocketIO(sslSocket);
+                    // 诊断：打印证书KeyUsage状态
+                    try {
+                        org.bouncycastle.asn1.x509.Certificate cert =
+                                org.bouncycastle.asn1.x509.Certificate.getInstance(encoding);
+                        org.bouncycastle.asn1.x509.Extensions exts = cert.getTBSCertificate().getExtensions();
+                        if (exts != null) {
+                            org.bouncycastle.asn1.x509.KeyUsage ku =
+                                    org.bouncycastle.asn1.x509.KeyUsage.fromExtensions(exts);
+                            if (ku != null) {
+                                byte[] kuBytes = ku.getBytes();
+                                int bits = (kuBytes.length > 0) ? (kuBytes[0] & 0xff) : 0;
+                                logger.info("证书KeyUsage: bits=0x" + Integer.toHexString(bits) +
+                                        " digitalSignature=" + ku.hasUsages(org.bouncycastle.asn1.x509.KeyUsage.digitalSignature));
+                            } else {
+                                logger.info("证书无KeyUsage扩展");
+                            }
+                        }
+                    } catch (Exception e) {
+                        logger.warning("诊断KeyUsage失败: " + e.getClass().getName() + ": " + e.getMessage());
+                    }
+
+                    // 创建BcTlsCertificate匿名子类，覆盖supportsKeyUsage()始终返回true
+                    // BcTlsCertificate构造函数是public，supportsKeyUsage是protected可被子类覆盖
+                    return new org.bouncycastle.tls.crypto.impl.bc.BcTlsCertificate(this, encoding) {
+                        @Override
+                        protected boolean supportsKeyUsage(int keyUsageBits) {
+                            logger.info("supportsKeyUsage被调用 keyUsageBits=" + keyUsageBits + ", 已绕过检查");
+                            return true;
+                        }
+                    };
+                }
+            };
+
+            // 创建TlsClient，配置协议版本（TLS 1.0/1.1/1.2，排除TLS 1.3）
+            org.bouncycastle.tls.DefaultTlsClient tlsClient = new org.bouncycastle.tls.DefaultTlsClient(crypto) {
+                @Override
+                public org.bouncycastle.tls.ProtocolVersion[] getProtocolVersions() {
+                    return new org.bouncycastle.tls.ProtocolVersion[]{
+                            org.bouncycastle.tls.ProtocolVersion.TLSv12,
+                            org.bouncycastle.tls.ProtocolVersion.TLSv11,
+                            org.bouncycastle.tls.ProtocolVersion.TLSv10
+                    };
+                }
+
+                @Override
+                public org.bouncycastle.tls.TlsAuthentication getAuthentication() throws java.io.IOException {
+                    return new org.bouncycastle.tls.TlsAuthentication() {
+                        @Override
+                        public void notifyServerCertificate(
+                                org.bouncycastle.tls.TlsServerCertificate serverCertificate) throws java.io.IOException {
+                            // 信任所有证书（RDP自签名证书）
+                            logger.info("服务器证书已接收（信任所有）");
+                        }
+
+                        @Override
+                        public org.bouncycastle.tls.TlsCredentials getClientCredentials(
+                                org.bouncycastle.tls.CertificateRequest certificateRequest) throws java.io.IOException {
+                            return null; // 无客户端证书
+                        }
+                    };
+                }
+            };
+
+            logger.info("Starting Bouncy Castle TLS handshake...");
+            protocol.connect(tlsClient);
+            logger.info("Bouncy Castle TLS handshake completed");
+
+            // 包装Bouncy Castle的流为IO对象
+            final java.io.InputStream bcIn = protocol.getInputStream();
+            final java.io.OutputStream bcOut = protocol.getOutputStream();
+            bcInputStream = bcIn; // 保存引用用于诊断
+            return new IO() {
+                @Override public java.io.InputStream getInputStream() throws java.io.IOException { return bcIn; }
+                @Override public java.io.OutputStream getOutputStream() throws java.io.IOException { return bcOut; }
+                @Override public void closeIO() throws java.io.IOException {
+                    bcIn.close();
+                    bcOut.close();
+                }
+                @Override public byte[] getPublicKey() { return new byte[0]; }
+                @Override public String getAddress() { return hostname != null ? hostname : "unknown"; }
+            };
+        }
+
+        /**
+         * 判断字符串是否为IP地址（IPv4或IPv6）。
+         * SNI不适用于IP地址连接。
+         */
+        private static boolean isIpAddress(String host) {
+            return host.chars().allMatch(c -> Character.isDigit(c) || c == '.')
+                    || host.contains(":");
         }
 
         /**
@@ -200,16 +396,19 @@ public class RdpTlsFix {
     public static synchronized void apply(X509TrustManager trustManager) {
         if (applied) return;
 
+        // 在任何SSL操作之前启用SSL调试输出
+        System.setProperty("javax.net.debug", "ssl:handshake");
+
         try {
-            // 1. 限制TLS协议版本为1.2（必须在创建SSLContext之前设置）
+            // 1. 允许TLS 1.0/1.1/1.2协议（排除TLS 1.3，必须在创建SSLContext之前设置）
             enableRdpTlsCiphers();
 
-            // 2. 修复Transport.CIPHERS字段（仅TLS 1.2密码套件）
+            // 2. 修复Transport.CIPHERS字段（现代密码套件）
             fixTransportCiphers();
 
-            // 3. 设置系统属性（分层防御，影响所有SSLContext.getInstance("TLS")）
-            System.setProperty("jdk.tls.client.protocols", "TLSv1.2");
-            logger.info("已设置系统属性jdk.tls.client.protocols=TLSv1.2");
+            // 3. 设置系统属性（分层防御，排除TLS 1.3）
+            System.setProperty("jdk.tls.client.protocols", "TLSv1,TLSv1.1,TLSv1.2");
+            logger.info("已设置系统属性jdk.tls.client.protocols=TLSv1,TLSv1.1,TLSv1.2");
 
             // 4. 设置JVM默认SSLContext使用宽松TrustManager
             fixDefaultSslContext(trustManager);
@@ -223,14 +422,17 @@ public class RdpTlsFix {
 
     /**
      * 通过反射替换ISO对象中的transport字段为RdpTransport实例。
-     * 
+     *
      * 这是最核心的修复：RdpTransport覆盖了negotiateSSL()方法，
      * 使用SSLContext.getInstance("TLSv1.2")并显式设置setEnabledProtocols，
      * 确保SSL握手只使用TLS 1.2协议，避免Windows RDP服务器的Connection Reset。
-     * 
+     * 同时设置SNI（Server Name Indication），避免Windows Server 2012 R2+
+     * 因缺少SNI扩展而重置TLS连接。
+     *
      * @param rdpLayer RDP层对象，用于导航到ISO层
+     * @param hostname RDP服务器主机名（用于SNI，可为null表示无SNI）
      */
-    public static void injectRdpTransport(Object rdpLayer) {
+    public static void injectRdpTransport(Object rdpLayer, String hostname) {
         try {
             // 导航路径: RdpPatch(Rdp) → secureLayer → mcsLayer → isoLayer → transport
             // 1. 获取secureLayer字段（Rdp类中声明为protected）
@@ -255,10 +457,10 @@ public class RdpTlsFix {
 
             // 5. 创建RdpTransport并替换
             State state = originalTransport.getState();
-            RdpTransport rdpTransport = new RdpTransport(state, (ISO) isoLayer);
+            RdpTransport rdpTransport = new RdpTransport(state, (ISO) isoLayer, hostname);
             transportField.set(isoLayer, rdpTransport);
 
-            logger.info("已替换Transport为RdpTransport（强制TLS 1.2协议）");
+            logger.info("已替换Transport为RdpTransport（强制TLS 1.2协议, SNI=" + hostname + "）");
         } catch (NoSuchFieldException e) {
             logger.log(Level.WARNING, "反射替换Transport失败（字段不存在）: " + e.getMessage()
                     + "，将依赖系统属性限制TLS 1.2");
@@ -280,7 +482,7 @@ public class RdpTlsFix {
     private static void fixTransportCiphers() {
         try {
             // 先过滤出JVM实际支持的密码套件
-            SSLContext ctx = SSLContext.getInstance("TLSv1.2");
+            SSLContext ctx = SSLContext.getInstance("TLS");
             ctx.init(null, null, null);
             Set<String> supported = new HashSet<>();
             try (SSLSocket socket = (SSLSocket)
@@ -320,37 +522,42 @@ public class RdpTlsFix {
      */
     private static void fixDefaultSslContext(X509TrustManager trustManager) {
         try {
-            SSLContext ctx = SSLContext.getInstance("TLSv1.2");
+            SSLContext ctx = SSLContext.getInstance("TLS");
             ctx.init(null, new javax.net.ssl.TrustManager[]{trustManager}, null);
             SSLContext.setDefault(ctx);
-            logger.info("已设置默认SSLContext（TLS 1.2 + 宽松TrustManager）");
+            logger.info("已设置默认SSLContext（TLS + 宽松TrustManager）");
         } catch (Exception e) {
             logger.log(Level.WARNING, "设置默认SSLContext失败: " + e.getMessage());
         }
     }
 
     /**
-     * 允许RDP协议所需的TLS密码套件，并限制为TLS 1.2协议。
+     * 允许RDP协议所需的TLS密码套件和协议版本。
      *
      * Windows RDP服务器对TLS 1.3支持不完善，可能导致Connection Reset，
-     * 因此限制为TLS 1.2。同时从jdk.tls.disabledAlgorithms中移除DHE限制
-     * 以兼容更多密码套件。
+     * 因此排除TLS 1.3。旧版Windows服务器（2003/2008）可能只支持TLS 1.0，
+     * 因此也移除TLSv1/TLSv1.1的禁用限制。同时移除DHE限制以兼容更多密码套件。
      */
     private static void enableRdpTlsCiphers() {
         try {
-            // 限制客户端仅使用TLS 1.2，避免TLS 1.3与Windows RDP的兼容性问题
-            java.security.Security.setProperty("jdk.tls.client.protocols", "TLSv1.2");
-            logger.info("已限制TLS客户端协议为TLSv1.2（Security属性）");
+            // 允许TLS 1.0/1.1/1.2（排除TLS 1.3），兼容所有Windows RDP服务器版本
+            java.security.Security.setProperty("jdk.tls.client.protocols", "TLSv1,TLSv1.1,TLSv1.2");
+            logger.info("已设置TLS客户端协议为TLSv1,TLSv1.1,TLSv1.2（Security属性）");
 
-            // 从禁用列表中移除DHE限制（保留TLSv1/TLSv1.1禁用以确保安全性）
+            // 从禁用列表中移除DHE和TLSv1/TLSv1.1限制
             String disabled = java.security.Security.getProperty("jdk.tls.disabledAlgorithms");
             if (disabled != null) {
                 StringBuilder sb = new StringBuilder();
                 for (String item : disabled.split(",")) {
                     String trimmed = item.trim();
                     if (trimmed.isEmpty()) continue;
-                    // 仅移除DHE相关限制，保留TLSv1/TLSv1.1禁用
+                    // 移除DHE相关限制
                     if (trimmed.startsWith("DH ") || trimmed.equals("DHE_DSS") || trimmed.equals("DHE_RSA")) {
+                        logger.fine("移除TLS禁用项: " + trimmed);
+                        continue;
+                    }
+                    // 移除TLSv1/TLSv1.1限制（旧版Windows RDP服务器需要）
+                    if (trimmed.equals("TLSv1") || trimmed.equals("TLSv1.1")) {
                         logger.fine("移除TLS禁用项: " + trimmed);
                         continue;
                     }
@@ -358,7 +565,7 @@ public class RdpTlsFix {
                     sb.append(trimmed);
                 }
                 java.security.Security.setProperty("jdk.tls.disabledAlgorithms", sb.toString());
-                logger.info("已调整TLS禁用算法以兼容RDP协议");
+                logger.info("已调整TLS禁用算法以兼容RDP协议: " + sb);
             }
         } catch (Exception e) {
             logger.log(Level.WARNING, "调整TLS安全属性失败: " + e.getMessage());

@@ -9,11 +9,13 @@ import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.SnapshotParameters;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.ScrollEvent;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
+import javafx.scene.Scene;
 import javafx.stage.Stage;
 
 import java.io.ByteArrayOutputStream;
@@ -553,6 +555,7 @@ public class S3FileBrowserPane extends BorderPane {
 
                     if (currentViewMode == ViewMode.ICON) {
                         rebuildIconView();
+                        loadThumbnailsForIconView();
                     }
                 });
             } catch (Exception e) {
@@ -617,6 +620,7 @@ public class S3FileBrowserPane extends BorderPane {
 
                     if (currentViewMode == ViewMode.ICON) {
                         rebuildIconView();
+                        loadThumbnailsForIconView();
                     }
                 });
             } catch (Exception e) {
@@ -667,80 +671,112 @@ public class S3FileBrowserPane extends BorderPane {
     private void handlePreview(FileItem item) {
         if (currentBucket == null) return;
 
-        // 加载提示
+        // 收集当前目录中所有图片文件
+        List<FileItem> imageItems = new ArrayList<>();
+        int currentIndex = -1;
+        for (int i = 0; i < fileData.size(); i++) {
+            FileItem fi = fileData.get(i);
+            if (!fi.isDirectory() && isImageFile(fi.getDisplayName())) {
+                imageItems.add(fi);
+                if (fi == item || fi.getKey().equals(item.getKey())) {
+                    currentIndex = imageItems.size() - 1;
+                }
+            }
+        }
+        if (imageItems.isEmpty() || currentIndex < 0) return;
+
+        Stage previewStage = new Stage();
+        previewStage.setTitle("图片预览");
+        previewStage.setMinWidth(600);
+        previewStage.setMinHeight(500);
+        previewStage.setWidth(800);
+        previewStage.setHeight(600);
+
+        // 初始加载动画
         ProgressIndicator loadingIndicator = new ProgressIndicator();
         loadingIndicator.setPrefSize(60, 60);
-
-        Dialog<Void> previewDialog = new Dialog<>();
-        previewDialog.setTitle("图片预览 - " + item.getDisplayName());
-        previewDialog.setHeaderText(null);
-        previewDialog.getDialogPane().setMinSize(600, 500);
-        previewDialog.getDialogPane().setPrefSize(800, 600);
-        previewDialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
-
-        // 先显示加载动画
         StackPane loadingPane = new StackPane(loadingIndicator);
         loadingPane.setPrefSize(780, 520);
         loadingPane.setStyle("-fx-background-color: #2b2b2b;");
-        previewDialog.getDialogPane().setContent(loadingPane);
+        previewStage.setScene(new Scene(loadingPane));
 
-        // 异步加载图片
-        new Thread(() -> {
-            try {
-                InputStream is;
-                if (isAliyunOSS) {
-                    is = OssService.getObjectStream(config, currentBucket, item.getKey());
-                } else {
-                    is = S3Service.getObjectStream(config, currentBucket, item.getKey());
-                }
+        // 使用数组以便在lambda中修改
+        final int[] imageIndex = {currentIndex};
 
-                // 读取到内存（InputStream需要在后台线程读取完）
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                byte[] buffer = new byte[8192];
-                int len;
-                while ((len = is.read(buffer)) != -1) {
-                    baos.write(buffer, 0, len);
-                }
-                is.close();
-                byte[] imageBytes = baos.toByteArray();
+        // 加载图片的回调接口
+        Runnable loadImage = new Runnable() {
+            @Override
+            public void run() {
+                int idx = imageIndex[0];
+                if (idx < 0 || idx >= imageItems.size()) return;
+                FileItem currentItem = imageItems.get(idx);
 
-                Platform.runLater(() -> {
+                // 显示加载动画
+                ProgressIndicator indicator = new ProgressIndicator();
+                indicator.setPrefSize(60, 60);
+                StackPane pane = new StackPane(indicator);
+                pane.setPrefSize(780, 520);
+                pane.setStyle("-fx-background-color: #2b2b2b;");
+                previewStage.setScene(new Scene(pane));
+
+                new Thread(() -> {
                     try {
-                        Image image = new Image(new java.io.ByteArrayInputStream(imageBytes));
-                        if (image.isError()) {
-                            throw new Exception("图片格式不支持或文件已损坏");
+                        InputStream is;
+                        if (isAliyunOSS) {
+                            is = OssService.getObjectStream(config, currentBucket, currentItem.getKey());
+                        } else {
+                            is = S3Service.getObjectStream(config, currentBucket, currentItem.getKey());
                         }
 
-                        showImageInPreviewDialog(previewDialog, image, item);
+                        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                        byte[] buffer = new byte[8192];
+                        int len;
+                        while ((len = is.read(buffer)) != -1) {
+                            baos.write(buffer, 0, len);
+                        }
+                        is.close();
+                        byte[] imageBytes = baos.toByteArray();
 
+                        Platform.runLater(() -> {
+                            try {
+                                Image image = new Image(new java.io.ByteArrayInputStream(imageBytes));
+                                if (image.isError()) {
+                                    throw new Exception("图片格式不支持或文件已损坏");
+                                }
+                                showImageInPreviewStage(previewStage, image, currentItem, imageItems, imageIndex, this);
+                            } catch (Exception e) {
+                                Label errorLabel = new Label("图片加载失败: " + e.getMessage());
+                                errorLabel.setStyle("-fx-text-fill: #ff6b6b; -fx-font-size: 13px;");
+                                StackPane errorPane = new StackPane(errorLabel);
+                                errorPane.setPrefSize(780, 520);
+                                errorPane.setStyle("-fx-background-color: #2b2b2b;");
+                                previewStage.setScene(new Scene(errorPane));
+                            }
+                        });
                     } catch (Exception e) {
-                        Label errorLabel = new Label("图片加载失败: " + e.getMessage());
-                        errorLabel.setStyle("-fx-text-fill: #ff6b6b; -fx-font-size: 13px;");
-                        StackPane errorPane = new StackPane(errorLabel);
-                        errorPane.setPrefSize(780, 520);
-                        errorPane.setStyle("-fx-background-color: #2b2b2b;");
-                        previewDialog.getDialogPane().setContent(errorPane);
+                        Platform.runLater(() -> {
+                            Label errorLabel = new Label("图片下载失败: " + e.getMessage());
+                            errorLabel.setStyle("-fx-text-fill: #ff6b6b; -fx-font-size: 13px;");
+                            StackPane errorPane = new StackPane(errorLabel);
+                            errorPane.setPrefSize(780, 520);
+                            errorPane.setStyle("-fx-background-color: #2b2b2b;");
+                            previewStage.setScene(new Scene(errorPane));
+                        });
                     }
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    Label errorLabel = new Label("图片下载失败: " + e.getMessage());
-                    errorLabel.setStyle("-fx-text-fill: #ff6b6b; -fx-font-size: 13px;");
-                    StackPane errorPane = new StackPane(errorLabel);
-                    errorPane.setPrefSize(780, 520);
-                    errorPane.setStyle("-fx-background-color: #2b2b2b;");
-                    previewDialog.getDialogPane().setContent(errorPane);
-                });
+                }, "S3-LoadImage").start();
             }
-        }, "S3-LoadImage").start();
+        };
 
-        previewDialog.show();
+        // 首次加载
+        loadImage.run();
+        previewStage.show();
     }
 
     /**
-     * 在预览对话框中展示图片（支持缩放和拖拽）
+     * 在预览窗口中展示图片（支持缩放、拖拽、上一张/下一张、下载、删除）
      */
-    private void showImageInPreviewDialog(Dialog<Void> dialog, Image image, FileItem item) {
+    private void showImageInPreviewStage(Stage stage, Image image, FileItem item,
+                                          List<FileItem> imageItems, int[] imageIndex, Runnable loadImage) {
         double imgWidth = image.getWidth();
         double imgHeight = image.getHeight();
 
@@ -758,11 +794,11 @@ public class S3FileBrowserPane extends BorderPane {
         imageContainer.setStyle("-fx-background-color: #2b2b2b;");
 
         // 初始适配：适应窗口大小
-        double dialogContentWidth = dialog.getDialogPane().getWidth() > 0 ? dialog.getDialogPane().getWidth() : 780;
-        double dialogContentHeight = dialog.getDialogPane().getHeight() > 0 ? dialog.getDialogPane().getHeight() : 520;
+        double contentWidth = stage.getWidth() > 0 ? stage.getWidth() : 800;
+        double contentHeight = stage.getHeight() > 0 ? stage.getHeight() - 40 : 560;
 
-        double fitWidth = Math.min(imgWidth, dialogContentWidth - 20);
-        double fitHeight = Math.min(imgHeight, dialogContentHeight - 60);
+        double fitWidth = Math.min(imgWidth, contentWidth - 20);
+        double fitHeight = Math.min(imgHeight, contentHeight - 60);
         double scale = Math.min(fitWidth / imgWidth, fitHeight / imgHeight);
         if (scale < 1) {
             imageView.setFitWidth(imgWidth * scale);
@@ -783,7 +819,6 @@ public class S3FileBrowserPane extends BorderPane {
             double newW = currentFitW * zoomFactor;
             double newH = currentFitH * zoomFactor;
 
-            // 限制缩放范围
             double minSize = 50;
             double maxSize = imgWidth * 10;
             if (newW < minSize || newH < minSize || newW > maxSize || newH > maxSize) return;
@@ -809,16 +844,40 @@ public class S3FileBrowserPane extends BorderPane {
             imageView.setTranslateY(translateStart[1] + dy);
         });
 
+        // 设置标题：文件名、尺寸、大小
+        stage.setTitle(String.format("%s  |  %dx%d  |  %s  (%d/%d)",
+                item.getDisplayName(), (int) imgWidth, (int) imgHeight, item.getFormattedSize(),
+                imageIndex[0] + 1, imageItems.size()));
+
         // 工具栏
         HBox toolbar = new HBox(8);
         toolbar.setAlignment(Pos.CENTER_LEFT);
         toolbar.setPadding(new Insets(6, 10, 6, 10));
         toolbar.setStyle("-fx-background-color: #3c3c3c;");
 
-        Label infoLabel = new Label(String.format("%s  |  %dx%d  |  %s",
-                item.getDisplayName(), (int) imgWidth, (int) imgHeight, item.getFormattedSize()));
-        infoLabel.setStyle("-fx-text-fill: #cccccc; -fx-font-size: 12px;");
-        toolbar.getChildren().add(infoLabel);
+        // 上一张按钮
+        Button prevBtn = new Button("◀ 上一张");
+        prevBtn.setStyle("-fx-font-size: 11px; -fx-padding: 3 8;");
+        prevBtn.setDisable(imageIndex[0] <= 0);
+        prevBtn.setOnAction(e -> {
+            if (imageIndex[0] > 0) {
+                imageIndex[0]--;
+                loadImage.run();
+            }
+        });
+        toolbar.getChildren().add(prevBtn);
+
+        // 下一张按钮
+        Button nextBtn = new Button("下一张 ▶");
+        nextBtn.setStyle("-fx-font-size: 11px; -fx-padding: 3 8;");
+        nextBtn.setDisable(imageIndex[0] >= imageItems.size() - 1);
+        nextBtn.setOnAction(e -> {
+            if (imageIndex[0] < imageItems.size() - 1) {
+                imageIndex[0]++;
+                loadImage.run();
+            }
+        });
+        toolbar.getChildren().add(nextBtn);
 
         Region toolSpacer = new Region();
         HBox.setHgrow(toolSpacer, Priority.ALWAYS);
@@ -832,7 +891,7 @@ public class S3FileBrowserPane extends BorderPane {
             double ch = imageContainer.getHeight();
             if (cw <= 0 || ch <= 0) return;
             double s = Math.min((cw - 20) / imgWidth, (ch - 20) / imgHeight);
-            if (s > 1) s = 1; // 不放大超过原始大小
+            if (s > 1) s = 1;
             imageView.setFitWidth(imgWidth * s);
             imageView.setFitHeight(imgHeight * s);
             imageView.setTranslateX(0);
@@ -851,11 +910,114 @@ public class S3FileBrowserPane extends BorderPane {
         });
         toolbar.getChildren().add(originalBtn);
 
+        // 分隔
+        Separator sep2 = new Separator();
+        sep2.setOrientation(javafx.geometry.Orientation.VERTICAL);
+        toolbar.getChildren().add(sep2);
+
+        // 下载按钮
+        Button downloadBtn = new Button("下载");
+        downloadBtn.setStyle("-fx-font-size: 11px; -fx-padding: 3 8;");
+        downloadBtn.setOnAction(e -> {
+            javafx.stage.FileChooser fileChooser = new javafx.stage.FileChooser();
+            fileChooser.setTitle("保存文件");
+            fileChooser.setInitialFileName(item.getDisplayName());
+            java.io.File saveFile = fileChooser.showSaveDialog(stage);
+            if (saveFile == null) return;
+
+            new Thread(() -> {
+                try {
+                    InputStream is;
+                    if (isAliyunOSS) {
+                        is = OssService.getObjectStream(config, currentBucket, item.getKey());
+                    } else {
+                        is = S3Service.getObjectStream(config, currentBucket, item.getKey());
+                    }
+                    java.nio.file.Files.copy(is, saveFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    is.close();
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                        alert.setTitle("下载完成");
+                        alert.setHeaderText(null);
+                        alert.setContentText("文件已保存到: " + saveFile.getAbsolutePath());
+                        alert.showAndWait();
+                    });
+                } catch (Exception ex) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("下载失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText(ex.getMessage());
+                        alert.showAndWait();
+                    });
+                }
+            }, "S3-Download").start();
+        });
+        toolbar.getChildren().add(downloadBtn);
+
+        // 删除按钮
+        Button deleteBtn = new Button("删除");
+        deleteBtn.setStyle("-fx-font-size: 11px; -fx-padding: 3 8; -fx-text-fill: #ff6b6b;");
+        deleteBtn.setOnAction(e -> {
+            Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+            confirm.setTitle("删除确认");
+            confirm.setHeaderText(null);
+            confirm.setContentText("确定要删除文件 \"" + item.getDisplayName() + "\" 吗？");
+            confirm.showAndWait().ifPresent(response -> {
+                if (response != ButtonType.OK) return;
+
+                new Thread(() -> {
+                    try {
+                        if (isAliyunOSS) {
+                            OssService.deleteObject(config, currentBucket, item.getKey());
+                        } else {
+                            S3Service.deleteObject(config, currentBucket, item.getKey());
+                        }
+                        Platform.runLater(() -> {
+                            // 从列表中移除已删除项
+                            imageItems.remove(imageIndex[0]);
+                            fileData.remove(item);
+                            if (imageItems.isEmpty()) {
+                                stage.close();
+                                refresh();
+                            } else {
+                                if (imageIndex[0] >= imageItems.size()) {
+                                    imageIndex[0] = imageItems.size() - 1;
+                                }
+                                refresh();
+                                loadImage.run();
+                            }
+                        });
+                    } catch (Exception ex) {
+                        Platform.runLater(() -> {
+                            Alert alert = new Alert(Alert.AlertType.ERROR);
+                            alert.setTitle("删除失败");
+                            alert.setHeaderText(null);
+                            alert.setContentText(ex.getMessage());
+                            alert.showAndWait();
+                        });
+                    }
+                }, "S3-Delete").start();
+            });
+        });
+        toolbar.getChildren().add(deleteBtn);
+
         VBox content = new VBox();
         content.getChildren().addAll(toolbar, imageContainer);
         VBox.setVgrow(imageContainer, Priority.ALWAYS);
 
-        dialog.getDialogPane().setContent(content);
+        stage.setScene(new Scene(content));
+
+        // 键盘快捷键：左右箭头切换图片
+        stage.getScene().setOnKeyPressed(e -> {
+            if (e.getCode() == javafx.scene.input.KeyCode.LEFT && imageIndex[0] > 0) {
+                imageIndex[0]--;
+                loadImage.run();
+            } else if (e.getCode() == javafx.scene.input.KeyCode.RIGHT && imageIndex[0] < imageItems.size() - 1) {
+                imageIndex[0]++;
+                loadImage.run();
+            }
+        });
     }
 
     /**
@@ -869,7 +1031,14 @@ public class S3FileBrowserPane extends BorderPane {
         if (w <= 0 || h <= 0) return;
 
         double scale = Math.min(thumbSize / w, thumbSize / h);
-        Image thumbnail = new Image(fullImage.getUrl(), w * scale, h * scale, true, true);
+        ImageView thumbView = new ImageView(fullImage);
+        thumbView.setFitWidth(w * scale);
+        thumbView.setFitHeight(h * scale);
+        thumbView.setPreserveRatio(true);
+        thumbView.setSmooth(true);
+        SnapshotParameters params = new SnapshotParameters();
+        params.setFill(javafx.scene.paint.Color.TRANSPARENT);
+        Image thumbnail = thumbView.snapshot(params, null);
 
         // 在图标视图中找到对应的VBox并替换图标
         for (var node : iconFlowPane.getChildren()) {
@@ -887,6 +1056,43 @@ public class S3FileBrowserPane extends BorderPane {
                     }
                     break;
                 }
+            }
+        }
+    }
+
+    /**
+     * 异步加载图标视图中所有图片文件的缩略图
+     */
+    private void loadThumbnailsForIconView() {
+        if (currentBucket == null) return;
+        for (FileItem item : fileData) {
+            if (!item.isDirectory() && isImageFile(item.getDisplayName())) {
+                new Thread(() -> {
+                    try {
+                        InputStream is;
+                        if (isAliyunOSS) {
+                            is = OssService.getObjectStream(config, currentBucket, item.getKey());
+                        } else {
+                            is = S3Service.getObjectStream(config, currentBucket, item.getKey());
+                        }
+                        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                        byte[] buffer = new byte[8192];
+                        int len;
+                        while ((len = is.read(buffer)) != -1) {
+                            baos.write(buffer, 0, len);
+                        }
+                        is.close();
+                        byte[] imageBytes = baos.toByteArray();
+
+                        Platform.runLater(() -> {
+                            try {
+                                Image image = new Image(new java.io.ByteArrayInputStream(imageBytes));
+                                if (image.isError() || image.getWidth() <= 0 || image.getHeight() <= 0) return;
+                                updateIconBoxWithThumbnail(item, image);
+                            } catch (Exception ignored) {}
+                        });
+                    } catch (Exception ignored) {}
+                }, "S3-Thumb-" + item.getName()).start();
             }
         }
     }

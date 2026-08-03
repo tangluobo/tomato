@@ -38,6 +38,7 @@ public class TableDataView extends BorderPane {
     private final String tableName;
 
     private TableView<ObservableList<String>> tableView;
+    private ScrollPane tableScrollPane;
     private Label pageInfoLabel;
     private Button firstPageBtn;
     private Button prevPageBtn;
@@ -217,11 +218,16 @@ public class TableDataView extends BorderPane {
 
     /**
      * 根据鼠标事件位置获取对应的cell坐标 [row, colIndex]
+     * 点击右侧空白区域（TableRow 但非 TableCell）时返回该行和最后一列
      */
     private int[] getCellPositionAt(javafx.scene.input.MouseEvent event) {
         Node target = event.getPickResult().getIntersectedNode();
-        // 向上查找TableCell
+        TableRow<?> clickedRow = null;
+        // 向上查找TableCell 或 TableRow
         while (target != null && target != tableView) {
+            if (clickedRow == null && target instanceof TableRow<?> row) {
+                clickedRow = row;
+            }
             if (target instanceof TableCell<?, ?> cell) {
                 if (cell.getTableColumn() != null && cell.getTableRow() != null) {
                     int row = cell.getTableRow().getIndex();
@@ -233,7 +239,28 @@ public class TableDataView extends BorderPane {
             }
             target = target.getParent();
         }
+        // 点击的不是TableCell（如右侧空白区域），但命中了TableRow
+        if (clickedRow != null) {
+            int rowIndex = clickedRow.getIndex();
+            int lastCol = getLastVisibleDataColumnIndex();
+            if (lastCol >= 0) {
+                return new int[]{rowIndex, lastCol};
+            }
+        }
         return null;
+    }
+
+    /**
+     * 获取最后一个可见数据列在 tableView.getColumns() 中的索引
+     */
+    private int getLastVisibleDataColumnIndex() {
+        for (int i = tableView.getColumns().size() - 1; i >= 0; i--) {
+            TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(i);
+            if (col.isVisible() && !ROW_SELECTOR_COL.equals(col.getUserData())) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**
@@ -467,6 +494,18 @@ public class TableDataView extends BorderPane {
         tableView.skinProperty().addListener((obs, oldSkin, newSkin) -> {
             if (newSkin != null) {
                 stripPaddingRecursive(tableView);
+                // filler（表头右侧空白）点击时清除选择，行为与点击空白区域一致
+                Node filler = tableView.lookup(".column-header-background .filler");
+                if (filler != null) {
+                    filler.setOnMousePressed(event -> {
+                        if (event.getButton() == MouseButton.PRIMARY) {
+                            tableView.getSelectionModel().clearSelection();
+                            anchorCell[0] = -1;
+                            anchorCell[1] = -1;
+                            event.consume();
+                        }
+                    });
+                }
             }
         });
 
@@ -475,13 +514,16 @@ public class TableDataView extends BorderPane {
         loadingIndicator.setMaxSize(40, 40);
         loadingIndicator.setVisible(false);
 
-        // ScrollPane包裹TableView：提供全宽水平滚动条，TableView自身只负责垂直滚动
-        ScrollPane tableScrollPane = new ScrollPane(tableView);
+        // ScrollPane包裹TableView：提供全宽水平滚动条
+        // TableView宽度填满视口（minWidth绑定视口宽度），垂直滚动条自然落在面板最右侧
+        tableScrollPane = new ScrollPane(tableView);
         tableScrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
         tableScrollPane.setFitToHeight(true);
         tableScrollPane.setFitToWidth(false);
         tableScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
         tableScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        // TableView宽度跟随视口（让垂直滚动条位于面板最右，右侧空白属于表格）
+        tableView.minWidthProperty().bind(tableScrollPane.widthProperty());
 
         centerPane = new StackPane(tableScrollPane, loadingIndicator);
         centerPane.setPadding(Insets.EMPTY);

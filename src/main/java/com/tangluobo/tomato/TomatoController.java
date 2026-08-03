@@ -23,6 +23,10 @@ import javafx.stage.Screen;
 import javafx.stage.Stage;
 
 import java.nio.charset.Charset;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 public class TomatoController {
     @FXML
@@ -84,6 +88,13 @@ public class TomatoController {
     private static final int EDGE_THRESHOLD = 10;
     private static final int MAXIMIZE_THRESHOLD = 5;
 
+    // 模块缓存：保留每个模块的实例及其侧边栏子节点/内容容器，切换模块时复用，保留原有窗口状态
+    private final Map<String, Module> moduleCache = new HashMap<>();
+    private final Map<String, List<Node>> moduleSidebarChildrenCache = new HashMap<>();
+    private final Map<String, String> moduleSidebarStyleCache = new HashMap<>();
+    private final Map<String, VBox> moduleContentCache = new HashMap<>();
+    private String currentModuleId = null;
+
     @FXML
     protected void onHelloButtonClick() {
         Charset.availableCharsets().forEach((s, charset) -> {
@@ -98,30 +109,69 @@ public class TomatoController {
     protected void onModuleClick(javafx.event.ActionEvent event) {
         Button source = (Button) event.getSource();
         String moduleId = (String) source.getUserData();
-
-        com.tangluobo.tomato.module.Module module = null;
-        switch (moduleId) {
-            case "connect":
-                module = new ConnectModule();
-                break;
-            case "tools":
-                module = new ToolsModule();
-                break;
-            case "settings":
-                module = new SettingsModule();
-                break;
-        }
-
-        if (module != null) {
-            loadModule(module);
-        }
+        loadModule(moduleId);
     }
 
-    private void loadModule(Module module) {
+    private Module getOrCreateModule(String moduleId) {
+        return moduleCache.computeIfAbsent(moduleId, id -> {
+            switch (id) {
+                case "connect":
+                    return new ConnectModule();
+                case "tools":
+                    return new ToolsModule();
+                case "settings":
+                    return new SettingsModule();
+                default:
+                    return null;
+            }
+        });
+    }
+
+    private void loadModule(String moduleId) {
+        if (moduleId.equals(currentModuleId)) {
+            return;
+        }
+
+        Module module = getOrCreateModule(moduleId);
+        if (module == null) {
+            return;
+        }
+
         chatTitle.setText(module.getName());
-        
+
+        // 移除当前模块的侧边栏子节点（保留节点到缓存，不销毁状态）
         sidebarPane.getChildren().clear();
-        module.loadSidebar(sidebarPane);
+        contentPane.getChildren().removeIf(n -> n != titleBar && n != chatScrollPane);
+
+        // 隐藏 ScrollPane，直接使用模块内容容器占满右侧
+        chatScrollPane.setManaged(false);
+        chatScrollPane.setVisible(false);
+        contentPane.setFillWidth(true);
+
+        // 获取或创建该模块缓存的侧边栏子节点/内容容器
+        List<Node> sidebarChildren = moduleSidebarChildrenCache.get(moduleId);
+        VBox moduleContent = moduleContentCache.get(moduleId);
+
+        if (sidebarChildren == null) {
+            // 首次加载该模块：构建其 UI 并缓存
+            sidebarPane.setStyle("-fx-background-color: #ffffff; -fx-border-color: #e5e5e5; -fx-border-width: 0 1 0 0;");
+            module.loadSidebar(sidebarPane);
+            moduleSidebarChildrenCache.put(moduleId, new ArrayList<>(sidebarPane.getChildren()));
+            moduleSidebarStyleCache.put(moduleId, sidebarPane.getStyle());
+
+            moduleContent = new VBox();
+            moduleContent.setStyle("-fx-background-color: #ffffff;");
+            moduleContent.setFillWidth(true);
+            moduleContent.setMaxWidth(Double.MAX_VALUE);
+            moduleContent.setMaxHeight(Double.MAX_VALUE);
+            VBox.setVgrow(moduleContent, Priority.ALWAYS);
+            module.loadContent(moduleContent);
+            moduleContentCache.put(moduleId, moduleContent);
+        } else {
+            // 恢复缓存的样式和子节点到 sidebarPane
+            sidebarPane.setStyle(moduleSidebarStyleCache.getOrDefault(moduleId, "-fx-background-color: #ffffff; -fx-border-color: #e5e5e5; -fx-border-width: 0 1 0 0;"));
+            sidebarPane.getChildren().addAll(sidebarChildren);
+        }
 
         if (sidebarPane.getChildren().isEmpty()) {
             sidebarPane.setVisible(false);
@@ -135,26 +185,9 @@ public class TomatoController {
             divider2.setManaged(true);
         }
 
-        chatContent.getChildren().clear();
-        // 移除contentPane中之前可能添加的模块内容（保留titleBar和chatScrollPane）
-        contentPane.getChildren().removeIf(n -> n != titleBar && n != chatScrollPane);
-
-        // 隐藏ScrollPane，改为直接在contentPane中添加模块内容容器
-        // 这样模块内容可以占满右侧全部空间
-        chatScrollPane.setManaged(false);
-        chatScrollPane.setVisible(false);
-
-        contentPane.setFillWidth(true);
-
-        VBox moduleContent = new VBox();
-        moduleContent.setStyle("-fx-background-color: #ffffff;");
-        moduleContent.setFillWidth(true);
-        moduleContent.setMaxWidth(Double.MAX_VALUE);
-        moduleContent.setMaxHeight(Double.MAX_VALUE);
-        VBox.setVgrow(moduleContent, Priority.ALWAYS);
         contentPane.getChildren().add(moduleContent);
 
-        module.loadContent(moduleContent);
+        currentModuleId = moduleId;
     }
 
     @FXML
@@ -241,7 +274,7 @@ public class TomatoController {
             }
         });
 
-        loadModule(new ConnectModule());
+        loadModule("connect");
     }
 
     private void setupDivider(Region divider) {
