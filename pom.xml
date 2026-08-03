@@ -15,7 +15,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <native.maven.plugin.version>0.11.3</native.maven.plugin.version>
         <mainClass>com.tangluobo.tomato.Launcher</mainClass>
-        <javafx.version>25.0.3-ea+3</javafx.version>
+        <javafx.version>27-ea+24</javafx.version>
     </properties>
 
     <description>
