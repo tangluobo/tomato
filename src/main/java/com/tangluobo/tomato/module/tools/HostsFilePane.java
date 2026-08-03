@@ -248,6 +248,22 @@ public class HostsFilePane extends VBox {
         // 带行号的编辑器
         editorArea = new NumberedTextArea();
         editorArea.setEditable(false);
+        editorArea.setOnSave(() -> {
+            if (viewingSystemHosts) {
+                if (writeHostsFile(editorArea.getText())) {
+                    showSuccess("Hosts 文件已保存");
+                }
+            } else if (selectedGroup != null) {
+                saveCurrentEditorToGroup();
+                if (selectedGroup.isEnabled()) {
+                    if (updateHostsFile()) {
+                        showSuccess("分组已保存并更新系统 Hosts");
+                    }
+                } else {
+                    showSuccess("分组已保存");
+                }
+            }
+        });
         VBox.setVgrow(editorArea, Priority.ALWAYS);
 
         // 按钮区
@@ -266,7 +282,6 @@ public class HostsFilePane extends VBox {
         buttonBar.getChildren().addAll(refreshBtn, saveBtn);
 
         panel.getChildren().addAll(
-                titleLabel,
                 entriesLabel,
                 entriesScrollPane,
                 addEntryBox,
@@ -1123,10 +1138,11 @@ public class HostsFilePane extends VBox {
     private static class NumberedTextArea extends BorderPane {
         private final TextArea textArea;
         private final VBox lineNumbersBox;
+        private Runnable onSave;
 
         NumberedTextArea() {
             textArea = new TextArea();
-            textArea.setStyle("-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 12px; -fx-padding: 8; -fx-background-color: transparent; -fx-border-color: transparent; -fx-focus-color: transparent; -fx-faint-focus-color: transparent;");
+            textArea.setStyle("-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 12px; -fx-padding: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-width: 0; -fx-focus-color: transparent; -fx-faint-focus-color: transparent;");
             HBox.setHgrow(textArea, Priority.ALWAYS);
 
             lineNumbersBox = new VBox(2);
@@ -1137,21 +1153,51 @@ public class HostsFilePane extends VBox {
 
             HBox container = new HBox();
             container.getChildren().addAll(lineNumbersBox, textArea);
-            container.setStyle("-fx-border-color: #c4d8ee; -fx-border-width: 1; -fx-border-radius: 4; -fx-background-color: #ffffff;");
+            container.setStyle("-fx-background-color: #ffffff; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0;");
 
             ScrollPane scrollPane = new ScrollPane(container);
             scrollPane.setFitToWidth(true);
             scrollPane.setFitToHeight(true);
-            scrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
+            scrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0;");
             VBox.setVgrow(scrollPane, Priority.ALWAYS);
             HBox.setHgrow(scrollPane, Priority.ALWAYS);
 
             setCenter(scrollPane);
-            setStyle("-fx-background-color: #ffffff;");
+            setStyle("-fx-background-color: #ffffff; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0;");
             setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
 
             updateLineNumbers();
             textArea.textProperty().addListener((obs, oldVal, newVal) -> updateLineNumbers());
+
+            // Ctrl+D 复制当前行, Ctrl+S 保存
+            textArea.setOnKeyPressed(e -> {
+                if (e.isControlDown() && e.getCode() == javafx.scene.input.KeyCode.D) {
+                    e.consume();
+                    duplicateCurrentLine();
+                } else if (e.isControlDown() && e.getCode() == javafx.scene.input.KeyCode.S) {
+                    e.consume();
+                    if (onSave != null) onSave.run();
+                }
+            });
+        }
+
+        /**
+         * 复制当前行到下一行
+         */
+        private void duplicateCurrentLine() {
+            String text = textArea.getText();
+            int caret = textArea.getCaretPosition();
+
+            int lineStart = text.lastIndexOf('\n', caret - 1) + 1;
+            int lineEnd = text.indexOf('\n', caret);
+            if (lineEnd == -1) lineEnd = text.length();
+
+            String currentLine = text.substring(lineStart, lineEnd);
+            String insertText = currentLine + "\n";
+
+            textArea.insertText(lineStart, insertText);
+            // 移动光标到新行对应位置
+            textArea.positionCaret(lineStart + insertText.length() + (caret - lineStart));
         }
 
         private void updateLineNumbers() {
@@ -1169,6 +1215,7 @@ public class HostsFilePane extends VBox {
         String getText() { return textArea.getText(); }
         void clear() { textArea.clear(); }
         void setEditable(boolean b) { textArea.setEditable(b); }
+        void setOnSave(Runnable r) { this.onSave = r; }
         javafx.beans.value.ObservableValue<String> textProperty() { return textArea.textProperty(); }
     }
 
