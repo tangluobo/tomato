@@ -96,7 +96,7 @@ public class EditDatabaseDialog {
         charsetCombo = new ComboBox<>();
         charsetCombo.getItems().add("(默认)");
         charsetCombo.getItems().addAll(CHARSET_COLLATIONS.keySet());
-        charsetCombo.setPrefWidth(Double.MAX_VALUE);
+        charsetCombo.setMaxWidth(Double.MAX_VALUE);
         if (currentCharset != null && CHARSET_COLLATIONS.containsKey(currentCharset)) {
             charsetCombo.setValue(currentCharset);
         } else {
@@ -110,7 +110,7 @@ public class EditDatabaseDialog {
         if (currentCharset != null && CHARSET_COLLATIONS.containsKey(currentCharset)) {
             collationCombo.getItems().addAll(CHARSET_COLLATIONS.get(currentCharset));
         }
-        collationCombo.setPrefWidth(Double.MAX_VALUE);
+        collationCombo.setMaxWidth(Double.MAX_VALUE);
         if (currentCollation != null && collationCombo.getItems().contains(currentCollation)) {
             collationCombo.setValue(currentCollation);
         } else {

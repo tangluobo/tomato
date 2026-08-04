@@ -82,13 +82,7 @@ public class DatabaseService {
                  ResultSet rs = stmt.executeQuery("SHOW DATABASES")) {
                 while (rs.next()) {
                     String dbName = rs.getString(1);
-                    // 过滤掉系统库
-                    if (!"information_schema".equals(dbName)
-                        && !"performance_schema".equals(dbName)
-                        && !"sys".equals(dbName)
-                        && !"mysql".equals(dbName)) {
                         databases.add(dbName);
-                    }
                 }
             }
         } else if (config.getType() == ConnectType.POSTGRESQL) {
@@ -1783,7 +1777,7 @@ public class DatabaseService {
             //   connectTimeout=5000            连接握手超时 5s
             //   socketTimeout=30000            socket 读超时 30s
             case MYSQL -> "jdbc:mysql://" + host + ":" + port + "/" + db
-                    + "?useSSL=false&serverTimezone=Asia/Shanghai"
+                    + "?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true"
                     + "&useLocalSessionState=true&cacheDefaultDatabase=true&cacheServerConfiguration=true"
                     + "&maintainTimeStats=false&prepStmtCacheEnabled=true&prepStmtCacheSize=250"
                     + "&useServerPrepStmts=true&rewriteBatchedStatements=true"

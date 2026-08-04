@@ -34,6 +34,8 @@ public class TerminalEmulator {
     private boolean applicationCursorKeys = false;
     // 是否原点模式(DECOM) - 光标定位相对于滚动区域
     private boolean originMode = false;
+    // 是否括号粘贴模式(DECSET 2004) - 粘贴时用\033[200~...\033[201~包裹内容
+    private boolean bracketedPasteMode = false;
     // ANSI.SYS保存的光标位置（不同于DECSC的savedCursorX/Y）
     private int ansiSavedCursorX = 0;
     private int ansiSavedCursorY = 0;
@@ -266,6 +268,7 @@ public class TerminalEmulator {
     public int getCursorY() { return cursorY; }
     public boolean isCursorVisible() { return cursorVisible; }
     public boolean isApplicationCursorKeys() { return applicationCursorKeys; }
+    public boolean isBracketedPasteMode() { return bracketedPasteMode; }
     public char getChar(int x, int y) { return buffer[y][x]; }
     public int getAttr(int x, int y) { return attrs[y][x]; }
 
@@ -1033,6 +1036,10 @@ public class TerminalEmulator {
                                 if (!usingAltBuffer) switchToAltBuffer();
                                 break;
                             case 7: autoWrap = true; break;
+                            case 2004: // 括号粘贴模式
+                                bracketedPasteMode = true;
+                                debugLogCursorState("CSI ?2004h (bracketed paste ON)");
+                                break;
                         }
                     }
                 } else {
@@ -1089,6 +1096,10 @@ public class TerminalEmulator {
                                 autoAltBuffer = false;
                                 break;
                             case 7: autoWrap = false; break;
+                            case 2004: // 括号粘贴模式
+                                bracketedPasteMode = false;
+                                debugLogCursorState("CSI ?2004l (bracketed paste OFF)");
+                                break;
                         }
                     }
                 } else {
@@ -1681,6 +1692,7 @@ public class TerminalEmulator {
         insertMode = false;
         applicationCursorKeys = false;
         originMode = false;
+        bracketedPasteMode = false;
         scrollTop = 0;
         scrollBottom = 0;
         suppressScreenModify = false;

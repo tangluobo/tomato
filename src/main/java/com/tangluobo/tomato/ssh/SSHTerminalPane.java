@@ -523,6 +523,11 @@ public class SSHTerminalPane extends BorderPane {
             if (text != null && !text.isEmpty()) {
                 // 将换行符转换为回车，适配终端输入
                 text = text.replace("\r\n", "\r").replace("\n", "\r");
+                // 括号粘贴模式：用\033[200~...\033[201~包裹内容，
+                // 让应用程序（如Claude CLI、bash）识别为粘贴而非逐字符输入
+                if (terminalView.getEmulator().isBracketedPasteMode()) {
+                    text = "\033[200~" + text + "\033[201~";
+                }
                 try {
                     OutputStream os = sshSession.getOutputStream();
                     if (os != null) {
