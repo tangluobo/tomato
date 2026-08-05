@@ -941,10 +941,12 @@ public class TableDataView extends BorderPane {
                 super.updateItem(item, empty);
                 if (empty || getTableRow() == null || getTableRow().getItem() == null) {
                     arrow.setVisible(false);
+                    setStyle("-fx-border-color: transparent; -fx-border-width: 0;");
                     return;
                 }
 
                 // 初始状态
+                setStyle("-fx-border-color: transparent #BEBEBC #BEBEBC #BEBEBC; -fx-border-width: 0 1 1 1;");
                 arrow.setVisible(isRowSelected(getTableRow().getIndex()));
 
                 // 监听选中cells变化

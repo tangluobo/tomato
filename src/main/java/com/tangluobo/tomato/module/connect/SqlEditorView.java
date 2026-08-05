@@ -747,8 +747,10 @@ public class SqlEditorView extends BorderPane {
                 super.updateItem(item, empty);
                 if (empty || getTableRow() == null || getTableRow().getItem() == null) {
                     arrow.setVisible(false);
+                    setStyle("-fx-border-color: transparent; -fx-border-width: 0;");
                     return;
                 }
+                setStyle("-fx-border-color: transparent #BEBEBC #BEBEBC #BEBEBC; -fx-border-width: 0 1 1 1;");
                 arrow.setVisible(tableView.getSelectionModel().getSelectedIndices().contains(getTableRow().getIndex()));
                 selectionListener = obs -> {
                     if (getTableRow() != null) {
