@@ -19,9 +19,11 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -47,6 +49,8 @@ public class DdnsService {
     private final Map<String, ConnectionConfig> configCache = new ConcurrentHashMap<>();
     private volatile String lastPublicIp = null;
     private ScheduledExecutorService scheduler;
+    private ExecutorService worker;
+    private final AtomicBoolean tickRunning = new AtomicBoolean(false);
     private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 
     private DdnsService() {}
@@ -77,6 +81,10 @@ public class DdnsService {
             scheduler.shutdownNow();
             scheduler = null;
         }
+        if (worker != null) {
+            worker.shutdownNow();
+            worker = null;
+        }
     }
 
     private void ensureScheduler() {
@@ -86,7 +94,12 @@ public class DdnsService {
             t.setDaemon(true);
             return t;
         });
-        // initialDelay=0：启动后立即检测一次，然后每 5 分钟一次
+        worker = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "DDNS-Worker");
+            t.setDaemon(true);
+            return t;
+        });
+        // initialDelay=0：启动后立即检测一次，然后每分钟一次
         scheduler.scheduleAtFixedRate(this::tick, 0, INTERVAL_MINUTES, TimeUnit.MINUTES);
     }
 
@@ -137,43 +150,55 @@ public class DdnsService {
         }
     }
 
-    /** 定时检测公网IP变化，变化则更新所有开启DDNS的记录 */
+    /** 定时触发：仅将实际工作提交到独立工作线程，不阻塞调度线程，绝不影响主界面 */
     private void tick() {
         if (entries.isEmpty()) return;
-        if (configCache.isEmpty()) refreshConfigCache();
-        String ip;
+        if (worker == null || worker.isShutdown()) return;
+        worker.submit(this::doTick);
+    }
+
+    /** 实际检测公网IP变化并更新所有开启DDNS的记录（运行在 DDNS-Worker 线程） */
+    private void doTick() {
+        // 防止上一次更新尚未完成时重复执行（网络慢时避免堆积）
+        if (!tickRunning.compareAndSet(false, true)) return;
         try {
-            ip = fetchPublicIp();
-        } catch (Exception e) {
-            System.out.println("[DDNS] 获取公网IP失败: " + e.getMessage());
-            return;
-        }
-        if (ip.equals(lastPublicIp)) {
-            System.out.println("[DDNS] 公网IP未变化: " + ip + "，跳过更新");
-            return;
-        }
-        System.out.println("[DDNS] 检测到公网IP变化: " + (lastPublicIp == null ? "(首次)" : lastPublicIp) + " → " + ip
-                + "，开始更新 " + entries.size() + " 条记录");
-        lastPublicIp = ip;
-        for (DdnsEntry entry : entries) {
-            ConnectionConfig config = configCache.get(entry.connectionId);
-            if (config == null) {
-                System.out.println("[DDNS] 跳过 " + entry.rr + "." + entry.domainName + "：连接配置不存在");
-                continue;
-            }
+            if (configCache.isEmpty()) refreshConfigCache();
+            String ip;
             try {
-                AliyunService.updateDomainRecord(config, entry.recordId, entry.rr, entry.type, ip,
-                        parseLong(entry.ttl), nullIfEmpty(entry.line), null);
-                System.out.println("[DDNS] 已更新 " + entry.rr + "." + entry.domainName + " → " + ip);
+                ip = fetchPublicIp();
             } catch (Exception e) {
-                String msg = e.getMessage();
-                // DomainRecordDuplicate: 记录值已等于新IP，视为已是最新，不算失败
-                if (msg != null && msg.contains("DomainRecordDuplicate")) {
-                    System.out.println("[DDNS] " + entry.rr + "." + entry.domainName + " 已是最新IP " + ip + "，无需更新");
-                } else {
-                    System.out.println("[DDNS] 更新失败 " + entry.rr + "." + entry.domainName + ": " + msg);
+                System.out.println("[DDNS] 获取公网IP失败: " + e.getMessage());
+                return;
+            }
+            if (ip.equals(lastPublicIp)) {
+                System.out.println("[DDNS] 公网IP未变化: " + ip + "，跳过更新");
+                return;
+            }
+            System.out.println("[DDNS] 检测到公网IP变化: " + (lastPublicIp == null ? "(首次)" : lastPublicIp) + " → " + ip
+                    + "，开始更新 " + entries.size() + " 条记录");
+            lastPublicIp = ip;
+            for (DdnsEntry entry : entries) {
+                ConnectionConfig config = configCache.get(entry.connectionId);
+                if (config == null) {
+                    System.out.println("[DDNS] 跳过 " + entry.rr + "." + entry.domainName + "：连接配置不存在");
+                    continue;
+                }
+                try {
+                    AliyunService.updateDomainRecord(config, entry.recordId, entry.rr, entry.type, ip,
+                            parseLong(entry.ttl), nullIfEmpty(entry.line), null);
+                    System.out.println("[DDNS] 已更新 " + entry.rr + "." + entry.domainName + " → " + ip);
+                } catch (Exception e) {
+                    String msg = e.getMessage();
+                    // DomainRecordDuplicate: 记录值已等于新IP，视为已是最新，不算失败
+                    if (msg != null && msg.contains("DomainRecordDuplicate")) {
+                        System.out.println("[DDNS] " + entry.rr + "." + entry.domainName + " 已是最新IP " + ip + "，无需更新");
+                    } else {
+                        System.out.println("[DDNS] 更新失败 " + entry.rr + "." + entry.domainName + ": " + msg);
+                    }
                 }
             }
+        } finally {
+            tickRunning.set(false);
         }
     }
 
