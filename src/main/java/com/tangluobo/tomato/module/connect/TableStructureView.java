@@ -596,6 +596,21 @@ public class TableStructureView extends BorderPane {
         sqlPreviewModeBox.getSelectionModel().selectFirst();
         sqlPreviewModeBox.setMaxWidth(javafx.scene.layout.Region.USE_PREF_SIZE);
         sqlPreviewModeBox.setOnAction(e -> loadSqlPreview());
+        // 修复弹出位置：强制弹出框在ComboBox下方显示，浮于状态栏之上
+        sqlPreviewModeBox.setOnShown(e -> {
+            javafx.geometry.Point2D pos = sqlPreviewModeBox.localToScreen(0, sqlPreviewModeBox.getHeight());
+            if (pos == null) return;
+            for (javafx.stage.Window w : javafx.stage.Window.getWindows()) {
+                if (w instanceof javafx.stage.PopupWindow && w.isShowing()) {
+                    javafx.stage.PopupWindow popup = (javafx.stage.PopupWindow) w;
+                    if (popup.getOwnerWindow() == sqlPreviewModeBox.getScene().getWindow()) {
+                        popup.setX(pos.getX());
+                        popup.setY(pos.getY());
+                        break;
+                    }
+                }
+            }
+        });
 
         HBox modeBox = new HBox(sqlPreviewModeBox);
         modeBox.setPadding(new Insets(2, 0, 0, 0));
