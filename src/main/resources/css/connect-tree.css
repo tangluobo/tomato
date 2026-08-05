@@ -465,6 +465,29 @@
     -fx-border-width: 0;
 }
 
+/* 注释标签页TextArea：去除边框和顶部线条 */
+.comment-text-area {
+    -fx-font-size: 13px;
+    -fx-background-color: white;
+    -fx-background-insets: 0;
+    -fx-background-radius: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-padding: 4;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+}
+.comment-text-area .scroll-pane {
+    -fx-background-color: white;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+}
+.comment-text-area .scroll-pane .content {
+    -fx-background-color: white;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+}
+
 .table-view .column-header-background .nested-column-header {
     -fx-padding: 0;
     -fx-background-insets: 0;

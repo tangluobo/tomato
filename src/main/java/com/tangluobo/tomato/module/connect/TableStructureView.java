@@ -574,7 +574,7 @@ public class TableStructureView extends BorderPane {
         commentTextArea = new TextArea();
         commentTextArea.setPromptText("请输入表注释");
         commentTextArea.setWrapText(true);
-        commentTextArea.setStyle("-fx-font-size: 13px; -fx-background-color: white; -fx-background-radius: 0; -fx-background-insets: 0; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 4; -fx-focus-color: transparent; -fx-faint-focus-color: transparent;");
+        commentTextArea.getStyleClass().add("comment-text-area");
         VBox.setVgrow(commentTextArea, javafx.scene.layout.Priority.ALWAYS);
         box.getChildren().add(commentTextArea);
         return box;
@@ -594,10 +594,13 @@ public class TableStructureView extends BorderPane {
         sqlPreviewModeBox = new ComboBox<>();
         sqlPreviewModeBox.getItems().addAll("保存", "另存为");
         sqlPreviewModeBox.getSelectionModel().selectFirst();
-        sqlPreviewModeBox.setStyle("-fx-pref-width: 100px;");
+        sqlPreviewModeBox.setMaxWidth(100);
+        sqlPreviewModeBox.setPrefWidth(100);
         sqlPreviewModeBox.setOnAction(e -> loadSqlPreview());
 
-        box.getChildren().addAll(sqlPreviewViewer.getNode(), sqlPreviewModeBox);
+        HBox modeBox = new HBox(sqlPreviewModeBox);
+        modeBox.setPadding(new Insets(2, 0, 0, 0));
+        box.getChildren().addAll(sqlPreviewViewer.getNode(), modeBox);
         return box;
     }
 
