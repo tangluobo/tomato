@@ -569,17 +569,14 @@ public class TableStructureView extends BorderPane {
      * 注释标签页：可编辑文本区域
      */
     private VBox createCommentPane() {
-        VBox box = new VBox(8);
-        box.setPadding(new Insets(8));
+        VBox box = new VBox();
         box.setStyle("-fx-background-color: white;");
-        Label header = new Label("表注释：");
-        header.setStyle("-fx-font-size: 12px; -fx-text-fill: #333;");
         commentTextArea = new TextArea();
         commentTextArea.setPromptText("请输入表注释");
         commentTextArea.setWrapText(true);
-        commentTextArea.setStyle("-fx-font-size: 13px;");
+        commentTextArea.setStyle("-fx-font-size: 13px; -fx-background-color: white; -fx-background-radius: 0; -fx-background-insets: 0; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 4; -fx-focus-color: transparent; -fx-faint-focus-color: transparent;");
         VBox.setVgrow(commentTextArea, javafx.scene.layout.Priority.ALWAYS);
-        box.getChildren().addAll(header, commentTextArea);
+        box.getChildren().add(commentTextArea);
         return box;
     }
 
@@ -587,8 +584,7 @@ public class TableStructureView extends BorderPane {
      * SQL预览标签页：展示生成SQL的只读文本区域
      */
     private VBox createSqlPreviewPane() {
-        VBox box = new VBox(8);
-        box.setPadding(new Insets(8));
+        VBox box = new VBox(4);
         box.setStyle("-fx-background-color: white;");
         sqlPreviewViewer = new SqlPreviewViewer();
         sqlPreviewViewer.setText("-- 加载中...");
@@ -1880,13 +1876,16 @@ public class TableStructureView extends BorderPane {
             textArea.setWrapText(false);
             textArea.setStyle(
                     "-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 13px; " +
-                            "-fx-background-color: white; -fx-padding: 4; -fx-text-fill: #333;"
+                            "-fx-background-color: white; -fx-padding: 2; -fx-text-fill: #333; " +
+                            "-fx-border-color: transparent; -fx-border-width: 0; " +
+                            "-fx-background-insets: 0; -fx-background-radius: 0;"
             );
 
             scrollPane = new org.fxmisc.flowless.VirtualizedScrollPane<>(textArea);
+            scrollPane.setStyle("-fx-background-color: white; -fx-border-color: transparent; -fx-border-width: 0;");
 
             gutterBox = new VBox();
-            gutterBox.setStyle("-fx-background-color: #f8f8f8; -fx-padding: 4 0 0 0;");
+            gutterBox.setStyle("-fx-background-color: #f8f8f8; -fx-padding: 2 0 0 0;");
             gutterBox.setPrefWidth(60);
             gutterBox.setMinWidth(60);
             gutterBox.setMaxWidth(60);
