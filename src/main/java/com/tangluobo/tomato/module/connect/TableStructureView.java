@@ -9,6 +9,8 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.*;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.input.KeyCode;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.GridPane;
@@ -18,7 +20,6 @@ import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Arc;
 import javafx.scene.shape.ArcType;
-import javafx.scene.shape.Line;
 import javafx.scene.shape.Polygon;
 import javafx.scene.shape.Rectangle;
 
@@ -271,6 +272,25 @@ public class TableStructureView extends BorderPane {
         return btn;
     }
 
+    /**
+     * 从资源目录加载图标图片，返回指定尺寸的ImageView。
+     * @param resourcePath 资源路径（如 /images/connect/col_add.png）
+     * @param size 图标边长（像素）
+     */
+    private Node createImageIcon(String resourcePath, int size) {
+        try {
+            Image img = new Image(getClass().getResourceAsStream(resourcePath));
+            ImageView iv = new ImageView(img);
+            iv.setFitWidth(size);
+            iv.setFitHeight(size);
+            iv.setPreserveRatio(true);
+            return iv;
+        } catch (Exception e) {
+            // 加载失败时返回空Label，避免按钮显示异常
+            return new Label("");
+        }
+    }
+
     /** 保存图标：蓝色上箭头 */
     private Node createSaveIcon() {
         javafx.scene.Group g = new javafx.scene.Group();
@@ -284,104 +304,34 @@ public class TableStructureView extends BorderPane {
         return g;
     }
 
-    /** 添加字段图标：绿色加号 */
+    /** 添加字段图标 */
     private Node createAddIcon() {
-        javafx.scene.Group g = new javafx.scene.Group();
-        Rectangle bg = new Rectangle(14, 14);
-        bg.setFill(Color.valueOf("#4CAF50"));
-        bg.setArcWidth(3);
-        bg.setArcHeight(3);
-        Line h = new Line(3, 7, 11, 7);
-        h.setStroke(Color.WHITE);
-        h.setStrokeWidth(2);
-        Line v = new Line(7, 3, 7, 11);
-        v.setStroke(Color.WHITE);
-        v.setStrokeWidth(2);
-        g.getChildren().addAll(bg, h, v);
-        return g;
+        return createImageIcon("/images/connect/col_add.png", 16);
     }
 
-    /** 插入字段图标：蓝色向右插入箭头 */
+    /** 插入字段图标 */
     private Node createInsertIcon() {
-        javafx.scene.Group g = new javafx.scene.Group();
-        Rectangle bg = new Rectangle(14, 14);
-        bg.setFill(Color.valueOf("#FB8C00"));
-        bg.setArcWidth(3);
-        bg.setArcHeight(3);
-        Polygon arrow = new Polygon(3, 7, 9, 3, 9, 11);
-        arrow.setFill(Color.WHITE);
-        Line bar = new Line(11, 3, 11, 11);
-        bar.setStroke(Color.WHITE);
-        bar.setStrokeWidth(2);
-        g.getChildren().addAll(bg, arrow, bar);
-        return g;
+        return createImageIcon("/images/connect/col_jump.png", 16);
     }
 
-    /** 主键图标：金黄色钥匙 */
+    /** 主键图标 */
     private Node createPrimaryKeyIcon() {
-        javafx.scene.Group g = new javafx.scene.Group();
-        Rectangle bg = new Rectangle(14, 14);
-        bg.setFill(Color.valueOf("#FDD835"));
-        bg.setArcWidth(3);
-        bg.setArcHeight(3);
-        // 钥匙圆环
-        javafx.scene.shape.Circle ring = new javafx.scene.shape.Circle(5, 5, 2.2);
-        ring.setFill(null);
-        ring.setStroke(Color.valueOf("#5D4037"));
-        ring.setStrokeWidth(1.4);
-        // 钥匙杆
-        Line stem = new Line(6.2, 6.2, 11, 11);
-        stem.setStroke(Color.valueOf("#5D4037"));
-        stem.setStrokeWidth(1.4);
-        // 齿
-        Line tooth = new Line(9, 10, 11, 8);
-        tooth.setStroke(Color.valueOf("#5D4037"));
-        tooth.setStrokeWidth(1.4);
-        g.getChildren().addAll(bg, ring, stem, tooth);
-        return g;
+        return createImageIcon("/images/connect/primary_key.png", 16);
     }
 
-    /** 上移图标：蓝色向上箭头 */
+    /** 上移图标 */
     private Node createMoveUpIcon() {
-        javafx.scene.Group g = new javafx.scene.Group();
-        Rectangle bg = new Rectangle(14, 14);
-        bg.setFill(Color.valueOf("#1E88E5"));
-        bg.setArcWidth(3);
-        bg.setArcHeight(3);
-        Polygon arrow = new Polygon(7, 2, 12, 9, 2, 9);
-        arrow.setFill(Color.WHITE);
-        g.getChildren().addAll(bg, arrow);
-        return g;
+        return createImageIcon("/images/connect/up.png", 16);
     }
 
-    /** 下移图标：蓝色向下箭头 */
+    /** 下移图标 */
     private Node createMoveDownIcon() {
-        javafx.scene.Group g = new javafx.scene.Group();
-        Rectangle bg = new Rectangle(14, 14);
-        bg.setFill(Color.valueOf("#1E88E5"));
-        bg.setArcWidth(3);
-        bg.setArcHeight(3);
-        Polygon arrow = new Polygon(7, 12, 2, 5, 12, 5);
-        arrow.setFill(Color.WHITE);
-        g.getChildren().addAll(bg, arrow);
-        return g;
+        return createImageIcon("/images/connect/down.png", 16);
     }
 
-    /** 删除图标：红色X */
+    /** 删除图标 */
     private Node createDeleteIcon() {
-        javafx.scene.Group g = new javafx.scene.Group();
-        Rectangle bg = new Rectangle(14, 14);
-        bg.setFill(Color.valueOf("#F44336"));
-        bg.setArcWidth(3);
-        bg.setArcHeight(3);
-        Line l1 = new Line(3, 3, 11, 11);
-        l1.setStroke(Color.WHITE);
-        l1.setStrokeWidth(2);
-        Line l2 = new Line(11, 3, 3, 11);
-        l2.setStroke(Color.WHITE);
-        l2.setStrokeWidth(2);
-        g.getChildren().addAll(bg, l1, l2);
-        return g;
+        return createImageIcon("/images/connect/col_del.png", 16);
     }
 
     /** 刷新图标：灰色环形箭头 */
