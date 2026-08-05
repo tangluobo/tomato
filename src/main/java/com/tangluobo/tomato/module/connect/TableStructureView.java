@@ -593,10 +593,8 @@ public class TableStructureView extends BorderPane {
         VBox.setVgrow(sqlPreviewViewer.getNode(), javafx.scene.layout.Priority.ALWAYS);
 
         // 自定义下拉框：保存（ALTER语句）/ 另存为（CREATE TABLE完整SQL）
-        sqlPreviewModeBtn = new Button("保存 \u25BE");
-        sqlPreviewModeBtn.setStyle("-fx-pref-width: 80px; -fx-pref-height: 24px; -fx-font-size: 12px; " +
-                "-fx-background-color: #f8f8f8; -fx-border-color: #ccc; -fx-border-width: 1; " +
-                "-fx-alignment: CENTER_LEFT; -fx-padding: 0 6 0 8;");
+        sqlPreviewModeBtn = new Button("保存");
+        sqlPreviewModeBtn.setStyle("-fx-pref-width: 70px; -fx-font-size: 12px;");
         sqlPreviewModeBtn.setCursor(javafx.scene.Cursor.HAND);
 
         sqlPreviewModePopup = new javafx.stage.Popup();
@@ -614,7 +612,7 @@ public class TableStructureView extends BorderPane {
             item.setOnMouseExited(e -> item.setStyle("-fx-padding: 5 20 5 10; -fx-font-size: 12px; -fx-cursor: hand; -fx-text-fill: #333;"));
             item.setOnMouseClicked(e -> {
                 sqlPreviewMode = opt;
-                sqlPreviewModeBtn.setText(opt + " \u25BE");
+                sqlPreviewModeBtn.setText(opt);
                 sqlPreviewModePopup.hide();
                 loadSqlPreview();
             });
