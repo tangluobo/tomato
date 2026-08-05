@@ -557,7 +557,8 @@ public class TableStructureView extends BorderPane {
 
         // 复选框行：二进制 + 自增 + 无符号 + 填充零
         // 每个复选框单独一行，padding 设为 0，让方框紧贴左侧，与"默认"文本对齐
-        VBox checkRow = new VBox(4);
+        // 行间距与外层 VBox 一致(6px)，保证视觉间距统一
+        VBox checkRow = new VBox(6);
         checkRow.setAlignment(Pos.CENTER_LEFT);
         checkRow.setStyle("-fx-padding: 0;");
 
