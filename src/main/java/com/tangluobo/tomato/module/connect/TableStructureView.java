@@ -609,7 +609,7 @@ public class TableStructureView extends BorderPane {
                     // 覆盖CSS中的min-height:200px，消除空白选项
                     if (popup.getScene() != null && popup.getScene().getRoot() != null) {
                         popup.getScene().getRoot().lookupAll(".list-view").forEach(n ->
-                                n.setStyle("-fx-min-height: 0; -fx-pref-height: 50px; -fx-max-height: 50px;"));
+                                n.setStyle("-fx-min-height: 0; -fx-pref-height: 65px; -fx-max-height: 65px;"));
                     }
                     javafx.geometry.Point2D pos = sqlPreviewModeBox.localToScreen(0, sqlPreviewModeBox.getHeight());
                     if (pos != null) {
