@@ -1760,31 +1760,37 @@ public class DatabaseService {
     }
 
     /**
-     * 更新表注释
+     * 生成更新表注释的SQL
      */
-    public static void updateTableComment(ConnectionConfig config, String databaseName, String tableName, String comment) throws Exception {
-        Connection conn = getConnection(config);
+    public static String generateUpdateTableCommentSql(ConnectionConfig config, String databaseName, String tableName, String comment) {
         String escapedComment = comment != null ? comment.replace("'", "''") : "";
-        String sql = switch (config.getType()) {
+        return switch (config.getType()) {
             case MYSQL -> "ALTER TABLE `" + databaseName + "`.`" + tableName + "` COMMENT = '" + escapedComment + "'";
             case POSTGRESQL -> "COMMENT ON TABLE \"" + databaseName + "\".\"" + tableName + "\" IS '" + escapedComment + "'";
             case ORACLE -> "COMMENT ON TABLE \"" + databaseName + "\".\"" + tableName + "\" IS '" + escapedComment + "'";
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
-        try (Statement stmt = conn.createStatement()) {
+    }
+
+    /**
+     * 更新表注释
+     */
+    public static void updateTableComment(ConnectionConfig config, String databaseName, String tableName, String comment) throws Exception {
+        String sql = generateUpdateTableCommentSql(config, databaseName, tableName, comment);
+        try (Statement stmt = getConnection(config).createStatement()) {
             stmt.executeUpdate(sql);
         }
     }
 
     /**
-     * 更新列注释
+     * 生成更新列注释的SQL
      * MySQL需要ALTER TABLE MODIFY COLUMN携带完整列定义；PostgreSQL/Oracle使用COMMENT ON COLUMN
      *
      * @param columnTitles 字段表列标题列表（字段名、类型、长度、非空、主键、自增、默认值、注释）
      * @param row 当前行数据
      */
-    public static void updateColumnComment(ConnectionConfig config, String databaseName, String tableName,
-                                           List<String> columnTitles, ObservableList<String> row) throws Exception {
+    public static String generateUpdateColumnCommentSql(ConnectionConfig config, String databaseName, String tableName,
+                                                        List<String> columnTitles, ObservableList<String> row) throws Exception {
         String columnName = getValue(row, columnTitles, "字段名");
         String comment = getValue(row, columnTitles, "注释");
         String escapedComment = comment != null ? comment.replace("'", "''") : "";
@@ -1812,19 +1818,23 @@ public class DatabaseService {
                 sql.append(" AUTO_INCREMENT");
             }
             sql.append(" COMMENT '").append(escapedComment).append("'");
-            try (Statement stmt = getConnection(config).createStatement()) {
-                stmt.executeUpdate(sql.toString());
-            }
+            return sql.toString();
         } else if (config.getType() == ConnectType.POSTGRESQL) {
-            String sql = "COMMENT ON COLUMN \"" + databaseName + "\".\"" + tableName + "\".\"" + columnName + "\" IS '" + escapedComment + "'";
-            try (Statement stmt = getConnection(config).createStatement()) {
-                stmt.executeUpdate(sql);
-            }
+            return "COMMENT ON COLUMN \"" + databaseName + "\".\"" + tableName + "\".\"" + columnName + "\" IS '" + escapedComment + "'";
         } else if (config.getType() == ConnectType.ORACLE) {
-            String sql = "COMMENT ON COLUMN \"" + databaseName + "\".\"" + tableName + "\".\"" + columnName + "\" IS '" + escapedComment + "'";
-            try (Statement stmt = getConnection(config).createStatement()) {
-                stmt.executeUpdate(sql);
-            }
+            return "COMMENT ON COLUMN \"" + databaseName + "\".\"" + tableName + "\".\"" + columnName + "\" IS '" + escapedComment + "'";
+        }
+        throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+    }
+
+    /**
+     * 更新列注释
+     */
+    public static void updateColumnComment(ConnectionConfig config, String databaseName, String tableName,
+                                           List<String> columnTitles, ObservableList<String> row) throws Exception {
+        String sql = generateUpdateColumnCommentSql(config, databaseName, tableName, columnTitles, row);
+        try (Statement stmt = getConnection(config).createStatement()) {
+            stmt.executeUpdate(sql);
         }
     }
 

@@ -65,6 +65,8 @@ public class TableStructureView extends BorderPane {
 
     /** SQL预览标签页 */
     private TextArea sqlPreviewArea;
+    /** SQL预览模式下拉框：保存（ALTER）/ 另存为（CREATE TABLE） */
+    private ComboBox<String> sqlPreviewModeBox;
 
     /** 缓存的字符集->排序规则映射（用于选项标签页字符集联动，避免在FX线程查询数据库） */
     private Map<String, List<String>> cachedCharsets;
@@ -85,6 +87,9 @@ public class TableStructureView extends BorderPane {
 
     /** 列注释原始值缓存（字段名 → 原始注释），用于检测变更 */
     private Map<String, String> originalColumnComments = new HashMap<>();
+
+    /** 表注释原始值，用于检测变更 */
+    private String originalTableComment = null;
 
     /** 缓存的数据类型列表（基于当前连接的数据库类型和版本） */
     private List<String> cachedDataTypes;
@@ -202,7 +207,7 @@ public class TableStructureView extends BorderPane {
                 loadOptions();
             } else if (newTab == commentTab && !commentLoaded) {
                 loadComment();
-            } else if (newTab == sqlPreviewTab && !sqlPreviewLoaded) {
+            } else if (newTab == sqlPreviewTab) {
                 loadSqlPreview();
             }
         });
@@ -593,7 +598,15 @@ public class TableStructureView extends BorderPane {
         sqlPreviewArea.setStyle("-fx-font-family: monospace; -fx-font-size: 13px;");
         sqlPreviewArea.setText("-- 加载中...");
         VBox.setVgrow(sqlPreviewArea, javafx.scene.layout.Priority.ALWAYS);
-        box.getChildren().addAll(header, sqlPreviewArea);
+
+        // 模式下拉框：保存（ALTER语句）/ 另存为（CREATE TABLE完整SQL）
+        sqlPreviewModeBox = new ComboBox<>();
+        sqlPreviewModeBox.getItems().addAll("保存", "另存为");
+        sqlPreviewModeBox.getSelectionModel().selectFirst();
+        sqlPreviewModeBox.setStyle("-fx-pref-width: 100px;");
+        sqlPreviewModeBox.setOnAction(e -> loadSqlPreview());
+
+        box.getChildren().addAll(header, sqlPreviewArea, sqlPreviewModeBox);
         return box;
     }
 
@@ -756,6 +769,7 @@ public class TableStructureView extends BorderPane {
                 String comment = DatabaseService.getTableComment(config, databaseName, tableName);
                 Platform.runLater(() -> {
                     commentTextArea.setText(comment != null ? comment : "");
+                    originalTableComment = comment != null ? comment : "";
                     commentLoaded = true;
                     statusLabel.setText("表注释已加载");
                 });
@@ -770,13 +784,66 @@ public class TableStructureView extends BorderPane {
      */
     private void loadSqlPreview() {
         sqlPreviewArea.setText("-- 加载中...");
+        boolean isSaveAs = "另存为".equals(sqlPreviewModeBox.getSelectionModel().getSelectedItem());
         new Thread(() -> {
             try {
-                String ddl = DatabaseService.getTableDdl(config, databaseName, tableName);
+                if (isSaveAs) {
+                    // 另存为模式：显示完整的CREATE TABLE DDL
+                    String ddl = DatabaseService.getTableDdl(config, databaseName, tableName);
+                    String result = ddl != null && !ddl.isEmpty() ? ddl : "-- 无法获取CREATE TABLE DDL";
+                    Platform.runLater(() -> {
+                        sqlPreviewArea.setText(result);
+                        sqlPreviewLoaded = true;
+                        statusLabel.setText("SQL预览已加载（CREATE TABLE）");
+                    });
+                    return;
+                }
+
+                // 保存模式：显示ALTER语句
+                List<ObservableList<String>> changedColumns = new ArrayList<>();
+                List<String> alterStatements = new ArrayList<>();
+
+                if (columnTitles != null && tableView.getItems() != null) {
+                    int commentIdx = columnTitles.indexOf("注释");
+                    int nameIdx = columnTitles.indexOf("字段名");
+                    if (commentIdx >= 0 && nameIdx >= 0) {
+                        for (ObservableList<String> row : tableView.getItems()) {
+                            String colName = nameIdx < row.size() ? row.get(nameIdx) : "";
+                            String comment = commentIdx < row.size() ? row.get(commentIdx) : "";
+                            String original = originalColumnComments.getOrDefault(colName, "");
+                            if (!original.equals(comment != null ? comment : "")) {
+                                changedColumns.add(row);
+                            }
+                        }
+                    }
+                }
+
+                for (ObservableList<String> row : changedColumns) {
+                    try {
+                        alterStatements.add(DatabaseService.generateUpdateColumnCommentSql(config, databaseName, tableName, columnTitles, row) + ";");
+                    } catch (Exception e) {
+                        alterStatements.add("-- 生成列注释SQL失败: " + e.getMessage());
+                    }
+                }
+
+                if (commentLoaded) {
+                    String tableComment = commentTextArea.getText();
+                    String original = originalTableComment != null ? originalTableComment : "";
+                    if (!original.equals(tableComment != null ? tableComment : "")) {
+                        alterStatements.add(DatabaseService.generateUpdateTableCommentSql(config, databaseName, tableName, tableComment) + ";");
+                    }
+                }
+
+                StringBuilder preview = new StringBuilder();
+                for (String sql : alterStatements) {
+                    preview.append(sql).append("\n");
+                }
+
+                String result = preview.length() > 0 ? preview.toString() : "-- 无变更";
                 Platform.runLater(() -> {
-                    sqlPreviewArea.setText(ddl != null ? ddl : "-- 无法获取DDL");
+                    sqlPreviewArea.setText(result);
                     sqlPreviewLoaded = true;
-                    statusLabel.setText("SQL预览已加载");
+                    statusLabel.setText(alterStatements.isEmpty() ? "SQL预览已加载（无变更）" : "SQL预览已加载（" + alterStatements.size() + "条ALTER语句）");
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> {
@@ -860,9 +927,10 @@ public class TableStructureView extends BorderPane {
             }
         }
 
-        // 表注释（仅当注释标签页已加载时才保存，避免空值覆盖）
+        // 表注释（仅当注释标签页已加载且有变更时才保存）
         String tableComment = commentLoaded ? commentTextArea.getText() : null;
-        boolean tableCommentChanged = tableComment != null;
+        String originalTc = originalTableComment != null ? originalTableComment : "";
+        boolean tableCommentChanged = commentLoaded && !originalTc.equals(tableComment != null ? tableComment : "");
 
         if (changedColumns.isEmpty() && !tableCommentChanged) {
             statusLabel.setText("没有需要保存的注释变更");
@@ -903,6 +971,9 @@ public class TableStructureView extends BorderPane {
                             String comment = commentIdx < row.size() ? row.get(commentIdx) : "";
                             originalColumnComments.put(colName, comment != null ? comment : "");
                         }
+                    }
+                    if (tableCommentChanged) {
+                        originalTableComment = tableComment != null ? tableComment : "";
                     }
                     statusLabel.setText("注释已保存");
                 } else {
@@ -1049,6 +1120,7 @@ public class TableStructureView extends BorderPane {
         optionsLoaded = false;
         commentLoaded = false;
         sqlPreviewLoaded = false;
+        originalTableComment = null;
 
         new Thread(() -> {
             try {
