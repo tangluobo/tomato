@@ -1760,6 +1760,102 @@ public class DatabaseService {
     }
 
     /**
+     * 更新表注释
+     */
+    public static void updateTableComment(ConnectionConfig config, String databaseName, String tableName, String comment) throws Exception {
+        Connection conn = getConnection(config);
+        String escapedComment = comment != null ? comment.replace("'", "''") : "";
+        String sql = switch (config.getType()) {
+            case MYSQL -> "ALTER TABLE `" + databaseName + "`.`" + tableName + "` COMMENT = '" + escapedComment + "'";
+            case POSTGRESQL -> "COMMENT ON TABLE \"" + databaseName + "\".\"" + tableName + "\" IS '" + escapedComment + "'";
+            case ORACLE -> "COMMENT ON TABLE \"" + databaseName + "\".\"" + tableName + "\" IS '" + escapedComment + "'";
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        };
+        try (Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(sql);
+        }
+    }
+
+    /**
+     * 更新列注释
+     * MySQL需要ALTER TABLE MODIFY COLUMN携带完整列定义；PostgreSQL/Oracle使用COMMENT ON COLUMN
+     *
+     * @param columnTitles 字段表列标题列表（字段名、类型、长度、非空、主键、自增、默认值、注释）
+     * @param row 当前行数据
+     */
+    public static void updateColumnComment(ConnectionConfig config, String databaseName, String tableName,
+                                           List<String> columnTitles, ObservableList<String> row) throws Exception {
+        String columnName = getValue(row, columnTitles, "字段名");
+        String comment = getValue(row, columnTitles, "注释");
+        String escapedComment = comment != null ? comment.replace("'", "''") : "";
+
+        if (config.getType() == ConnectType.MYSQL) {
+            // MySQL: 需要查询原始列类型，构造完整的MODIFY COLUMN语句
+            String columnType = getMysqlColumnType(config, databaseName, tableName, columnName);
+            String notNull = getValue(row, columnTitles, "非空");
+            String autoIncrement = getValue(row, columnTitles, "自增");
+            String defaultValue = getValue(row, columnTitles, "默认值");
+
+            StringBuilder sql = new StringBuilder();
+            sql.append("ALTER TABLE `").append(databaseName).append("`.`").append(tableName).append("` ");
+            sql.append("MODIFY COLUMN `").append(columnName).append("` ");
+            sql.append(columnType);
+            if ("是".equals(notNull)) {
+                sql.append(" NOT NULL");
+            } else {
+                sql.append(" NULL");
+            }
+            if (defaultValue != null && !defaultValue.isEmpty()) {
+                sql.append(" DEFAULT '").append(defaultValue.replace("'", "''")).append("'");
+            }
+            if ("是".equals(autoIncrement)) {
+                sql.append(" AUTO_INCREMENT");
+            }
+            sql.append(" COMMENT '").append(escapedComment).append("'");
+            try (Statement stmt = getConnection(config).createStatement()) {
+                stmt.executeUpdate(sql.toString());
+            }
+        } else if (config.getType() == ConnectType.POSTGRESQL) {
+            String sql = "COMMENT ON COLUMN \"" + databaseName + "\".\"" + tableName + "\".\"" + columnName + "\" IS '" + escapedComment + "'";
+            try (Statement stmt = getConnection(config).createStatement()) {
+                stmt.executeUpdate(sql);
+            }
+        } else if (config.getType() == ConnectType.ORACLE) {
+            String sql = "COMMENT ON COLUMN \"" + databaseName + "\".\"" + tableName + "\".\"" + columnName + "\" IS '" + escapedComment + "'";
+            try (Statement stmt = getConnection(config).createStatement()) {
+                stmt.executeUpdate(sql);
+            }
+        }
+    }
+
+    /**
+     * 查询MySQL列的完整类型字符串（如 varchar(255)、int、decimal(10,2)）
+     */
+    private static String getMysqlColumnType(ConnectionConfig config, String databaseName, String tableName, String columnName) throws Exception {
+        Connection conn = getConnection(config);
+        String sql = "SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?";
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, databaseName);
+            stmt.setString(2, tableName);
+            stmt.setString(3, columnName);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString("COLUMN_TYPE");
+                }
+            }
+        }
+        throw new RuntimeException("未找到列: " + columnName);
+    }
+
+    /**
+     * 从行数据中按列标题获取值
+     */
+    private static String getValue(ObservableList<String> row, List<String> columnTitles, String title) {
+        int idx = columnTitles.indexOf(title);
+        return idx >= 0 && idx < row.size() ? row.get(idx) : "";
+    }
+
+    /**
      * 构建JDBC URL
      */
     private static String buildJdbcUrl(ConnectionConfig config, String host, int port, String database) {

@@ -80,6 +80,12 @@ public class TableStructureView extends BorderPane {
     /** 数据列数量（不含行选择器列） */
     private int dataColumnCount;
 
+    /** 字段表列标题（字段名、类型、长度、非空、主键、自增、默认值、注释） */
+    private List<String> columnTitles;
+
+    /** 列注释原始值缓存（字段名 → 原始注释），用于检测变更 */
+    private Map<String, String> originalColumnComments = new HashMap<>();
+
     /** 缓存的数据类型列表（基于当前连接的数据库类型和版本） */
     private List<String> cachedDataTypes;
     /** 缓存的数据库版本字符串 */
@@ -136,13 +142,14 @@ public class TableStructureView extends BorderPane {
         // TableView
         tableView = new TableView<>();
         tableView.setEditable(true);
-        tableView.setFixedCellSize(28);
+        GlobalConfig globalConfig = GlobalConfig.getInstance();
+        int rowHeight = globalConfig.getTableFontSize() + 18;
+        tableView.setFixedCellSize(rowHeight);
         tableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         tableView.getSelectionModel().setCellSelectionEnabled(false);
-        GlobalConfig globalConfig = GlobalConfig.getInstance();
         String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
                 globalConfig.getTableFontName(), globalConfig.getTableFontSize());
-        tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0;");
+        tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0; -fx-table-header-height: " + rowHeight + ";");
         tableView.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
 
         // 加载指示器
@@ -360,11 +367,12 @@ public class TableStructureView extends BorderPane {
     private TableView<ObservableList<String>> createInfoTableView() {
         TableView<ObservableList<String>> tv = new TableView<>();
         tv.setEditable(false);
-        tv.setFixedCellSize(28);
         GlobalConfig globalConfig = GlobalConfig.getInstance();
+        int rowHeight = globalConfig.getTableFontSize() + 18;
+        tv.setFixedCellSize(rowHeight);
         String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
                 globalConfig.getTableFontName(), globalConfig.getTableFontSize());
-        tv.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0;");
+        tv.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0; -fx-table-header-height: " + rowHeight + ";");
         tv.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         tv.setPlaceholder(new Label("暂无数据"));
         return tv;
@@ -835,8 +843,73 @@ public class TableStructureView extends BorderPane {
     // ====== 工具栏动作处理（占位实现，后续对接业务逻辑） ======
 
     private void handleSave() {
-        // TODO: 实现保存逻辑（生成ALTER TABLE等DDL并提交）
-        statusLabel.setText("保存功能待实现");
+        // 收集变更的列注释
+        List<ObservableList<String>> changedColumns = new ArrayList<>();
+        if (columnTitles != null && tableView.getItems() != null) {
+            int commentIdx = columnTitles.indexOf("注释");
+            int nameIdx = columnTitles.indexOf("字段名");
+            if (commentIdx >= 0 && nameIdx >= 0) {
+                for (ObservableList<String> row : tableView.getItems()) {
+                    String colName = nameIdx < row.size() ? row.get(nameIdx) : "";
+                    String comment = commentIdx < row.size() ? row.get(commentIdx) : "";
+                    String original = originalColumnComments.getOrDefault(colName, "");
+                    if (!original.equals(comment != null ? comment : "")) {
+                        changedColumns.add(row);
+                    }
+                }
+            }
+        }
+
+        // 表注释（仅当注释标签页已加载时才保存，避免空值覆盖）
+        String tableComment = commentLoaded ? commentTextArea.getText() : null;
+        boolean tableCommentChanged = tableComment != null;
+
+        if (changedColumns.isEmpty() && !tableCommentChanged) {
+            statusLabel.setText("没有需要保存的注释变更");
+            return;
+        }
+
+        statusLabel.setText("正在保存注释...");
+        new Thread(() -> {
+            List<String> errors = new ArrayList<>();
+            int nameIdx = columnTitles != null ? columnTitles.indexOf("字段名") : -1;
+
+            // 保存表注释
+            if (tableCommentChanged) {
+                try {
+                    DatabaseService.updateTableComment(config, databaseName, tableName, tableComment);
+                } catch (Exception e) {
+                    errors.add("表注释: " + e.getMessage());
+                }
+            }
+
+            // 保存列注释
+            for (ObservableList<String> row : changedColumns) {
+                try {
+                    DatabaseService.updateColumnComment(config, databaseName, tableName, columnTitles, row);
+                } catch (Exception e) {
+                    String colName = nameIdx >= 0 && nameIdx < row.size() ? row.get(nameIdx) : "?";
+                    errors.add(colName + ": " + e.getMessage());
+                }
+            }
+
+            Platform.runLater(() -> {
+                if (errors.isEmpty()) {
+                    // 更新原始注释缓存
+                    int commentIdx = columnTitles != null ? columnTitles.indexOf("注释") : -1;
+                    if (commentIdx >= 0 && nameIdx >= 0) {
+                        for (ObservableList<String> row : tableView.getItems()) {
+                            String colName = nameIdx < row.size() ? row.get(nameIdx) : "";
+                            String comment = commentIdx < row.size() ? row.get(commentIdx) : "";
+                            originalColumnComments.put(colName, comment != null ? comment : "");
+                        }
+                    }
+                    statusLabel.setText("注释已保存");
+                } else {
+                    statusLabel.setText("保存部分失败: " + String.join("; ", errors));
+                }
+            });
+        }, "DB-SaveComments").start();
     }
 
     private void handleAddField() {
@@ -1010,12 +1083,13 @@ public class TableStructureView extends BorderPane {
     private void updateTableView(List<Map<String, String>> columns) {
         tableView.getColumns().clear();
         tableView.getItems().clear();
+        originalColumnComments.clear();
 
         if (columns.isEmpty()) return;
 
         // 列标题名（从第一行的key集合获取，保持LinkedHashMap的插入顺序）
-        List<String> columnTitles = new ArrayList<>(columns.get(0).keySet());
-        dataColumnCount = columnTitles.size();
+        this.columnTitles = new ArrayList<>(columns.get(0).keySet());
+        dataColumnCount = this.columnTitles.size();
 
         // 创建行选择器列：选中行显示黑色实心三角箭头
         TableColumn<ObservableList<String>, String> selectorCol = new TableColumn<>();
@@ -1135,8 +1209,8 @@ public class TableStructureView extends BorderPane {
             } else if ("主键".equals(title) || "非空".equals(title)) {
                 // "主键"/"非空"列使用复选框，点击直接切换
                 col.setCellFactory(tc -> new PrimaryKeyCheckBoxTableCell());
-            } else if ("字段名".equals(title) || "长度".equals(title)) {
-                // "字段名"/"长度"列使用可编辑TextField单元格
+            } else if ("字段名".equals(title) || "长度".equals(title) || "注释".equals(title)) {
+                // "字段名"/"长度"/"注释"列使用可编辑TextField单元格
                 col.setCellFactory(tc -> new EditableTextFieldTableCell(columnTitles));
                 col.setOnEditCommit(event -> {
                     ObservableList<String> row = event.getRowValue();
@@ -1188,6 +1262,17 @@ public class TableStructureView extends BorderPane {
             rows.add(row);
         }
         tableView.setItems(rows);
+
+        // 缓存列注释原始值（用于检测变更）
+        int commentIdx = columnTitles.indexOf("注释");
+        int nameIdx = columnTitles.indexOf("字段名");
+        if (commentIdx >= 0 && nameIdx >= 0) {
+            for (ObservableList<String> row : rows) {
+                String colName = nameIdx < row.size() ? row.get(nameIdx) : "";
+                String comment = commentIdx < row.size() ? row.get(commentIdx) : "";
+                originalColumnComments.put(colName, comment != null ? comment : "");
+            }
+        }
     }
 
     /**
@@ -1201,9 +1286,11 @@ public class TableStructureView extends BorderPane {
     }
 
     public void applyTableConfig(GlobalConfig config) {
+        int rowHeight = config.getTableFontSize() + 18;
+        tableView.setFixedCellSize(rowHeight);
         String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
                 config.getTableFontName(), config.getTableFontSize());
-        tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0;");
+        tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0; -fx-table-header-height: " + rowHeight + ";");
     }
 
     /**
@@ -1243,7 +1330,7 @@ public class TableStructureView extends BorderPane {
                 checkBox.setSelected("是".equals(item));
                 setGraphic(checkBox);
                 setText(null);
-                setStyle("-fx-alignment: center; -fx-border-color: transparent; -fx-padding: 0;");
+                setStyle("-fx-alignment: center; -fx-border-color: transparent #e0e0e0 #e0e0e0 transparent; -fx-border-width: 0 1 1 0; -fx-padding: 0;");
             }
         }
     }
