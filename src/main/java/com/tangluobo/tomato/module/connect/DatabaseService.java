@@ -1311,18 +1311,20 @@ public class DatabaseService {
                 stmt.setString(2, tableName);
                 try (ResultSet rs = stmt.executeQuery()) {
                     while (rs.next()) {
-                        Map<String, String> idx = new LinkedHashMap<>();
                         String indexName = rs.getString("INDEX_NAME");
                         boolean isPrimaryKey = "PRIMARY".equals(indexName);
-                        idx.put("名称", indexName);
-                        idx.put("字段", rs.getString("COLUMNS"));
-                        idx.put("方法", isPrimaryKey ? "BTREE" : rs.getString("INDEX_TYPE"));
-                        boolean nonUnique = rs.getBoolean("NON_UNIQUE");
-                        idx.put("类型", isPrimaryKey ? "PRIMARY" : (nonUnique ? "NORMAL" : "UNIQUE"));
-                        idx.put("唯一", nonUnique ? "否" : "是");
-                        String comment = rs.getString("INDEX_COMMENT");
-                        idx.put("注释", comment != null ? comment : "");
-                        indexes.add(idx);
+                        if(!isPrimaryKey) {
+                            Map<String, String> idx = new LinkedHashMap<>();
+                            idx.put("名称", indexName);
+                            idx.put("字段", rs.getString("COLUMNS"));
+                            idx.put("方法", isPrimaryKey ? "BTREE" : rs.getString("INDEX_TYPE"));
+                            boolean nonUnique = rs.getBoolean("NON_UNIQUE");
+                            idx.put("类型", isPrimaryKey ? "PRIMARY" : (nonUnique ? "NORMAL" : "UNIQUE"));
+                            idx.put("唯一", nonUnique ? "否" : "是");
+                            String comment = rs.getString("INDEX_COMMENT");
+                            idx.put("注释", comment != null ? comment : "");
+                            indexes.add(idx);
+                        }
                     }
                 }
             }
