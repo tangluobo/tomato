@@ -283,6 +283,13 @@ public class LocalTerminalPane extends BorderPane {
     }
 
     /**
+     * 请求终端输入焦点（切换标签时调用）
+     */
+    public void requestTerminalFocus() {
+        Platform.runLater(() -> terminalView.requestFocus());
+    }
+
+    /**
      * 连接本地终端
      * @param terminalType Windows: "cmd" 或 "powershell"; Linux/macOS: 忽略，使用系统默认Shell
      */

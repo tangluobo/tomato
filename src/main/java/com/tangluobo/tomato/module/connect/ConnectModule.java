@@ -3665,5 +3665,15 @@ public class ConnectModule implements Module {
         contentArea.getChildren().add(terminalTabPane);
         terminalTabPane.setVisible(true);
         terminalTabPane.setManaged(true);
+
+        // 切换标签时自动将输入焦点转移到终端视图，无需再点击终端区域
+        terminalTabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
+            if (newTab == null) return;
+            if (newTab.getContent() instanceof SSHTerminalPane pane) {
+                pane.requestTerminalFocus();
+            } else if (newTab.getContent() instanceof LocalTerminalPane pane) {
+                pane.requestTerminalFocus();
+            }
+        });
     }
 }

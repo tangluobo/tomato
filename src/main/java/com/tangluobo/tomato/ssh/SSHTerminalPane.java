@@ -437,6 +437,13 @@ public class SSHTerminalPane extends BorderPane {
     }
 
     /**
+     * 请求终端输入焦点（切换标签时调用）
+     */
+    public void requestTerminalFocus() {
+        Platform.runLater(() -> terminalView.requestFocus());
+    }
+
+    /**
      * 连接SSH
      */
     public void connect(String host, int port, String username, String password) throws Exception {
