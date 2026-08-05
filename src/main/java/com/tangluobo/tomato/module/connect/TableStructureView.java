@@ -71,6 +71,10 @@ public class TableStructureView extends BorderPane {
     private ComboBox<String> fieldCollationComboBox;
     private TextField keyLengthField;
     private CheckBox binaryCheckBox;
+    /** 字符集/排序规则/键长度 行容器：用于按类型整体隐藏（含Label），隐藏时不占位 */
+    private HBox charsetRow;
+    private HBox collationRow;
+    private HBox keyLengthRow;
 
     /** 注释标签页 */
     private TextArea commentTextArea;
@@ -437,13 +441,13 @@ public class TableStructureView extends BorderPane {
         box.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #ddd; -fx-border-width: 1 0 0 0;");
         box.setPadding(new Insets(8, 12, 8, 12));
 
-        GridPane grid = new GridPane();
-        grid.setHgap(8);
-        grid.setVgap(6);
+        // 行标签统一宽度，保证对齐
+        double labelWidth = 70;
 
-        // 默认值行
+        // 默认值行（所有类型可见）
         Label defaultLabel = new Label("默认:");
         defaultLabel.setStyle("-fx-font-size: 12px;");
+        defaultLabel.setPrefWidth(labelWidth);
         defaultValueComboBox = new ComboBox<>();
         defaultValueComboBox.setEditable(true);
         defaultValueComboBox.setPrefWidth(300);
@@ -461,12 +465,13 @@ public class TableStructureView extends BorderPane {
                 }
             }
         });
-        grid.add(defaultLabel, 0, 0);
-        grid.add(defaultValueComboBox, 1, 0);
+        HBox defaultRow = new HBox(8, defaultLabel, defaultValueComboBox);
+        defaultRow.setAlignment(Pos.CENTER_LEFT);
 
-        // 字符集行
+        // 字符集行（仅字符串类型可见）
         Label charsetLabel = new Label("字符集:");
         charsetLabel.setStyle("-fx-font-size: 12px;");
+        charsetLabel.setPrefWidth(labelWidth);
         fieldCharsetComboBox = new ComboBox<>();
         fieldCharsetComboBox.setEditable(false);
         fieldCharsetComboBox.setPrefWidth(300);
@@ -500,12 +505,13 @@ public class TableStructureView extends BorderPane {
                 }
             }
         });
-        grid.add(charsetLabel, 0, 1);
-        grid.add(fieldCharsetComboBox, 1, 1);
+        charsetRow = new HBox(8, charsetLabel, fieldCharsetComboBox);
+        charsetRow.setAlignment(Pos.CENTER_LEFT);
 
-        // 排序规则行
+        // 排序规则行（仅字符串类型可见）
         Label collationLabel = new Label("排序规则:");
         collationLabel.setStyle("-fx-font-size: 12px;");
+        collationLabel.setPrefWidth(labelWidth);
         fieldCollationComboBox = new ComboBox<>();
         fieldCollationComboBox.setEditable(false);
         fieldCollationComboBox.setPrefWidth(300);
@@ -522,12 +528,13 @@ public class TableStructureView extends BorderPane {
                 }
             }
         });
-        grid.add(collationLabel, 0, 2);
-        grid.add(fieldCollationComboBox, 1, 2);
+        collationRow = new HBox(8, collationLabel, fieldCollationComboBox);
+        collationRow.setAlignment(Pos.CENTER_LEFT);
 
-        // 键长度行
+        // 键长度行（仅字符串类型可见）
         Label keyLenLabel = new Label("键长度:");
         keyLenLabel.setStyle("-fx-font-size: 12px;");
+        keyLenLabel.setPrefWidth(labelWidth);
         keyLengthField = new TextField();
         keyLengthField.setPrefWidth(300);
         keyLengthField.setStyle("-fx-font-size: 12px;");
@@ -545,15 +552,17 @@ public class TableStructureView extends BorderPane {
                 }
             }
         });
-        grid.add(keyLenLabel, 0, 3);
-        grid.add(keyLengthField, 1, 3);
+        keyLengthRow = new HBox(8, keyLenLabel, keyLengthField);
+        keyLengthRow.setAlignment(Pos.CENTER_LEFT);
 
         // 复选框行：二进制 + 自增 + 无符号 + 填充零
-        HBox checkRow = new HBox(20);
+        // 每个复选框单独一行，padding 设为 0，让方框紧贴左侧，与"默认"文本对齐
+        VBox checkRow = new VBox(4);
         checkRow.setAlignment(Pos.CENTER_LEFT);
+        checkRow.setStyle("-fx-padding: 0;");
 
         binaryCheckBox = new CheckBox("二进制");
-        binaryCheckBox.setStyle("-fx-font-size: 12px;");
+        binaryCheckBox.setStyle("-fx-font-size: 12px; -fx-padding: 0;");
         binaryCheckBox.setOnAction(e -> {
             ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
             if (selected == null || columnTitles == null) return;
@@ -564,7 +573,7 @@ public class TableStructureView extends BorderPane {
         });
 
         autoIncrementCheckBox = new CheckBox("自动递增");
-        autoIncrementCheckBox.setStyle("-fx-font-size: 12px;");
+        autoIncrementCheckBox.setStyle("-fx-font-size: 12px; -fx-padding: 0;");
         autoIncrementCheckBox.setOnAction(e -> {
             ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
             if (selected == null || columnTitles == null) return;
@@ -575,7 +584,7 @@ public class TableStructureView extends BorderPane {
         });
 
         unsignedCheckBox = new CheckBox("无符号");
-        unsignedCheckBox.setStyle("-fx-font-size: 12px;");
+        unsignedCheckBox.setStyle("-fx-font-size: 12px; -fx-padding: 0;");
         unsignedCheckBox.setOnAction(e -> {
             ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
             if (selected == null || columnTitles == null) return;
@@ -586,7 +595,7 @@ public class TableStructureView extends BorderPane {
         });
 
         zeroFillCheckBox = new CheckBox("填充零");
-        zeroFillCheckBox.setStyle("-fx-font-size: 12px;");
+        zeroFillCheckBox.setStyle("-fx-font-size: 12px; -fx-padding: 0;");
         zeroFillCheckBox.setOnAction(e -> {
             ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
             if (selected == null || columnTitles == null) return;
@@ -597,10 +606,9 @@ public class TableStructureView extends BorderPane {
         });
 
         checkRow.getChildren().addAll(binaryCheckBox, autoIncrementCheckBox, unsignedCheckBox, zeroFillCheckBox);
-        grid.add(checkRow, 0, 4, 2, 1);
 
-        fieldPropsBox = new VBox(4);
-        fieldPropsBox.getChildren().add(grid);
+        fieldPropsBox = new VBox(6);
+        fieldPropsBox.getChildren().addAll(defaultRow, charsetRow, collationRow, keyLengthRow, checkRow);
 
         // 占位提示
         fieldPropsPlaceholder = new Label("请选择字段以编辑属性");
@@ -660,6 +668,13 @@ public class TableStructureView extends BorderPane {
         }
 
         // 字符串类型：加载字符集、排序规则、键长度、二进制
+        // 整行隐藏（含Label且不占位）：仅字符串类型显示字符集/排序规则/键长度
+        charsetRow.setVisible(isString);
+        charsetRow.setManaged(isString);
+        collationRow.setVisible(isString);
+        collationRow.setManaged(isString);
+        keyLengthRow.setVisible(isString);
+        keyLengthRow.setManaged(isString);
         fieldCharsetComboBox.setVisible(isString);
         fieldCollationComboBox.setVisible(isString);
         keyLengthField.setVisible(isString);
