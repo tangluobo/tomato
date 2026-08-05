@@ -64,7 +64,7 @@ public class TableStructureView extends BorderPane {
     private TextArea commentTextArea;
 
     /** SQL预览标签页 */
-    private TextArea sqlPreviewArea;
+    private SqlPreviewViewer sqlPreviewViewer;
     /** SQL预览模式下拉框：保存（ALTER）/ 另存为（CREATE TABLE） */
     private ComboBox<String> sqlPreviewModeBox;
 
@@ -592,12 +592,9 @@ public class TableStructureView extends BorderPane {
         box.setStyle("-fx-background-color: white;");
         Label header = new Label("CREATE TABLE / ALTER TABLE 预览：");
         header.setStyle("-fx-font-size: 12px; -fx-text-fill: #333;");
-        sqlPreviewArea = new TextArea();
-        sqlPreviewArea.setEditable(false);
-        sqlPreviewArea.setWrapText(true);
-        sqlPreviewArea.setStyle("-fx-font-family: monospace; -fx-font-size: 13px;");
-        sqlPreviewArea.setText("-- 加载中...");
-        VBox.setVgrow(sqlPreviewArea, javafx.scene.layout.Priority.ALWAYS);
+        sqlPreviewViewer = new SqlPreviewViewer();
+        sqlPreviewViewer.setText("-- 加载中...");
+        VBox.setVgrow(sqlPreviewViewer.getNode(), javafx.scene.layout.Priority.ALWAYS);
 
         // 模式下拉框：保存（ALTER语句）/ 另存为（CREATE TABLE完整SQL）
         sqlPreviewModeBox = new ComboBox<>();
@@ -606,7 +603,7 @@ public class TableStructureView extends BorderPane {
         sqlPreviewModeBox.setStyle("-fx-pref-width: 100px;");
         sqlPreviewModeBox.setOnAction(e -> loadSqlPreview());
 
-        box.getChildren().addAll(header, sqlPreviewArea, sqlPreviewModeBox);
+        box.getChildren().addAll(header, sqlPreviewViewer.getNode(), sqlPreviewModeBox);
         return box;
     }
 
@@ -783,7 +780,7 @@ public class TableStructureView extends BorderPane {
      * 加载SQL预览（SHOW CREATE TABLE）
      */
     private void loadSqlPreview() {
-        sqlPreviewArea.setText("-- 加载中...");
+        sqlPreviewViewer.setText("-- 加载中...");
         boolean isSaveAs = "另存为".equals(sqlPreviewModeBox.getSelectionModel().getSelectedItem());
         new Thread(() -> {
             try {
@@ -793,7 +790,7 @@ public class TableStructureView extends BorderPane {
                     String result = ddl != null && !ddl.isEmpty() ? ddl : "-- 无法获取CREATE TABLE DDL";
                     int fieldCount = tableView.getItems() != null ? tableView.getItems().size() : 0;
                     Platform.runLater(() -> {
-                        sqlPreviewArea.setText(result);
+                        sqlPreviewViewer.setText(result);
                         sqlPreviewLoaded = true;
                         statusLabel.setText("共 " + fieldCount + " 个字段");
                     });
@@ -843,13 +840,13 @@ public class TableStructureView extends BorderPane {
                 String result = preview.length() > 0 ? preview.toString() : "";
                 int fieldCount = tableView.getItems() != null ? tableView.getItems().size() : 0;
                 Platform.runLater(() -> {
-                    sqlPreviewArea.setText(result);
+                    sqlPreviewViewer.setText(result);
                     sqlPreviewLoaded = true;
                     statusLabel.setText("共 " + fieldCount + " 个字段");
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> {
-                    sqlPreviewArea.setText("-- 加载失败: " + e.getMessage());
+                    sqlPreviewViewer.setText("-- 加载失败: " + e.getMessage());
                     statusLabel.setText("加载SQL预览失败: " + e.getMessage());
                 });
             }
@@ -1830,6 +1827,229 @@ public class TableStructureView extends BorderPane {
                 setStyle("-fx-background-color: #3592CB; -fx-text-fill: white;");
             } else {
                 setStyle("");
+            }
+        }
+    }
+
+    /**
+     * SQL预览查看器：基于RichTextFX InlineCssTextArea
+     * 支持SQL关键字高亮、行号显示、括号折叠
+     */
+    private static class SqlPreviewViewer {
+        private final org.fxmisc.richtext.InlineCssTextArea textArea;
+        private final org.fxmisc.flowless.VirtualizedScrollPane<org.fxmisc.richtext.InlineCssTextArea> scrollPane;
+        private final HBox container;
+        private final VBox gutterBox;
+
+        private String[] paragraphs = new String[0];
+        private final List<int[]> foldRanges = new ArrayList<>();
+        private final Set<Integer> foldedStarts = new HashSet<>();
+
+        private static final String STYLE_KEYWORD = "-fx-fill: #0000FF; -fx-font-weight: bold;";
+        private static final String STYLE_STRING = "-fx-fill: #A31515;";
+        private static final String STYLE_COMMENT = "-fx-fill: #6A9955; -fx-font-style: italic;";
+        private static final String STYLE_NUMBER = "-fx-fill: #098658;";
+
+        private static final String[] KEYWORDS = {
+                "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET",
+                "DELETE", "CREATE", "DROP", "ALTER", "TABLE", "INDEX", "VIEW", "DATABASE",
+                "AND", "OR", "NOT", "IN", "EXISTS", "BETWEEN", "LIKE", "IS", "NULL",
+                "JOIN", "INNER", "LEFT", "RIGHT", "OUTER", "FULL", "CROSS", "ON",
+                "GROUP", "BY", "ORDER", "HAVING", "LIMIT", "OFFSET", "UNION", "ALL",
+                "AS", "DISTINCT", "CASE", "WHEN", "THEN", "ELSE", "END",
+                "COUNT", "SUM", "AVG", "MIN", "MAX",
+                "PRIMARY", "KEY", "FOREIGN", "REFERENCES", "CONSTRAINT",
+                "DEFAULT", "CHECK", "UNIQUE", "AUTO_INCREMENT",
+                "IF", "CASCADE", "RENAME", "TO",
+                "BEGIN", "COMMIT", "ROLLBACK", "TRANSACTION",
+                "GRANT", "REVOKE", "PRIVILEGES",
+                "SHOW", "DESCRIBE", "EXPLAIN", "USE", "TRUNCATE",
+                "CHARACTER", "COLLATE", "REPLACE", "COMMENT", "COLUMN", "MODIFY", "ADD"
+        };
+
+        private static final String KEYWORD_PATTERN = "(?i)\\b(" + String.join("|", KEYWORDS) + ")\\b";
+        private static final java.util.regex.Pattern SYNTAX_PATTERN = java.util.regex.Pattern.compile(
+                "(?<KEYWORD>" + KEYWORD_PATTERN + ")" +
+                        "|(?<STRING>'[^']*')" +
+                        "|(?<COMMENT1>--[^\n]*)" +
+                        "|(?<COMMENT2>/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/)" +
+                        "|(?<NUMBER>\\b\\d+(\\.\\d+)?\\b)"
+        );
+
+        SqlPreviewViewer() {
+            textArea = new org.fxmisc.richtext.InlineCssTextArea();
+            textArea.setEditable(false);
+            textArea.setWrapText(false);
+            textArea.setStyle(
+                    "-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 13px; " +
+                            "-fx-background-color: white; -fx-padding: 4; -fx-text-fill: #333;"
+            );
+
+            scrollPane = new org.fxmisc.flowless.VirtualizedScrollPane<>(textArea);
+
+            gutterBox = new VBox();
+            gutterBox.setStyle("-fx-background-color: #f8f8f8; -fx-padding: 4 0 0 0;");
+            gutterBox.setPrefWidth(60);
+            gutterBox.setMinWidth(60);
+            gutterBox.setMaxWidth(60);
+
+            container = new HBox();
+            container.getChildren().addAll(gutterBox, scrollPane);
+            HBox.setHgrow(scrollPane, javafx.scene.layout.Priority.ALWAYS);
+            container.setMinHeight(0);
+            container.setPrefHeight(200);
+
+            // 行号区与文本区滚动同步
+            textArea.estimatedScrollYProperty().addListener((obs, old, val) ->
+                    gutterBox.setTranslateY(-val.doubleValue()));
+        }
+
+        Node getNode() {
+            return container;
+        }
+
+        void setText(String text) {
+            paragraphs = text.split("\n", -1);
+            detectFoldRanges();
+            foldedStarts.clear();
+            rebuild();
+        }
+
+        private void detectFoldRanges() {
+            foldRanges.clear();
+            Deque<int[]> stack = new ArrayDeque<>();
+            for (int i = 0; i < paragraphs.length; i++) {
+                String line = paragraphs[i];
+                boolean inString = false;
+                boolean inLineComment = false;
+                for (int j = 0; j < line.length(); j++) {
+                    char c = line.charAt(j);
+                    if (inLineComment) break;
+                    if (inString) {
+                        if (c == '\'') inString = false;
+                        continue;
+                    }
+                    if (c == '\'') { inString = true; continue; }
+                    if (c == '-' && j + 1 < line.length() && line.charAt(j + 1) == '-') {
+                        inLineComment = true;
+                        continue;
+                    }
+                    if (c == '(') {
+                        stack.push(new int[]{i, j});
+                    } else if (c == ')' && !stack.isEmpty()) {
+                        int[] open = stack.pop();
+                        if (i > open[0]) {
+                            foldRanges.add(new int[]{open[0], i});
+                        }
+                    }
+                }
+            }
+        }
+
+        private boolean isFoldStart(int para) {
+            for (int[] r : foldRanges) {
+                if (r[0] == para) return true;
+            }
+            return false;
+        }
+
+        private int getFoldEnd(int para) {
+            for (int[] r : foldRanges) {
+                if (r[0] == para) return r[1];
+            }
+            return -1;
+        }
+
+        private boolean isInFoldedRegion(int para) {
+            for (int start : foldedStarts) {
+                int end = getFoldEnd(start);
+                if (para > start && para <= end) return true;
+            }
+            return false;
+        }
+
+        private void toggleFold(int para) {
+            if (foldedStarts.contains(para)) {
+                foldedStarts.remove(para);
+            } else {
+                foldedStarts.add(para);
+            }
+            rebuild();
+        }
+
+        private void rebuild() {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < paragraphs.length; i++) {
+                if (isInFoldedRegion(i)) continue;
+                if (sb.length() > 0) sb.append("\n");
+                sb.append(paragraphs[i]);
+                if (foldedStarts.contains(i)) {
+                    sb.append(" ...");
+                }
+            }
+            textArea.replaceText(sb.toString());
+            applyHighlighting();
+            rebuildGutter();
+        }
+
+        private void rebuildGutter() {
+            gutterBox.getChildren().clear();
+            for (int i = 0; i < paragraphs.length; i++) {
+                if (isInFoldedRegion(i)) continue;
+
+                HBox cell = new HBox();
+                cell.setAlignment(Pos.CENTER_LEFT);
+
+                if (isFoldStart(i)) {
+                    Label foldBtn = new Label(foldedStarts.contains(i) ? "\u25B6" : "\u25BC");
+                    foldBtn.setStyle("-fx-font-size: 10px; -fx-text-fill: #555; -fx-cursor: hand; -fx-padding: 0 2 0 4;");
+                    final int paraIdx = i;
+                    foldBtn.setOnMouseClicked(e -> {
+                        toggleFold(paraIdx);
+                        e.consume();
+                    });
+                    cell.getChildren().add(foldBtn);
+                } else {
+                    cell.getChildren().add(new Label("  "));
+                }
+
+                Label lineNum = new Label(String.valueOf(i + 1));
+                lineNum.setStyle("-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 13px; " +
+                        "-fx-text-fill: #888888; -fx-padding: 0 8 0 4;");
+                cell.getChildren().add(lineNum);
+
+                gutterBox.getChildren().add(cell);
+            }
+        }
+
+        private void applyHighlighting() {
+            String text = textArea.getText();
+            if (text.isEmpty()) return;
+            try {
+                java.util.regex.Matcher matcher = SYNTAX_PATTERN.matcher(text);
+                int lastKwEnd = 0;
+                org.fxmisc.richtext.model.StyleSpansBuilder<String> spansBuilder =
+                        new org.fxmisc.richtext.model.StyleSpansBuilder<>();
+                while (matcher.find()) {
+                    String style;
+                    if (matcher.group("KEYWORD") != null) style = STYLE_KEYWORD;
+                    else if (matcher.group("STRING") != null) style = STYLE_STRING;
+                    else if (matcher.group("COMMENT1") != null) style = STYLE_COMMENT;
+                    else if (matcher.group("COMMENT2") != null) style = STYLE_COMMENT;
+                    else if (matcher.group("NUMBER") != null) style = STYLE_NUMBER;
+                    else style = "";
+                    if (matcher.start() > lastKwEnd) {
+                        spansBuilder.add("", matcher.start() - lastKwEnd);
+                    }
+                    spansBuilder.add(style, matcher.end() - matcher.start());
+                    lastKwEnd = matcher.end();
+                }
+                if (lastKwEnd < text.length()) {
+                    spansBuilder.add("", text.length() - lastKwEnd);
+                }
+                textArea.setStyleSpans(0, spansBuilder.create());
+            } catch (Exception e) {
+                System.err.println("SQL预览高亮异常: " + e.getMessage());
             }
         }
     }
