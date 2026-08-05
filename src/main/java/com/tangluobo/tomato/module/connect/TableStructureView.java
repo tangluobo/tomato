@@ -293,15 +293,7 @@ public class TableStructureView extends BorderPane {
 
     /** 保存图标：蓝色上箭头 */
     private Node createSaveIcon() {
-        javafx.scene.Group g = new javafx.scene.Group();
-        Rectangle bg = new Rectangle(14, 14);
-        bg.setFill(Color.valueOf("#1E88E5"));
-        bg.setArcWidth(3);
-        bg.setArcHeight(3);
-        Polygon arrow = new Polygon(7, 2, 12, 8, 9, 8, 9, 12, 5, 12, 5, 8, 2, 8);
-        arrow.setFill(Color.WHITE);
-        g.getChildren().addAll(bg, arrow);
-        return g;
+        return createImageIcon("/images/connect/save.png", 16);
     }
 
     /** 添加字段图标 */
