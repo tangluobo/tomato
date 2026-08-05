@@ -445,13 +445,14 @@ public class TableStructureView extends BorderPane {
         double labelWidth = 70;
 
         // 默认值行（所有类型可见）
+        // 下拉项参考 Navicat：空、NULL、CURRENT_TIMESTAMP；宽度调细
         Label defaultLabel = new Label("默认:");
         defaultLabel.setStyle("-fx-font-size: 12px;");
         defaultLabel.setPrefWidth(labelWidth);
         defaultValueComboBox = new ComboBox<>();
         defaultValueComboBox.setEditable(true);
-        defaultValueComboBox.setPrefWidth(300);
-        defaultValueComboBox.getItems().addAll("", "NULL", "CURRENT_TIMESTAMP", "0", "1");
+        defaultValueComboBox.setPrefWidth(200);
+        defaultValueComboBox.getItems().addAll("", "NULL", "CURRENT_TIMESTAMP");
         defaultValueComboBox.valueProperty().addListener((obs, oldVal, nv) -> {
             ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
             if (selected == null || columnTitles == null) return;
@@ -469,12 +470,14 @@ public class TableStructureView extends BorderPane {
         defaultRow.setAlignment(Pos.CENTER_LEFT);
 
         // 字符集行（仅字符串类型可见）
+        // 参考 Navicat：可编辑，允许手动输入或从列表选择
         Label charsetLabel = new Label("字符集:");
         charsetLabel.setStyle("-fx-font-size: 12px;");
         charsetLabel.setPrefWidth(labelWidth);
         fieldCharsetComboBox = new ComboBox<>();
-        fieldCharsetComboBox.setEditable(false);
-        fieldCharsetComboBox.setPrefWidth(300);
+        fieldCharsetComboBox.setEditable(true);
+        fieldCharsetComboBox.setPrefWidth(200);
+        fieldCharsetComboBox.setVisibleRowCount(15);
         fieldCharsetComboBox.valueProperty().addListener((obs, oldVal, newVal) -> {
             ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
             if (selected == null || columnTitles == null) return;
@@ -509,12 +512,14 @@ public class TableStructureView extends BorderPane {
         charsetRow.setAlignment(Pos.CENTER_LEFT);
 
         // 排序规则行（仅字符串类型可见）
+        // 参考 Navicat：可编辑，允许手动输入或从列表选择
         Label collationLabel = new Label("排序规则:");
         collationLabel.setStyle("-fx-font-size: 12px;");
         collationLabel.setPrefWidth(labelWidth);
         fieldCollationComboBox = new ComboBox<>();
-        fieldCollationComboBox.setEditable(false);
-        fieldCollationComboBox.setPrefWidth(300);
+        fieldCollationComboBox.setEditable(true);
+        fieldCollationComboBox.setPrefWidth(200);
+        fieldCollationComboBox.setVisibleRowCount(15);
         fieldCollationComboBox.valueProperty().addListener((obs, oldVal, newVal) -> {
             ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
             if (selected == null || columnTitles == null) return;
@@ -536,7 +541,7 @@ public class TableStructureView extends BorderPane {
         keyLenLabel.setStyle("-fx-font-size: 12px;");
         keyLenLabel.setPrefWidth(labelWidth);
         keyLengthField = new TextField();
-        keyLengthField.setPrefWidth(300);
+        keyLengthField.setPrefWidth(200);
         keyLengthField.setStyle("-fx-font-size: 12px;");
         keyLengthField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
             if (!isNowFocused) {
@@ -555,13 +560,9 @@ public class TableStructureView extends BorderPane {
         keyLengthRow = new HBox(8, keyLenLabel, keyLengthField);
         keyLengthRow.setAlignment(Pos.CENTER_LEFT);
 
-        // 复选框行：二进制 + 自增 + 无符号 + 填充零
-        // 每个复选框单独一行，padding 设为 0，让方框紧贴左侧，与"默认"文本对齐
-        // 行间距与外层 VBox 一致(6px)，保证视觉间距统一
-        VBox checkRow = new VBox(6);
-        checkRow.setAlignment(Pos.CENTER_LEFT);
-        checkRow.setStyle("-fx-padding: 0;");
-
+        // 复选框：二进制 + 自增 + 无符号 + 填充零
+        // 每个复选框单独成行，padding 设为 0，让方框紧贴左侧，与"默认"文本对齐
+        // 直接加入 fieldPropsBox（不嵌套 VBox），保证与上方各行间距统一
         binaryCheckBox = new CheckBox("二进制");
         binaryCheckBox.setStyle("-fx-font-size: 12px; -fx-padding: 0;");
         binaryCheckBox.setOnAction(e -> {
@@ -606,10 +607,10 @@ public class TableStructureView extends BorderPane {
             }
         });
 
-        checkRow.getChildren().addAll(binaryCheckBox, autoIncrementCheckBox, unsignedCheckBox, zeroFillCheckBox);
-
         fieldPropsBox = new VBox(6);
-        fieldPropsBox.getChildren().addAll(defaultRow, charsetRow, collationRow, keyLengthRow, checkRow);
+        fieldPropsBox.getChildren().addAll(
+                defaultRow, charsetRow, collationRow, keyLengthRow,
+                binaryCheckBox, autoIncrementCheckBox, unsignedCheckBox, zeroFillCheckBox);
 
         // 占位提示
         fieldPropsPlaceholder = new Label("请选择字段以编辑属性");
