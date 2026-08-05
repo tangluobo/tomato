@@ -606,6 +606,11 @@ public class TableStructureView extends BorderPane {
                 if (w instanceof javafx.stage.PopupWindow && w.isShowing()) {
                     javafx.stage.PopupWindow popup = (javafx.stage.PopupWindow) w;
                     popup.setAutoFix(false);
+                    // 覆盖CSS中的min-height:200px，消除空白选项
+                    if (popup.getScene() != null && popup.getScene().getRoot() != null) {
+                        popup.getScene().getRoot().lookupAll(".list-view").forEach(n ->
+                                n.setStyle("-fx-min-height: 0; -fx-pref-height: 50px; -fx-max-height: 50px;"));
+                    }
                     javafx.geometry.Point2D pos = sqlPreviewModeBox.localToScreen(0, sqlPreviewModeBox.getHeight());
                     if (pos != null) {
                         popupTargetY = pos.getY();
