@@ -99,14 +99,14 @@ public class CreateDatabaseDialog {
         charsetCombo.getItems().add("(默认)");
         charsetCombo.getItems().addAll(CHARSET_COLLATIONS.keySet());
         charsetCombo.setValue("(默认)");
-        charsetCombo.setPrefWidth(Double.MAX_VALUE);
+        charsetCombo.setMaxWidth(Double.MAX_VALUE);
 
         // 排序规则
         Label collationLabel = new Label("排序规则：");
         collationCombo = new ComboBox<>();
         collationCombo.getItems().add("(默认)");
         collationCombo.setValue("(默认)");
-        collationCombo.setPrefWidth(Double.MAX_VALUE);
+        collationCombo.setMaxWidth(Double.MAX_VALUE);
 
         // 字符集变化时更新排序规则列表
         charsetCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
