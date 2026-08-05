@@ -590,8 +590,6 @@ public class TableStructureView extends BorderPane {
         VBox box = new VBox(8);
         box.setPadding(new Insets(8));
         box.setStyle("-fx-background-color: white;");
-        Label header = new Label("CREATE TABLE / ALTER TABLE 预览：");
-        header.setStyle("-fx-font-size: 12px; -fx-text-fill: #333;");
         sqlPreviewViewer = new SqlPreviewViewer();
         sqlPreviewViewer.setText("-- 加载中...");
         VBox.setVgrow(sqlPreviewViewer.getNode(), javafx.scene.layout.Priority.ALWAYS);
@@ -603,7 +601,7 @@ public class TableStructureView extends BorderPane {
         sqlPreviewModeBox.setStyle("-fx-pref-width: 100px;");
         sqlPreviewModeBox.setOnAction(e -> loadSqlPreview());
 
-        box.getChildren().addAll(header, sqlPreviewViewer.getNode(), sqlPreviewModeBox);
+        box.getChildren().addAll(sqlPreviewViewer.getNode(), sqlPreviewModeBox);
         return box;
     }
 
