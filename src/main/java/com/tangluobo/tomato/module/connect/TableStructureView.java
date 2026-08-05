@@ -1615,7 +1615,8 @@ public class TableStructureView extends BorderPane {
                 case "字段名" -> 150;
                 case "类型" -> 120;
                 case "长度" -> 60;
-                case "可为空", "非空", "主键", "自增" -> 60;
+                case "可为空", "非空", "自增" -> 60;
+                case "主键" -> 70;
                 case "默认值" -> 120;
                 case "注释" -> 200;
                 default -> 80;
@@ -1643,8 +1644,11 @@ public class TableStructureView extends BorderPane {
                         row.set(dataColIndex, newValue);
                     }
                 });
-            } else if ("主键".equals(title) || "非空".equals(title)) {
-                // "主键"/"非空"列使用复选框，点击直接切换
+            } else if ("主键".equals(title)) {
+                // "主键"列使用主键图标+序号显示（支持多主键，按行序号编号）
+                col.setCellFactory(tc -> new PrimaryKeyIconTableCell());
+            } else if ("非空".equals(title)) {
+                // "非空"列使用复选框，点击直接切换
                 col.setCellFactory(tc -> new PrimaryKeyCheckBoxTableCell());
             } else if ("字段名".equals(title) || "长度".equals(title) || "注释".equals(title)) {
                 // "字段名"/"长度"/"注释"列使用可编辑TextField单元格
@@ -1731,7 +1735,7 @@ public class TableStructureView extends BorderPane {
     }
 
     /**
-     * "主键"列的复选框单元格，点击直接切换，无需先进入编辑模式
+     * "非空"列的复选框单元格，点击直接切换，无需先进入编辑模式
      */
     private class PrimaryKeyCheckBoxTableCell extends TableCell<ObservableList<String>, String> {
         private final CheckBox checkBox;
@@ -1770,6 +1774,93 @@ public class TableStructureView extends BorderPane {
                 setText(null);
                 setStyle("-fx-alignment: center; -fx-border-color: transparent #e0e0e0 #e0e0e0 transparent; -fx-border-width: 0 1 1 0; -fx-padding: 0;");
             }
+        }
+    }
+
+    /**
+     * "主键"列的图标+序号单元格：
+     * - 主键字段显示主键图标 + 序号（多主键时按表格中行顺序依次编号 1,2,3...）
+     * - 非主键字段显示空白
+     * - 点击时在"主键"和"非主键"之间切换，切换后刷新整个表格以重新编号
+     */
+    private class PrimaryKeyIconTableCell extends TableCell<ObservableList<String>, String> {
+        private final ImageView pkIcon;
+        private final Label numberLabel;
+        private final HBox graphic;
+
+        PrimaryKeyIconTableCell() {
+            Image img = new Image(getClass().getResourceAsStream("/images/connect/primary_key.png"));
+            pkIcon = new ImageView(img);
+            pkIcon.setFitWidth(14);
+            pkIcon.setFitHeight(14);
+            pkIcon.setPreserveRatio(true);
+            numberLabel = new Label();
+            numberLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #1E88E5; -fx-font-weight: bold; -fx-padding: 0;");
+            graphic = new HBox(2, pkIcon, numberLabel);
+            graphic.setAlignment(Pos.CENTER);
+            graphic.setMaxHeight(javafx.scene.control.Control.USE_COMPUTED_SIZE);
+            graphic.setMouseTransparent(false);
+
+            // 点击切换主键状态
+            setOnMousePressed(e -> {
+                if (e.isConsumed()) return;
+                if (isEmpty() || getItem() == null) return;
+                TableRow<?> tableRow = getTableRow();
+                if (tableRow == null || tableRow.getItem() == null) return;
+                tableView.getSelectionModel().select(getIndex());
+                @SuppressWarnings("unchecked")
+                ObservableList<String> row = (ObservableList<String>) tableRow.getItem();
+                Integer dataColIndex = (Integer) getTableColumn().getUserData();
+                if (dataColIndex == null || dataColIndex < 0 || dataColIndex >= row.size()) return;
+                String current = row.get(dataColIndex);
+                row.set(dataColIndex, "是".equals(current) ? "否" : "是");
+                // 刷新整表以重新编号所有主键
+                tableView.refresh();
+                updateFieldPropertiesPane();
+                e.consume();
+            });
+        }
+
+        @Override
+        protected void updateItem(String item, boolean empty) {
+            super.updateItem(item, empty);
+            if (empty) {
+                // 空单元格（表格底部无数据行）：完全清空，不显示边框，避免延伸到下方空白区
+                setGraphic(null);
+                setText(null);
+                numberLabel.setText("");
+                setStyle("-fx-border-color: transparent; -fx-padding: 0;");
+            } else if (item == null || !"是".equals(item)) {
+                // 非主键数据行：清空 graphic，显示边框
+                setGraphic(null);
+                setText(null);
+                numberLabel.setText("");
+                setStyle("-fx-alignment: center; -fx-border-color: transparent #e0e0e0 #e0e0e0 transparent; -fx-border-width: 0 1 1 0; -fx-padding: 0;");
+            } else {
+                int seq = computePrimaryKeySequence();
+                numberLabel.setText(String.valueOf(seq));
+                setGraphic(graphic);
+                setText(null);
+                setStyle("-fx-alignment: center; -fx-border-color: transparent #e0e0e0 #e0e0e0 transparent; -fx-border-width: 0 1 1 0; -fx-padding: 0;");
+            }
+        }
+
+        /**
+         * 计算当前行在所有主键字段中的序号（从1开始，按表格行顺序）
+         */
+        private int computePrimaryKeySequence() {
+            TableRow<?> tableRow = getTableRow();
+            if (tableRow == null || tableRow.getItem() == null) return 1;
+            Integer dataColIndex = (Integer) getTableColumn().getUserData();
+            if (dataColIndex == null) return 1;
+            int seq = 0;
+            for (ObservableList<String> row : tableView.getItems()) {
+                if (dataColIndex < row.size() && "是".equals(row.get(dataColIndex))) {
+                    seq++;
+                    if (row == tableRow.getItem()) return seq;
+                }
+            }
+            return seq > 0 ? seq : 1;
         }
     }
 
