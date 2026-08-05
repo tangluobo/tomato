@@ -65,9 +65,8 @@ public class TableStructureView extends BorderPane {
 
     /** SQL预览标签页 */
     private SqlPreviewViewer sqlPreviewViewer;
-    /** SQL预览模式：保存（ALTER）/ 另存为（CREATE TABLE） */
-    private ToggleButton sqlPreviewSaveBtn;
-    private ToggleButton sqlPreviewSaveAsBtn;
+    /** SQL预览模式下拉框：保存（ALTER）/ 另存为（CREATE TABLE） */
+    private ComboBox<String> sqlPreviewModeBox;
 
     /** 缓存的字符集->排序规则映射（用于选项标签页字符集联动，避免在FX线程查询数据库） */
     private Map<String, List<String>> cachedCharsets;
@@ -591,22 +590,16 @@ public class TableStructureView extends BorderPane {
         sqlPreviewViewer.setText("-- 加载中...");
         VBox.setVgrow(sqlPreviewViewer.getNode(), javafx.scene.layout.Priority.ALWAYS);
 
-        // 模式切换：保存（ALTER语句）/ 另存为（CREATE TABLE完整SQL）
-        sqlPreviewSaveBtn = new ToggleButton("保存");
-        sqlPreviewSaveAsBtn = new ToggleButton("另存为");
-        ToggleGroup modeGroup = new ToggleGroup();
-        sqlPreviewSaveBtn.setToggleGroup(modeGroup);
-        sqlPreviewSaveAsBtn.setToggleGroup(modeGroup);
-        sqlPreviewSaveBtn.setSelected(true);
-        sqlPreviewSaveBtn.setStyle("-fx-pref-width: 60px; -fx-pref-height: 24px; -fx-font-size: 12px;");
-        sqlPreviewSaveAsBtn.setStyle("-fx-pref-width: 60px; -fx-pref-height: 24px; -fx-font-size: 12px; " +
-                "-fx-border-insets: 0 -1 0 0;");
-        modeGroup.selectedToggleProperty().addListener((obs, old, val) -> {
-            if (val != null) loadSqlPreview();
-        });
+        // 模式下拉框：保存（ALTER语句）/ 另存为（CREATE TABLE完整SQL）
+        sqlPreviewModeBox = new ComboBox<>();
+        sqlPreviewModeBox.getItems().addAll("保存", "另存为");
+        sqlPreviewModeBox.getSelectionModel().selectFirst();
+        sqlPreviewModeBox.setMaxWidth(javafx.scene.layout.Region.USE_PREF_SIZE);
+        sqlPreviewModeBox.setOnAction(e -> loadSqlPreview());
 
-        HBox modeBox = new HBox(sqlPreviewSaveBtn, sqlPreviewSaveAsBtn);
+        HBox modeBox = new HBox(sqlPreviewModeBox);
         modeBox.setPadding(new Insets(2, 0, 0, 0));
+        modeBox.setMaxHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
         box.getChildren().addAll(sqlPreviewViewer.getNode(), modeBox);
         return box;
     }
@@ -785,7 +778,7 @@ public class TableStructureView extends BorderPane {
      */
     private void loadSqlPreview() {
         sqlPreviewViewer.setText("-- 加载中...");
-        boolean isSaveAs = sqlPreviewSaveAsBtn.isSelected();
+        boolean isSaveAs = "另存为".equals(sqlPreviewModeBox.getSelectionModel().getSelectedItem());
         new Thread(() -> {
             try {
                 if (isSaveAs) {
