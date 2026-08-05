@@ -212,8 +212,6 @@
     -fx-border-color: transparent;
     -fx-effect: none;
     -fx-background-radius: 0;
-    -fx-min-height: 200px;
-    -fx-pref-height: 400px;
 }
 
 .combo-box-popup .list-view .virtual-flow {
