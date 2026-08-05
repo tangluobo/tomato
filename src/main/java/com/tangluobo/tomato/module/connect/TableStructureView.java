@@ -791,10 +791,11 @@ public class TableStructureView extends BorderPane {
                     // 另存为模式：显示完整的CREATE TABLE DDL
                     String ddl = DatabaseService.getTableDdl(config, databaseName, tableName);
                     String result = ddl != null && !ddl.isEmpty() ? ddl : "-- 无法获取CREATE TABLE DDL";
+                    int fieldCount = tableView.getItems() != null ? tableView.getItems().size() : 0;
                     Platform.runLater(() -> {
                         sqlPreviewArea.setText(result);
                         sqlPreviewLoaded = true;
-                        statusLabel.setText("SQL预览已加载（CREATE TABLE）");
+                        statusLabel.setText("共 " + fieldCount + " 个字段");
                     });
                     return;
                 }
@@ -839,11 +840,12 @@ public class TableStructureView extends BorderPane {
                     preview.append(sql).append("\n");
                 }
 
-                String result = preview.length() > 0 ? preview.toString() : "-- 无变更";
+                String result = preview.length() > 0 ? preview.toString() : "";
+                int fieldCount = tableView.getItems() != null ? tableView.getItems().size() : 0;
                 Platform.runLater(() -> {
                     sqlPreviewArea.setText(result);
                     sqlPreviewLoaded = true;
-                    statusLabel.setText(alterStatements.isEmpty() ? "SQL预览已加载（无变更）" : "SQL预览已加载（" + alterStatements.size() + "条ALTER语句）");
+                    statusLabel.setText("共 " + fieldCount + " 个字段");
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> {
