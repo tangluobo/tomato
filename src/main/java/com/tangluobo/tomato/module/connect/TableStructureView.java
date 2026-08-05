@@ -1779,6 +1779,8 @@ public class TableStructureView extends BorderPane {
         private final ImageView pkIcon;
         private final Label numberLabel;
         private final HBox graphic;
+        /** 选中状态监听器，用于在行选中/取消选中时更新样式（避免选中时数字看不见） */
+        private javafx.beans.InvalidationListener selectionListener;
 
         PrimaryKeyIconTableCell() {
             Image img = new Image(getClass().getResourceAsStream("/images/connect/primary_key.png"));
@@ -1790,7 +1792,6 @@ public class TableStructureView extends BorderPane {
             numberLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #1E88E5; -fx-font-weight: bold; -fx-padding: 0;");
             graphic = new HBox(2, pkIcon, numberLabel);
             graphic.setAlignment(Pos.CENTER);
-            graphic.setMaxHeight(javafx.scene.control.Control.USE_COMPUTED_SIZE);
             graphic.setMouseTransparent(false);
 
             // 点击切换主键状态
@@ -1815,6 +1816,11 @@ public class TableStructureView extends BorderPane {
 
         @Override
         protected void updateItem(String item, boolean empty) {
+            // 清理旧的选中状态监听器
+            if (selectionListener != null) {
+                tableView.getSelectionModel().getSelectedCells().removeListener(selectionListener);
+                selectionListener = null;
+            }
             super.updateItem(item, empty);
             if (empty) {
                 // 空单元格（表格底部无数据行）：完全清空，不显示边框，避免延伸到下方空白区
@@ -1833,7 +1839,27 @@ public class TableStructureView extends BorderPane {
                 numberLabel.setText(String.valueOf(seq));
                 setGraphic(graphic);
                 setText(null);
+                applyRowStateStyle();
+                // 注册选中状态监听器，选中/取消选中时更新数字颜色（避免选中时蓝色数字看不清）
+                selectionListener = obs -> applyRowStateStyle();
+                tableView.getSelectionModel().getSelectedCells().addListener(selectionListener);
+            }
+        }
+
+        /**
+         * 根据行状态应用视觉样式：
+         * - 选中：蓝色背景 + 白色数字
+         * - 未选中：透明背景 + 蓝色数字
+         */
+        private void applyRowStateStyle() {
+            TableRow<?> currentRow = getTableRow();
+            boolean selected = currentRow != null && currentRow.isSelected();
+            if (selected) {
+                setStyle("-fx-alignment: center; -fx-background-color: #3592CB; -fx-border-color: transparent #e0e0e0 #e0e0e0 transparent; -fx-border-width: 0 1 1 0; -fx-padding: 0;");
+                numberLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: white; -fx-font-weight: bold; -fx-padding: 0;");
+            } else {
                 setStyle("-fx-alignment: center; -fx-border-color: transparent #e0e0e0 #e0e0e0 transparent; -fx-border-width: 0 1 1 0; -fx-padding: 0;");
+                numberLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #1E88E5; -fx-font-weight: bold; -fx-padding: 0;");
             }
         }
 
