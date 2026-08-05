@@ -67,6 +67,9 @@ public class TableStructureView extends BorderPane {
     private SqlPreviewViewer sqlPreviewViewer;
     /** SQL预览模式下拉框：保存（ALTER）/ 另存为（CREATE TABLE） */
     private ComboBox<String> sqlPreviewModeBox;
+    /** 下拉框弹出位置锁定（防止autoFix跳位） */
+    private double popupTargetY = -1;
+    private boolean popupListenerAdded = false;
 
     /** 缓存的字符集->排序规则映射（用于选项标签页字符集联动，避免在FX线程查询数据库） */
     private Map<String, List<String>> cachedCharsets;
@@ -597,7 +600,7 @@ public class TableStructureView extends BorderPane {
         sqlPreviewModeBox.setMaxWidth(javafx.scene.layout.Region.USE_PREF_SIZE);
         sqlPreviewModeBox.setVisibleRowCount(2);
         sqlPreviewModeBox.setOnAction(e -> loadSqlPreview());
-        // 修复弹出位置：弹出后立即禁用autoFix并重新定位到ComboBox正下方
+        // 修复弹出位置：弹出后禁用autoFix、重新定位、并锁定Y坐标防止跳位
         sqlPreviewModeBox.setOnShown(e -> Platform.runLater(() -> {
             for (javafx.stage.Window w : javafx.stage.Window.getWindows()) {
                 if (w instanceof javafx.stage.PopupWindow && w.isShowing()) {
@@ -605,8 +608,21 @@ public class TableStructureView extends BorderPane {
                     popup.setAutoFix(false);
                     javafx.geometry.Point2D pos = sqlPreviewModeBox.localToScreen(0, sqlPreviewModeBox.getHeight());
                     if (pos != null) {
+                        popupTargetY = pos.getY();
                         popup.setX(pos.getX());
-                        popup.setY(pos.getY());
+                        popup.setY(popupTargetY);
+                        // 只添加一次Y坐标监听器，防止JavaFX后续自动重定位
+                        if (!popupListenerAdded) {
+                            popup.yProperty().addListener((obs, old, newY) -> {
+                                if (popup.isShowing() && popupTargetY >= 0
+                                        && Math.abs(newY.doubleValue() - popupTargetY) > 1) {
+                                    Platform.runLater(() -> {
+                                        if (popup.isShowing()) popup.setY(popupTargetY);
+                                    });
+                                }
+                            });
+                            popupListenerAdded = true;
+                        }
                     }
                     break;
                 }
