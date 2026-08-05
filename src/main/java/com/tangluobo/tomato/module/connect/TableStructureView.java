@@ -60,6 +60,18 @@ public class TableStructureView extends BorderPane {
     private Label avgRowLengthLabel;
     private ProgressIndicator optionsLoadingIndicator;
 
+    /** 字段属性面板（字段标签页下方） */
+    private VBox fieldPropsBox;
+    private Label fieldPropsPlaceholder;
+    private CheckBox autoIncrementCheckBox;
+    private ComboBox<String> defaultValueComboBox;
+    private CheckBox unsignedCheckBox;
+    private CheckBox zeroFillCheckBox;
+    private ComboBox<String> fieldCharsetComboBox;
+    private ComboBox<String> fieldCollationComboBox;
+    private TextField keyLengthField;
+    private CheckBox binaryCheckBox;
+
     /** 注释标签页 */
     private TextArea commentTextArea;
 
@@ -165,8 +177,21 @@ public class TableStructureView extends BorderPane {
         loadingIndicator.setMaxSize(40, 40);
         loadingIndicator.setVisible(false);
 
-        // 字段标签页内容：表格 + 加载指示器
-        StackPane fieldsPane = new StackPane(tableView, loadingIndicator);
+        // 字段标签页内容：上方表格 + 下方字段属性面板（SplitPane上下拆分）
+        StackPane tablePane = new StackPane(tableView, loadingIndicator);
+
+        // 字段属性面板：主键选中时显示自增复选框和默认值设置
+        Node fieldPropsPane = createFieldPropertiesPane();
+
+        SplitPane fieldsSplitPane = new SplitPane();
+        fieldsSplitPane.setOrientation(javafx.geometry.Orientation.VERTICAL);
+        fieldsSplitPane.getItems().addAll(tablePane, fieldPropsPane);
+        fieldsSplitPane.setDividerPositions(0.72);
+        fieldsSplitPane.setStyle("-fx-background-color: white; -fx-padding: 0; -fx-background-insets: 0;");
+
+        // 监听选中行变化，更新字段属性面板
+        tableView.getSelectionModel().selectedItemProperty().addListener(
+                (obs, oldSel, newSel) -> updateFieldPropertiesPane());
 
         // 多标签页：字段、索引、外键、触发器、选项、注释、SQL预览
         TabPane tabPane = new TabPane();
@@ -174,7 +199,7 @@ public class TableStructureView extends BorderPane {
         tabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
 
         Tab fieldsTab = new Tab("字段");
-        fieldsTab.setContent(fieldsPane);
+        fieldsTab.setContent(fieldsSplitPane);
 
         Tab indexesTab = new Tab("索引");
         indexesTab.setContent(createIndexesPane());
@@ -398,6 +423,327 @@ public class TableStructureView extends BorderPane {
         if (deleteBtn != null) toolBar.getChildren().add(deleteBtn);
         if (refreshBtn != null) toolBar.getChildren().add(refreshBtn);
         return toolBar;
+    }
+
+    /**
+     * 字段属性面板：位于字段标签页下方。
+     * - 默认值：所有类型可见
+     * - 字符集/排序规则/键长度/二进制：字符串类型可见
+     * - 自增复选框：主键可见
+     * - 无符号/填充零：数字类型可见
+     */
+    private VBox createFieldPropertiesPane() {
+        VBox box = new VBox(4);
+        box.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #ddd; -fx-border-width: 1 0 0 0;");
+        box.setPadding(new Insets(8, 12, 8, 12));
+
+        GridPane grid = new GridPane();
+        grid.setHgap(8);
+        grid.setVgap(6);
+
+        // 默认值行
+        Label defaultLabel = new Label("默认:");
+        defaultLabel.setStyle("-fx-font-size: 12px;");
+        defaultValueComboBox = new ComboBox<>();
+        defaultValueComboBox.setEditable(true);
+        defaultValueComboBox.setPrefWidth(300);
+        defaultValueComboBox.getItems().addAll("", "NULL", "CURRENT_TIMESTAMP", "0", "1");
+        defaultValueComboBox.valueProperty().addListener((obs, oldVal, nv) -> {
+            ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
+            if (selected == null || columnTitles == null) return;
+            int dvIdx = columnTitles.indexOf("默认值");
+            if (dvIdx >= 0 && dvIdx < selected.size()) {
+                String current = selected.get(dvIdx);
+                String val = nv != null ? nv : "";
+                if (!val.equals(current != null ? current : "")) {
+                    selected.set(dvIdx, val);
+                    tableView.refresh();
+                }
+            }
+        });
+        grid.add(defaultLabel, 0, 0);
+        grid.add(defaultValueComboBox, 1, 0);
+
+        // 字符集行
+        Label charsetLabel = new Label("字符集:");
+        charsetLabel.setStyle("-fx-font-size: 12px;");
+        fieldCharsetComboBox = new ComboBox<>();
+        fieldCharsetComboBox.setEditable(false);
+        fieldCharsetComboBox.setPrefWidth(300);
+        fieldCharsetComboBox.valueProperty().addListener((obs, oldVal, newVal) -> {
+            ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
+            if (selected == null || columnTitles == null) return;
+            int csIdx = columnTitles.indexOf("字符集");
+            if (csIdx >= 0 && csIdx < selected.size()) {
+                String current = selected.get(csIdx);
+                String val = newVal != null ? newVal : "";
+                if (!val.equals(current != null ? current : "")) {
+                    selected.set(csIdx, val);
+                    // 字符集变化时联动更新排序规则
+                    if (cachedCharsets != null && newVal != null) {
+                        List<String> collations = cachedCharsets.get(newVal);
+                        if (collations != null) {
+                            String currentColl = null;
+                            int coIdx = columnTitles.indexOf("排序规则");
+                            if (coIdx >= 0 && coIdx < selected.size()) {
+                                currentColl = selected.get(coIdx);
+                            }
+                            fieldCollationComboBox.getItems().setAll(collations);
+                            if (currentColl != null && collations.contains(currentColl)) {
+                                fieldCollationComboBox.setValue(currentColl);
+                            } else if (!collations.isEmpty()) {
+                                fieldCollationComboBox.setValue(collations.get(0));
+                            }
+                        }
+                    }
+                    tableView.refresh();
+                }
+            }
+        });
+        grid.add(charsetLabel, 0, 1);
+        grid.add(fieldCharsetComboBox, 1, 1);
+
+        // 排序规则行
+        Label collationLabel = new Label("排序规则:");
+        collationLabel.setStyle("-fx-font-size: 12px;");
+        fieldCollationComboBox = new ComboBox<>();
+        fieldCollationComboBox.setEditable(false);
+        fieldCollationComboBox.setPrefWidth(300);
+        fieldCollationComboBox.valueProperty().addListener((obs, oldVal, newVal) -> {
+            ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
+            if (selected == null || columnTitles == null) return;
+            int coIdx = columnTitles.indexOf("排序规则");
+            if (coIdx >= 0 && coIdx < selected.size()) {
+                String current = selected.get(coIdx);
+                String val = newVal != null ? newVal : "";
+                if (!val.equals(current != null ? current : "")) {
+                    selected.set(coIdx, val);
+                    tableView.refresh();
+                }
+            }
+        });
+        grid.add(collationLabel, 0, 2);
+        grid.add(fieldCollationComboBox, 1, 2);
+
+        // 键长度行
+        Label keyLenLabel = new Label("键长度:");
+        keyLenLabel.setStyle("-fx-font-size: 12px;");
+        keyLengthField = new TextField();
+        keyLengthField.setPrefWidth(300);
+        keyLengthField.setStyle("-fx-font-size: 12px;");
+        keyLengthField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
+            if (!isNowFocused) {
+                ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
+                if (selected == null || columnTitles == null) return;
+                int idx = columnTitles.indexOf("键长度");
+                if (idx >= 0 && idx < selected.size()) {
+                    String newVal = keyLengthField.getText();
+                    if (!newVal.equals(selected.get(idx))) {
+                        selected.set(idx, newVal);
+                        tableView.refresh();
+                    }
+                }
+            }
+        });
+        grid.add(keyLenLabel, 0, 3);
+        grid.add(keyLengthField, 1, 3);
+
+        // 复选框行：二进制 + 自增 + 无符号 + 填充零
+        HBox checkRow = new HBox(20);
+        checkRow.setAlignment(Pos.CENTER_LEFT);
+
+        binaryCheckBox = new CheckBox("二进制");
+        binaryCheckBox.setStyle("-fx-font-size: 12px;");
+        binaryCheckBox.setOnAction(e -> {
+            ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
+            if (selected == null || columnTitles == null) return;
+            int idx = columnTitles.indexOf("二进制");
+            if (idx >= 0 && idx < selected.size()) {
+                selected.set(idx, binaryCheckBox.isSelected() ? "是" : "否");
+            }
+        });
+
+        autoIncrementCheckBox = new CheckBox("自动递增");
+        autoIncrementCheckBox.setStyle("-fx-font-size: 12px;");
+        autoIncrementCheckBox.setOnAction(e -> {
+            ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
+            if (selected == null || columnTitles == null) return;
+            int aiIdx = columnTitles.indexOf("自增");
+            if (aiIdx >= 0 && aiIdx < selected.size()) {
+                selected.set(aiIdx, autoIncrementCheckBox.isSelected() ? "是" : "否");
+            }
+        });
+
+        unsignedCheckBox = new CheckBox("无符号");
+        unsignedCheckBox.setStyle("-fx-font-size: 12px;");
+        unsignedCheckBox.setOnAction(e -> {
+            ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
+            if (selected == null || columnTitles == null) return;
+            int idx = columnTitles.indexOf("无符号");
+            if (idx >= 0 && idx < selected.size()) {
+                selected.set(idx, unsignedCheckBox.isSelected() ? "是" : "否");
+            }
+        });
+
+        zeroFillCheckBox = new CheckBox("填充零");
+        zeroFillCheckBox.setStyle("-fx-font-size: 12px;");
+        zeroFillCheckBox.setOnAction(e -> {
+            ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
+            if (selected == null || columnTitles == null) return;
+            int idx = columnTitles.indexOf("填充零");
+            if (idx >= 0 && idx < selected.size()) {
+                selected.set(idx, zeroFillCheckBox.isSelected() ? "是" : "否");
+            }
+        });
+
+        checkRow.getChildren().addAll(binaryCheckBox, autoIncrementCheckBox, unsignedCheckBox, zeroFillCheckBox);
+        grid.add(checkRow, 0, 4, 2, 1);
+
+        fieldPropsBox = new VBox(4);
+        fieldPropsBox.getChildren().add(grid);
+
+        // 占位提示
+        fieldPropsPlaceholder = new Label("请选择字段以编辑属性");
+        fieldPropsPlaceholder.setStyle("-fx-font-size: 12px; -fx-text-fill: #999;");
+
+        StackPane stack = new StackPane();
+        stack.getChildren().addAll(fieldPropsBox, fieldPropsPlaceholder);
+        StackPane.setAlignment(fieldPropsPlaceholder, Pos.CENTER_LEFT);
+
+        box.getChildren().add(stack);
+        // 初始状态：显示占位提示
+        fieldPropsBox.setVisible(false);
+        fieldPropsPlaceholder.setVisible(true);
+        return box;
+    }
+
+    /**
+     * 根据当前选中行更新字段属性面板：
+     * - 默认值：所有类型可见
+     * - 字符集/排序规则/键长度/二进制：字符串类型可见
+     * - 自增复选框：主键可见
+     * - 无符号/填充零：数字类型可见
+     */
+    private void updateFieldPropertiesPane() {
+        ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
+        if (selected == null || columnTitles == null) {
+            fieldPropsBox.setVisible(false);
+            fieldPropsPlaceholder.setVisible(true);
+            return;
+        }
+
+        fieldPropsBox.setVisible(true);
+        fieldPropsPlaceholder.setVisible(false);
+
+        int pkIdx = columnTitles.indexOf("主键");
+        int typeIdx = columnTitles.indexOf("类型");
+        int aiIdx = columnTitles.indexOf("自增");
+        int dvIdx = columnTitles.indexOf("默认值");
+        int usIdx = columnTitles.indexOf("无符号");
+        int zfIdx = columnTitles.indexOf("填充零");
+        int csIdx = columnTitles.indexOf("字符集");
+        int coIdx = columnTitles.indexOf("排序规则");
+        int klIdx = columnTitles.indexOf("键长度");
+        int biIdx = columnTitles.indexOf("二进制");
+
+        boolean isPk = pkIdx >= 0 && pkIdx < selected.size() && "是".equals(selected.get(pkIdx));
+        String typeName = typeIdx >= 0 && typeIdx < selected.size() ? selected.get(typeIdx) : "";
+        boolean isNumeric = isNumericType(typeName);
+        boolean isString = isStringType(typeName);
+
+        // 加载默认值
+        if (dvIdx >= 0 && dvIdx < selected.size()) {
+            String val = selected.get(dvIdx);
+            defaultValueComboBox.setValue(val != null ? val : "");
+        } else {
+            defaultValueComboBox.setValue("");
+        }
+
+        // 字符串类型：加载字符集、排序规则、键长度、二进制
+        fieldCharsetComboBox.setVisible(isString);
+        fieldCollationComboBox.setVisible(isString);
+        keyLengthField.setVisible(isString);
+        binaryCheckBox.setVisible(isString);
+        if (isString) {
+            // 填充字符集下拉项
+            if (cachedCharsets != null && !cachedCharsets.isEmpty()) {
+                fieldCharsetComboBox.getItems().setAll(cachedCharsets.keySet());
+            }
+            if (csIdx >= 0 && csIdx < selected.size()) {
+                String cs = selected.get(csIdx);
+                fieldCharsetComboBox.setValue(cs != null ? cs : "");
+                // 联动填充排序规则
+                if (cachedCharsets != null && cs != null && !cs.isEmpty()) {
+                    List<String> collations = cachedCharsets.get(cs);
+                    if (collations != null) {
+                        fieldCollationComboBox.getItems().setAll(collations);
+                    }
+                }
+            } else {
+                fieldCharsetComboBox.setValue("");
+            }
+            if (coIdx >= 0 && coIdx < selected.size()) {
+                fieldCollationComboBox.setValue(selected.get(coIdx));
+            } else {
+                fieldCollationComboBox.setValue("");
+            }
+            if (klIdx >= 0 && klIdx < selected.size()) {
+                keyLengthField.setText(selected.get(klIdx));
+            } else {
+                keyLengthField.setText("");
+            }
+            if (biIdx >= 0 && biIdx < selected.size()) {
+                binaryCheckBox.setSelected("是".equals(selected.get(biIdx)));
+            } else {
+                binaryCheckBox.setSelected(false);
+            }
+        }
+
+        // 自增复选框：仅主键显示
+        autoIncrementCheckBox.setVisible(isPk);
+        if (isPk && aiIdx >= 0 && aiIdx < selected.size()) {
+            autoIncrementCheckBox.setSelected("是".equals(selected.get(aiIdx)));
+        } else {
+            autoIncrementCheckBox.setSelected(false);
+        }
+
+        // 无符号和填充零复选框：仅数字类型显示
+        unsignedCheckBox.setVisible(isNumeric);
+        zeroFillCheckBox.setVisible(isNumeric);
+        if (isNumeric) {
+            if (usIdx >= 0 && usIdx < selected.size()) {
+                unsignedCheckBox.setSelected("是".equals(selected.get(usIdx)));
+            } else {
+                unsignedCheckBox.setSelected(false);
+            }
+            if (zfIdx >= 0 && zfIdx < selected.size()) {
+                zeroFillCheckBox.setSelected("是".equals(selected.get(zfIdx)));
+            } else {
+                zeroFillCheckBox.setSelected(false);
+            }
+        }
+    }
+
+    /**
+     * 判断类型名是否为数字类型（用于显示无符号/填充零复选框）
+     */
+    private boolean isNumericType(String typeName) {
+        if (typeName == null) return false;
+        String t = typeName.toLowerCase();
+        return t.contains("int") || t.contains("decimal") || t.contains("float")
+                || t.contains("double") || t.contains("numeric") || t.contains("number")
+                || t.contains("bit") || t.contains("real") || t.contains("serial");
+    }
+
+    /**
+     * 判断类型名是否为字符串/二进制类型（用于显示字符集/排序规则/键长度/二进制）
+     */
+    private boolean isStringType(String typeName) {
+        if (typeName == null) return false;
+        String t = typeName.toLowerCase();
+        return t.contains("char") || t.contains("text") || t.contains("enum")
+                || t.contains("set") || t.contains("binary") || t.contains("blob")
+                || t.contains("clob") || t.contains("string");
     }
 
     /**
@@ -1067,6 +1413,7 @@ public class TableStructureView extends BorderPane {
         String current = selected.get(pkColIndex);
         selected.set(pkColIndex, "是".equals(current) ? "否" : "是");
         tableView.refresh();
+        updateFieldPropertiesPane();
         statusLabel.setText("已切换主键（未保存）");
     }
 
@@ -1167,9 +1514,19 @@ public class TableStructureView extends BorderPane {
                     cachedDataTypes = DataTypeProvider.getDataTypes(config.getType(), cachedDbVersion);
                 }
 
+                // 加载字符集映射（供底部面板和选项标签页使用）
+                if (cachedCharsets == null) {
+                    try {
+                        cachedCharsets = DatabaseService.getCharsets(config);
+                    } catch (Exception e) {
+                        cachedCharsets = new HashMap<>();
+                    }
+                }
+
                 List<Map<String, String>> columns = DatabaseService.getTableColumns(config, databaseName, tableName);
                 Platform.runLater(() -> {
                     updateTableView(columns);
+                    updateFieldPropertiesPane();
                     String versionInfo = cachedDbVersion != null ? " | 版本: " + cachedDbVersion : "";
                     statusLabel.setText("共 " + columns.size() + " 个字段" + versionInfo);
                     loadingIndicator.setVisible(false);
@@ -1273,6 +1630,14 @@ public class TableStructureView extends BorderPane {
         for (int i = 0; i < columnTitles.size(); i++) {
             final int dataColIndex = i;
             String title = columnTitles.get(i);
+
+            // 不在表中显示的列（仅在下方字段属性面板中编辑）
+            if ("自增".equals(title) || "无符号".equals(title) || "填充零".equals(title)
+                    || "字符集".equals(title) || "排序规则".equals(title)
+                    || "键长度".equals(title) || "二进制".equals(title)) {
+                continue;
+            }
+
             TableColumn<ObservableList<String>, String> col = new TableColumn<>(title);
 
             // 存储数据列索引到userData，避免行选择器列导致的索引偏移
@@ -1420,6 +1785,7 @@ public class TableStructureView extends BorderPane {
                 Integer dataColIndex = (Integer) getTableColumn().getUserData();
                 if (dataColIndex != null && dataColIndex >= 0 && dataColIndex < row.size()) {
                     row.set(dataColIndex, checkBox.isSelected() ? "是" : "否");
+                    updateFieldPropertiesPane();
                 }
             });
         }
