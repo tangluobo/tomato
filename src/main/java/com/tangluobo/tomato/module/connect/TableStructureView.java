@@ -65,8 +65,10 @@ public class TableStructureView extends BorderPane {
 
     /** SQL预览标签页 */
     private SqlPreviewViewer sqlPreviewViewer;
-    /** SQL预览模式下拉框：保存（ALTER）/ 另存为（CREATE TABLE） */
-    private ComboBox<String> sqlPreviewModeBox;
+    /** SQL预览模式：保存（ALTER）/ 另存为（CREATE TABLE） */
+    private Button sqlPreviewModeBtn;
+    private javafx.stage.Popup sqlPreviewModePopup;
+    private String sqlPreviewMode = "保存";
 
     /** 缓存的字符集->排序规则映射（用于选项标签页字符集联动，避免在FX线程查询数据库） */
     private Map<String, List<String>> cachedCharsets;
@@ -590,32 +592,48 @@ public class TableStructureView extends BorderPane {
         sqlPreviewViewer.setText("-- 加载中...");
         VBox.setVgrow(sqlPreviewViewer.getNode(), javafx.scene.layout.Priority.ALWAYS);
 
-        // 模式下拉框：保存（ALTER语句）/ 另存为（CREATE TABLE完整SQL）
-        sqlPreviewModeBox = new ComboBox<>();
-        sqlPreviewModeBox.getItems().addAll("保存", "另存为");
-        sqlPreviewModeBox.getSelectionModel().selectFirst();
-        sqlPreviewModeBox.setMaxWidth(javafx.scene.layout.Region.USE_PREF_SIZE);
-        sqlPreviewModeBox.setVisibleRowCount(2);
-        sqlPreviewModeBox.setOnAction(e -> loadSqlPreview());
-        // 修复弹出位置：强制弹出框在ComboBox下方显示，浮于状态栏之上
-        sqlPreviewModeBox.setOnShown(e -> {
-            for (javafx.stage.Window w : javafx.stage.Window.getWindows()) {
-                if (w instanceof javafx.stage.PopupWindow && w.isShowing()) {
-                    javafx.stage.PopupWindow popup = (javafx.stage.PopupWindow) w;
-                    if (popup.getOwnerWindow() == sqlPreviewModeBox.getScene().getWindow()) {
-                        popup.setAutoFix(false);
-                        javafx.geometry.Point2D pos = sqlPreviewModeBox.localToScreen(0, sqlPreviewModeBox.getHeight());
-                        if (pos != null) {
-                            popup.setX(pos.getX());
-                            popup.setY(pos.getY());
-                        }
-                        break;
-                    }
+        // 自定义下拉框：保存（ALTER语句）/ 另存为（CREATE TABLE完整SQL）
+        sqlPreviewModeBtn = new Button("保存 \u25BE");
+        sqlPreviewModeBtn.setStyle("-fx-pref-width: 80px; -fx-pref-height: 24px; -fx-font-size: 12px; " +
+                "-fx-background-color: #f8f8f8; -fx-border-color: #ccc; -fx-border-width: 1; " +
+                "-fx-alignment: CENTER_LEFT; -fx-padding: 0 6 0 8;");
+        sqlPreviewModeBtn.setCursor(javafx.scene.Cursor.HAND);
+
+        sqlPreviewModePopup = new javafx.stage.Popup();
+        sqlPreviewModePopup.setAutoFix(false);
+        sqlPreviewModePopup.setAutoHide(true);
+
+        VBox popupContent = new VBox();
+        popupContent.setStyle("-fx-background-color: white; -fx-border-color: #ccc; -fx-border-width: 1; " +
+                "-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.25), 6, 0, 0, 2);");
+
+        for (String opt : new String[]{"保存", "另存为"}) {
+            Label item = new Label(opt);
+            item.setStyle("-fx-padding: 5 20 5 10; -fx-font-size: 12px; -fx-cursor: hand; -fx-text-fill: #333;");
+            item.setOnMouseEntered(e -> item.setStyle("-fx-padding: 5 20 5 10; -fx-font-size: 12px; -fx-cursor: hand; -fx-text-fill: #333; -fx-background-color: #e0f0ff;"));
+            item.setOnMouseExited(e -> item.setStyle("-fx-padding: 5 20 5 10; -fx-font-size: 12px; -fx-cursor: hand; -fx-text-fill: #333;"));
+            item.setOnMouseClicked(e -> {
+                sqlPreviewMode = opt;
+                sqlPreviewModeBtn.setText(opt + " \u25BE");
+                sqlPreviewModePopup.hide();
+                loadSqlPreview();
+            });
+            popupContent.getChildren().add(item);
+        }
+        sqlPreviewModePopup.getContent().add(popupContent);
+
+        sqlPreviewModeBtn.setOnAction(e -> {
+            if (sqlPreviewModePopup.isShowing()) {
+                sqlPreviewModePopup.hide();
+            } else {
+                javafx.geometry.Point2D pos = sqlPreviewModeBtn.localToScreen(0, sqlPreviewModeBtn.getHeight());
+                if (pos != null) {
+                    sqlPreviewModePopup.show(sqlPreviewModeBtn.getScene().getWindow(), pos.getX(), pos.getY());
                 }
             }
         });
 
-        HBox modeBox = new HBox(sqlPreviewModeBox);
+        HBox modeBox = new HBox(sqlPreviewModeBtn);
         modeBox.setPadding(new Insets(2, 0, 0, 0));
         modeBox.setMaxHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
         box.getChildren().addAll(sqlPreviewViewer.getNode(), modeBox);
@@ -796,7 +814,7 @@ public class TableStructureView extends BorderPane {
      */
     private void loadSqlPreview() {
         sqlPreviewViewer.setText("-- 加载中...");
-        boolean isSaveAs = "另存为".equals(sqlPreviewModeBox.getSelectionModel().getSelectedItem());
+        boolean isSaveAs = "另存为".equals(sqlPreviewMode);
         new Thread(() -> {
             try {
                 if (isSaveAs) {
