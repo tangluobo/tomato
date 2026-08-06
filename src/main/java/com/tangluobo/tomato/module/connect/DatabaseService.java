@@ -1267,6 +1267,8 @@ public class DatabaseService {
                 col.put("字段名", colName);
                 col.put("类型", rs.getString("TYPE_NAME"));
                 col.put("长度", rs.getString("COLUMN_SIZE"));
+                String decimalDigits = rs.getString("DECIMAL_DIGITS");
+                col.put("小数点", decimalDigits != null ? decimalDigits : "");
                 col.put("非空", "NO".equalsIgnoreCase(rs.getString("IS_NULLABLE")) ? "是" : "否");
                 col.put("主键", primaryKeys.contains(colName) ? "是" : "否");
                 String autoIncrement = rs.getString("IS_AUTOINCREMENT");
@@ -1824,18 +1826,23 @@ public class DatabaseService {
             StringBuilder colDef = new StringBuilder();
             String type = col.getOrDefault("类型", "");
             String length = col.getOrDefault("长度", "");
+            String decimal = col.getOrDefault("小数点", "");
             String nullable = col.getOrDefault("非空", "否");
             String autoInc = col.getOrDefault("自增", "否");
             String isPk = col.getOrDefault("主键", "否");
             String defaultValue = col.getOrDefault("默认值", "");
             String colComment = col.getOrDefault("注释", "");
+            // 构造类型长度部分：需要小数位的类型生成 (length,decimal)，其他生成 (length)
+            String typeSize = "";
+            if (length != null && !length.isEmpty()) {
+                typeSize = needsDecimalPlaces(type) && decimal != null && !decimal.isEmpty()
+                        ? "(" + length + "," + decimal + ")"
+                        : "(" + length + ")";
+            }
 
             switch (config.getType()) {
                 case MYSQL -> {
-                    colDef.append("    `").append(colName).append("` ").append(type);
-                    if (length != null && !length.isEmpty()) {
-                        colDef.append("(").append(length).append(")");
-                    }
+                    colDef.append("    `").append(colName).append("` ").append(type).append(typeSize);
                     if ("是".equals(col.get("无符号"))) colDef.append(" UNSIGNED");
                     if ("是".equals(col.get("填充零"))) colDef.append(" ZEROFILL");
                     String cs = col.get("字符集");
@@ -1859,10 +1866,7 @@ public class DatabaseService {
                 }
                 case POSTGRESQL, ORACLE -> {
                     String quote = config.getType() == ConnectType.POSTGRESQL ? "\"" : "\"";
-                    colDef.append("    ").append(quote).append(colName).append(quote).append(" ").append(type);
-                    if (length != null && !length.isEmpty()) {
-                        colDef.append("(").append(length).append(")");
-                    }
+                    colDef.append("    ").append(quote).append(colName).append(quote).append(" ").append(type).append(typeSize);
                     if ("是".equals(nullable)) colDef.append(" NOT NULL");
                 }
                 default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
@@ -1925,6 +1929,16 @@ public class DatabaseService {
         }
 
         return sb.toString();
+    }
+
+    /**
+     * 判断类型是否需要指定小数位数（精度类型：decimal/numeric/double/float/real）
+     */
+    public static boolean needsDecimalPlaces(String type) {
+        if (type == null) return false;
+        String t = type.toLowerCase();
+        return t.contains("decimal") || t.contains("numeric")
+                || t.contains("double") || t.contains("float") || t.contains("real");
     }
 
     /**

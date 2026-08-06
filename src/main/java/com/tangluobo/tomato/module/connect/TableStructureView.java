@@ -8,12 +8,14 @@ import javafx.collections.transformation.FilteredList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
+import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyCombination;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
@@ -113,6 +115,9 @@ public class TableStructureView extends BorderPane {
     /** 列注释原始值缓存（字段名 → 原始注释），用于检测变更 */
     private Map<String, String> originalColumnComments = new HashMap<>();
 
+    /** 复制字段的JSON缓存（避免被JavaFX默认复制行为覆盖剪贴板导致粘贴失败） */
+    private String copiedFieldsJson = null;
+
     /** 表注释原始值，用于检测变更 */
     private String originalTableComment = null;
 
@@ -192,17 +197,10 @@ public class TableStructureView extends BorderPane {
         tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0; -fx-table-header-height: " + rowHeight + ";");
         tableView.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
 
-        // Ctrl+C 复制字段、Ctrl+V 粘贴字段（用addEventFilter确保在事件捕获阶段触发）
-        tableView.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, e -> {
-            if (tableView.getEditingCell() != null) return; // 正在编辑时不拦截
-            if (e.isControlDown() && e.getCode() == KeyCode.C) {
-                handleCopyFields();
-                e.consume();
-            } else if (e.isControlDown() && e.getCode() == KeyCode.V) {
-                handlePasteFields();
-                e.consume();
-            }
-        });
+        // Ctrl+C 复制字段、Ctrl+V 粘贴字段
+        // 使用Scene加速器（最高优先级，在所有事件处理之前触发），
+        // 解决ComboBox内TextField拦截Ctrl+C导致TableView事件过滤器不触发的问题
+        setupCopyPasteAccelerators();
 
         // 右键菜单：复制/粘贴/添加/插入/删除/主键
         ContextMenu tableContextMenu = new ContextMenu();
@@ -1537,6 +1535,7 @@ public class TableStructureView extends BorderPane {
         int nameIdx = columnTitles.indexOf("字段名");
         int typeIdx = columnTitles.indexOf("类型");
         int lenIdx = columnTitles.indexOf("长度");
+        int decIdx = columnTitles.indexOf("小数点");
         for (int i = 0; i < tableView.getItems().size(); i++) {
             ObservableList<String> row = tableView.getItems().get(i);
             String colName = nameIdx >= 0 && nameIdx < row.size() ? row.get(nameIdx) : "";
@@ -1550,6 +1549,10 @@ public class TableStructureView extends BorderPane {
             String length = lenIdx >= 0 && lenIdx < row.size() ? row.get(lenIdx) : "";
             if (needsLength(type) && (length == null || length.trim().isEmpty())) {
                 errors.add("第" + (i + 1) + "行字段\"" + colName + "\"：类型\"" + type + "\"需要指定长度");
+            }
+            String decimal = decIdx >= 0 && decIdx < row.size() ? row.get(decIdx) : "";
+            if (DatabaseService.needsDecimalPlaces(type) && (decimal == null || decimal.trim().isEmpty())) {
+                errors.add("第" + (i + 1) + "行字段\"" + colName + "\"：类型\"" + type + "\"需要指定小数点");
             }
         }
         return errors;
@@ -1682,6 +1685,92 @@ public class TableStructureView extends BorderPane {
     }
 
     /**
+     * 注册Scene加速器处理Ctrl+C/Ctrl+V。
+     * Scene加速器在所有事件分发之前触发，确保ComboBox内TextField不会拦截快捷键。
+     * 通过focusOwnerProperty监听焦点变化，确保当前焦点所在的TableView始终拥有加速器。
+     */
+    private void setupCopyPasteAccelerators() {
+        final KeyCombination copyCombo = KeyCombination.keyCombination("Ctrl+C");
+        final KeyCombination pasteCombo = KeyCombination.keyCombination("Ctrl+V");
+
+        // 在Scene上注册加速器和焦点监听器
+        java.util.function.Consumer<Scene> registerOnScene = scene -> {
+            // 立即注册一次
+            scene.getAccelerators().put(copyCombo, this::handleAcceleratorCopy);
+            scene.getAccelerators().put(pasteCombo, this::handleAcceleratorPaste);
+            // 监听焦点变化：当焦点进入本表格时，重新注册本表格的加速器（覆盖其他Tab的）
+            scene.focusOwnerProperty().addListener((o, oldFocus, newFocus) -> {
+                if (newFocus != null && isFocusInTable(newFocus)) {
+                    scene.getAccelerators().put(copyCombo, this::handleAcceleratorCopy);
+                    scene.getAccelerators().put(pasteCombo, this::handleAcceleratorPaste);
+                }
+            });
+        };
+
+        tableView.sceneProperty().addListener((obs, oldScene, newScene) -> {
+            if (newScene != null) {
+                registerOnScene.accept(newScene);
+            }
+        });
+
+        Scene scene = tableView.getScene();
+        if (scene != null) {
+            registerOnScene.accept(scene);
+        }
+    }
+
+    /** Ctrl+C加速器处理：优先复制TextInputControl选中文本，否则复制表格选中行 */
+    private void handleAcceleratorCopy() {
+        Scene scene = tableView.getScene();
+        if (scene == null) return;
+        Node focusOwner = scene.getFocusOwner();
+        // 1. 焦点在文本输入组件且有选中文本 → 复制文本
+        if (focusOwner instanceof TextInputControl tic) {
+            String selected = tic.getSelectedText();
+            if (selected != null && !selected.isEmpty()) {
+                ClipboardContent content = new ClipboardContent();
+                content.putString(selected);
+                Clipboard.getSystemClipboard().setContent(content);
+                copiedFieldsJson = null; // 清除字段缓存，避免粘贴时误用
+                return;
+            }
+        }
+        // 2. 表格有选中行 → 复制字段（无论焦点在哪里）
+        if (!tableView.getSelectionModel().getSelectedIndices().isEmpty()
+            && tableView.getEditingCell() == null) {
+            handleCopyFields();
+        }
+    }
+
+    /** Ctrl+V加速器处理：焦点在TextInputControl时粘贴文本，否则粘贴字段 */
+    private void handleAcceleratorPaste() {
+        Scene scene = tableView.getScene();
+        if (scene == null) return;
+        Node focusOwner = scene.getFocusOwner();
+        // 1. 焦点在文本输入组件 → 粘贴文本
+        if (focusOwner instanceof TextInputControl tic) {
+            String text = Clipboard.getSystemClipboard().getString();
+            if (text != null) {
+                tic.replaceSelection(text);
+            }
+            return;
+        }
+        // 2. 否则 → 粘贴字段
+        if (tableView.getEditingCell() == null) {
+            handlePasteFields();
+        }
+    }
+
+    private boolean isFocusInTable(Node focusOwner) {
+        Node n = focusOwner;
+        while (n != null) {
+            if (n == tableView) return true;
+            n = n.getParent();
+        }
+        return false;
+    }
+
+    /**
      * 复制选中字段到系统剪贴板（JSON格式，支持跨表粘贴）
      */
     private void handleCopyFields() {
@@ -1693,6 +1782,13 @@ public class TableStructureView extends BorderPane {
             }
             ObservableList<ObservableList<String>> items = tableView.getItems();
             List<Integer> selectedIndices = new ArrayList<>(tableView.getSelectionModel().getSelectedIndices());
+            // 选中为空时回退到焦点行（避免ComboBox获得焦点时行选择丢失导致Ctrl+C无效）
+            if (selectedIndices.isEmpty()) {
+                int focusedRow = tableView.getFocusModel().getFocusedIndex();
+                if (focusedRow >= 0 && focusedRow < items.size()) {
+                    selectedIndices.add(focusedRow);
+                }
+            }
             if (selectedIndices.isEmpty()) {
                 statusLabel.setText("请先选择要复制的字段");
                 return;
@@ -1716,6 +1812,7 @@ public class TableStructureView extends BorderPane {
             // 序列化为JSON并存入剪贴板
             com.google.gson.Gson gson = new com.google.gson.GsonBuilder().create();
             String json = gson.toJson(copiedRows);
+            copiedFieldsJson = json; // 缓存到成员变量，防止剪贴板被默认行为覆盖
             ClipboardContent content = new ClipboardContent();
             content.putString(json);
             Clipboard.getSystemClipboard().setContent(content);
@@ -1744,7 +1841,11 @@ public class TableStructureView extends BorderPane {
             if (tableView.getEditingCell() != null) {
                 tableView.edit(-1, null);
             }
-            String json = Clipboard.getSystemClipboard().getString();
+            // 优先从成员变量读取（避免JavaFX默认复制行为覆盖剪贴板），其次从剪贴板读取
+            String json = copiedFieldsJson;
+            if (json == null || json.trim().isEmpty()) {
+                json = Clipboard.getSystemClipboard().getString();
+            }
             if (json == null || json.trim().isEmpty()) {
                 statusLabel.setText("剪贴板无内容");
                 return;
@@ -1895,6 +1996,7 @@ public class TableStructureView extends BorderPane {
         emptyRow.put("字段名", "");
         emptyRow.put("类型", "");
         emptyRow.put("长度", "");
+        emptyRow.put("小数点", "");
         emptyRow.put("非空", "否");
         emptyRow.put("主键", "否");
         emptyRow.put("自增", "否");
@@ -2020,7 +2122,7 @@ public class TableStructureView extends BorderPane {
             int prefWidth = switch (title) {
                 case "字段名" -> 150;
                 case "类型" -> 120;
-                case "长度" -> 60;
+                case "长度", "小数点" -> 60;
                 case "可为空", "非空", "自增" -> 60;
                 case "主键" -> 70;
                 case "默认值" -> 120;
@@ -2056,8 +2158,8 @@ public class TableStructureView extends BorderPane {
             } else if ("非空".equals(title)) {
                 // "非空"列使用复选框，点击直接切换
                 col.setCellFactory(tc -> new PrimaryKeyCheckBoxTableCell());
-            } else if ("字段名".equals(title) || "长度".equals(title) || "注释".equals(title)) {
-                // "字段名"/"长度"/"注释"列使用可编辑TextField单元格
+            } else if ("字段名".equals(title) || "长度".equals(title) || "小数点".equals(title) || "注释".equals(title)) {
+                // "字段名"/"长度"/"小数点"/"注释"列使用可编辑TextField单元格
                 col.setCellFactory(tc -> new EditableTextFieldTableCell(columnTitles));
                 col.setOnEditCommit(event -> {
                     ObservableList<String> row = event.getRowValue();
