@@ -2,6 +2,8 @@ package com.tangluobo.tomato.module.connect;
 
 import javafx.application.Platform;
 import javafx.scene.control.*;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.layout.GridPane;
 import javafx.geometry.Insets;
 
@@ -97,5 +99,61 @@ public class RedisConnectHandler implements ConnectHandler {
         }
         hostItem.getChildren().clear();
         module.triggerHostDoubleClick(hostItem, config);
+    }
+
+    /** 双击 Redis 数据库节点：打开 Redis 数据 Tab */
+    public void handleRedisDbDoubleClick(ConnectModule module, TreeItem<String> dbItem, DatabaseNodeData data) {
+        if (module.getTerminalTabPane() == null) return;
+        if (!module.ensureTabPaneInstalled()) return;
+
+        String dbName = data.getDatabaseName();
+        int dbIndex = 0;
+        if (dbName.startsWith("db")) {
+            try {
+                dbIndex = Integer.parseInt(dbName.substring(2));
+            } catch (NumberFormatException ignored) {}
+        }
+
+        String tabId = "redis_" + data.getConnectionConfig().getId() + "_" + dbName;
+        for (Tab tab : module.getTerminalTabPane().getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                module.getTerminalTabPane().getSelectionModel().select(tab);
+                module.showDataView();
+                return;
+            }
+        }
+
+        RedisDataView dataView = new RedisDataView(data.getConnectionConfig(), dbIndex);
+
+        ConnectionConfig config = data.getConnectionConfig();
+        String tabTitle = dbName + "(" + config.getHost() + ":" + config.getPort() + ")-Redis";
+        Tab tab = new Tab(tabTitle);
+
+        try {
+            Image redisIcon = new Image(getClass().getResourceAsStream("/images/connect/redis.png"));
+            ImageView tabIconView = new ImageView(redisIcon);
+            tabIconView.setFitWidth(18);
+            tabIconView.setFitHeight(18);
+            tab.setGraphic(tabIconView);
+        } catch (Exception ignored) {}
+
+        tab.setContent(dataView);
+        tab.setUserData(tabId);
+
+        ContextMenu redisTabContextMenu = new ContextMenu();
+        MenuItem refreshItem = new MenuItem("刷新");
+        refreshItem.setOnAction(e -> dataView.loadKeyTree());
+        redisTabContextMenu.getItems().add(refreshItem);
+        tab.setContextMenu(redisTabContextMenu);
+
+        tab.setOnClosed(e -> {
+            if (module.getTerminalTabPane().getTabs().isEmpty()) {
+                module.showWelcomeView();
+            }
+        });
+
+        module.getTerminalTabPane().getTabs().add(tab);
+        module.getTerminalTabPane().getSelectionModel().select(tab);
+        module.showDataView();
     }
 }

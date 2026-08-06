@@ -1,13 +1,14 @@
-package com.tangluobo.tomato.module.connect;
+package com.tangluobo.tomato.module.connect.dialog;
 
+import com.tangluobo.tomato.module.connect.BackupService;
+import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.DatabaseService;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
-import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
-import javafx.scene.control.cell.CheckBoxTreeCell;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.*;

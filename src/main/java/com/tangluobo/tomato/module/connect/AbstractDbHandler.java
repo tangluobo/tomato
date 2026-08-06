@@ -1,13 +1,19 @@
 package com.tangluobo.tomato.module.connect;
 
+import com.tangluobo.tomato.module.connect.dialog.CreateDatabaseDialog;
+import com.tangluobo.tomato.module.connect.dialog.EditDatabaseDialog;
+import com.tangluobo.tomato.module.connect.dialog.GlobalConfigDialog;
 import javafx.application.Platform;
 import javafx.collections.ObservableList;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.ProgressIndicator;
+import javafx.scene.control.Tab;
 import javafx.scene.control.TreeItem;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
@@ -753,5 +759,199 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         loadBackupsForFolder(backupFolder, config, dbName);
 
         schemaItem.getChildren().addAll(tablesFolder, viewsFolder, functionFolder, queryFolder, backupFolder);
+    }
+
+    // ==================== 文件夹双击：加载表/视图列表 ====================
+
+    /** 双击表文件夹：若已加载则切换展开状态，否则加载表列表 */
+    public void handleTablesFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
+        if (!folderItem.getChildren().isEmpty()) {
+            folderItem.setExpanded(!folderItem.isExpanded());
+            return;
+        }
+        loadTablesForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(), true);
+    }
+
+    /** 双击视图文件夹：若已加载则切换展开状态，否则加载视图列表 */
+    public void handleViewsFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
+        if (!folderItem.getChildren().isEmpty()) {
+            folderItem.setExpanded(!folderItem.isExpanded());
+            return;
+        }
+        loadViewsForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(), true);
+    }
+
+    // ==================== 表/视图 Tab 打开 ====================
+
+    /** 新建表：打开表结构设计 Tab */
+    public void handleNewTable(TreeItem<String> item, DatabaseNodeData data) {
+        if (module.getTerminalTabPane() == null) return;
+        if (!module.ensureTabPaneInstalled()) return;
+
+        String tabId = "newtable_" + data.getConnectionConfig().getId() + "_" + data.getDatabaseName()
+                + (data.getSchemaName() != null ? "_" + data.getSchemaName() : "");
+        for (Tab tab : module.getTerminalTabPane().getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                module.getTerminalTabPane().getSelectionModel().select(tab);
+                module.showDataView();
+                return;
+            }
+        }
+
+        TableStructureView structView = new TableStructureView(data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(), null);
+
+        ConnectionConfig config = data.getConnectionConfig();
+        String tabTitle = "新建表@" + data.getDatabaseName() + "(" + config.getHost() + ":" + config.getPort() + ")-表结构";
+        Tab tab = new Tab(tabTitle);
+        Image tableIcon = module.getTableIcon();
+        if (tableIcon != null) {
+            ImageView tabIconView = new ImageView(tableIcon);
+            tabIconView.setFitWidth(18);
+            tabIconView.setFitHeight(18);
+            tab.setGraphic(tabIconView);
+        }
+        tab.setContent(structView);
+        tab.setUserData(tabId);
+
+        // 新建表保存成功后：更新 tab 标题/userData（切换为设计表标识）并刷新表树
+        final Tab finalTab = tab;
+        structView.setOnTableCreated(newTableName -> {
+            finalTab.setText(newTableName + "@" + data.getDatabaseName() + "(" + config.getHost() + ":" + config.getPort() + ")-表结构");
+            finalTab.setUserData("struct_" + config.getId() + "_" + data.getDatabaseName() + "_" + newTableName);
+            refreshDbNode(item, data);
+        });
+
+        ContextMenu structTabContextMenu = new ContextMenu();
+        MenuItem structConfigItem = new MenuItem("表格配置");
+        structConfigItem.setOnAction(e -> {
+            Stage stage = (Stage) module.getTerminalTabPane().getScene().getWindow();
+            GlobalConfigDialog.show(stage, GlobalConfigDialog.ConfigMode.TABLE);
+            GlobalConfig globalConfig = GlobalConfig.getInstance();
+            structView.applyTableConfig(globalConfig);
+        });
+        MenuItem structRefreshItem = new MenuItem("刷新结构");
+        structRefreshItem.setOnAction(e -> structView.loadStructure());
+        structTabContextMenu.getItems().addAll(structConfigItem, structRefreshItem);
+        tab.setContextMenu(structTabContextMenu);
+
+        tab.setOnClosed(e -> {
+            if (module.getTerminalTabPane().getTabs().isEmpty()) {
+                module.showWelcomeView();
+            }
+        });
+
+        module.getTerminalTabPane().getTabs().add(tab);
+        module.getTerminalTabPane().getSelectionModel().select(tab);
+        module.showDataView();
+    }
+
+    /** 设计表：打开表/视图结构 Tab */
+    public void handleTableStructureDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
+        if (module.getTerminalTabPane() == null) return;
+        if (!module.ensureTabPaneInstalled()) return;
+
+        String tabId = "struct_" + data.getConnectionConfig().getId() + "_" + data.getDatabaseName()
+                + (data.getSchemaName() != null ? "_" + data.getSchemaName() : "") + "_" + data.getName();
+        for (Tab tab : module.getTerminalTabPane().getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                module.getTerminalTabPane().getSelectionModel().select(tab);
+                module.showDataView();
+                return;
+            }
+        }
+
+        TableStructureView structView = new TableStructureView(data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(), data.getName());
+
+        ConnectionConfig config = data.getConnectionConfig();
+        String typeLabel = data.getType() == DatabaseNodeData.NodeType.VIEW ? "视图" : "表";
+        String tabTitle = data.getName() + "@" + data.getDatabaseName() + "(" + config.getHost() + ":" + config.getPort() + ")-" + typeLabel + "结构";
+        Tab tab = new Tab(tabTitle);
+        Image tabIcon = data.getType() == DatabaseNodeData.NodeType.VIEW ? module.getViewIcon() : module.getTableIcon();
+        if (tabIcon != null) {
+            ImageView tabIconView = new ImageView(tabIcon);
+            tabIconView.setFitWidth(18);
+            tabIconView.setFitHeight(18);
+            tab.setGraphic(tabIconView);
+        }
+        tab.setContent(structView);
+        tab.setUserData(tabId);
+
+        ContextMenu structTabContextMenu = new ContextMenu();
+        MenuItem structConfigItem = new MenuItem("表格配置");
+        structConfigItem.setOnAction(e -> {
+            Stage stage = (Stage) module.getTerminalTabPane().getScene().getWindow();
+            GlobalConfigDialog.show(stage, GlobalConfigDialog.ConfigMode.TABLE);
+            GlobalConfig globalConfig = GlobalConfig.getInstance();
+            structView.applyTableConfig(globalConfig);
+        });
+        MenuItem structRefreshItem = new MenuItem("刷新结构");
+        structRefreshItem.setOnAction(e -> structView.loadStructure());
+        structTabContextMenu.getItems().addAll(structConfigItem, structRefreshItem);
+        tab.setContextMenu(structTabContextMenu);
+
+        tab.setOnClosed(e -> {
+            if (module.getTerminalTabPane().getTabs().isEmpty()) {
+                module.showWelcomeView();
+            }
+        });
+
+        module.getTerminalTabPane().getTabs().add(tab);
+        module.getTerminalTabPane().getSelectionModel().select(tab);
+        module.showDataView();
+    }
+
+    /** 打开数据：打开表/视图数据 Tab */
+    public void handleTableDataDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
+        if (module.getTerminalTabPane() == null) return;
+        if (!module.ensureTabPaneInstalled()) return;
+
+        String tabId = data.getConnectionConfig().getId() + "_" + data.getDatabaseName()
+                + (data.getSchemaName() != null ? "_" + data.getSchemaName() : "") + "_" + data.getName();
+        for (Tab tab : module.getTerminalTabPane().getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                module.getTerminalTabPane().getSelectionModel().select(tab);
+                module.showDataView();
+                return;
+            }
+        }
+
+        TableDataView dataView = new TableDataView(data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(), data.getName());
+
+        ConnectionConfig config = data.getConnectionConfig();
+        String typeLabel = data.getType() == DatabaseNodeData.NodeType.VIEW ? "视图" : "表";
+        String tabTitle = data.getName() + "@" + data.getDatabaseName() + "(" + config.getHost() + ":" + config.getPort() + ")-" + typeLabel;
+        Tab tab = new Tab(tabTitle);
+        Image tabIcon = data.getType() == DatabaseNodeData.NodeType.VIEW ? module.getViewIcon() : module.getTableIcon();
+        if (tabIcon != null) {
+            ImageView tabIconView = new ImageView(tabIcon);
+            tabIconView.setFitWidth(18);
+            tabIconView.setFitHeight(18);
+            tab.setGraphic(tabIconView);
+        }
+        tab.setContent(dataView);
+        tab.setUserData(tabId);
+
+        ContextMenu tableTabContextMenu = new ContextMenu();
+        MenuItem tableConfigItem = new MenuItem("表格配置");
+        tableConfigItem.setOnAction(e -> {
+            Stage stage = (Stage) module.getTerminalTabPane().getScene().getWindow();
+            GlobalConfigDialog.show(stage, GlobalConfigDialog.ConfigMode.TABLE);
+            GlobalConfig globalConfig = GlobalConfig.getInstance();
+            dataView.applyTableConfig(globalConfig);
+        });
+        MenuItem tableRefreshItem = new MenuItem("刷新数据");
+        tableRefreshItem.setOnAction(e -> dataView.refreshData());
+        tableTabContextMenu.getItems().addAll(tableConfigItem, tableRefreshItem);
+        tab.setContextMenu(tableTabContextMenu);
+
+        tab.setOnClosed(e -> {
+            if (module.getTerminalTabPane().getTabs().isEmpty()) {
+                module.showWelcomeView();
+            }
+        });
+
+        module.getTerminalTabPane().getTabs().add(tab);
+        module.getTerminalTabPane().getSelectionModel().select(tab);
+        module.showDataView();
     }
 }

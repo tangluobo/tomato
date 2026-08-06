@@ -3,6 +3,7 @@ package com.tangluobo.tomato.module.connect;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.annotations.SerializedName;
+import com.tangluobo.tomato.module.connect.dialog.BackupDialog;
 import javafx.application.Platform;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.compress.archivers.ArchiveEntry;
@@ -14,7 +15,6 @@ import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream;
 import org.apache.commons.io.IOUtils;
 
 import java.io.*;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -47,9 +47,9 @@ public class BackupService {
     // ==================== 备份 ====================
 
     public static String createBackup(ConnectionConfig config, String databaseName,
-                                       List<BackupDialog.BackupObject> objects, String comment,
-                                       boolean lockTables, boolean singleTransaction,
-                                       String filename, BackupDialog.BackupTask task) throws Exception {
+                                      List<BackupDialog.BackupObject> objects, String comment,
+                                      boolean lockTables, boolean singleTransaction,
+                                      String filename, BackupDialog.BackupTask task) throws Exception {
 
         String sanitizedConn = sanitizeFileName(config.getName());
         String sanitizedDb = sanitizeFileName(databaseName);

@@ -1,4 +1,4 @@
-package com.tangluobo.tomato.module.connect;
+package com.tangluobo.tomato.module.connect.dialog;
 
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;

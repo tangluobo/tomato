@@ -1,5 +1,6 @@
 package com.tangluobo.tomato.module.connect;
 
+import com.tangluobo.tomato.module.connect.dialog.SessionConfigDialog;
 import com.tangluobo.tomato.rdp.RdpPane;
 import javafx.geometry.Insets;
 import javafx.scene.control.*;

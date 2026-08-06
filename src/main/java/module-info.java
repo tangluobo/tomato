@@ -78,4 +78,6 @@ module tomato {
     exports com.tangluobo.tomato.ssh.zmodem.xfer.io;
     exports com.tangluobo.tomato.ssh.zmodem.zm.io;
     exports com.tangluobo.tomato.ssh.zmodem.util;
+    exports com.tangluobo.tomato.module.connect.dialog;
+    opens com.tangluobo.tomato.module.connect.dialog to com.google.gson, javafx.fxml;
 }

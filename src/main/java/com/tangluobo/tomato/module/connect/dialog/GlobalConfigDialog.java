@@ -1,9 +1,9 @@
-package com.tangluobo.tomato.module.connect;
+package com.tangluobo.tomato.module.connect.dialog;
 
+import com.tangluobo.tomato.module.connect.GlobalConfig;
 import javafx.geometry.Insets;
 import javafx.scene.control.*;
 import javafx.scene.layout.GridPane;
-import javafx.scene.layout.HBox;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 

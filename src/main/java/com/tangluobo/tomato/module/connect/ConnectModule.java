@@ -1,7 +1,10 @@
 package com.tangluobo.tomato.module.connect;
 
 import com.tangluobo.tomato.module.Module;
-import com.tangluobo.tomato.rdp.RdpPane;
+import com.tangluobo.tomato.module.connect.dialog.BackupDialog;
+import com.tangluobo.tomato.module.connect.dialog.ConnectionConfigDialog;
+import com.tangluobo.tomato.module.connect.dialog.FolderDialog;
+import com.tangluobo.tomato.module.connect.dialog.RestoreDialog;
 import com.tangluobo.tomato.ssh.LocalTerminalPane;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
 import javafx.animation.KeyFrame;
@@ -21,7 +24,6 @@ import javafx.geometry.Pos;
 import javafx.stage.Stage;
 import javafx.beans.value.ChangeListener;
 
-import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -199,6 +201,15 @@ public class ConnectModule implements Module {
         if (icon != null) iv.setImage(icon);
         return iv;
     }
+
+    /** 供 handler 调用：获取表图标（原始 Image） */
+    Image getTableIcon() { return tableIcon; }
+
+    /** 供 handler 调用：获取视图图标（原始 Image） */
+    Image getViewIcon() { return viewIcon; }
+
+    /** 供 handler 调用：获取查询图标（原始 Image） */
+    Image getQueryIcon() { return queryIcon; }
 
     private void loadTree() {
         root.getChildren().clear();
@@ -425,7 +436,12 @@ public class ConnectModule implements Module {
                         }
                         case REDIS_DB -> {
                             MenuItem openItem = new MenuItem("打开");
-                            openItem.setOnAction(e -> handleRedisDbDoubleClick(targetItem, dbData));
+                            openItem.setOnAction(e -> {
+                                ConnectHandler h = createConnectHandler(dbData.getConnectionConfig());
+                                if (h instanceof RedisConnectHandler r) {
+                                    r.handleRedisDbDoubleClick(this, targetItem, dbData);
+                                }
+                            });
                             contextMenu.getItems().add(openItem);
                         }
                         case SCHEMA -> {
@@ -459,7 +475,10 @@ public class ConnectModule implements Module {
                         }
                         case TABLES_FOLDER -> {
                             MenuItem newTableItem = new MenuItem("新建表");
-                            newTableItem.setOnAction(e -> handleNewTable(targetItem, dbData));
+                            newTableItem.setOnAction(e -> {
+                                AbstractDbHandler h = createDbHandler(dbData.getConnectionConfig());
+                                if (h != null) h.handleNewTable(targetItem, dbData);
+                            });
                             MenuItem refreshItem = new MenuItem("刷新");
                             refreshItem.setOnAction(e -> refreshDbNode(targetItem, dbData));
                             contextMenu.getItems().addAll(newTableItem, new SeparatorMenuItem(), refreshItem);
@@ -485,9 +504,15 @@ public class ConnectModule implements Module {
                         }
                         case TABLE, VIEW -> {
                             MenuItem designItem = new MenuItem("设计表");
-                            designItem.setOnAction(e -> handleTableStructureDoubleClick(targetItem, dbData));
+                            designItem.setOnAction(e -> {
+                                AbstractDbHandler h = createDbHandler(dbData.getConnectionConfig());
+                                if (h != null) h.handleTableStructureDoubleClick(targetItem, dbData);
+                            });
                             MenuItem openDataItem = new MenuItem("打开数据");
-                            openDataItem.setOnAction(e -> handleTableDataDoubleClick(targetItem, dbData));
+                            openDataItem.setOnAction(e -> {
+                                AbstractDbHandler h = createDbHandler(dbData.getConnectionConfig());
+                                if (h != null) h.handleTableDataDoubleClick(targetItem, dbData);
+                            });
                             MenuItem deleteItem = new MenuItem("删除");
                             deleteItem.setOnAction(e -> deleteDbNodes());
                             contextMenu.getItems().addAll(designItem, openDataItem, new SeparatorMenuItem(), deleteItem);
@@ -1311,11 +1336,25 @@ public class ConnectModule implements Module {
     private void handleDbNodeDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
         switch (data.getType()) {
             case DATABASE -> handleDatabaseDoubleClick(item, data);
-            case REDIS_DB -> handleRedisDbDoubleClick(item, data);
+            case REDIS_DB -> {
+                ConnectHandler h = createConnectHandler(data.getConnectionConfig());
+                if (h instanceof RedisConnectHandler r) {
+                    r.handleRedisDbDoubleClick(this, item, data);
+                }
+            }
             case SCHEMA -> handleSchemaDoubleClick(item, data);
-            case TABLES_FOLDER -> handleTablesFolderDoubleClick(item, data);
-            case VIEWS_FOLDER -> handleViewsFolderDoubleClick(item, data);
-            case TABLE, VIEW -> handleTableDataDoubleClick(item, data);
+            case TABLES_FOLDER -> {
+                AbstractDbHandler dbh = createDbHandler(data.getConnectionConfig());
+                if (dbh != null) dbh.handleTablesFolderDoubleClick(item, data);
+            }
+            case VIEWS_FOLDER -> {
+                AbstractDbHandler dbh = createDbHandler(data.getConnectionConfig());
+                if (dbh != null) dbh.handleViewsFolderDoubleClick(item, data);
+            }
+            case TABLE, VIEW -> {
+                AbstractDbHandler h = createDbHandler(data.getConnectionConfig());
+                if (h != null) h.handleTableDataDoubleClick(item, data);
+            }
             case QUERY -> handleQueryDoubleClick(item, data);
             case BACKUP -> handleRestoreBackup(item, data);
             case QUERY_FOLDER -> item.setExpanded(!item.isExpanded());
@@ -1366,61 +1405,6 @@ public class ConnectModule implements Module {
         openDatabase(dbItem, data);
     }
 
-    private void handleRedisDbDoubleClick(TreeItem<String> dbItem, DatabaseNodeData data) {
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        String dbName = data.getDatabaseName();
-        int dbIndex = 0;
-        if (dbName.startsWith("db")) {
-            try {
-                dbIndex = Integer.parseInt(dbName.substring(2));
-            } catch (NumberFormatException ignored) {}
-        }
-
-        String tabId = "redis_" + data.getConnectionConfig().getId() + "_" + dbName;
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-
-        RedisDataView dataView = new RedisDataView(data.getConnectionConfig(), dbIndex);
-
-        ConnectionConfig config = data.getConnectionConfig();
-        String tabTitle = dbName + "(" + config.getHost() + ":" + config.getPort() + ")-Redis";
-        Tab tab = new Tab(tabTitle);
-
-        try {
-            Image redisIcon = new Image(getClass().getResourceAsStream("/images/connect/redis.png"));
-            ImageView tabIconView = new ImageView(redisIcon);
-            tabIconView.setFitWidth(18);
-            tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
-        } catch (Exception ignored) {}
-
-        tab.setContent(dataView);
-        tab.setUserData(tabId);
-
-        ContextMenu redisTabContextMenu = new ContextMenu();
-        MenuItem refreshItem = new MenuItem("刷新");
-        refreshItem.setOnAction(e -> dataView.loadKeyTree());
-        redisTabContextMenu.getItems().add(refreshItem);
-        tab.setContextMenu(redisTabContextMenu);
-
-        tab.setOnClosed(e -> {
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showDataView();
-    }
-
     /**
      * 打开数据库节点：委托给对应类型的数据库处理器
      */
@@ -1437,237 +1421,6 @@ public class ConnectModule implements Module {
         data.setOpened(false);
         dbItem.setGraphic(getDbNodeIcon(data));
         dbItem.setExpanded(false);
-    }
-
-    private void handleTablesFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
-        if (!folderItem.getChildren().isEmpty()) {
-            folderItem.setExpanded(!folderItem.isExpanded());
-            return;
-        }
-        AbstractDbHandler handler = createDbHandler(data.getConnectionConfig());
-        if (handler != null) {
-            handler.loadTablesForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(), true);
-        }
-    }
-
-    private void handleViewsFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
-        if (!folderItem.getChildren().isEmpty()) {
-            folderItem.setExpanded(!folderItem.isExpanded());
-            return;
-        }
-        AbstractDbHandler handler = createDbHandler(data.getConnectionConfig());
-        if (handler != null) {
-            handler.loadViewsForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(), true);
-        }
-    }
-
-    private void loadColumnsForTable(TreeItem<String> tableItem, ConnectionConfig config, String dbName, String tableName) {
-        new Thread(() -> {
-            try {
-                List<Map<String, String>> columns = DatabaseService.getTableColumns(config, dbName, tableName);
-                Platform.runLater(() -> {
-                    tableItem.getChildren().clear();
-                    for (Map<String, String> col : columns) {
-                        String colName = col.get("字段名");
-                        String typeInfo = col.get("类型");
-                        String displayText = colName + "  " + typeInfo;
-                        TreeItem<String> colItem = new TreeItem<>(displayText);
-                        boolean isPk = "是".equals(col.get("主键"));
-                        ImageView iv = new ImageView();
-                        iv.setFitWidth(16);
-                        iv.setFitHeight(16);
-                        javafx.scene.shape.Rectangle rect = new javafx.scene.shape.Rectangle(10, 10);
-                        rect.setFill(isPk ? Color.valueOf("#1E88E5") : Color.valueOf("#999999"));
-                        rect.setArcWidth(2);
-                        rect.setArcHeight(2);
-                        javafx.scene.SnapshotParameters sp = new javafx.scene.SnapshotParameters();
-                        sp.setFill(Color.TRANSPARENT);
-                        Image colIcon = rect.snapshot(sp, null);
-                        iv.setImage(colIcon);
-                        colItem.setGraphic(iv);
-                        tableItem.getChildren().add(colItem);
-                    }
-                    tableItem.setExpanded(true);
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("加载失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("无法加载列信息: " + e.getMessage());
-                    alert.showAndWait();
-                });
-                e.printStackTrace();
-            }
-        }, "DB-LoadColumns").start();
-    }
-
-    private void handleNewTable(TreeItem<String> item, DatabaseNodeData data) {
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        String tabId = "newtable_" + data.getConnectionConfig().getId() + "_" + data.getDatabaseName()
-                + (data.getSchemaName() != null ? "_" + data.getSchemaName() : "");
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-
-        TableStructureView structView = new TableStructureView(data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(), null);
-
-        ConnectionConfig config = data.getConnectionConfig();
-        String tabTitle = "新建表@" + data.getDatabaseName() + "(" + config.getHost() + ":" + config.getPort() + ")-表结构";
-        Tab tab = new Tab(tabTitle);
-        if (tableIcon != null) {
-            ImageView tabIconView = new ImageView(tableIcon);
-            tabIconView.setFitWidth(18);
-            tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
-        }
-        tab.setContent(structView);
-        tab.setUserData(tabId);
-
-        // 新建表保存成功后：更新 tab 标题/userData（切换为设计表标识）并刷新表树
-        final Tab finalTab = tab;
-        structView.setOnTableCreated(newTableName -> {
-            finalTab.setText(newTableName + "@" + data.getDatabaseName() + "(" + config.getHost() + ":" + config.getPort() + ")-表结构");
-            finalTab.setUserData("struct_" + config.getId() + "_" + data.getDatabaseName() + "_" + newTableName);
-            refreshDbNode(item, data);
-        });
-
-        ContextMenu structTabContextMenu = new ContextMenu();
-        MenuItem structConfigItem = new MenuItem("表格配置");
-        structConfigItem.setOnAction(e -> {
-            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
-            GlobalConfigDialog.show(stage, GlobalConfigDialog.ConfigMode.TABLE);
-            GlobalConfig globalConfig = GlobalConfig.getInstance();
-            structView.applyTableConfig(globalConfig);
-        });
-        MenuItem structRefreshItem = new MenuItem("刷新结构");
-        structRefreshItem.setOnAction(e -> structView.loadStructure());
-        structTabContextMenu.getItems().addAll(structConfigItem, structRefreshItem);
-        tab.setContextMenu(structTabContextMenu);
-
-        tab.setOnClosed(e -> {
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showDataView();
-    }
-
-    private void handleTableStructureDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        String tabId = "struct_" + data.getConnectionConfig().getId() + "_" + data.getDatabaseName()
-                + (data.getSchemaName() != null ? "_" + data.getSchemaName() : "") + "_" + data.getName();
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-
-        TableStructureView structView = new TableStructureView(data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(), data.getName());
-
-        ConnectionConfig config = data.getConnectionConfig();
-        String typeLabel = data.getType() == DatabaseNodeData.NodeType.VIEW ? "视图" : "表";
-        String tabTitle = data.getName() + "@" + data.getDatabaseName() + "(" + config.getHost() + ":" + config.getPort() + ")-" + typeLabel + "结构";
-        Tab tab = new Tab(tabTitle);
-        Image tabIcon = data.getType() == DatabaseNodeData.NodeType.VIEW ? viewIcon : tableIcon;
-        if (tabIcon != null) {
-            ImageView tabIconView = new ImageView(tabIcon);
-            tabIconView.setFitWidth(18);
-            tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
-        }
-        tab.setContent(structView);
-        tab.setUserData(tabId);
-
-        ContextMenu structTabContextMenu = new ContextMenu();
-        MenuItem structConfigItem = new MenuItem("表格配置");
-        structConfigItem.setOnAction(e -> {
-            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
-            GlobalConfigDialog.show(stage, GlobalConfigDialog.ConfigMode.TABLE);
-            GlobalConfig globalConfig = GlobalConfig.getInstance();
-            structView.applyTableConfig(globalConfig);
-        });
-        MenuItem structRefreshItem = new MenuItem("刷新结构");
-        structRefreshItem.setOnAction(e -> structView.loadStructure());
-        structTabContextMenu.getItems().addAll(structConfigItem, structRefreshItem);
-        tab.setContextMenu(structTabContextMenu);
-
-        tab.setOnClosed(e -> {
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showDataView();
-    }
-
-    private void handleTableDataDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        String tabId = data.getConnectionConfig().getId() + "_" + data.getDatabaseName()
-                + (data.getSchemaName() != null ? "_" + data.getSchemaName() : "") + "_" + data.getName();
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-
-        TableDataView dataView = new TableDataView(data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(), data.getName());
-
-        ConnectionConfig config = data.getConnectionConfig();
-        String typeLabel = data.getType() == DatabaseNodeData.NodeType.VIEW ? "视图" : "表";
-        String tabTitle = data.getName() + "@" + data.getDatabaseName() + "(" + config.getHost() + ":" + config.getPort() + ")-" + typeLabel;
-        Tab tab = new Tab(tabTitle);
-        Image tabIcon = data.getType() == DatabaseNodeData.NodeType.VIEW ? viewIcon : tableIcon;
-        if (tabIcon != null) {
-            ImageView tabIconView = new ImageView(tabIcon);
-            tabIconView.setFitWidth(18);
-            tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
-        }
-        tab.setContent(dataView);
-        tab.setUserData(tabId);
-
-        ContextMenu tableTabContextMenu = new ContextMenu();
-        MenuItem tableConfigItem = new MenuItem("表格配置");
-        tableConfigItem.setOnAction(e -> {
-            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
-            GlobalConfigDialog.show(stage, GlobalConfigDialog.ConfigMode.TABLE);
-            GlobalConfig globalConfig = GlobalConfig.getInstance();
-            dataView.applyTableConfig(globalConfig);
-        });
-        MenuItem tableRefreshItem = new MenuItem("刷新数据");
-        tableRefreshItem.setOnAction(e -> dataView.refreshData());
-        tableTabContextMenu.getItems().addAll(tableConfigItem, tableRefreshItem);
-        tab.setContextMenu(tableTabContextMenu);
-
-        tab.setOnClosed(e -> {
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showDataView();
     }
 
     private void handleNewQuery(TreeItem<String> folderItem, DatabaseNodeData data) {

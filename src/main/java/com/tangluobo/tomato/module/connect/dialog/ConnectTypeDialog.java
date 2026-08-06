@@ -1,5 +1,6 @@
-package com.tangluobo.tomato.module.connect;
+package com.tangluobo.tomato.module.connect.dialog;
 
+import com.tangluobo.tomato.module.connect.ConnectType;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;

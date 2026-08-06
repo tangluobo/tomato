@@ -1,5 +1,7 @@
 package com.tangluobo.tomato.module.connect;
 
+import com.tangluobo.tomato.module.connect.dialog.GlobalConfigDialog;
+import com.tangluobo.tomato.module.connect.dialog.SessionConfigDialog;
 import javafx.scene.control.*;
 import javafx.stage.Stage;
 

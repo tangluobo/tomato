@@ -1,5 +1,6 @@
 package com.tangluobo.tomato.module.connect;
 
+import com.tangluobo.tomato.module.connect.dialog.SessionConfigDialog;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
