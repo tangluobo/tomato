@@ -1536,7 +1536,7 @@ public class TableStructureView extends BorderPane {
     private void handleAddField() {
         // 在表格末尾追加一个空字段行
         ObservableList<ObservableList<String>> items = tableView.getItems();
-        if (items.isEmpty()) {
+        if (items.isEmpty() && !isNewTable) {
             statusLabel.setText("请先加载表结构");
             return;
         }
