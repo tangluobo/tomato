@@ -1988,8 +1988,7 @@ public class ConnectModule implements Module {
     }
 
     /**
-     * 双击 PostgreSQL 模式节点：若未打开则加载表/视图/函数文件夹（schema 级别），否则切换展开
-     * 查询/备份在数据库节点下（按数据库级别），不在此重复
+     * 双击 PostgreSQL 模式节点：若未打开则加载表/视图/函数/查询/备份文件夹，否则切换展开
      */
     private void handleSchemaDoubleClick(TreeItem<String> schemaItem, DatabaseNodeData data) {
         if (!data.isOpened()) {
@@ -2015,7 +2014,19 @@ public class ConnectModule implements Module {
             functionFolder.setGraphic(getDbNodeIcon(functionData));
             dbNodeDataMap.put(functionFolder, functionData);
 
-            schemaItem.getChildren().addAll(tablesFolder, viewsFolder, functionFolder);
+            TreeItem<String> queryFolder = new TreeItem<>("查询");
+            DatabaseNodeData queryData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, dbName, schemaName);
+            queryFolder.setGraphic(getDbNodeIcon(queryData));
+            dbNodeDataMap.put(queryFolder, queryData);
+            loadQueriesForFolder(queryFolder, config, dbName);
+
+            TreeItem<String> backupFolder = new TreeItem<>("备份");
+            DatabaseNodeData backupData = new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, dbName, schemaName);
+            backupFolder.setGraphic(getDbNodeIcon(backupData));
+            dbNodeDataMap.put(backupFolder, backupData);
+            loadBackupsForFolder(backupFolder, config, dbName);
+
+            schemaItem.getChildren().addAll(tablesFolder, viewsFolder, functionFolder, queryFolder, backupFolder);
             schemaItem.setExpanded(true);
 
             // 加载表/视图列表并自动展开文件夹，让用户立即看到所有表/视图项
@@ -2135,7 +2146,7 @@ public class ConnectModule implements Module {
     }
 
     /**
-     * 加载 PostgreSQL 数据库下的模式(schema)列表，并附加按数据库级别的查询/备份文件夹
+     * 加载 PostgreSQL 数据库下的模式(schema)列表
      */
     private void loadSchemasForDatabase(TreeItem<String> dbItem, ConnectionConfig config, String dbName) {
         new Thread(() -> {
@@ -2151,20 +2162,6 @@ public class ConnectModule implements Module {
                         dbNodeDataMap.put(schemaItem, schemaData);
                         dbItem.getChildren().add(schemaItem);
                     }
-                    // 附加按数据库级别的查询/备份文件夹
-                    TreeItem<String> queryFolder = new TreeItem<>("查询");
-                    DatabaseNodeData queryData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, dbName);
-                    queryFolder.setGraphic(getDbNodeIcon(queryData));
-                    dbNodeDataMap.put(queryFolder, queryData);
-                    loadQueriesForFolder(queryFolder, config, dbName);
-
-                    TreeItem<String> backupFolder = new TreeItem<>("备份");
-                    DatabaseNodeData backupData = new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, dbName);
-                    backupFolder.setGraphic(getDbNodeIcon(backupData));
-                    dbNodeDataMap.put(backupFolder, backupData);
-                    loadBackupsForFolder(backupFolder, config, dbName);
-
-                    dbItem.getChildren().addAll(queryFolder, backupFolder);
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> {
