@@ -48,6 +48,8 @@ public class ConnectModule implements Module {
     private Image folderIcon;
     private Image dbIcon;
     private Image dbIconGray;
+    private Image schemaIcon;
+    private Image schemaOpenIcon;
     private Image tableIcon;
     private Image viewIcon;
     private Image functionIcon;
@@ -132,6 +134,8 @@ public class ConnectModule implements Module {
     private void loadDbIcons() {
         try { dbIcon = new Image(getClass().getResourceAsStream("/images/connect/database.png")); } catch (Exception e) { dbIcon = null; }
         try { dbIconGray = new Image(getClass().getResourceAsStream("/images/connect/database_gray.png")); } catch (Exception e) { dbIconGray = null; }
+        try { schemaIcon = new Image(getClass().getResourceAsStream("/images/connect/mod.png")); } catch (Exception e) { schemaIcon = null; }
+        try { schemaOpenIcon = new Image(getClass().getResourceAsStream("/images/connect/mod_open.png")); } catch (Exception e) { schemaOpenIcon = null; }
         try { tableIcon = new Image(getClass().getResourceAsStream("/images/connect/table.png")); } catch (Exception e) { tableIcon = null; }
         try { viewIcon = new Image(getClass().getResourceAsStream("/images/connect/view.png")); } catch (Exception e) { viewIcon = null; }
         try { queryIcon = new Image(getClass().getResourceAsStream("/images/connect/query.png")); } catch (Exception e) { queryIcon = null; }
@@ -157,6 +161,7 @@ public class ConnectModule implements Module {
         Image icon = switch (data.getType()) {
             case DATABASE -> data.isOpened() ? dbIcon : dbIconGray;
             case REDIS_DB -> data.isOpened() ? dbIcon : dbIconGray;
+            case SCHEMA -> data.isOpened() ? schemaOpenIcon : schemaIcon;
             case TABLES_FOLDER -> tableIcon;
             case VIEWS_FOLDER -> viewIcon;
             case QUERY_FOLDER -> queryIcon;
@@ -376,6 +381,13 @@ public class ConnectModule implements Module {
                             MenuItem openItem = new MenuItem("打开");
                             openItem.setOnAction(e -> handleRedisDbDoubleClick(targetItem, dbData));
                             contextMenu.getItems().add(openItem);
+                        }
+                        case SCHEMA -> {
+                            MenuItem openItem = new MenuItem("打开");
+                            openItem.setOnAction(e -> handleSchemaDoubleClick(targetItem, dbData));
+                            MenuItem refreshItem = new MenuItem("刷新");
+                            refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
+                            contextMenu.getItems().addAll(openItem, new SeparatorMenuItem(), refreshItem);
                         }
                         case ROCKETMQ_TOPICS_FOLDER, ROCKETMQ_CONSUMERS_FOLDER, ROCKETMQ_CLUSTER_FOLDER, ALIYUN_PRODUCT_FOLDER -> {
                             MenuItem refreshItem = new MenuItem("刷新");
@@ -1952,6 +1964,7 @@ public class ConnectModule implements Module {
         switch (data.getType()) {
             case DATABASE -> handleDatabaseDoubleClick(item, data);
             case REDIS_DB -> handleRedisDbDoubleClick(item, data);
+            case SCHEMA -> handleSchemaDoubleClick(item, data);
             case TABLES_FOLDER -> handleTablesFolderDoubleClick(item, data);
             case VIEWS_FOLDER -> handleViewsFolderDoubleClick(item, data);
             case TABLE, VIEW -> handleTableDataDoubleClick(item, data);
@@ -1971,6 +1984,45 @@ public class ConnectModule implements Module {
             case ALIYUN_PRODUCT_FOLDER -> handleAliyunProductFolderDoubleClick(item, data);
             case ALIYUN_ECS_INSTANCE -> { /* TODO: show ECS instance detail */ }
             case ALIYUN_DOMAIN -> handleAliyunDomainDoubleClick(item, data);
+        }
+    }
+
+    /**
+     * 双击 PostgreSQL 模式节点：若未打开则加载表/视图/函数文件夹（schema 级别），否则切换展开
+     * 查询/备份在数据库节点下（按数据库级别），不在此重复
+     */
+    private void handleSchemaDoubleClick(TreeItem<String> schemaItem, DatabaseNodeData data) {
+        if (!data.isOpened()) {
+            data.setOpened(true);
+            schemaItem.setGraphic(getDbNodeIcon(data));
+
+            ConnectionConfig config = data.getConnectionConfig();
+            String dbName = data.getDatabaseName();
+            String schemaName = data.getSchemaName();
+
+            TreeItem<String> tablesFolder = new TreeItem<>("表");
+            DatabaseNodeData tablesData = new DatabaseNodeData(DatabaseNodeData.NodeType.TABLES_FOLDER, "表", config, dbName, schemaName);
+            tablesFolder.setGraphic(getDbNodeIcon(tablesData));
+            dbNodeDataMap.put(tablesFolder, tablesData);
+
+            TreeItem<String> viewsFolder = new TreeItem<>("视图");
+            DatabaseNodeData viewsData = new DatabaseNodeData(DatabaseNodeData.NodeType.VIEWS_FOLDER, "视图", config, dbName, schemaName);
+            viewsFolder.setGraphic(getDbNodeIcon(viewsData));
+            dbNodeDataMap.put(viewsFolder, viewsData);
+
+            TreeItem<String> functionFolder = new TreeItem<>("函数");
+            DatabaseNodeData functionData = new DatabaseNodeData(DatabaseNodeData.NodeType.FUNCTION_FOLDER, "函数", config, dbName, schemaName);
+            functionFolder.setGraphic(getDbNodeIcon(functionData));
+            dbNodeDataMap.put(functionFolder, functionData);
+
+            schemaItem.getChildren().addAll(tablesFolder, viewsFolder, functionFolder);
+            schemaItem.setExpanded(true);
+
+            // 加载表/视图列表并自动展开文件夹，让用户立即看到所有表/视图项
+            loadTablesForFolder(tablesFolder, config, dbName, schemaName, true);
+            loadViewsForFolder(viewsFolder, config, dbName, schemaName, true);
+        } else {
+            schemaItem.setExpanded(!schemaItem.isExpanded());
         }
     }
 
@@ -2042,36 +2094,89 @@ public class ConnectModule implements Module {
         dbItem.setGraphic(getDbNodeIcon(data));
 
         ConnectionConfig config = data.getConnectionConfig();
+        String dbName = data.getDatabaseName();
+
+        // PostgreSQL: 数据库下直接加载模式(schema)节点，模式节点下再加载表/视图
+        if (config.getType() == ConnectType.POSTGRESQL) {
+            dbItem.setExpanded(true);
+            loadSchemasForDatabase(dbItem, config, dbName);
+            return;
+        }
 
         TreeItem<String> tablesFolder = new TreeItem<>("表");
-        tablesFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.TABLES_FOLDER, "表", config, data.getDatabaseName())));
-        dbNodeDataMap.put(tablesFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.TABLES_FOLDER, "表", config, data.getDatabaseName()));
+        tablesFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.TABLES_FOLDER, "表", config, dbName)));
+        dbNodeDataMap.put(tablesFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.TABLES_FOLDER, "表", config, dbName));
 
         TreeItem<String> viewsFolder = new TreeItem<>("视图");
-        viewsFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.VIEWS_FOLDER, "视图", config, data.getDatabaseName())));
-        dbNodeDataMap.put(viewsFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.VIEWS_FOLDER, "视图", config, data.getDatabaseName()));
+        viewsFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.VIEWS_FOLDER, "视图", config, dbName)));
+        dbNodeDataMap.put(viewsFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.VIEWS_FOLDER, "视图", config, dbName));
 
         TreeItem<String> functionFolder = new TreeItem<>("函数");
-        functionFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.FUNCTION_FOLDER, "函数", config, data.getDatabaseName())));
-        dbNodeDataMap.put(functionFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.FUNCTION_FOLDER, "函数", config, data.getDatabaseName()));
+        functionFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.FUNCTION_FOLDER, "函数", config, dbName)));
+        dbNodeDataMap.put(functionFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.FUNCTION_FOLDER, "函数", config, dbName));
 
         TreeItem<String> queryFolder = new TreeItem<>("查询");
-        queryFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, data.getDatabaseName())));
-        dbNodeDataMap.put(queryFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, data.getDatabaseName()));
+        queryFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, dbName)));
+        dbNodeDataMap.put(queryFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, dbName));
 
-        loadQueriesForFolder(queryFolder, config, data.getDatabaseName());
+        loadQueriesForFolder(queryFolder, config, dbName);
 
         TreeItem<String> backupFolder = new TreeItem<>("备份");
-        backupFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, data.getDatabaseName())));
-        dbNodeDataMap.put(backupFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, data.getDatabaseName()));
+        backupFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, dbName)));
+        dbNodeDataMap.put(backupFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, dbName));
 
-        loadBackupsForFolder(backupFolder, config, data.getDatabaseName());
+        loadBackupsForFolder(backupFolder, config, dbName);
 
         dbItem.getChildren().addAll(tablesFolder, viewsFolder, functionFolder, queryFolder, backupFolder);
         dbItem.setExpanded(true);
 
-        loadTablesForFolder(tablesFolder, config, data.getDatabaseName(), false);
-        loadViewsForFolder(viewsFolder, config, data.getDatabaseName(), false);
+        loadTablesForFolder(tablesFolder, config, dbName, null, false);
+        loadViewsForFolder(viewsFolder, config, dbName, null, false);
+    }
+
+    /**
+     * 加载 PostgreSQL 数据库下的模式(schema)列表，并附加按数据库级别的查询/备份文件夹
+     */
+    private void loadSchemasForDatabase(TreeItem<String> dbItem, ConnectionConfig config, String dbName) {
+        new Thread(() -> {
+            try {
+                List<String> schemas = DatabaseService.getSchemas(config, dbName);
+                Platform.runLater(() -> {
+                    dbItem.getChildren().clear();
+                    // 动态加载模式节点
+                    for (String schemaName : schemas) {
+                        TreeItem<String> schemaItem = new TreeItem<>(schemaName);
+                        DatabaseNodeData schemaData = new DatabaseNodeData(DatabaseNodeData.NodeType.SCHEMA, schemaName, config, dbName, schemaName);
+                        schemaItem.setGraphic(getDbNodeIcon(schemaData));
+                        dbNodeDataMap.put(schemaItem, schemaData);
+                        dbItem.getChildren().add(schemaItem);
+                    }
+                    // 附加按数据库级别的查询/备份文件夹
+                    TreeItem<String> queryFolder = new TreeItem<>("查询");
+                    DatabaseNodeData queryData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, dbName);
+                    queryFolder.setGraphic(getDbNodeIcon(queryData));
+                    dbNodeDataMap.put(queryFolder, queryData);
+                    loadQueriesForFolder(queryFolder, config, dbName);
+
+                    TreeItem<String> backupFolder = new TreeItem<>("备份");
+                    DatabaseNodeData backupData = new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, dbName);
+                    backupFolder.setGraphic(getDbNodeIcon(backupData));
+                    dbNodeDataMap.put(backupFolder, backupData);
+                    loadBackupsForFolder(backupFolder, config, dbName);
+
+                    dbItem.getChildren().addAll(queryFolder, backupFolder);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("加载失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法加载模式列表: " + e.getMessage());
+                    alert.showAndWait();
+                });
+                e.printStackTrace();
+            }
+        }, "PG-LoadSchemas").start();
     }
 
     private void closeDatabase(TreeItem<String> dbItem, DatabaseNodeData data) {
@@ -2087,7 +2192,7 @@ public class ConnectModule implements Module {
             folderItem.setExpanded(!folderItem.isExpanded());
             return;
         }
-        loadTablesForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName(), true);
+        loadTablesForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(), true);
     }
 
     private void handleViewsFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
@@ -2095,7 +2200,7 @@ public class ConnectModule implements Module {
             folderItem.setExpanded(!folderItem.isExpanded());
             return;
         }
-        loadViewsForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName(), true);
+        loadViewsForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(), true);
     }
 
     private void loadQueriesForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName) {
@@ -2109,16 +2214,17 @@ public class ConnectModule implements Module {
         }
     }
 
-    private void loadTablesForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName, boolean autoExpand) {
+    private void loadTablesForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName, String schemaName, boolean autoExpand) {
         new Thread(() -> {
             try {
-                List<String> tables = DatabaseService.getTables(config, dbName);
+                List<String> tables = DatabaseService.getTables(config, dbName, schemaName);
                 Platform.runLater(() -> {
                     folderItem.getChildren().clear();
                     for (String tableName : tables) {
                         TreeItem<String> tableItem = new TreeItem<>(tableName);
-                        tableItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.TABLE, tableName, config, dbName)));
-                        dbNodeDataMap.put(tableItem, new DatabaseNodeData(DatabaseNodeData.NodeType.TABLE, tableName, config, dbName));
+                        DatabaseNodeData tableData = new DatabaseNodeData(DatabaseNodeData.NodeType.TABLE, tableName, config, dbName, schemaName);
+                        tableItem.setGraphic(getDbNodeIcon(tableData));
+                        dbNodeDataMap.put(tableItem, tableData);
                         folderItem.getChildren().add(tableItem);
                     }
                     folderItem.setExpanded(autoExpand);
@@ -2136,16 +2242,17 @@ public class ConnectModule implements Module {
         }, "DB-LoadTables").start();
     }
 
-    private void loadViewsForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName, boolean autoExpand) {
+    private void loadViewsForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName, String schemaName, boolean autoExpand) {
         new Thread(() -> {
             try {
-                List<String> views = DatabaseService.getViews(config, dbName);
+                List<String> views = DatabaseService.getViews(config, dbName, schemaName);
                 Platform.runLater(() -> {
                     folderItem.getChildren().clear();
                     for (String viewName : views) {
                         TreeItem<String> viewItem = new TreeItem<>(viewName);
-                        viewItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.VIEW, viewName, config, dbName)));
-                        dbNodeDataMap.put(viewItem, new DatabaseNodeData(DatabaseNodeData.NodeType.VIEW, viewName, config, dbName));
+                        DatabaseNodeData viewData = new DatabaseNodeData(DatabaseNodeData.NodeType.VIEW, viewName, config, dbName, schemaName);
+                        viewItem.setGraphic(getDbNodeIcon(viewData));
+                        dbNodeDataMap.put(viewItem, viewData);
                         folderItem.getChildren().add(viewItem);
                     }
                     folderItem.setExpanded(autoExpand);
@@ -2208,7 +2315,8 @@ public class ConnectModule implements Module {
         if (contentArea == null || terminalTabPane == null) return;
         if (!ensureTabPaneInstalled()) return;
 
-        String tabId = "newtable_" + data.getConnectionConfig().getId() + "_" + data.getDatabaseName();
+        String tabId = "newtable_" + data.getConnectionConfig().getId() + "_" + data.getDatabaseName()
+                + (data.getSchemaName() != null ? "_" + data.getSchemaName() : "");
         for (Tab tab : terminalTabPane.getTabs()) {
             if (tabId.equals(tab.getUserData())) {
                 terminalTabPane.getSelectionModel().select(tab);
@@ -2217,7 +2325,7 @@ public class ConnectModule implements Module {
             }
         }
 
-        TableStructureView structView = new TableStructureView(data.getConnectionConfig(), data.getDatabaseName(), null);
+        TableStructureView structView = new TableStructureView(data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(), null);
 
         ConnectionConfig config = data.getConnectionConfig();
         String tabTitle = "新建表@" + data.getDatabaseName() + "(" + config.getHost() + ":" + config.getPort() + ")-表结构";
@@ -2267,7 +2375,8 @@ public class ConnectModule implements Module {
         if (contentArea == null || terminalTabPane == null) return;
         if (!ensureTabPaneInstalled()) return;
 
-        String tabId = "struct_" + data.getConnectionConfig().getId() + "_" + data.getDatabaseName() + "_" + data.getName();
+        String tabId = "struct_" + data.getConnectionConfig().getId() + "_" + data.getDatabaseName()
+                + (data.getSchemaName() != null ? "_" + data.getSchemaName() : "") + "_" + data.getName();
         for (Tab tab : terminalTabPane.getTabs()) {
             if (tabId.equals(tab.getUserData())) {
                 terminalTabPane.getSelectionModel().select(tab);
@@ -2276,7 +2385,7 @@ public class ConnectModule implements Module {
             }
         }
 
-        TableStructureView structView = new TableStructureView(data.getConnectionConfig(), data.getDatabaseName(), data.getName());
+        TableStructureView structView = new TableStructureView(data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(), data.getName());
 
         ConnectionConfig config = data.getConnectionConfig();
         String typeLabel = data.getType() == DatabaseNodeData.NodeType.VIEW ? "视图" : "表";
@@ -2320,7 +2429,8 @@ public class ConnectModule implements Module {
         if (contentArea == null || terminalTabPane == null) return;
         if (!ensureTabPaneInstalled()) return;
 
-        String tabId = data.getConnectionConfig().getId() + "_" + data.getDatabaseName() + "_" + data.getName();
+        String tabId = data.getConnectionConfig().getId() + "_" + data.getDatabaseName()
+                + (data.getSchemaName() != null ? "_" + data.getSchemaName() : "") + "_" + data.getName();
         for (Tab tab : terminalTabPane.getTabs()) {
             if (tabId.equals(tab.getUserData())) {
                 terminalTabPane.getSelectionModel().select(tab);
@@ -2329,7 +2439,7 @@ public class ConnectModule implements Module {
             }
         }
 
-        TableDataView dataView = new TableDataView(data.getConnectionConfig(), data.getDatabaseName(), data.getName());
+        TableDataView dataView = new TableDataView(data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(), data.getName());
 
         ConnectionConfig config = data.getConnectionConfig();
         String typeLabel = data.getType() == DatabaseNodeData.NodeType.VIEW ? "视图" : "表";
@@ -3001,13 +3111,21 @@ public class ConnectModule implements Module {
                     openDatabase(item, data);
                 }
             }
+            case SCHEMA -> {
+                // 重置打开状态后重新加载 schema 子树
+                removeDbNodeDataRecursive(item);
+                item.getChildren().clear();
+                data.setOpened(false);
+                item.setGraphic(getDbNodeIcon(data));
+                handleSchemaDoubleClick(item, data);
+            }
             case TABLES_FOLDER -> {
                 item.getChildren().clear();
-                loadTablesForFolder(item, config, data.getDatabaseName(), false);
+                loadTablesForFolder(item, config, data.getDatabaseName(), data.getSchemaName(), false);
             }
             case VIEWS_FOLDER -> {
                 item.getChildren().clear();
-                loadViewsForFolder(item, config, data.getDatabaseName(), false);
+                loadViewsForFolder(item, config, data.getDatabaseName(), data.getSchemaName(), false);
             }
             case QUERY_FOLDER -> {
                 loadQueriesForFolder(item, config, data.getDatabaseName());
@@ -3083,13 +3201,15 @@ public class ConnectModule implements Module {
             Map<String, List<TreeItem<String>>> groupedTables = new HashMap<>();
             for (TreeItem<String> item : tableItems) {
                 DatabaseNodeData data = dbNodeDataMap.get(item);
-                String key = data.getConnectionConfig().getId() + "|" + data.getDatabaseName();
+                String schemaName = data.getSchemaName() != null ? data.getSchemaName() : "";
+                String key = data.getConnectionConfig().getId() + "|" + data.getDatabaseName() + "|" + schemaName;
                 groupedTables.computeIfAbsent(key, k -> new ArrayList<>()).add(item);
             }
             for (Map.Entry<String, List<TreeItem<String>>> entry : groupedTables.entrySet()) {
                 String[] parts = entry.getKey().split("\\|");
                 String configId = parts[0];
                 String dbName = parts[1];
+                String schemaName = parts.length > 2 && !parts[2].isEmpty() ? parts[2] : null;
                 List<String> tableNames = entry.getValue().stream()
                         .map(TreeItem::getValue).toList();
                 ConnectionConfig cfg = connections.stream()
@@ -3097,7 +3217,7 @@ public class ConnectModule implements Module {
                 if (cfg == null) continue;
 
                 try {
-                    DatabaseService.dropTables(cfg, dbName, tableNames);
+                    DatabaseService.dropTables(cfg, dbName, schemaName, tableNames);
                     Platform.runLater(() -> {
                         for (TreeItem<String> item : entry.getValue()) {
                             dbNodeDataMap.remove(item);
@@ -3120,13 +3240,15 @@ public class ConnectModule implements Module {
             Map<String, List<TreeItem<String>>> groupedViews = new HashMap<>();
             for (TreeItem<String> item : viewItems) {
                 DatabaseNodeData data = dbNodeDataMap.get(item);
-                String key = data.getConnectionConfig().getId() + "|" + data.getDatabaseName();
+                String schemaName = data.getSchemaName() != null ? data.getSchemaName() : "";
+                String key = data.getConnectionConfig().getId() + "|" + data.getDatabaseName() + "|" + schemaName;
                 groupedViews.computeIfAbsent(key, k -> new ArrayList<>()).add(item);
             }
             for (Map.Entry<String, List<TreeItem<String>>> entry : groupedViews.entrySet()) {
                 String[] parts = entry.getKey().split("\\|");
                 String configId = parts[0];
                 String dbName = parts[1];
+                String schemaName = parts.length > 2 && !parts[2].isEmpty() ? parts[2] : null;
                 List<String> viewNames = entry.getValue().stream()
                         .map(TreeItem::getValue).toList();
                 ConnectionConfig cfg = connections.stream()
@@ -3134,7 +3256,7 @@ public class ConnectModule implements Module {
                 if (cfg == null) continue;
 
                 try {
-                    DatabaseService.dropViews(cfg, dbName, viewNames);
+                    DatabaseService.dropViews(cfg, dbName, schemaName, viewNames);
                     Platform.runLater(() -> {
                         for (TreeItem<String> item : entry.getValue()) {
                             dbNodeDataMap.remove(item);

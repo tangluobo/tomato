@@ -109,13 +109,45 @@ public class DatabaseService {
     }
 
     /**
+     * 获取模式(schema)列表（仅 PostgreSQL 使用，其他类型返回空列表）。
+     * PostgreSQL 必须连接到具体数据库才能查询其 schema 列表，因此使用绑定到 databaseName 的连接。
+     */
+    public static List<String> getSchemas(ConnectionConfig config, String databaseName) throws Exception {
+        if (config.getType() != ConnectType.POSTGRESQL) {
+            return Collections.emptyList();
+        }
+        Connection conn = getConnection(config, databaseName);
+        List<String> schemas = new ArrayList<>();
+        try (PreparedStatement stmt = conn.prepareStatement(
+                 "SELECT schema_name FROM information_schema.schemata "
+                 + "WHERE schema_name NOT LIKE 'pg\\_%' AND schema_name <> 'information_schema' "
+                 + "AND has_schema_privilege(current_user, schema_name, 'USAGE') "
+                 + "ORDER BY schema_name")) {
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    schemas.add(rs.getString(1));
+                }
+            }
+        }
+        return schemas;
+    }
+
+    /**
      * 获取表列表
      */
     public static List<String> getTables(ConnectionConfig config, String databaseName) throws Exception {
-        Connection conn = getConnection(config);
+        return getTables(config, databaseName, null);
+    }
+
+    /**
+     * 获取表列表
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时 PostgreSQL 回退用 databaseName 当 schema 名）
+     */
+    public static List<String> getTables(ConnectionConfig config, String databaseName, String schemaName) throws Exception {
         List<String> tables = new ArrayList<>();
 
         if (config.getType() == ConnectType.MYSQL) {
+            Connection conn = getConnection(config);
             try (Statement stmt = conn.createStatement();
                  ResultSet rs = stmt.executeQuery("SHOW TABLES FROM `" + databaseName + "`")) {
                 while (rs.next()) {
@@ -123,9 +155,11 @@ public class DatabaseService {
                 }
             }
         } else if (config.getType() == ConnectType.POSTGRESQL) {
+            String schema = schemaName != null ? schemaName : databaseName;
+            Connection conn = getConnection(config, databaseName);
             try (PreparedStatement stmt = conn.prepareStatement(
                      "SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_type = 'BASE TABLE' ORDER BY table_name")) {
-                stmt.setString(1, databaseName);
+                stmt.setString(1, schema);
                 try (ResultSet rs = stmt.executeQuery()) {
                     while (rs.next()) {
                         tables.add(rs.getString(1));
@@ -133,6 +167,7 @@ public class DatabaseService {
                 }
             }
         } else if (config.getType() == ConnectType.ORACLE) {
+            Connection conn = getConnection(config);
             try (PreparedStatement stmt = conn.prepareStatement(
                      "SELECT table_name FROM all_tables WHERE owner = ? ORDER BY table_name")) {
                 stmt.setString(1, databaseName);
@@ -151,10 +186,18 @@ public class DatabaseService {
      * 获取视图列表
      */
     public static List<String> getViews(ConnectionConfig config, String databaseName) throws Exception {
-        Connection conn = getConnection(config);
+        return getViews(config, databaseName, null);
+    }
+
+    /**
+     * 获取视图列表
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时 PostgreSQL 回退用 databaseName 当 schema 名）
+     */
+    public static List<String> getViews(ConnectionConfig config, String databaseName, String schemaName) throws Exception {
         List<String> views = new ArrayList<>();
 
         if (config.getType() == ConnectType.MYSQL) {
+            Connection conn = getConnection(config);
             try (PreparedStatement stmt = conn.prepareStatement(
                      "SELECT TABLE_NAME FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME")) {
                 stmt.setString(1, databaseName);
@@ -165,9 +208,11 @@ public class DatabaseService {
                 }
             }
         } else if (config.getType() == ConnectType.POSTGRESQL) {
+            String schema = schemaName != null ? schemaName : databaseName;
+            Connection conn = getConnection(config, databaseName);
             try (PreparedStatement stmt = conn.prepareStatement(
                      "SELECT table_name FROM information_schema.views WHERE table_schema = ? ORDER BY table_name")) {
-                stmt.setString(1, databaseName);
+                stmt.setString(1, schema);
                 try (ResultSet rs = stmt.executeQuery()) {
                     while (rs.next()) {
                         views.add(rs.getString(1));
@@ -175,6 +220,7 @@ public class DatabaseService {
                 }
             }
         } else if (config.getType() == ConnectType.ORACLE) {
+            Connection conn = getConnection(config);
             try (PreparedStatement stmt = conn.prepareStatement(
                      "SELECT view_name FROM all_views WHERE owner = ? ORDER BY view_name")) {
                 stmt.setString(1, databaseName);
@@ -236,13 +282,23 @@ public class DatabaseService {
     }
 
     public static TableRowData queryTableData(ConnectionConfig config, String databaseName, String tableName, int page, int pageSize, String sortColumn, boolean sortDescending) throws Exception {
-        // SQL 使用全限定名（database.table），复用主连接避免为每个数据库建立独立连接
-        Connection conn = getConnection(config);
+        return queryTableData(config, databaseName, null, tableName, page, pageSize, sortColumn, sortDescending);
+    }
+
+    /**
+     * 分页查询表/视图数据
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时 PostgreSQL 回退用 databaseName 当 schema 名）
+     */
+    public static TableRowData queryTableData(ConnectionConfig config, String databaseName, String schemaName, String tableName, int page, int pageSize, String sortColumn, boolean sortDescending) throws Exception {
+        // PostgreSQL 必须绑定到具体数据库才能查询该库的表；MySQL/Oracle 复用主连接（SQL 使用全限定名）
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
         TableRowData result = new TableRowData();
 
         // 获取总行数
         long totalCount;
-        String countSql = buildCountSql(config, databaseName, tableName);
+        String countSql = buildCountSql(config, databaseName, schemaName, tableName);
         try (Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(countSql)) {
             rs.next();
@@ -255,7 +311,7 @@ public class DatabaseService {
         result.setTotalPages((int) Math.ceil((double) totalCount / pageSize));
 
         // 分页查询数据
-        String dataSql = buildPageSql(config, databaseName, tableName, page, pageSize, sortColumn, sortDescending);
+        String dataSql = buildPageSql(config, databaseName, schemaName, tableName, page, pageSize, sortColumn, sortDescending);
         try (Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(dataSql)) {
             ResultSetMetaData metaData = rs.getMetaData();
@@ -332,9 +388,18 @@ public class DatabaseService {
      * 构建计数SQL
      */
     private static String buildCountSql(ConnectionConfig config, String databaseName, String tableName) {
+        return buildCountSql(config, databaseName, null, tableName);
+    }
+
+    /**
+     * 构建计数SQL
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    private static String buildCountSql(ConnectionConfig config, String databaseName, String schemaName, String tableName) {
+        String pgSchema = schemaName != null ? schemaName : databaseName;
         return switch (config.getType()) {
             case MYSQL -> "SELECT COUNT(*) FROM `" + databaseName + "`.`" + tableName + "`";
-            case POSTGRESQL -> "SELECT COUNT(*) FROM \"" + databaseName + "\".\"" + tableName + "\"";
+            case POSTGRESQL -> "SELECT COUNT(*) FROM \"" + pgSchema + "\".\"" + tableName + "\"";
             case ORACLE -> "SELECT COUNT(*) FROM \"" + databaseName + "\".\"" + tableName + "\"";
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
@@ -417,6 +482,14 @@ public class DatabaseService {
      * 构建分页查询SQL
      */
     private static String buildPageSql(ConnectionConfig config, String databaseName, String tableName, int page, int pageSize, String sortColumn, boolean sortDescending) {
+        return buildPageSql(config, databaseName, null, tableName, page, pageSize, sortColumn, sortDescending);
+    }
+
+    /**
+     * 构建分页查询SQL
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    private static String buildPageSql(ConnectionConfig config, String databaseName, String schemaName, String tableName, int page, int pageSize, String sortColumn, boolean sortDescending) {
         int offset = (page - 1) * pageSize;
         String orderBy = "";
         if (sortColumn != null && !sortColumn.isEmpty()) {
@@ -428,9 +501,10 @@ public class DatabaseService {
             orderBy = " ORDER BY " + quotedCol + (sortDescending ? " DESC" : " ASC");
         }
         final String order = orderBy;
+        String pgSchema = schemaName != null ? schemaName : databaseName;
         return switch (config.getType()) {
             case MYSQL -> "SELECT * FROM `" + databaseName + "`.`" + tableName + "`" + order + " LIMIT " + pageSize + " OFFSET " + offset;
-            case POSTGRESQL -> "SELECT * FROM \"" + databaseName + "\".\"" + tableName + "\"" + order + " LIMIT " + pageSize + " OFFSET " + offset;
+            case POSTGRESQL -> "SELECT * FROM \"" + pgSchema + "\".\"" + tableName + "\"" + order + " LIMIT " + pageSize + " OFFSET " + offset;
             case ORACLE -> "SELECT * FROM (SELECT a.*, ROWNUM rn FROM \"" + databaseName + "\".\"" + tableName + "\" a WHERE ROWNUM <= " + (offset + pageSize) + order + ") WHERE rn > " + offset;
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
@@ -441,12 +515,23 @@ public class DatabaseService {
      * @return 成功删除的表名列表
      */
     public static List<String> dropTables(ConnectionConfig config, String databaseName, List<String> tableNames) throws Exception {
-        // SQL 使用全限定名，复用主连接
-        Connection conn = getConnection(config);
+        return dropTables(config, databaseName, null, tableNames);
+    }
+
+    /**
+     * 删除多个表
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     * @return 成功删除的表名列表
+     */
+    public static List<String> dropTables(ConnectionConfig config, String databaseName, String schemaName, List<String> tableNames) throws Exception {
+        // PostgreSQL 绑定到具体数据库；MySQL/Oracle 复用主连接（SQL 使用全限定名）
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
         List<String> dropped = new ArrayList<>();
         List<String> errors = new ArrayList<>();
         for (String tableName : tableNames) {
-            String sql = buildDropTableSql(config, databaseName, tableName);
+            String sql = buildDropTableSql(config, databaseName, schemaName, tableName);
             try (Statement stmt = conn.createStatement()) {
                 stmt.executeUpdate(sql);
                 dropped.add(tableName);
@@ -465,12 +550,22 @@ public class DatabaseService {
      * @return 成功删除的视图名列表
      */
     public static List<String> dropViews(ConnectionConfig config, String databaseName, List<String> viewNames) throws Exception {
-        // SQL 使用全限定名，复用主连接
-        Connection conn = getConnection(config);
+        return dropViews(config, databaseName, null, viewNames);
+    }
+
+    /**
+     * 删除多个视图
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     * @return 成功删除的视图名列表
+     */
+    public static List<String> dropViews(ConnectionConfig config, String databaseName, String schemaName, List<String> viewNames) throws Exception {
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
         List<String> dropped = new ArrayList<>();
         List<String> errors = new ArrayList<>();
         for (String viewName : viewNames) {
-            String sql = buildDropViewSql(config, databaseName, viewName);
+            String sql = buildDropViewSql(config, databaseName, schemaName, viewName);
             try (Statement stmt = conn.createStatement()) {
                 stmt.executeUpdate(sql);
                 dropped.add(viewName);
@@ -488,9 +583,14 @@ public class DatabaseService {
      * 构建删除表SQL
      */
     private static String buildDropTableSql(ConnectionConfig config, String databaseName, String tableName) {
+        return buildDropTableSql(config, databaseName, null, tableName);
+    }
+
+    private static String buildDropTableSql(ConnectionConfig config, String databaseName, String schemaName, String tableName) {
+        String pgSchema = schemaName != null ? schemaName : databaseName;
         return switch (config.getType()) {
             case MYSQL -> "DROP TABLE `" + databaseName + "`.`" + tableName + "`";
-            case POSTGRESQL -> "DROP TABLE \"" + databaseName + "\".\"" + tableName + "\"";
+            case POSTGRESQL -> "DROP TABLE \"" + pgSchema + "\".\"" + tableName + "\"";
             case ORACLE -> "DROP TABLE \"" + databaseName + "\".\"" + tableName + "\"";
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
@@ -500,11 +600,21 @@ public class DatabaseService {
      * 重命名表
      */
     public static void renameTable(ConnectionConfig config, String databaseName, String oldTableName, String newTableName) throws Exception {
-        // SQL 使用全限定名，复用主连接
-        Connection conn = getConnection(config);
+        renameTable(config, databaseName, null, oldTableName, newTableName);
+    }
+
+    /**
+     * 重命名表
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static void renameTable(ConnectionConfig config, String databaseName, String schemaName, String oldTableName, String newTableName) throws Exception {
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
+        String pgSchema = schemaName != null ? schemaName : databaseName;
         String sql = switch (config.getType()) {
             case MYSQL -> "RENAME TABLE `" + databaseName + "`.`" + oldTableName + "` TO `" + databaseName + "`.`" + newTableName + "`";
-            case POSTGRESQL -> "ALTER TABLE \"" + databaseName + "\".\"" + oldTableName + "\" RENAME TO \"" + newTableName + "\"";
+            case POSTGRESQL -> "ALTER TABLE \"" + pgSchema + "\".\"" + oldTableName + "\" RENAME TO \"" + newTableName + "\"";
             case ORACLE -> "ALTER TABLE \"" + databaseName + "\".\"" + oldTableName + "\" RENAME TO \"" + newTableName + "\"";
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
@@ -517,11 +627,21 @@ public class DatabaseService {
      * 重命名视图
      */
     public static void renameView(ConnectionConfig config, String databaseName, String oldViewName, String newViewName) throws Exception {
-        // SQL 使用全限定名，复用主连接
-        Connection conn = getConnection(config);
+        renameView(config, databaseName, null, oldViewName, newViewName);
+    }
+
+    /**
+     * 重命名视图
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static void renameView(ConnectionConfig config, String databaseName, String schemaName, String oldViewName, String newViewName) throws Exception {
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
+        String pgSchema = schemaName != null ? schemaName : databaseName;
         String sql = switch (config.getType()) {
             case MYSQL -> "RENAME TABLE `" + databaseName + "`.`" + oldViewName + "` TO `" + databaseName + "`.`" + newViewName + "`";
-            case POSTGRESQL -> "ALTER VIEW \"" + databaseName + "\".\"" + oldViewName + "\" RENAME TO \"" + newViewName + "\"";
+            case POSTGRESQL -> "ALTER VIEW \"" + pgSchema + "\".\"" + oldViewName + "\" RENAME TO \"" + newViewName + "\"";
             case ORACLE -> "RENAME \"" + oldViewName + "\" TO \"" + newViewName + "\"";
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
@@ -534,9 +654,14 @@ public class DatabaseService {
      * 构建删除视图SQL
      */
     private static String buildDropViewSql(ConnectionConfig config, String databaseName, String viewName) {
+        return buildDropViewSql(config, databaseName, null, viewName);
+    }
+
+    private static String buildDropViewSql(ConnectionConfig config, String databaseName, String schemaName, String viewName) {
+        String pgSchema = schemaName != null ? schemaName : databaseName;
         return switch (config.getType()) {
             case MYSQL -> "DROP VIEW `" + databaseName + "`.`" + viewName + "`";
-            case POSTGRESQL -> "DROP VIEW \"" + databaseName + "\".\"" + viewName + "\"";
+            case POSTGRESQL -> "DROP VIEW \"" + pgSchema + "\".\"" + viewName + "\"";
             case ORACLE -> "DROP VIEW \"" + databaseName + "\".\"" + viewName + "\"";
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
@@ -872,11 +997,28 @@ public class DatabaseService {
      * @return 主键列名列表，若无主键返回空列表
      */
     public static List<String> getPrimaryKeys(ConnectionConfig config, String databaseName, String tableName) throws Exception {
-        // JDBC 元数据 API 通过参数传入 databaseName，复用主连接
-        Connection conn = getConnection(config);
+        return getPrimaryKeys(config, databaseName, null, tableName);
+    }
+
+    /**
+     * 获取表的主键列名列表
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static List<String> getPrimaryKeys(ConnectionConfig config, String databaseName, String schemaName, String tableName) throws Exception {
+        // PostgreSQL 绑定到具体数据库，并传入 schema 给 JDBC 元数据；MySQL/Oracle 复用主连接
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
         List<String> primaryKeys = new ArrayList<>();
 
-        try (ResultSet rs = conn.getMetaData().getPrimaryKeys(databaseName, null, tableName)) {
+        String catalog = databaseName;
+        String schema = null;
+        if (config.getType() == ConnectType.POSTGRESQL) {
+            catalog = null;
+            schema = schemaName != null ? schemaName : databaseName;
+        }
+
+        try (ResultSet rs = conn.getMetaData().getPrimaryKeys(catalog, schema, tableName)) {
             while (rs.next()) {
                 primaryKeys.add(rs.getString("COLUMN_NAME"));
             }
@@ -898,8 +1040,21 @@ public class DatabaseService {
     public static int deleteRowsByPrimaryKeys(ConnectionConfig config, String databaseName, String tableName,
                                                List<String> primaryKeyColumns, List<String> columnNames,
                                                List<ObservableList<String>> rows) throws Exception {
-        // SQL 使用全限定名，复用主连接
-        Connection conn = getConnection(config);
+        return deleteRowsByPrimaryKeys(config, databaseName, null, tableName, primaryKeyColumns, columnNames, rows);
+    }
+
+    /**
+     * 根据主键删除指定行
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static int deleteRowsByPrimaryKeys(ConnectionConfig config, String databaseName, String schemaName, String tableName,
+                                               List<String> primaryKeyColumns, List<String> columnNames,
+                                               List<ObservableList<String>> rows) throws Exception {
+        // PostgreSQL 绑定到具体数据库；MySQL/Oracle 复用主连接（SQL 使用全限定名）
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
+        String pgSchema = schemaName != null ? schemaName : databaseName;
         int totalDeleted = 0;
 
         // 构建主键列在columnNames中的索引
@@ -921,7 +1076,8 @@ public class DatabaseService {
         // 构建DELETE语句的WHERE部分：WHERE pk1=? AND pk2=?
         String qualifiedTable = switch (config.getType()) {
             case MYSQL -> "`" + databaseName + "`.`" + tableName + "`";
-            case POSTGRESQL, ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
+            case POSTGRESQL -> "\"" + pgSchema + "\".\"" + tableName + "\"";
+            case ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
 
@@ -971,12 +1127,26 @@ public class DatabaseService {
     public static int updateCell(ConnectionConfig config, String databaseName, String tableName,
                                  List<String> primaryKeyColumns, List<String> columnNames,
                                  ObservableList<String> row, int columnIndex, String newValue) throws Exception {
-        // SQL 使用全限定名，复用主连接
-        Connection conn = getConnection(config);
+        return updateCell(config, databaseName, null, tableName, primaryKeyColumns, columnNames, row, columnIndex, newValue);
+    }
+
+    /**
+     * 根据主键更新指定单元格
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static int updateCell(ConnectionConfig config, String databaseName, String schemaName, String tableName,
+                                 List<String> primaryKeyColumns, List<String> columnNames,
+                                 ObservableList<String> row, int columnIndex, String newValue) throws Exception {
+        // PostgreSQL 绑定到具体数据库；MySQL/Oracle 复用主连接（SQL 使用全限定名）
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
+        String pgSchema = schemaName != null ? schemaName : databaseName;
 
         String qualifiedTable = switch (config.getType()) {
             case MYSQL -> "`" + databaseName + "`.`" + tableName + "`";
-            case POSTGRESQL, ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
+            case POSTGRESQL -> "\"" + pgSchema + "\".\"" + tableName + "\"";
+            case ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
 
@@ -1035,12 +1205,25 @@ public class DatabaseService {
      */
     public static void insertEmptyRow(ConnectionConfig config, String databaseName, String tableName,
                                       List<String> columnNames) throws Exception {
-        // SQL 使用全限定名，复用主连接
-        Connection conn = getConnection(config);
+        insertEmptyRow(config, databaseName, null, tableName, columnNames);
+    }
+
+    /**
+     * 插入一行空数据（所有列设为DEFAULT/NULL）
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static void insertEmptyRow(ConnectionConfig config, String databaseName, String schemaName, String tableName,
+                                      List<String> columnNames) throws Exception {
+        // PostgreSQL 绑定到具体数据库；MySQL/Oracle 复用主连接（SQL 使用全限定名）
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
+        String pgSchema = schemaName != null ? schemaName : databaseName;
 
         String qualifiedTable = switch (config.getType()) {
             case MYSQL -> "`" + databaseName + "`.`" + tableName + "`";
-            case POSTGRESQL, ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
+            case POSTGRESQL -> "\"" + pgSchema + "\".\"" + tableName + "\"";
+            case ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
 
@@ -1076,13 +1259,27 @@ public class DatabaseService {
     public static int insertRows(ConnectionConfig config, String databaseName, String tableName,
                                  List<String> columnNames, List<ObservableList<String>> rows,
                                  List<String> primaryKeyColumns) throws Exception {
-        // SQL 使用全限定名，复用主连接
-        Connection conn = getConnection(config);
+        return insertRows(config, databaseName, null, tableName, columnNames, rows, primaryKeyColumns);
+    }
+
+    /**
+     * 插入多行数据（使用具体值而非DEFAULT）
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static int insertRows(ConnectionConfig config, String databaseName, String schemaName, String tableName,
+                                 List<String> columnNames, List<ObservableList<String>> rows,
+                                 List<String> primaryKeyColumns) throws Exception {
+        // PostgreSQL 绑定到具体数据库；MySQL/Oracle 复用主连接（SQL 使用全限定名）
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
+        String pgSchema = schemaName != null ? schemaName : databaseName;
         int totalInserted = 0;
 
         String qualifiedTable = switch (config.getType()) {
             case MYSQL -> "`" + databaseName + "`.`" + tableName + "`";
-            case POSTGRESQL, ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
+            case POSTGRESQL -> "\"" + pgSchema + "\".\"" + tableName + "\"";
+            case ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
 
@@ -1144,13 +1341,30 @@ public class DatabaseService {
                                  List<ObservableList<String>> currentRows,
                                  List<ObservableList<String>> originalRows,
                                  List<java.util.Set<Integer>> modifiedColumnsPerRow) throws Exception {
-        // SQL 使用全限定名，复用主连接
-        Connection conn = getConnection(config);
+        return updateRows(config, databaseName, null, tableName, primaryKeyColumns, columnNames,
+                          currentRows, originalRows, modifiedColumnsPerRow);
+    }
+
+    /**
+     * 更新多行数据（仅更新修改过的列）
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static int updateRows(ConnectionConfig config, String databaseName, String schemaName, String tableName,
+                                 List<String> primaryKeyColumns, List<String> columnNames,
+                                 List<ObservableList<String>> currentRows,
+                                 List<ObservableList<String>> originalRows,
+                                 List<java.util.Set<Integer>> modifiedColumnsPerRow) throws Exception {
+        // PostgreSQL 绑定到具体数据库；MySQL/Oracle 复用主连接（SQL 使用全限定名）
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
+        String pgSchema = schemaName != null ? schemaName : databaseName;
         int totalUpdated = 0;
 
         String qualifiedTable = switch (config.getType()) {
             case MYSQL -> "`" + databaseName + "`.`" + tableName + "`";
-            case POSTGRESQL, ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
+            case POSTGRESQL -> "\"" + pgSchema + "\".\"" + tableName + "\"";
+            case ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
 
@@ -1247,20 +1461,37 @@ public class DatabaseService {
      * @return 列信息列表，每个元素为一个列的属性Map
      */
     public static List<Map<String, String>> getTableColumns(ConnectionConfig config, String databaseName, String tableName) throws Exception {
-        // JDBC 元数据 API 通过参数传入 databaseName，复用主连接
-        Connection conn = getConnection(config);
+        return getTableColumns(config, databaseName, null, tableName);
+    }
+
+    /**
+     * 获取表的列信息列表
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static List<Map<String, String>> getTableColumns(ConnectionConfig config, String databaseName, String schemaName, String tableName) throws Exception {
+        // PostgreSQL 绑定到具体数据库，并传入 schema 给 JDBC 元数据；MySQL/Oracle 复用主连接
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
         List<Map<String, String>> columns = new ArrayList<>();
+
+        String catalog = databaseName;
+        String schema = null;
+        if (config.getType() == ConnectType.POSTGRESQL) {
+            catalog = null;
+            schema = schemaName != null ? schemaName : databaseName;
+        }
 
         // 获取主键列表
         List<String> primaryKeys = new ArrayList<>();
-        try (ResultSet pkRs = conn.getMetaData().getPrimaryKeys(databaseName, null, tableName)) {
+        try (ResultSet pkRs = conn.getMetaData().getPrimaryKeys(catalog, schema, tableName)) {
             while (pkRs.next()) {
                 primaryKeys.add(pkRs.getString("COLUMN_NAME"));
             }
         }
 
         // 获取列信息
-        try (ResultSet rs = conn.getMetaData().getColumns(databaseName, null, tableName, null)) {
+        try (ResultSet rs = conn.getMetaData().getColumns(catalog, schema, tableName, null)) {
             while (rs.next()) {
                 Map<String, String> col = new LinkedHashMap<>();
                 String colName = rs.getString("COLUMN_NAME");
@@ -1299,7 +1530,16 @@ public class DatabaseService {
      * @return 索引信息列表，每个元素为一个索引的属性Map（键：名称、字段、类型、方法、注释、可空、唯一）
      */
     public static List<Map<String, String>> getTableIndexes(ConnectionConfig config, String databaseName, String tableName) throws Exception {
-        Connection conn = getConnection(config);
+        return getTableIndexes(config, databaseName, null, tableName);
+    }
+
+    /**
+     * 获取表的索引信息列表
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static List<Map<String, String>> getTableIndexes(ConnectionConfig config, String databaseName, String schemaName, String tableName) throws Exception {
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL) ? getConnection(config, databaseName) : getConnection(config);
+        String pgSchema = schemaName != null ? schemaName : databaseName;
         List<Map<String, String>> indexes = new ArrayList<>();
 
         if (config.getType() == ConnectType.MYSQL) {
@@ -1344,7 +1584,7 @@ public class DatabaseService {
                     + "WHERE n.nspname = ? AND t.relname = ? "
                     + "GROUP BY i.relname, ix.indisunique, ix.indisprimary, am.amname ORDER BY i.relname";
             try (PreparedStatement stmt = conn.prepareStatement(sql)) {
-                stmt.setString(1, databaseName);
+                stmt.setString(1, pgSchema);
                 stmt.setString(2, tableName);
                 try (ResultSet rs = stmt.executeQuery()) {
                     while (rs.next()) {
@@ -1395,7 +1635,16 @@ public class DatabaseService {
      * @return 外键信息列表，每个元素为一个外键的属性Map
      */
     public static List<Map<String, String>> getTableForeignKeys(ConnectionConfig config, String databaseName, String tableName) throws Exception {
-        Connection conn = getConnection(config);
+        return getTableForeignKeys(config, databaseName, null, tableName);
+    }
+
+    /**
+     * 获取表的外键信息列表
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static List<Map<String, String>> getTableForeignKeys(ConnectionConfig config, String databaseName, String schemaName, String tableName) throws Exception {
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL) ? getConnection(config, databaseName) : getConnection(config);
+        String pgSchema = schemaName != null ? schemaName : databaseName;
         List<Map<String, String>> foreignKeys = new ArrayList<>();
 
         if (config.getType() == ConnectType.MYSQL) {
@@ -1447,7 +1696,7 @@ public class DatabaseService {
                     + "GROUP BY con.conname, rn.nspname, cl.relname, con.confdeltype, con.confupdtype "
                     + "ORDER BY con.conname";
             try (PreparedStatement stmt = conn.prepareStatement(sql)) {
-                stmt.setString(1, databaseName);
+                stmt.setString(1, pgSchema);
                 stmt.setString(2, tableName);
                 try (ResultSet rs = stmt.executeQuery()) {
                     while (rs.next()) {
@@ -1518,7 +1767,16 @@ public class DatabaseService {
      * @return 触发器信息列表，每个元素为一个触发器的属性Map
      */
     public static List<Map<String, String>> getTableTriggers(ConnectionConfig config, String databaseName, String tableName) throws Exception {
-        Connection conn = getConnection(config);
+        return getTableTriggers(config, databaseName, null, tableName);
+    }
+
+    /**
+     * 获取表的触发器信息列表
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static List<Map<String, String>> getTableTriggers(ConnectionConfig config, String databaseName, String schemaName, String tableName) throws Exception {
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL) ? getConnection(config, databaseName) : getConnection(config);
+        String pgSchema = schemaName != null ? schemaName : databaseName;
         List<Map<String, String>> triggers = new ArrayList<>();
 
         if (config.getType() == ConnectType.MYSQL) {
@@ -1551,7 +1809,7 @@ public class DatabaseService {
                     + "WHERE n.nspname = ? AND c.relname = ? AND NOT t.tgisinternal "
                     + "ORDER BY t.tgname";
             try (PreparedStatement stmt = conn.prepareStatement(sql)) {
-                stmt.setString(1, databaseName);
+                stmt.setString(1, pgSchema);
                 stmt.setString(2, tableName);
                 try (ResultSet rs = stmt.executeQuery()) {
                     while (rs.next()) {
@@ -1592,7 +1850,16 @@ public class DatabaseService {
      * @return 表选项Map
      */
     public static Map<String, String> getTableOptions(ConnectionConfig config, String databaseName, String tableName) throws Exception {
-        Connection conn = getConnection(config);
+        return getTableOptions(config, databaseName, null, tableName);
+    }
+
+    /**
+     * 获取表选项信息
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static Map<String, String> getTableOptions(ConnectionConfig config, String databaseName, String schemaName, String tableName) throws Exception {
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL) ? getConnection(config, databaseName) : getConnection(config);
+        String pgSchema = schemaName != null ? schemaName : databaseName;
         Map<String, String> options = new LinkedHashMap<>();
 
         if (config.getType() == ConnectType.MYSQL) {
@@ -1628,7 +1895,7 @@ public class DatabaseService {
                     + "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
                     + "WHERE n.nspname = ? AND c.relname = ?";
             try (PreparedStatement stmt = conn.prepareStatement(sql)) {
-                stmt.setString(1, databaseName);
+                stmt.setString(1, pgSchema);
                 stmt.setString(2, tableName);
                 try (ResultSet rs = stmt.executeQuery()) {
                     if (rs.next()) {
@@ -1682,7 +1949,18 @@ public class DatabaseService {
      * @return DDL字符串
      */
     public static String getTableDdl(ConnectionConfig config, String databaseName, String tableName) throws Exception {
-        Connection conn = getConnection(config);
+        return getTableDdl(config, databaseName, null, tableName);
+    }
+
+    /**
+     * 获取表的DDL（CREATE TABLE语句）
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static String getTableDdl(ConnectionConfig config, String databaseName, String schemaName, String tableName) throws Exception {
+        // PostgreSQL 绑定到具体数据库；MySQL/Oracle 复用主连接
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
 
         if (config.getType() == ConnectType.MYSQL) {
             try (PreparedStatement stmt = conn.prepareStatement(
@@ -1695,7 +1973,7 @@ public class DatabaseService {
             }
         } else if (config.getType() == ConnectType.POSTGRESQL) {
             // PostgreSQL 没有直接的 SHOW CREATE TABLE，使用 pg_get_tabledef 不可用，构造简化版DDL
-            return generatePostgresDdl(config, databaseName, tableName);
+            return generatePostgresDdl(config, databaseName, schemaName, tableName);
         } else if (config.getType() == ConnectType.ORACLE) {
             try (PreparedStatement stmt = conn.prepareStatement(
                      "SELECT DBMS_METADATA.GET_DDL('TABLE', ?, ?) FROM DUAL")) {
@@ -1722,12 +2000,14 @@ public class DatabaseService {
 
     /**
      * 为PostgreSQL生成简化的CREATE TABLE DDL
+     * @param schemaName 模式名（为 null 时回退用 databaseName 当 schema 名）
      */
-    private static String generatePostgresDdl(ConnectionConfig config, String databaseName, String tableName) throws Exception {
-        List<Map<String, String>> columns = getTableColumns(config, databaseName, tableName);
-        List<String> primaryKeys = getPrimaryKeys(config, databaseName, tableName);
+    private static String generatePostgresDdl(ConnectionConfig config, String databaseName, String schemaName, String tableName) throws Exception {
+        List<Map<String, String>> columns = getTableColumns(config, databaseName, schemaName, tableName);
+        List<String> primaryKeys = getPrimaryKeys(config, databaseName, schemaName, tableName);
+        String pgSchema = schemaName != null ? schemaName : databaseName;
         StringBuilder sb = new StringBuilder();
-        sb.append("CREATE TABLE \"").append(databaseName).append("\".\"").append(tableName).append("\" (\n");
+        sb.append("CREATE TABLE \"").append(pgSchema).append("\".\"").append(tableName).append("\" (\n");
         for (int i = 0; i < columns.size(); i++) {
             Map<String, String> col = columns.get(i);
             sb.append("    \"").append(col.get("字段名")).append("\" ");
@@ -1759,7 +2039,15 @@ public class DatabaseService {
      * 获取表的注释
      */
     public static String getTableComment(ConnectionConfig config, String databaseName, String tableName) throws Exception {
-        Map<String, String> options = getTableOptions(config, databaseName, tableName);
+        return getTableComment(config, databaseName, null, tableName);
+    }
+
+    /**
+     * 获取表的注释
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static String getTableComment(ConnectionConfig config, String databaseName, String schemaName, String tableName) throws Exception {
+        Map<String, String> options = getTableOptions(config, databaseName, schemaName, tableName);
         return options.getOrDefault("注释", "");
     }
 
@@ -1767,10 +2055,19 @@ public class DatabaseService {
      * 生成更新表注释的SQL
      */
     public static String generateUpdateTableCommentSql(ConnectionConfig config, String databaseName, String tableName, String comment) {
+        return generateUpdateTableCommentSql(config, databaseName, null, tableName, comment);
+    }
+
+    /**
+     * 生成更新表注释的SQL
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static String generateUpdateTableCommentSql(ConnectionConfig config, String databaseName, String schemaName, String tableName, String comment) {
         String escapedComment = comment != null ? comment.replace("'", "''") : "";
+        String pgSchema = schemaName != null ? schemaName : databaseName;
         return switch (config.getType()) {
             case MYSQL -> "ALTER TABLE `" + databaseName + "`.`" + tableName + "` COMMENT = '" + escapedComment + "'";
-            case POSTGRESQL -> "COMMENT ON TABLE \"" + databaseName + "\".\"" + tableName + "\" IS '" + escapedComment + "'";
+            case POSTGRESQL -> "COMMENT ON TABLE \"" + pgSchema + "\".\"" + tableName + "\" IS '" + escapedComment + "'";
             case ORACLE -> "COMMENT ON TABLE \"" + databaseName + "\".\"" + tableName + "\" IS '" + escapedComment + "'";
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
@@ -1780,8 +2077,20 @@ public class DatabaseService {
      * 更新表注释
      */
     public static void updateTableComment(ConnectionConfig config, String databaseName, String tableName, String comment) throws Exception {
-        String sql = generateUpdateTableCommentSql(config, databaseName, tableName, comment);
-        try (Statement stmt = getConnection(config).createStatement()) {
+        updateTableComment(config, databaseName, null, tableName, comment);
+    }
+
+    /**
+     * 更新表注释
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static void updateTableComment(ConnectionConfig config, String databaseName, String schemaName, String tableName, String comment) throws Exception {
+        String sql = generateUpdateTableCommentSql(config, databaseName, schemaName, tableName, comment);
+        // PostgreSQL 绑定到具体数据库；MySQL/Oracle 复用主连接
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
+        try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate(sql);
         }
     }
@@ -1805,8 +2114,24 @@ public class DatabaseService {
     public static void createTable(ConnectionConfig config, String databaseName, String tableName,
                                     List<Map<String, String>> columns, Map<String, String> options,
                                     String comment) throws Exception {
-        String sql = generateCreateTableSql(config, databaseName, tableName, columns, options, comment);
-        executeDdl(config, sql);
+        createTable(config, databaseName, null, tableName, columns, options, comment);
+    }
+
+    /**
+     * 创建新表：根据字段列表、选项和注释生成 CREATE TABLE 并执行
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static void createTable(ConnectionConfig config, String databaseName, String schemaName, String tableName,
+                                    List<Map<String, String>> columns, Map<String, String> options,
+                                    String comment) throws Exception {
+        String sql = generateCreateTableSql(config, databaseName, schemaName, tableName, columns, options, comment);
+        // PostgreSQL 绑定到具体数据库；MySQL/Oracle 复用主连接
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
+        try (Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(sql);
+        }
     }
 
     /**
@@ -1815,6 +2140,17 @@ public class DatabaseService {
     public static String generateCreateTableSql(ConnectionConfig config, String databaseName, String tableName,
                                                  List<Map<String, String>> columns, Map<String, String> options,
                                                  String comment) {
+        return generateCreateTableSql(config, databaseName, null, tableName, columns, options, comment);
+    }
+
+    /**
+     * 生成CREATE TABLE SQL（支持MySQL/PostgreSQL/Oracle）
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static String generateCreateTableSql(ConnectionConfig config, String databaseName, String schemaName, String tableName,
+                                                 List<Map<String, String>> columns, Map<String, String> options,
+                                                 String comment) {
+        String pgSchema = schemaName != null ? schemaName : databaseName;
         StringBuilder sb = new StringBuilder();
         List<String> primaryKeys = new ArrayList<>();
         List<String> colDefs = new ArrayList<>();
@@ -1881,7 +2217,8 @@ public class DatabaseService {
         // 表名限定
         switch (config.getType()) {
             case MYSQL -> sb.append("CREATE TABLE `").append(databaseName).append("`.`").append(tableName).append("` (\n");
-            case POSTGRESQL, ORACLE -> sb.append("CREATE TABLE \"").append(databaseName).append("\".\"").append(tableName).append("\" (\n");
+            case POSTGRESQL -> sb.append("CREATE TABLE \"").append(pgSchema).append("\".\"").append(tableName).append("\" (\n");
+            case ORACLE -> sb.append("CREATE TABLE \"").append(databaseName).append("\".\"").append(tableName).append("\" (\n");
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         }
 
@@ -1924,7 +2261,8 @@ public class DatabaseService {
 
         // PostgreSQL/Oracle 表注释使用单独语句
         if (comment != null && !comment.isEmpty() && config.getType() != ConnectType.MYSQL) {
-            sb.append("\nCOMMENT ON TABLE \"").append(databaseName).append("\".\"").append(tableName)
+            String commentSchema = config.getType() == ConnectType.POSTGRESQL ? pgSchema : databaseName;
+            sb.append("\nCOMMENT ON TABLE \"").append(commentSchema).append("\".\"").append(tableName)
               .append("\" IS '").append(comment.replace("'", "''")).append("';");
         }
 
@@ -1950,9 +2288,20 @@ public class DatabaseService {
      */
     public static String generateUpdateColumnCommentSql(ConnectionConfig config, String databaseName, String tableName,
                                                         List<String> columnTitles, ObservableList<String> row) throws Exception {
+        return generateUpdateColumnCommentSql(config, databaseName, null, tableName, columnTitles, row);
+    }
+
+    /**
+     * 生成更新列注释的SQL
+     * MySQL需要ALTER TABLE MODIFY COLUMN携带完整列定义；PostgreSQL/Oracle使用COMMENT ON COLUMN
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static String generateUpdateColumnCommentSql(ConnectionConfig config, String databaseName, String schemaName, String tableName,
+                                                        List<String> columnTitles, ObservableList<String> row) throws Exception {
         String columnName = getValue(row, columnTitles, "字段名");
         String comment = getValue(row, columnTitles, "注释");
         String escapedComment = comment != null ? comment.replace("'", "''") : "";
+        String pgSchema = schemaName != null ? schemaName : databaseName;
 
         if (config.getType() == ConnectType.MYSQL) {
             // MySQL: 需要查询原始列类型，构造完整的MODIFY COLUMN语句
@@ -1979,7 +2328,7 @@ public class DatabaseService {
             sql.append(" COMMENT '").append(escapedComment).append("'");
             return sql.toString();
         } else if (config.getType() == ConnectType.POSTGRESQL) {
-            return "COMMENT ON COLUMN \"" + databaseName + "\".\"" + tableName + "\".\"" + columnName + "\" IS '" + escapedComment + "'";
+            return "COMMENT ON COLUMN \"" + pgSchema + "\".\"" + tableName + "\".\"" + columnName + "\" IS '" + escapedComment + "'";
         } else if (config.getType() == ConnectType.ORACLE) {
             return "COMMENT ON COLUMN \"" + databaseName + "\".\"" + tableName + "\".\"" + columnName + "\" IS '" + escapedComment + "'";
         }
@@ -1991,8 +2340,21 @@ public class DatabaseService {
      */
     public static void updateColumnComment(ConnectionConfig config, String databaseName, String tableName,
                                            List<String> columnTitles, ObservableList<String> row) throws Exception {
-        String sql = generateUpdateColumnCommentSql(config, databaseName, tableName, columnTitles, row);
-        try (Statement stmt = getConnection(config).createStatement()) {
+        updateColumnComment(config, databaseName, null, tableName, columnTitles, row);
+    }
+
+    /**
+     * 更新列注释
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static void updateColumnComment(ConnectionConfig config, String databaseName, String schemaName, String tableName,
+                                           List<String> columnTitles, ObservableList<String> row) throws Exception {
+        String sql = generateUpdateColumnCommentSql(config, databaseName, schemaName, tableName, columnTitles, row);
+        // PostgreSQL 绑定到具体数据库；MySQL/Oracle 复用主连接
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
+        try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate(sql);
         }
     }

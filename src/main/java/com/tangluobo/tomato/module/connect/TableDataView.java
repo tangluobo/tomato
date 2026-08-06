@@ -35,6 +35,7 @@ public class TableDataView extends BorderPane {
 
     private final ConnectionConfig config;
     private final String databaseName;
+    private final String schemaName;
     private final String tableName;
 
     private TableView<ObservableList<String>> tableView;
@@ -72,8 +73,13 @@ public class TableDataView extends BorderPane {
     private final Map<ObservableList<String>, ObservableList<String>> originalValuesMap = new HashMap<>();
 
     public TableDataView(ConnectionConfig config, String databaseName, String tableName) {
+        this(config, databaseName, null, tableName);
+    }
+
+    public TableDataView(ConnectionConfig config, String databaseName, String schemaName, String tableName) {
         this.config = config;
         this.databaseName = databaseName;
+        this.schemaName = schemaName;
         this.tableName = tableName;
 
         initializeUI();
@@ -87,7 +93,7 @@ public class TableDataView extends BorderPane {
     private void loadPrimaryKeys() {
         new Thread(() -> {
             try {
-                List<String> pks = DatabaseService.getPrimaryKeys(config, databaseName, tableName);
+                List<String> pks = DatabaseService.getPrimaryKeys(config, databaseName, schemaName, tableName);
                 Platform.runLater(() -> {
                     this.primaryKeyColumns = pks;
                     setupRowContextMenu();
@@ -381,7 +387,7 @@ public class TableDataView extends BorderPane {
                 new Thread(() -> {
                     try {
                         int deleted = DatabaseService.deleteRowsByPrimaryKeys(
-                                config, databaseName, tableName,
+                                config, databaseName, schemaName, tableName,
                                 primaryKeyColumns, dataColumns, rowsToDelete);
                         Platform.runLater(() -> {
                             for (ObservableList<String> row : rowsToDelete) {
@@ -781,13 +787,13 @@ public class TableDataView extends BorderPane {
             try {
                 // INSERT 新行
                 if (!finalRowsToInsert.isEmpty()) {
-                    DatabaseService.insertRows(config, databaseName, tableName,
+                    DatabaseService.insertRows(config, databaseName, schemaName, tableName,
                             dataColumns, finalRowsToInsert, primaryKeyColumns);
                 }
 
                 // UPDATE 修改的现有行
                 if (!finalRowsToUpdate.isEmpty()) {
-                    DatabaseService.updateRows(config, databaseName, tableName,
+                    DatabaseService.updateRows(config, databaseName, schemaName, tableName,
                             primaryKeyColumns, dataColumns,
                             finalRowsToUpdate, finalOriginalValues, finalModifiedColumns);
                 }
@@ -843,7 +849,7 @@ public class TableDataView extends BorderPane {
 
         new Thread(() -> {
             try {
-                TableRowData data = DatabaseService.queryTableData(config, databaseName, tableName, page, DEFAULT_PAGE_SIZE, sortColumn, sortDescending);
+                TableRowData data = DatabaseService.queryTableData(config, databaseName, schemaName, tableName, page, DEFAULT_PAGE_SIZE, sortColumn, sortDescending);
                 Platform.runLater(() -> {
                     currentPage = data.getPage();
                     totalPages = data.getTotalPages();

@@ -38,6 +38,7 @@ public class TableStructureView extends BorderPane {
 
     private final ConnectionConfig config;
     private final String databaseName;
+    private final String schemaName;
     private String tableName;
     /** 新建表模式：tableName 为空时为 true，跳过数据库加载，初始化空字段表格 */
     private boolean isNewTable;
@@ -127,8 +128,13 @@ public class TableStructureView extends BorderPane {
     private String cachedDbVersion;
 
     public TableStructureView(ConnectionConfig config, String databaseName, String tableName) {
+        this(config, databaseName, null, tableName);
+    }
+
+    public TableStructureView(ConnectionConfig config, String databaseName, String schemaName, String tableName) {
         this.config = config;
         this.databaseName = databaseName;
+        this.schemaName = schemaName;
         this.tableName = tableName;
         this.isNewTable = tableName == null || tableName.trim().isEmpty();
 
@@ -999,7 +1005,7 @@ public class TableStructureView extends BorderPane {
         indexesTableView.setDisable(true);
         new Thread(() -> {
             try {
-                List<Map<String, String>> indexes = DatabaseService.getTableIndexes(config, databaseName, tableName);
+                List<Map<String, String>> indexes = DatabaseService.getTableIndexes(config, databaseName, schemaName, tableName);
                 Platform.runLater(() -> {
                     populateInfoTable(indexesTableView, indexes, java.util.List.of("名称", "字段", "类型", "方法", "唯一", "注释"),
                             java.util.Map.of("名称", 180, "字段", 200, "类型", 100, "方法", 100, "唯一", 60, "注释", 200));
@@ -1026,7 +1032,7 @@ public class TableStructureView extends BorderPane {
         foreignKeysTableView.setDisable(true);
         new Thread(() -> {
             try {
-                List<Map<String, String>> fks = DatabaseService.getTableForeignKeys(config, databaseName, tableName);
+                List<Map<String, String>> fks = DatabaseService.getTableForeignKeys(config, databaseName, schemaName, tableName);
                 Platform.runLater(() -> {
                     populateInfoTable(foreignKeysTableView, fks,
                             java.util.List.of("名称", "字段", "参考数据库", "参考表", "参考字段", "删除时", "更新时"),
@@ -1054,7 +1060,7 @@ public class TableStructureView extends BorderPane {
         triggersTableView.setDisable(true);
         new Thread(() -> {
             try {
-                List<Map<String, String>> triggers = DatabaseService.getTableTriggers(config, databaseName, tableName);
+                List<Map<String, String>> triggers = DatabaseService.getTableTriggers(config, databaseName, schemaName, tableName);
                 Platform.runLater(() -> {
                     populateInfoTable(triggersTableView, triggers,
                             java.util.List.of("名称", "时机", "事件", "语句"),
@@ -1085,7 +1091,7 @@ public class TableStructureView extends BorderPane {
         new Thread(() -> {
             try {
                 Map<String, String> options = isNewTable ? new LinkedHashMap<>()
-                        : DatabaseService.getTableOptions(config, databaseName, tableName);
+                        : DatabaseService.getTableOptions(config, databaseName, schemaName, tableName);
                 // 加载可用引擎列表
                 List<String> engines = DatabaseService.getEngines(config);
                 // 加载字符集列表
@@ -1161,7 +1167,7 @@ public class TableStructureView extends BorderPane {
         }
         new Thread(() -> {
             try {
-                String comment = DatabaseService.getTableComment(config, databaseName, tableName);
+                String comment = DatabaseService.getTableComment(config, databaseName, schemaName, tableName);
                 Platform.runLater(() -> {
                     commentTextArea.setText(comment != null ? comment : "");
                     originalTableComment = comment != null ? comment : "";
@@ -1202,11 +1208,11 @@ public class TableStructureView extends BorderPane {
                             } else {
                                 Map<String, String> opts = collectOptionsForCreate();
                                 String cmt = commentLoaded ? commentTextArea.getText() : null;
-                                result = DatabaseService.generateCreateTableSql(config, databaseName, "新表名", cols, opts, cmt);
+                                result = DatabaseService.generateCreateTableSql(config, databaseName, schemaName, "新表名", cols, opts, cmt);
                             }
                         }
                     } else {
-                        String ddl = DatabaseService.getTableDdl(config, databaseName, tableName);
+                        String ddl = DatabaseService.getTableDdl(config, databaseName, schemaName, tableName);
                         result = ddl != null && !ddl.isEmpty() ? ddl : "-- 无法获取CREATE TABLE DDL";
                     }
                     int fieldCount = tableView.getItems() != null ? tableView.getItems().size() : 0;
@@ -1239,7 +1245,7 @@ public class TableStructureView extends BorderPane {
 
                 for (ObservableList<String> row : changedColumns) {
                     try {
-                        alterStatements.add(DatabaseService.generateUpdateColumnCommentSql(config, databaseName, tableName, columnTitles, row) + ";");
+                        alterStatements.add(DatabaseService.generateUpdateColumnCommentSql(config, databaseName, schemaName, tableName, columnTitles, row) + ";");
                     } catch (Exception e) {
                         alterStatements.add("-- 生成列注释SQL失败: " + e.getMessage());
                     }
@@ -1249,7 +1255,7 @@ public class TableStructureView extends BorderPane {
                     String tableComment = commentTextArea.getText();
                     String original = originalTableComment != null ? originalTableComment : "";
                     if (!original.equals(tableComment != null ? tableComment : "")) {
-                        alterStatements.add(DatabaseService.generateUpdateTableCommentSql(config, databaseName, tableName, tableComment) + ";");
+                        alterStatements.add(DatabaseService.generateUpdateTableCommentSql(config, databaseName, schemaName, tableName, tableComment) + ";");
                     }
                 }
 
@@ -1369,7 +1375,7 @@ public class TableStructureView extends BorderPane {
             // 保存表注释
             if (tableCommentChanged) {
                 try {
-                    DatabaseService.updateTableComment(config, databaseName, tableName, tableComment);
+                    DatabaseService.updateTableComment(config, databaseName, schemaName, tableName, tableComment);
                 } catch (Exception e) {
                     errors.add("表注释: " + e.getMessage());
                 }
@@ -1378,7 +1384,7 @@ public class TableStructureView extends BorderPane {
             // 保存列注释
             for (ObservableList<String> row : changedColumns) {
                 try {
-                    DatabaseService.updateColumnComment(config, databaseName, tableName, columnTitles, row);
+                    DatabaseService.updateColumnComment(config, databaseName, schemaName, tableName, columnTitles, row);
                 } catch (Exception e) {
                     String colName = nameIdx >= 0 && nameIdx < row.size() ? row.get(nameIdx) : "?";
                     errors.add(colName + ": " + e.getMessage());
@@ -1450,7 +1456,7 @@ public class TableStructureView extends BorderPane {
         String finalNewTableName = newTableName;
         new Thread(() -> {
             try {
-                DatabaseService.createTable(config, databaseName, finalNewTableName, columns, options, tableComment);
+                DatabaseService.createTable(config, databaseName, schemaName, finalNewTableName, columns, options, tableComment);
                 Platform.runLater(() -> {
                     // 切换为正常设计表模式
                     tableName = finalNewTableName;
@@ -1687,24 +1693,17 @@ public class TableStructureView extends BorderPane {
     /**
      * 注册Scene加速器处理Ctrl+C/Ctrl+V。
      * Scene加速器在所有事件分发之前触发，确保ComboBox内TextField不会拦截快捷键。
-     * 通过focusOwnerProperty监听焦点变化，确保当前焦点所在的TableView始终拥有加速器。
+     * 通过当前选中的Tab定位TableStructureView，不依赖焦点判断，
+     * 避免多Tab下焦点不在表格内时复制/粘贴失效。
      */
     private void setupCopyPasteAccelerators() {
         final KeyCombination copyCombo = KeyCombination.keyCombination("Ctrl+C");
         final KeyCombination pasteCombo = KeyCombination.keyCombination("Ctrl+V");
 
-        // 在Scene上注册加速器和焦点监听器
+        // 在Scene上注册加速器：捕获scene引用，回调时通过选中Tab定位结构视图
         java.util.function.Consumer<Scene> registerOnScene = scene -> {
-            // 立即注册一次
-            scene.getAccelerators().put(copyCombo, this::handleAcceleratorCopy);
-            scene.getAccelerators().put(pasteCombo, this::handleAcceleratorPaste);
-            // 监听焦点变化：当焦点进入本表格时，重新注册本表格的加速器（覆盖其他Tab的）
-            scene.focusOwnerProperty().addListener((o, oldFocus, newFocus) -> {
-                if (newFocus != null && isFocusInTable(newFocus)) {
-                    scene.getAccelerators().put(copyCombo, this::handleAcceleratorCopy);
-                    scene.getAccelerators().put(pasteCombo, this::handleAcceleratorPaste);
-                }
-            });
+            scene.getAccelerators().put(copyCombo, () -> handleAcceleratorCopy(scene));
+            scene.getAccelerators().put(pasteCombo, () -> handleAcceleratorPaste(scene));
         };
 
         tableView.sceneProperty().addListener((obs, oldScene, newScene) -> {
@@ -1719,9 +1718,8 @@ public class TableStructureView extends BorderPane {
         }
     }
 
-    /** Ctrl+C加速器处理：优先复制TextInputControl选中文本，否则复制表格选中行 */
-    private void handleAcceleratorCopy() {
-        Scene scene = tableView.getScene();
+    /** Ctrl+C加速器处理：优先复制TextInputControl选中文本，否则复制当前选中Tab中表格的选中行 */
+    private void handleAcceleratorCopy(Scene scene) {
         if (scene == null) return;
         Node focusOwner = scene.getFocusOwner();
         // 1. 焦点在文本输入组件且有选中文本 → 复制文本
@@ -1731,20 +1729,23 @@ public class TableStructureView extends BorderPane {
                 ClipboardContent content = new ClipboardContent();
                 content.putString(selected);
                 Clipboard.getSystemClipboard().setContent(content);
-                copiedFieldsJson = null; // 清除字段缓存，避免粘贴时误用
+                // 清除活动结构视图的字段缓存，避免粘贴时误用
+                TableStructureView activeView = findActiveStructureView(scene);
+                if (activeView != null) activeView.copiedFieldsJson = null;
                 return;
             }
         }
-        // 2. 表格有选中行 → 复制字段（无论焦点在哪里）
-        if (!tableView.getSelectionModel().getSelectedIndices().isEmpty()
-            && tableView.getEditingCell() == null) {
-            handleCopyFields();
+        // 2. 获取当前选中Tab中的TableStructureView，复制其选中行（不依赖焦点判断）
+        TableStructureView activeView = findActiveStructureView(scene);
+        if (activeView != null
+            && !activeView.tableView.getSelectionModel().getSelectedIndices().isEmpty()
+            && activeView.tableView.getEditingCell() == null) {
+            activeView.handleCopyFields();
         }
     }
 
-    /** Ctrl+V加速器处理：焦点在TextInputControl时粘贴文本，否则粘贴字段 */
-    private void handleAcceleratorPaste() {
-        Scene scene = tableView.getScene();
+    /** Ctrl+V加速器处理：焦点在TextInputControl时粘贴文本，否则粘贴到当前选中Tab的表格 */
+    private void handleAcceleratorPaste(Scene scene) {
         if (scene == null) return;
         Node focusOwner = scene.getFocusOwner();
         // 1. 焦点在文本输入组件 → 粘贴文本
@@ -1755,19 +1756,29 @@ public class TableStructureView extends BorderPane {
             }
             return;
         }
-        // 2. 否则 → 粘贴字段
-        if (tableView.getEditingCell() == null) {
-            handlePasteFields();
+        // 2. 否则 → 粘贴到当前选中Tab的TableStructureView
+        TableStructureView activeView = findActiveStructureView(scene);
+        if (activeView != null && activeView.tableView.getEditingCell() == null) {
+            activeView.handlePasteFields();
         }
     }
 
-    private boolean isFocusInTable(Node focusOwner) {
-        Node n = focusOwner;
-        while (n != null) {
-            if (n == tableView) return true;
-            n = n.getParent();
+    /**
+     * 查找当前选中Tab中的TableStructureView。
+     * 不依赖焦点，而是通过TabPane的选中状态确定用户当前操作的结构视图，
+     * 避免多Tab下焦点不在表格内时复制/粘贴失效。
+     */
+    private TableStructureView findActiveStructureView(Scene scene) {
+        if (scene == null || scene.getRoot() == null) return null;
+        for (Node n : scene.getRoot().lookupAll(".tab-pane")) {
+            if (n instanceof TabPane tp) {
+                Tab selectedTab = tp.getSelectionModel().getSelectedItem();
+                if (selectedTab != null && selectedTab.getContent() instanceof TableStructureView tsv) {
+                    return tsv;
+                }
+            }
         }
-        return false;
+        return null;
     }
 
     /**
@@ -1939,7 +1950,7 @@ public class TableStructureView extends BorderPane {
                     }
                 }
 
-                List<Map<String, String>> columns = DatabaseService.getTableColumns(config, databaseName, tableName);
+                List<Map<String, String>> columns = DatabaseService.getTableColumns(config, databaseName, schemaName, tableName);
                 Platform.runLater(() -> {
                     updateTableView(columns);
                     updateFieldPropertiesPane();
