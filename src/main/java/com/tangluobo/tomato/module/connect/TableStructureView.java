@@ -1571,6 +1571,10 @@ public class TableStructureView extends BorderPane {
     }
 
     private void handleTogglePrimaryKey() {
+        // 先取消正在编辑的单元格（cancelEdit会保留编辑值到数据模型，避免refresh丢失输入）
+        if (tableView.getEditingCell() != null) {
+            tableView.edit(-1, null);
+        }
         ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
         if (selected == null) {
             statusLabel.setText("请先选择一个字段");
@@ -2072,6 +2076,10 @@ public class TableStructureView extends BorderPane {
             setOnMousePressed(e -> {
                 if (e.isConsumed()) return;
                 if (isEmpty() || getItem() == null) return;
+                // 先取消正在编辑的单元格（cancelEdit会保留编辑值到数据模型，避免refresh丢失输入）
+                if (tableView.getEditingCell() != null) {
+                    tableView.edit(-1, null);
+                }
                 TableRow<?> tableRow = getTableRow();
                 if (tableRow == null || tableRow.getItem() == null) return;
                 tableView.getSelectionModel().select(getIndex());
