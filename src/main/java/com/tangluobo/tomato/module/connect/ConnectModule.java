@@ -3298,9 +3298,6 @@ public class ConnectModule implements Module {
         ConnectHandler handler = createConnectHandler(config);
         if (handler != null) {
             handler.handleConnect(this, config);
-        } else {
-            // 默认：SSH 终端
-            createSshTerminalTab(config);
         }
     }
 
@@ -3325,64 +3322,6 @@ public class ConnectModule implements Module {
         return null;
     }
 
-    /** 供 SshTerminalConnectHandler 调用：创建 SSH 终端 tab 并连接 */
-    void doSshTerminalConnect(ConnectionConfig config) {
-        createSshTerminalTab(config);
-    }
-
-    /** 创建 SSH 终端 tab 并发起连接 */
-    private void createSshTerminalTab(ConnectionConfig config) {
-        SSHTerminalPane terminalPane = new SSHTerminalPane();
-
-        int scrollback = config.getScrollbackLines() != null ?
-                config.getScrollbackLines() : GlobalConfig.getInstance().getScrollbackLines();
-        terminalPane.setScrollbackLines(scrollback);
-
-        Tab tab = new Tab(config.getName());
-        tab.setContent(terminalPane);
-        tab.setUserData(config.getId());
-
-        ContextMenu tabContextMenu = new ContextMenu();
-
-        MenuItem copySessionItem = new MenuItem("复制会话");
-        copySessionItem.setOnAction(e -> handleConnect(config));
-
-        MenuItem sessionConfigItem = new MenuItem("会话配置");
-        sessionConfigItem.setOnAction(e -> {
-            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
-            SessionConfigDialog.show(stage, config);
-            int newScrollback = config.getScrollbackLines() != null ?
-                    config.getScrollbackLines() : GlobalConfig.getInstance().getScrollbackLines();
-            terminalPane.setScrollbackLines(newScrollback);
-            ConfigManager.saveConnections(connections);
-        });
-
-        MenuItem globalConfigItem = new MenuItem("终端配置");
-        globalConfigItem.setOnAction(e -> {
-            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
-            GlobalConfigDialog.show(stage, GlobalConfigDialog.ConfigMode.SSH);
-            if (config.getScrollbackLines() == null) {
-                terminalPane.setScrollbackLines(GlobalConfig.getInstance().getScrollbackLines());
-            }
-        });
-
-        tabContextMenu.getItems().addAll(copySessionItem, new SeparatorMenuItem(), sessionConfigItem, globalConfigItem);
-        tab.setContextMenu(tabContextMenu);
-
-        tab.setOnClosed(e -> {
-            terminalPane.disconnect();
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showTerminalView();
-
-        doConnect(terminalPane, config);
-    }
-
     /** 供 handler 调用：获取终端 Tab 面板 */
     TabPane getTerminalTabPane() {
         return terminalTabPane;
@@ -3397,11 +3336,8 @@ public class ConnectModule implements Module {
         }
     }
 
-    private void showDataView() {
-        showTerminalView();
-    }
-
-    private void showWelcomeView() {
+    /** 供 handler 调用：显示欢迎视图 */
+    void showWelcomeView() {
         // 无标签时保持TabPane可见，但可以清空标签或显示提示
         if (terminalTabPane != null) {
             terminalTabPane.setVisible(true);
@@ -3409,56 +3345,18 @@ public class ConnectModule implements Module {
         }
     }
 
-    private void doConnect(SSHTerminalPane terminalPane, ConnectionConfig config) {
-        if (config.isUsePassword() && config.getPassword() == null) {
-            Dialog<String> pwdDialog = new Dialog<>();
-            pwdDialog.setTitle("输入密码");
-            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
-            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-
-            GridPane grid = new GridPane();
-            grid.setHgap(10);
-            grid.setVgap(10);
-            grid.setPadding(new Insets(20, 10, 10, 10));
-            PasswordField pf = new PasswordField();
-            pf.setPrefWidth(250);
-            grid.add(new Label("密码："), 0, 0);
-            grid.add(pf, 1, 0);
-            pwdDialog.getDialogPane().setContent(grid);
-
-            pwdDialog.setResultConverter(dialogButton -> {
-                if (dialogButton == ButtonType.OK) {
-                    return pf.getText();
-                }
-                return null;
-            });
-
-            pwdDialog.showAndWait().ifPresentOrElse(pwd -> {
-                if (pwd.isEmpty()) return;
-                connectWithAuth(terminalPane, config, pwd);
-            }, () -> {});
-        } else {
-            connectWithAuth(terminalPane, config, config.getPassword());
-        }
+    /** 供 handler 调用：保存连接配置 */
+    void saveConnections() {
+        ConfigManager.saveConnections(connections);
     }
 
-    private void connectWithAuth(SSHTerminalPane terminalPane, ConnectionConfig config, String password) {
-        List<String> keyPaths = config.isUseKey() ? config.getPrivateKeyPaths() : null;
-        new Thread(() -> {
-            try {
-                terminalPane.connect(config.getHost(), config.getPort(), config.getUsername(), password, keyPaths);
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("连接失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("SSH连接失败: " + e.getMessage());
-                    alert.showAndWait();
-                    terminalPane.disconnect();
-                });
-                e.printStackTrace();
-            }
-        }, "SSH-Connect").start();
+    /** 供 handler 调用：触发连接（用于"复制会话"菜单） */
+    void triggerConnect(ConnectionConfig config) {
+        handleConnect(config);
+    }
+
+    private void showDataView() {
+        showTerminalView();
     }
 
     /** 供 LocalTerminalConnectHandler 调用 */
@@ -3584,82 +3482,6 @@ public class ConnectModule implements Module {
         terminalTabPane.getTabs().add(tab);
         terminalTabPane.getSelectionModel().select(tab);
         showTerminalView();
-    }
-
-    /** 供 RdpConnectHandler 调用 */
-    void doRdpConnect(ConnectionConfig config) {
-        String password = config.getPassword();
-        if (password == null || password.isEmpty()) {
-            Dialog<String> pwdDialog = new Dialog<>();
-            pwdDialog.setTitle("输入密码");
-            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
-            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-
-            GridPane grid = new GridPane();
-            grid.setHgap(10);
-            grid.setVgap(10);
-            grid.setPadding(new Insets(20, 10, 10, 10));
-            PasswordField pf = new PasswordField();
-            pf.setPrefWidth(250);
-            grid.add(new Label("密码："), 0, 0);
-            grid.add(pf, 1, 0);
-            pwdDialog.getDialogPane().setContent(grid);
-
-            pwdDialog.setResultConverter(dialogButton -> {
-                if (dialogButton == ButtonType.OK) {
-                    return pf.getText();
-                }
-                return null;
-            });
-
-            var result = pwdDialog.showAndWait();
-            if (result.isEmpty() || result.get().isEmpty()) return;
-            password = result.get();
-        }
-
-        RdpPane rdpPane = new RdpPane();
-
-        Tab tab = new Tab(config.getName());
-        tab.setContent(rdpPane);
-        tab.setUserData(config.getId());
-
-        ContextMenu tabContextMenu = new ContextMenu();
-
-        MenuItem sessionConfigItem = new MenuItem("会话配置");
-        sessionConfigItem.setOnAction(e -> {
-            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
-            SessionConfigDialog.show(stage, config);
-            ConfigManager.saveConnections(connections);
-        });
-
-        tabContextMenu.getItems().add(sessionConfigItem);
-        tab.setContextMenu(tabContextMenu);
-
-        tab.setOnClosed(e -> {
-            rdpPane.disconnect();
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
-            if (newTab == tab) {
-                rdpPane.requestRdpFocus();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showTerminalView();
-
-        int rdpPort = config.getPort() > 0 ? config.getPort() : 3389;
-        int width = config.getScreenWidth() > 0 ? config.getScreenWidth() : 1024;
-        int height = config.getScreenHeight() > 0 ? config.getScreenHeight() : 768;
-        int bpp = config.getColorDepth() > 0 ? config.getColorDepth() : 24;
-        String domain = config.getDomain();
-
-        rdpPane.connect(config.getHost(), rdpPort, config.getUsername(), password,
-                domain, width, height, bpp, config.isUseSsl());
     }
 
     private void handleAddFolder(TreeItem<String> parent) {
