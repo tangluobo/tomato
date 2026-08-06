@@ -1,5 +1,6 @@
-package com.tangluobo.tomato.module.connect;
+package com.tangluobo.tomato.module.connect.handler;
 
+import com.tangluobo.tomato.module.connect.*;
 import com.tangluobo.tomato.module.connect.dialog.CreateDatabaseDialog;
 import com.tangluobo.tomato.module.connect.dialog.EditDatabaseDialog;
 import com.tangluobo.tomato.module.connect.dialog.GlobalConfigDialog;

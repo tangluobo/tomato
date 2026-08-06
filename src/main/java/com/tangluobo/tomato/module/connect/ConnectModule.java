@@ -5,6 +5,7 @@ import com.tangluobo.tomato.module.connect.dialog.BackupDialog;
 import com.tangluobo.tomato.module.connect.dialog.ConnectionConfigDialog;
 import com.tangluobo.tomato.module.connect.dialog.FolderDialog;
 import com.tangluobo.tomato.module.connect.dialog.RestoreDialog;
+import com.tangluobo.tomato.module.connect.handler.*;
 import com.tangluobo.tomato.ssh.LocalTerminalPane;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
 import javafx.animation.KeyFrame;
@@ -169,7 +170,7 @@ public class ConnectModule implements Module {
     }
 
     /** 供 handler 调用：根据节点数据获取图标 */
-    ImageView getDbNodeIcon(DatabaseNodeData data) {
+    public ImageView getDbNodeIcon(DatabaseNodeData data) {
         ImageView iv = new ImageView();
         iv.setFitWidth(20);
         iv.setFitHeight(20);
@@ -203,10 +204,10 @@ public class ConnectModule implements Module {
     }
 
     /** 供 handler 调用：获取表图标（原始 Image） */
-    Image getTableIcon() { return tableIcon; }
+    public Image getTableIcon() { return tableIcon; }
 
     /** 供 handler 调用：获取视图图标（原始 Image） */
-    Image getViewIcon() { return viewIcon; }
+    public Image getViewIcon() { return viewIcon; }
 
     /** 供 handler 调用：获取查询图标（原始 Image） */
     Image getQueryIcon() { return queryIcon; }
@@ -318,7 +319,7 @@ public class ConnectModule implements Module {
     }
 
     /** 供 handler 调用：根据连接配置获取图标 */
-    ImageView getIconForConfig(ConnectionConfig config) {
+    public ImageView getIconForConfig(ConnectionConfig config) {
         ImageView imageView = new ImageView();
         imageView.setFitWidth(20);
         imageView.setFitHeight(20);
@@ -341,32 +342,32 @@ public class ConnectModule implements Module {
     }
 
     /** 供 handler 调用：获取树根节点 */
-    TreeItem<String> getRoot() {
+    public TreeItem<String> getRoot() {
         return root;
     }
 
     /** 供 handler 调用：获取连接中的主机节点集合 */
-    Set<TreeItem<String>> getConnectingHosts() {
+    public Set<TreeItem<String>> getConnectingHosts() {
         return connectingHosts;
     }
 
     /** 供 handler 调用：获取节点数据映射 */
-    Map<TreeItem<String>, DatabaseNodeData> getDbNodeDataMap() {
+    public Map<TreeItem<String>, DatabaseNodeData> getDbNodeDataMap() {
         return dbNodeDataMap;
     }
 
     /** 供 handler 调用：获取树视图 */
-    TreeView<String> getTreeView() {
+    public TreeView<String> getTreeView() {
         return treeView;
     }
 
     /** 供 handler 调用：更新连接状态映射 */
-    void markConnectionState(TreeItem<String> hostItem, boolean connected) {
+    public void markConnectionState(TreeItem<String> hostItem, boolean connected) {
         connectionStateMap.put(hostItem, connected);
     }
 
     /** 供 handler 调用：根据 ID 查找树节点 */
-    TreeItem<String> findItemById(TreeItem<String> root, String id) {
+    public TreeItem<String> findItemById(TreeItem<String> root, String id) {
         ConnectionConfig config = itemConfigMap.get(root);
         if (config != null && config.getId().equals(id)) {
             return root;
@@ -1724,7 +1725,7 @@ public class ConnectModule implements Module {
     }
 
     /** 供 handler 调用：更新主机节点图标（根据连接状态分发到具体 handler） */
-    void updateHostIcon(TreeItem<String> hostItem, ConnectionConfig config, boolean connected) {
+    public void updateHostIcon(TreeItem<String> hostItem, ConnectionConfig config, boolean connected) {
         connectionStateMap.put(hostItem, connected);
         AbstractDbHandler handler = createDbHandler(config);
         if (handler != null) {
@@ -1735,7 +1736,7 @@ public class ConnectModule implements Module {
     }
 
     /** 供非数据库类型(SSH/RDP 等)及 PG/Oracle handler 调用：通用主机图标更新 */
-    void updateHostIconGeneric(TreeItem<String> hostItem, ConnectionConfig config, boolean connected) {
+    public void updateHostIconGeneric(TreeItem<String> hostItem, ConnectionConfig config, boolean connected) {
         ImageView imageView = new ImageView();
         imageView.setFitWidth(16);
         imageView.setFitHeight(16);
@@ -1755,7 +1756,7 @@ public class ConnectModule implements Module {
     }
 
     /** 供 MySQL handler 调用：MySQL 专用主机图标更新 */
-    void updateMysqlHostIcon(TreeItem<String> hostItem, ConnectionConfig config) {
+    public void updateMysqlHostIcon(TreeItem<String> hostItem, ConnectionConfig config) {
         ImageView imageView = new ImageView();
         imageView.setFitWidth(16);
         imageView.setFitHeight(16);
@@ -1809,7 +1810,7 @@ public class ConnectModule implements Module {
     }
 
     /** 供 handler 调用：递归移除节点映射 */
-    void removeDbNodeDataRecursive(TreeItem<String> item) {
+    public void removeDbNodeDataRecursive(TreeItem<String> item) {
         dbNodeDataMap.remove(item);
         for (TreeItem<String> child : item.getChildren()) {
             removeDbNodeDataRecursive(child);
@@ -1817,12 +1818,12 @@ public class ConnectModule implements Module {
     }
 
     /** 供 handler 调用：注册节点数据映射 */
-    void putDbNodeData(TreeItem<String> item, DatabaseNodeData data) {
+    public void putDbNodeData(TreeItem<String> item, DatabaseNodeData data) {
         dbNodeDataMap.put(item, data);
     }
 
     /** 供 handler 调用：根据 id 查找连接配置 */
-    ConnectionConfig findConnectionById(String id) {
+    public ConnectionConfig findConnectionById(String id) {
         return connections.stream().filter(c -> c.getId().equals(id)).findFirst().orElse(null);
     }
 
@@ -1859,12 +1860,12 @@ public class ConnectModule implements Module {
     }
 
     /** 供 handler 调用：获取终端 Tab 面板 */
-    TabPane getTerminalTabPane() {
+    public TabPane getTerminalTabPane() {
         return terminalTabPane;
     }
 
     /** 供 RdpConnectHandler 调用 */
-    void showTerminalView() {
+    public void showTerminalView() {
         // 已直接使用terminalTabPane，无需隐藏/显示其他元素
         if (terminalTabPane != null) {
             terminalTabPane.setVisible(true);
@@ -1873,7 +1874,7 @@ public class ConnectModule implements Module {
     }
 
     /** 供 handler 调用：显示欢迎视图 */
-    void showWelcomeView() {
+    public void showWelcomeView() {
         // 无标签时保持TabPane可见，但可以清空标签或显示提示
         if (terminalTabPane != null) {
             terminalTabPane.setVisible(true);
@@ -1882,17 +1883,17 @@ public class ConnectModule implements Module {
     }
 
     /** 供 handler 调用：保存连接配置 */
-    void saveConnections() {
+    public void saveConnections() {
         ConfigManager.saveConnections(connections);
     }
 
     /** 供 handler 调用：触发连接（用于"复制会话"菜单） */
-    void triggerConnect(ConnectionConfig config) {
+    public void triggerConnect(ConnectionConfig config) {
         handleConnect(config);
     }
 
     /** 双击主机节点：通过对应 handler 加载主机资源列表 */
-    void triggerHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
+    public void triggerHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
         ConnectHandler handler = createConnectHandler(config);
         if (handler != null) {
             handler.handleHostDoubleClick(this, hostItem, config);
@@ -1966,7 +1967,7 @@ public class ConnectModule implements Module {
     }
 
     /** 供 handler 调用：显示数据视图（实际为终端视图） */
-    void showDataView() {
+    public void showDataView() {
         showTerminalView();
     }
 
@@ -2131,7 +2132,7 @@ public class ConnectModule implements Module {
     }
 
     /** 供 handler 调用：获取所属 Stage */
-    Stage getStage() {
+    public Stage getStage() {
         Node node = treeView;
         while (node != null && !(node.getScene() != null && node.getScene().getWindow() instanceof Stage)) {
             node = node.getParent();
@@ -2143,7 +2144,7 @@ public class ConnectModule implements Module {
     }
 
     /** 供 handler 调用：确认 TabPane 已安装 */
-    boolean ensureTabPaneInstalled() {
+    public boolean ensureTabPaneInstalled() {
         // 现在 terminalTabPane 始终在 contentArea 中，直接返回 true
         return terminalTabPane != null;
     }

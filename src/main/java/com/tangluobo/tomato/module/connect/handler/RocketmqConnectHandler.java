@@ -1,5 +1,6 @@
-package com.tangluobo.tomato.module.connect;
+package com.tangluobo.tomato.module.connect.handler;
 
+import com.tangluobo.tomato.module.connect.*;
 import javafx.application.Platform;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
@@ -397,7 +398,7 @@ public class RocketmqConnectHandler implements ConnectHandler {
     }
 
     /** 加载主题列表到 folder 节点 */
-    void loadTopicsForFolder(ConnectModule module, TreeItem<String> folderItem, ConnectionConfig config) {
+    public void loadTopicsForFolder(ConnectModule module, TreeItem<String> folderItem, ConnectionConfig config) {
         new Thread(() -> {
             try {
                 List<Map<String, Object>> topics = RocketmqService.getTopicList(config);
@@ -425,7 +426,7 @@ public class RocketmqConnectHandler implements ConnectHandler {
     }
 
     /** 加载集群信息到 folder 节点 */
-    void loadClusterForFolder(ConnectModule module, TreeItem<String> folderItem, ConnectionConfig config) {
+    public void loadClusterForFolder(ConnectModule module, TreeItem<String> folderItem, ConnectionConfig config) {
         new Thread(() -> {
             try {
                 List<Map<String, Object>> cluster = RocketmqService.getClusterInfo(config);

@@ -1,5 +1,8 @@
-package com.tangluobo.tomato.module.connect;
+package com.tangluobo.tomato.module.connect.handler;
 
+import com.tangluobo.tomato.module.connect.ConnectModule;
+import com.tangluobo.tomato.module.connect.ConnectType;
+import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import com.tangluobo.tomato.module.connect.dialog.SessionConfigDialog;
 import com.tangluobo.tomato.rdp.RdpPane;
 import javafx.geometry.Insets;

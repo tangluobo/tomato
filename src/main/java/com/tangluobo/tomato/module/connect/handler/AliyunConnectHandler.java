@@ -1,5 +1,6 @@
-package com.tangluobo.tomato.module.connect;
+package com.tangluobo.tomato.module.connect.handler;
 
+import com.tangluobo.tomato.module.connect.*;
 import javafx.application.Platform;
 import javafx.scene.control.*;
 import javafx.scene.layout.GridPane;
@@ -125,7 +126,7 @@ public class AliyunConnectHandler implements ConnectHandler {
     }
 
     /** 加载阿里云产品子节点（ECS实例/域名等） */
-    void loadAliyunProductChildren(ConnectModule module, TreeItem<String> productItem, DatabaseNodeData data) {
+    public void loadAliyunProductChildren(ConnectModule module, TreeItem<String> productItem, DatabaseNodeData data) {
         String productCode = data.getDatabaseName(); // product code stored in databaseName field
         ConnectionConfig config = data.getConnectionConfig();
 
@@ -183,7 +184,7 @@ public class AliyunConnectHandler implements ConnectHandler {
     }
 
     /** 双击阿里云域名节点：打开子域名数据视图tab */
-    void handleAliyunDomainDoubleClick(ConnectModule module, TreeItem<String> item, DatabaseNodeData data) {
+    public void handleAliyunDomainDoubleClick(ConnectModule module, TreeItem<String> item, DatabaseNodeData data) {
         javafx.scene.control.TabPane terminalTabPane = module.getTerminalTabPane();
         if (terminalTabPane == null) return;
         if (!module.ensureTabPaneInstalled()) return;
