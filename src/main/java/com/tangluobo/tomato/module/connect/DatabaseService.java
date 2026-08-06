@@ -157,8 +157,15 @@ public class DatabaseService {
         } else if (config.getType() == ConnectType.POSTGRESQL) {
             String schema = schemaName != null ? schemaName : databaseName;
             Connection conn = getConnection(config, databaseName);
+            // 使用 pg_class 系统目录查询，比 information_schema.tables 更可靠
+            // information_schema.tables 只显示当前用户有显式权限的表，可能漏掉部分表
+            // pg_class 显示所有表（包括其他用户创建但当前用户有 schema USAGE 权限的表）
+            // relkind: r=普通表, p=分区表
             try (PreparedStatement stmt = conn.prepareStatement(
-                     "SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_type = 'BASE TABLE' ORDER BY table_name")) {
+                     "SELECT c.relname FROM pg_class c "
+                     + "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                     + "WHERE n.nspname = ? AND c.relkind IN ('r','p') "
+                     + "ORDER BY c.relname")) {
                 stmt.setString(1, schema);
                 try (ResultSet rs = stmt.executeQuery()) {
                     while (rs.next()) {
@@ -210,8 +217,12 @@ public class DatabaseService {
         } else if (config.getType() == ConnectType.POSTGRESQL) {
             String schema = schemaName != null ? schemaName : databaseName;
             Connection conn = getConnection(config, databaseName);
+            // 使用 pg_class 查询视图，relkind: v=视图, m=物化视图
             try (PreparedStatement stmt = conn.prepareStatement(
-                     "SELECT table_name FROM information_schema.views WHERE table_schema = ? ORDER BY table_name")) {
+                     "SELECT c.relname FROM pg_class c "
+                     + "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                     + "WHERE n.nspname = ? AND c.relkind IN ('v','m') "
+                     + "ORDER BY c.relname")) {
                 stmt.setString(1, schema);
                 try (ResultSet rs = stmt.executeQuery()) {
                     while (rs.next()) {
