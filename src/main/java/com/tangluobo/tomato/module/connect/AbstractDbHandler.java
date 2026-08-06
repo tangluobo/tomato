@@ -1,12 +1,25 @@
 package com.tangluobo.tomato.module.connect;
 
 import javafx.application.Platform;
+import javafx.collections.ObservableList;
 import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.Dialog;
+import javafx.scene.control.Label;
+import javafx.scene.control.PasswordField;
+import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.TreeItem;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.layout.GridPane;
+import javafx.geometry.Insets;
+import javafx.stage.Stage;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 /**
  * 数据库连接处理器抽象基类。
@@ -76,7 +89,84 @@ public abstract class AbstractDbHandler implements ConnectHandler {
      * MySQL/PostgreSQL/Oracle 逻辑一致：密码输入 → 后台调 DatabaseService.getDatabases → 填充数据库节点。
      */
     public void handleHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
-        module.doHandleDbHostDoubleClick(hostItem, config, this);
+        doHandleDbHostDoubleClick(hostItem, config);
+    }
+
+    /**
+     * 执行数据库主机连接的公共流程（密码输入 → 加载数据库列表 → 填充节点）。
+     * MySQL/PostgreSQL/Oracle 逻辑一致。
+     */
+    void doHandleDbHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
+        if (module.getConnectingHosts().contains(hostItem)) {
+            return;
+        }
+        if (!hostItem.getChildren().isEmpty()) {
+            hostItem.setExpanded(!hostItem.isExpanded());
+            return;
+        }
+
+        if (config.getPassword() == null) {
+            Dialog<String> pwdDialog = new Dialog<>();
+            pwdDialog.setTitle("输入密码");
+            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
+            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+            GridPane grid = new GridPane();
+            grid.setHgap(10);
+            grid.setVgap(10);
+            grid.setPadding(new Insets(20, 10, 10, 10));
+            PasswordField pf = new PasswordField();
+            pf.setPrefWidth(250);
+            grid.add(new Label("密码："), 0, 0);
+            grid.add(pf, 1, 0);
+            pwdDialog.getDialogPane().setContent(grid);
+            pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
+            final String[] passwordHolder = new String[1];
+            pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
+            if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
+            config.setPassword(passwordHolder[0]);
+        }
+
+        module.getConnectingHosts().add(hostItem);
+
+        ProgressIndicator loadingIndicator = new ProgressIndicator();
+        loadingIndicator.setPrefSize(16, 16);
+        loadingIndicator.setMaxSize(16, 16);
+        loadingIndicator.setStyle("-fx-progress-color: #4CAF50;");
+        hostItem.setGraphic(loadingIndicator);
+        module.getTreeView().refresh();
+
+        new Thread(() -> {
+            try {
+                List<String> databases = DatabaseService.getDatabases(config);
+                Platform.runLater(() -> {
+                    module.getConnectingHosts().remove(hostItem);
+                    module.markConnectionState(hostItem, true);
+                    updateHostIcon(hostItem, config, true);
+
+                    hostItem.getChildren().clear();
+                    for (String dbName : databases) {
+                        TreeItem<String> dbItem = new TreeItem<>(dbName);
+                        DatabaseNodeData data = new DatabaseNodeData(DatabaseNodeData.NodeType.DATABASE, dbName, config, dbName);
+                        dbItem.setGraphic(module.getDbNodeIcon(data));
+                        module.getDbNodeDataMap().put(dbItem, data);
+                        hostItem.getChildren().add(dbItem);
+                    }
+                    hostItem.setExpanded(true);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    module.getConnectingHosts().remove(hostItem);
+                    hostItem.setGraphic(module.getIconForConfig(config));
+                    module.getTreeView().refresh();
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("连接失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法连接到 " + config.getName() + ": " + e.getMessage());
+                    alert.showAndWait();
+                });
+                e.printStackTrace();
+            }
+        }, "DB-LoadDatabases").start();
     }
 
     /**
@@ -113,5 +203,555 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         if (hostItem != null) {
             handleHostDoubleClick(hostItem, config);
         }
+    }
+
+    /**
+     * 接口方法：双击主机节点。
+     * 委托给本类已有的 handleHostDoubleClick(hostItem, config)（持有 module 引用，无需重复查找）。
+     */
+    @Override
+    public void handleHostDoubleClick(ConnectModule module, TreeItem<String> hostItem, ConnectionConfig config) {
+        handleHostDoubleClick(hostItem, config);
+    }
+
+    // ==================== 新建/编辑/删除数据库 ====================
+
+    /** 新建数据库 */
+    public void handleCreateDatabase(TreeItem<String> hostItem, ConnectionConfig config) {
+        if (config.getPassword() == null) {
+            Dialog<String> pwdDialog = new Dialog<>();
+            pwdDialog.setTitle("输入密码");
+            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
+            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+            GridPane grid = new GridPane();
+            grid.setHgap(10);
+            grid.setVgap(10);
+            grid.setPadding(new Insets(20, 10, 10, 10));
+            PasswordField pf = new PasswordField();
+            pf.setPrefWidth(250);
+            grid.add(new Label("密码："), 0, 0);
+            grid.add(pf, 1, 0);
+            pwdDialog.getDialogPane().setContent(grid);
+            pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
+            final String[] passwordHolder = new String[1];
+            pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
+            if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
+            config.setPassword(passwordHolder[0]);
+        }
+
+        Stage stage = module.getStage();
+        if (stage == null) return;
+
+        CreateDatabaseDialog dialog = new CreateDatabaseDialog(stage, config);
+        dialog.showAndWait();
+
+        if (!dialog.isConfirmed()) return;
+
+        String dbName = dialog.getDatabaseName();
+        String charset = dialog.getCharset();
+        String collation = dialog.getCollation();
+
+        new Thread(() -> {
+            try {
+                DatabaseService.createDatabase(config, dbName, charset, collation);
+                Platform.runLater(() -> {
+                    if (!hostItem.getChildren().isEmpty()) {
+                        refreshDbHost(hostItem, config);
+                    }
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("创建失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("创建数据库失败: " + e.getMessage());
+                    alert.showAndWait();
+                });
+            }
+        }, "DB-CreateDatabase").start();
+    }
+
+    /** 编辑数据库（修改字符集/排序规则） */
+    public void handleEditDatabase(TreeItem<String> dbItem, DatabaseNodeData data) {
+        ConnectionConfig config = data.getConnectionConfig();
+
+        if (config.getPassword() == null) {
+            Dialog<String> pwdDialog = new Dialog<>();
+            pwdDialog.setTitle("输入密码");
+            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
+            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+            GridPane grid = new GridPane();
+            grid.setHgap(10);
+            grid.setVgap(10);
+            grid.setPadding(new Insets(20, 10, 10, 10));
+            PasswordField pf = new PasswordField();
+            pf.setPrefWidth(250);
+            grid.add(new Label("密码："), 0, 0);
+            grid.add(pf, 1, 0);
+            pwdDialog.getDialogPane().setContent(grid);
+            pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
+            final String[] passwordHolder = new String[1];
+            pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
+            if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
+            config.setPassword(passwordHolder[0]);
+        }
+
+        Stage stage = module.getStage();
+        if (stage == null) return;
+
+        String dbName = data.getDatabaseName();
+
+        new Thread(() -> {
+            try {
+                String[] charsetCollation = DatabaseService.getDatabaseCharsetCollation(config, dbName);
+                String currentCharset = charsetCollation[0];
+                String currentCollation = charsetCollation[1];
+
+                Platform.runLater(() -> {
+                    EditDatabaseDialog dialog = new EditDatabaseDialog(stage, config, dbName, currentCharset, currentCollation);
+                    dialog.showAndWait();
+
+                    if (!dialog.isConfirmed()) return;
+
+                    String charset = dialog.getCharset();
+                    String collation = dialog.getCollation();
+
+                    new Thread(() -> {
+                        try {
+                            DatabaseService.alterDatabase(config, dbName, charset, collation);
+                            Platform.runLater(() -> {
+                                refreshDbNode(dbItem, data);
+                            });
+                        } catch (Exception e) {
+                            Platform.runLater(() -> {
+                                Alert alert = new Alert(Alert.AlertType.ERROR);
+                                alert.setTitle("修改失败");
+                                alert.setHeaderText(null);
+                                alert.setContentText("修改数据库失败: " + e.getMessage());
+                                alert.showAndWait();
+                            });
+                        }
+                    }, "DB-AlterDatabase").start();
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("查询失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("获取数据库信息失败: " + e.getMessage());
+                    alert.showAndWait();
+                });
+            }
+        }, "DB-GetDbInfo").start();
+    }
+
+    /** 删除数据库 */
+    public void handleDeleteDatabase(TreeItem<String> dbItem, DatabaseNodeData data) {
+        ConnectionConfig config = data.getConnectionConfig();
+        String dbName = data.getDatabaseName();
+
+        Alert confirm = new Alert(Alert.AlertType.WARNING);
+        confirm.setTitle("删除数据库");
+        confirm.setHeaderText("确定要删除数据库 \"" + dbName + "\" 吗？");
+        confirm.setContentText("此操作不可撤销，该数据库中的所有数据将被永久删除！");
+        confirm.getButtonTypes().setAll(ButtonType.YES, ButtonType.NO);
+        confirm.showAndWait().ifPresent(response -> {
+            if (response != ButtonType.YES) return;
+
+            if (config.getPassword() == null) {
+                Dialog<String> pwdDialog = new Dialog<>();
+                pwdDialog.setTitle("输入密码");
+                pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
+                pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+                GridPane grid = new GridPane();
+                grid.setHgap(10);
+                grid.setVgap(10);
+                grid.setPadding(new Insets(20, 10, 10, 10));
+                PasswordField pf = new PasswordField();
+                pf.setPrefWidth(250);
+                grid.add(new Label("密码："), 0, 0);
+                grid.add(pf, 1, 0);
+                pwdDialog.getDialogPane().setContent(grid);
+                pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
+                final String[] passwordHolder = new String[1];
+                pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
+                if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
+                config.setPassword(passwordHolder[0]);
+            }
+
+            new Thread(() -> {
+                try {
+                    DatabaseService.dropDatabase(config, dbName);
+                    Platform.runLater(() -> {
+                        module.removeDbNodeDataRecursive(dbItem);
+                        dbItem.getParent().getChildren().remove(dbItem);
+                    });
+                } catch (Exception e) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("删除失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("删除数据库失败: " + e.getMessage());
+                        alert.showAndWait();
+                    });
+                }
+            }, "DB-DropDatabase").start();
+        });
+    }
+
+    /** 批量删除表/视图节点 */
+    public void handleDeleteDbNodes() {
+        ObservableList<TreeItem<String>> selectedItems = module.getTreeView().getSelectionModel().getSelectedItems();
+        List<TreeItem<String>> tableItems = new ArrayList<>();
+        List<TreeItem<String>> viewItems = new ArrayList<>();
+
+        for (TreeItem<String> item : selectedItems) {
+            DatabaseNodeData data = module.getDbNodeDataMap().get(item);
+            if (data != null) {
+                if (data.getType() == DatabaseNodeData.NodeType.TABLE) {
+                    tableItems.add(item);
+                } else if (data.getType() == DatabaseNodeData.NodeType.VIEW) {
+                    viewItems.add(item);
+                }
+            }
+        }
+
+        if (tableItems.isEmpty() && viewItems.isEmpty()) return;
+
+        StringBuilder msg = new StringBuilder("确定要删除以下对象吗？此操作不可恢复！\n\n");
+        if (!tableItems.isEmpty()) {
+            msg.append("表：\n");
+            for (TreeItem<String> item : tableItems) {
+                msg.append("  - ").append(item.getValue()).append("\n");
+            }
+        }
+        if (!viewItems.isEmpty()) {
+            msg.append("视图：\n");
+            for (TreeItem<String> item : viewItems) {
+                msg.append("  - ").append(item.getValue()).append("\n");
+            }
+        }
+
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("确认删除");
+        confirm.setHeaderText(null);
+        confirm.setContentText(msg.toString());
+
+        ButtonType deleteBtn = new ButtonType("确认删除");
+        confirm.getButtonTypes().setAll(deleteBtn, ButtonType.CANCEL);
+
+        Optional<ButtonType> result = confirm.showAndWait();
+        if (result.isEmpty() || result.get() != deleteBtn) return;
+
+        if (!tableItems.isEmpty()) {
+            Map<String, List<TreeItem<String>>> groupedTables = new HashMap<>();
+            for (TreeItem<String> item : tableItems) {
+                DatabaseNodeData data = module.getDbNodeDataMap().get(item);
+                String schemaName = data.getSchemaName() != null ? data.getSchemaName() : "";
+                String key = data.getConnectionConfig().getId() + "|" + data.getDatabaseName() + "|" + schemaName;
+                groupedTables.computeIfAbsent(key, k -> new ArrayList<>()).add(item);
+            }
+            for (Map.Entry<String, List<TreeItem<String>>> entry : groupedTables.entrySet()) {
+                String[] parts = entry.getKey().split("\\|");
+                String configId = parts[0];
+                String dbName = parts[1];
+                String schemaName = parts.length > 2 && !parts[2].isEmpty() ? parts[2] : null;
+                List<String> tableNames = entry.getValue().stream()
+                        .map(TreeItem::getValue).toList();
+                ConnectionConfig cfg = module.findConnectionById(configId);
+                if (cfg == null) continue;
+
+                try {
+                    DatabaseService.dropTables(cfg, dbName, schemaName, tableNames);
+                    Platform.runLater(() -> {
+                        for (TreeItem<String> item : entry.getValue()) {
+                            module.getDbNodeDataMap().remove(item);
+                            item.getParent().getChildren().remove(item);
+                        }
+                    });
+                } catch (Exception e) {
+                    Platform.runLater(() -> {
+                        Alert err = new Alert(Alert.AlertType.ERROR);
+                        err.setTitle("删除失败");
+                        err.setHeaderText(null);
+                        err.setContentText(e.getMessage());
+                        err.showAndWait();
+                    });
+                }
+            }
+        }
+
+        if (!viewItems.isEmpty()) {
+            Map<String, List<TreeItem<String>>> groupedViews = new HashMap<>();
+            for (TreeItem<String> item : viewItems) {
+                DatabaseNodeData data = module.getDbNodeDataMap().get(item);
+                String schemaName = data.getSchemaName() != null ? data.getSchemaName() : "";
+                String key = data.getConnectionConfig().getId() + "|" + data.getDatabaseName() + "|" + schemaName;
+                groupedViews.computeIfAbsent(key, k -> new ArrayList<>()).add(item);
+            }
+            for (Map.Entry<String, List<TreeItem<String>>> entry : groupedViews.entrySet()) {
+                String[] parts = entry.getKey().split("\\|");
+                String configId = parts[0];
+                String dbName = parts[1];
+                String schemaName = parts.length > 2 && !parts[2].isEmpty() ? parts[2] : null;
+                List<String> viewNames = entry.getValue().stream()
+                        .map(TreeItem::getValue).toList();
+                ConnectionConfig cfg = module.findConnectionById(configId);
+                if (cfg == null) continue;
+
+                try {
+                    DatabaseService.dropViews(cfg, dbName, schemaName, viewNames);
+                    Platform.runLater(() -> {
+                        for (TreeItem<String> item : entry.getValue()) {
+                            module.getDbNodeDataMap().remove(item);
+                            item.getParent().getChildren().remove(item);
+                        }
+                    });
+                } catch (Exception e) {
+                    Platform.runLater(() -> {
+                        Alert err = new Alert(Alert.AlertType.ERROR);
+                        err.setTitle("删除失败");
+                        err.setHeaderText(null);
+                        err.setContentText(e.getMessage());
+                        err.showAndWait();
+                    });
+                }
+            }
+        }
+    }
+
+    // ==================== 刷新 ====================
+
+    /** 刷新数据库主机：重新加载数据库列表 */
+    public void refreshDbHost(TreeItem<String> hostItem, ConnectionConfig config) {
+        if (config.getPassword() == null) {
+            module.triggerHostDoubleClick(hostItem, config);
+            return;
+        }
+        new Thread(() -> {
+            try {
+                List<String> databases = DatabaseService.getDatabases(config);
+                Platform.runLater(() -> {
+                    for (TreeItem<String> child : hostItem.getChildren()) {
+                        module.removeDbNodeDataRecursive(child);
+                    }
+                    hostItem.getChildren().clear();
+                    for (String dbName : databases) {
+                        TreeItem<String> dbItem = new TreeItem<>(dbName);
+                        dbItem.setGraphic(module.getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.DATABASE, dbName, config, dbName)));
+                        module.getDbNodeDataMap().put(dbItem, new DatabaseNodeData(DatabaseNodeData.NodeType.DATABASE, dbName, config, dbName));
+                        hostItem.getChildren().add(dbItem);
+                    }
+                    hostItem.setExpanded(true);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("刷新失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法刷新数据库列表: " + e.getMessage());
+                    alert.showAndWait();
+                });
+            }
+        }, "DB-RefreshDatabases").start();
+    }
+
+    /** 刷新数据库节点（仅处理数据库相关类型） */
+    public void refreshDbNode(TreeItem<String> item, DatabaseNodeData data) {
+        ConnectionConfig config = data.getConnectionConfig();
+        switch (data.getType()) {
+            case DATABASE -> {
+                if (data.isOpened()) {
+                    module.removeDbNodeDataRecursive(item);
+                    item.getChildren().clear();
+                    openDatabase(item, data);
+                }
+            }
+            case SCHEMA -> {
+                module.removeDbNodeDataRecursive(item);
+                item.getChildren().clear();
+                data.setOpened(false);
+                item.setGraphic(module.getDbNodeIcon(data));
+                handleSchemaDoubleClick(item, data);
+            }
+            case TABLES_FOLDER -> {
+                item.getChildren().clear();
+                loadTablesForFolder(item, config, data.getDatabaseName(), data.getSchemaName(), false);
+            }
+            case VIEWS_FOLDER -> {
+                item.getChildren().clear();
+                loadViewsForFolder(item, config, data.getDatabaseName(), data.getSchemaName(), false);
+            }
+            case QUERY_FOLDER -> {
+                loadQueriesForFolder(item, config, data.getDatabaseName());
+            }
+            case BACKUP_FOLDER -> {
+                loadBackupsForFolder(item, config, data.getDatabaseName());
+            }
+            default -> {}
+        }
+    }
+
+    // ==================== 加载列表到 folder 节点 ====================
+
+    /** 加载表列表到指定文件夹节点 */
+    public void loadTablesForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName, String schemaName, boolean autoExpand) {
+        new Thread(() -> {
+            try {
+                List<String> tables = DatabaseService.getTables(config, dbName, schemaName);
+                Platform.runLater(() -> {
+                    folderItem.getChildren().clear();
+                    for (String tableName : tables) {
+                        TreeItem<String> tableItem = new TreeItem<>(tableName);
+                        DatabaseNodeData tableData = new DatabaseNodeData(DatabaseNodeData.NodeType.TABLE, tableName, config, dbName, schemaName);
+                        tableItem.setGraphic(module.getDbNodeIcon(tableData));
+                        module.getDbNodeDataMap().put(tableItem, tableData);
+                        folderItem.getChildren().add(tableItem);
+                    }
+                    folderItem.setExpanded(autoExpand);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("加载失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法加载表列表: " + e.getMessage());
+                    alert.showAndWait();
+                });
+                e.printStackTrace();
+            }
+        }, "DB-LoadTables").start();
+    }
+
+    /** 加载视图列表到指定文件夹节点 */
+    public void loadViewsForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName, String schemaName, boolean autoExpand) {
+        new Thread(() -> {
+            try {
+                List<String> views = DatabaseService.getViews(config, dbName, schemaName);
+                Platform.runLater(() -> {
+                    folderItem.getChildren().clear();
+                    for (String viewName : views) {
+                        TreeItem<String> viewItem = new TreeItem<>(viewName);
+                        DatabaseNodeData viewData = new DatabaseNodeData(DatabaseNodeData.NodeType.VIEW, viewName, config, dbName, schemaName);
+                        viewItem.setGraphic(module.getDbNodeIcon(viewData));
+                        module.getDbNodeDataMap().put(viewItem, viewData);
+                        folderItem.getChildren().add(viewItem);
+                    }
+                    folderItem.setExpanded(autoExpand);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("加载失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法加载视图列表: " + e.getMessage());
+                    alert.showAndWait();
+                });
+                e.printStackTrace();
+            }
+        }, "DB-LoadViews").start();
+    }
+
+    /** 加载查询列表到指定文件夹节点 */
+    public void loadQueriesForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName) {
+        List<String> queryNames = SqlEditorView.listQueries(config.getName(), dbName);
+        folderItem.getChildren().clear();
+        for (String queryName : queryNames) {
+            TreeItem<String> queryItem = new TreeItem<>(queryName);
+            queryItem.setGraphic(module.getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, queryName, config, dbName)));
+            module.getDbNodeDataMap().put(queryItem, new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, queryName, config, dbName));
+            folderItem.getChildren().add(queryItem);
+        }
+    }
+
+    /** 加载备份列表到指定文件夹节点 */
+    public void loadBackupsForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName) {
+        List<String> backupNames = BackupService.listBackups(config.getName(), dbName);
+        folderItem.getChildren().clear();
+        for (String backupName : backupNames) {
+            TreeItem<String> backupItem = new TreeItem<>(backupName);
+            backupItem.setGraphic(module.getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP, backupName, config, dbName)));
+            module.getDbNodeDataMap().put(backupItem, new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP, backupName, config, dbName));
+            folderItem.getChildren().add(backupItem);
+        }
+    }
+
+    // ==================== 打开数据库/构建文件夹 ====================
+
+    /**
+     * 打开数据库节点并直接加载 5 个文件夹（表/视图/函数/查询/备份）。
+     * 供 MySQL/Oracle 等无 schema 层级的数据库处理器调用。
+     */
+    protected void openDatabaseWithFolders(TreeItem<String> dbItem, DatabaseNodeData data) {
+        data.setOpened(true);
+        dbItem.setGraphic(module.getDbNodeIcon(data));
+
+        ConnectionConfig config = data.getConnectionConfig();
+        String dbName = data.getDatabaseName();
+
+        TreeItem<String> tablesFolder = new TreeItem<>("表");
+        tablesFolder.setGraphic(module.getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.TABLES_FOLDER, "表", config, dbName)));
+        module.getDbNodeDataMap().put(tablesFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.TABLES_FOLDER, "表", config, dbName));
+
+        TreeItem<String> viewsFolder = new TreeItem<>("视图");
+        viewsFolder.setGraphic(module.getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.VIEWS_FOLDER, "视图", config, dbName)));
+        module.getDbNodeDataMap().put(viewsFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.VIEWS_FOLDER, "视图", config, dbName));
+
+        TreeItem<String> functionFolder = new TreeItem<>("函数");
+        functionFolder.setGraphic(module.getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.FUNCTION_FOLDER, "函数", config, dbName)));
+        module.getDbNodeDataMap().put(functionFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.FUNCTION_FOLDER, "函数", config, dbName));
+
+        TreeItem<String> queryFolder = new TreeItem<>("查询");
+        queryFolder.setGraphic(module.getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, dbName)));
+        module.getDbNodeDataMap().put(queryFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, dbName));
+
+        loadQueriesForFolder(queryFolder, config, dbName);
+
+        TreeItem<String> backupFolder = new TreeItem<>("备份");
+        backupFolder.setGraphic(module.getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, dbName)));
+        module.getDbNodeDataMap().put(backupFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, dbName));
+
+        loadBackupsForFolder(backupFolder, config, dbName);
+
+        dbItem.getChildren().addAll(tablesFolder, viewsFolder, functionFolder, queryFolder, backupFolder);
+        dbItem.setExpanded(true);
+
+        loadTablesForFolder(tablesFolder, config, dbName, null, false);
+        loadViewsForFolder(viewsFolder, config, dbName, null, false);
+    }
+
+    /**
+     * 为 schema 节点构建 5 个子文件夹（表/视图/函数/查询/备份）。
+     * 供 PostgreSQL 等支持 schema 层级的数据库处理器调用。
+     */
+    protected void buildSchemaFolders(TreeItem<String> schemaItem, ConnectionConfig config, String dbName, String schemaName) {
+        TreeItem<String> tablesFolder = new TreeItem<>("表");
+        DatabaseNodeData tablesData = new DatabaseNodeData(DatabaseNodeData.NodeType.TABLES_FOLDER, "表", config, dbName, schemaName);
+        tablesFolder.setGraphic(module.getDbNodeIcon(tablesData));
+        module.getDbNodeDataMap().put(tablesFolder, tablesData);
+
+        TreeItem<String> viewsFolder = new TreeItem<>("视图");
+        DatabaseNodeData viewsData = new DatabaseNodeData(DatabaseNodeData.NodeType.VIEWS_FOLDER, "视图", config, dbName, schemaName);
+        viewsFolder.setGraphic(module.getDbNodeIcon(viewsData));
+        module.getDbNodeDataMap().put(viewsFolder, viewsData);
+
+        TreeItem<String> functionFolder = new TreeItem<>("函数");
+        DatabaseNodeData functionData = new DatabaseNodeData(DatabaseNodeData.NodeType.FUNCTION_FOLDER, "函数", config, dbName, schemaName);
+        functionFolder.setGraphic(module.getDbNodeIcon(functionData));
+        module.getDbNodeDataMap().put(functionFolder, functionData);
+
+        TreeItem<String> queryFolder = new TreeItem<>("查询");
+        DatabaseNodeData queryData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, dbName, schemaName);
+        queryFolder.setGraphic(module.getDbNodeIcon(queryData));
+        module.getDbNodeDataMap().put(queryFolder, queryData);
+        loadQueriesForFolder(queryFolder, config, dbName);
+
+        TreeItem<String> backupFolder = new TreeItem<>("备份");
+        DatabaseNodeData backupData = new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, dbName, schemaName);
+        backupFolder.setGraphic(module.getDbNodeIcon(backupData));
+        module.getDbNodeDataMap().put(backupFolder, backupData);
+        loadBackupsForFolder(backupFolder, config, dbName);
+
+        schemaItem.getChildren().addAll(tablesFolder, viewsFolder, functionFolder, queryFolder, backupFolder);
     }
 }

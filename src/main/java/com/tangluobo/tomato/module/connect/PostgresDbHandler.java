@@ -52,11 +52,11 @@ public class PostgresDbHandler extends AbstractDbHandler {
             String dbName = data.getDatabaseName();
             String schemaName = data.getSchemaName();
 
-            module.buildSchemaFolders(schemaItem, config, dbName, schemaName);
+            buildSchemaFolders(schemaItem, config, dbName, schemaName);
             schemaItem.setExpanded(true);
 
-            module.loadTablesForFolder(schemaItem.getChildren().get(0), config, dbName, schemaName, true);
-            module.loadViewsForFolder(schemaItem.getChildren().get(1), config, dbName, schemaName, true);
+            loadTablesForFolder(schemaItem.getChildren().get(0), config, dbName, schemaName, true);
+            loadViewsForFolder(schemaItem.getChildren().get(1), config, dbName, schemaName, true);
         } else {
             schemaItem.setExpanded(!schemaItem.isExpanded());
         }

@@ -1,6 +1,19 @@
 package com.tangluobo.tomato.module.connect;
 
-import javafx.scene.control.TreeItem;
+import javafx.application.Platform;
+import javafx.collections.ObservableList;
+import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.control.*;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.VBox;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 /**
  * RocketMQ 连接处理器
@@ -16,7 +29,427 @@ public class RocketmqConnectHandler implements ConnectHandler {
     public void handleConnect(ConnectModule module, ConnectionConfig config) {
         TreeItem<String> hostItem = module.findItemById(module.getRoot(), config.getId());
         if (hostItem != null) {
-            module.handleRocketmqHostDoubleClick(hostItem, config);
+            handleHostDoubleClick(module, hostItem, config);
         }
+    }
+
+    @Override
+    public void handleHostDoubleClick(ConnectModule module, TreeItem<String> hostItem, ConnectionConfig config) {
+        if (!hostItem.getChildren().isEmpty()) {
+            hostItem.setExpanded(!hostItem.isExpanded());
+            return;
+        }
+
+        ProgressIndicator loadingIndicator = new ProgressIndicator();
+        loadingIndicator.setPrefSize(16, 16);
+        loadingIndicator.setMaxSize(16, 16);
+        loadingIndicator.setStyle("-fx-progress-color: #4CAF50;");
+        hostItem.setGraphic(loadingIndicator);
+
+        new Thread(() -> {
+            try {
+                boolean connected = RocketmqService.testConnection(config);
+                if (!connected) {
+                    Platform.runLater(() -> {
+                        hostItem.setGraphic(module.getIconForConfig(config));
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("连接失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("无法连接到RocketMQ NameServer: " + config.getHost() + ":" + config.getPort());
+                        alert.showAndWait();
+                    });
+                    return;
+                }
+                Platform.runLater(() -> {
+                    module.updateHostIcon(hostItem, config, true);
+                    hostItem.getChildren().clear();
+
+                    // 主题节点
+                    TreeItem<String> topicsFolder = new TreeItem<>("主题");
+                    DatabaseNodeData topicsData = new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_TOPICS_FOLDER, "主题", config, "");
+                    topicsFolder.setGraphic(module.getDbNodeIcon(topicsData));
+                    module.getDbNodeDataMap().put(topicsFolder, topicsData);
+
+                    // 消费者组节点
+                    TreeItem<String> consumersFolder = new TreeItem<>("消费者组");
+                    DatabaseNodeData consumersData = new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_CONSUMERS_FOLDER, "消费者组", config, "");
+                    consumersFolder.setGraphic(module.getDbNodeIcon(consumersData));
+                    module.getDbNodeDataMap().put(consumersFolder, consumersData);
+
+                    // 集群节点
+                    TreeItem<String> clusterFolder = new TreeItem<>("集群");
+                    DatabaseNodeData clusterData = new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_CLUSTER_FOLDER, "集群", config, "");
+                    clusterFolder.setGraphic(module.getDbNodeIcon(clusterData));
+                    module.getDbNodeDataMap().put(clusterFolder, clusterData);
+
+                    hostItem.getChildren().addAll(topicsFolder, consumersFolder, clusterFolder);
+                    hostItem.setExpanded(true);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    hostItem.setGraphic(module.getIconForConfig(config));
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("连接失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法连接到RocketMQ " + config.getName() + ": " + e.getMessage());
+                    alert.showAndWait();
+                });
+                e.printStackTrace();
+            }
+        }, "RocketMQ-Connect").start();
+    }
+
+    /**
+     * 双击"消费者组"folder节点：创建/选中"消费者组"一级标签，并加载子节点到树。
+     */
+    public void handleConsumersFolderDoubleClick(ConnectModule module, TreeItem<String> item, DatabaseNodeData data) {
+        TabPane terminalTabPane = module.getTerminalTabPane();
+        if (terminalTabPane == null) return;
+        if (!module.ensureTabPaneInstalled()) return;
+
+        ConnectionConfig config = data.getConnectionConfig();
+        String tabId = "rocketmq_consumers_" + config.getId();
+
+        // 如果已有该消费者组标签，直接选中
+        for (Tab tab : terminalTabPane.getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                terminalTabPane.getSelectionModel().select(tab);
+                module.showDataView();
+                return;
+            }
+        }
+
+        // 创建消费者组一级标签
+        VBox consumerContent = new VBox(0);
+        consumerContent.setPadding(new Insets(8));
+
+        HBox toolbar = new HBox(8);
+        toolbar.setAlignment(Pos.CENTER_LEFT);
+
+        Button refreshBtn = new Button("刷新");
+        refreshBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-font-size: 12px;");
+
+        TextField filterField = new TextField();
+        filterField.setPromptText("过滤消费者组...");
+        filterField.setPrefWidth(200);
+        filterField.setStyle("-fx-font-size: 12px;");
+
+        Button deleteBtn = new Button("批量删除");
+        deleteBtn.setStyle("-fx-font-size: 12px; -fx-text-fill: #cc0000;");
+
+        toolbar.getChildren().addAll(refreshBtn, filterField, deleteBtn);
+
+        TableView<ObservableList<String>> consumerTable = new TableView<>();
+        consumerTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
+        consumerTable.setPlaceholder(new Label("无数据"));
+        consumerTable.getSelectionModel().setSelectionMode(javafx.scene.control.SelectionMode.MULTIPLE);
+
+        TableColumn<ObservableList<String>, String> groupCol = new TableColumn<>("消费者组");
+        groupCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(0)));
+        groupCol.setPrefWidth(400);
+
+        TableColumn<ObservableList<String>, String> tpsCol = new TableColumn<>("消费TPS");
+        tpsCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(1)));
+        tpsCol.setPrefWidth(150);
+
+        TableColumn<ObservableList<String>, String> diffCol = new TableColumn<>("积压量");
+        diffCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(2)));
+        diffCol.setPrefWidth(150);
+
+        consumerTable.getColumns().addAll(groupCol, tpsCol, diffCol);
+
+        javafx.collections.ObservableList<ObservableList<String>> consumerAllData = javafx.collections.FXCollections.observableArrayList();
+        javafx.collections.ObservableList<ObservableList<String>> consumerFilteredData = javafx.collections.FXCollections.observableArrayList();
+        consumerTable.setItems(consumerFilteredData);
+
+        // 过滤逻辑
+        filterField.textProperty().addListener((obs, oldVal, newVal) -> {
+            consumerFilteredData.clear();
+            String keyword = newVal == null ? "" : newVal.trim().toLowerCase();
+            for (ObservableList<String> row : consumerAllData) {
+                if (keyword.isEmpty() || row.get(0).toLowerCase().contains(keyword)) {
+                    consumerFilteredData.add(row);
+                }
+            }
+        });
+
+        // 详情区域
+        TextArea consumerDetailArea = new TextArea();
+        consumerDetailArea.setPromptText("双击消费者组查看消费详情");
+        consumerDetailArea.setPrefHeight(200);
+        consumerDetailArea.setEditable(false);
+        consumerDetailArea.setStyle("-fx-font-family: monospace; -fx-font-size: 12px;");
+
+        // 双击查看详情
+        consumerTable.setRowFactory(tv -> {
+            TableRow<ObservableList<String>> row = new TableRow<>();
+            row.setOnMouseClicked(e -> {
+                if (e.getClickCount() == 2 && !row.isEmpty()) {
+                    String group = row.getItem().get(0);
+                    loadConsumerDetailInTab(config, group, consumerDetailArea);
+                }
+            });
+            return row;
+        });
+
+        Runnable loadConsumers = () -> {
+            new Thread(() -> {
+                try {
+                    List<Map<String, Object>> consumers = RocketmqService.getConsumerGroupList(config);
+                    Platform.runLater(() -> {
+                        consumerAllData.clear();
+                        for (Map<String, Object> c : consumers) {
+                            ObservableList<String> row = javafx.collections.FXCollections.observableArrayList();
+                            row.add(String.valueOf(c.getOrDefault("group", "")));
+                            row.add(String.valueOf(c.getOrDefault("consumeTps", "0")));
+                            row.add(String.valueOf(c.getOrDefault("diffTotal", "0")));
+                            consumerAllData.add(row);
+                        }
+                        // 触发过滤刷新
+                        String keyword = filterField.getText() == null ? "" : filterField.getText().trim().toLowerCase();
+                        consumerFilteredData.clear();
+                        for (ObservableList<String> row : consumerAllData) {
+                            if (keyword.isEmpty() || row.get(0).toLowerCase().contains(keyword)) {
+                                consumerFilteredData.add(row);
+                            }
+                        }
+                    });
+                } catch (Exception e) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("加载失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("无法加载消费者组列表: " + e.getMessage());
+                        alert.showAndWait();
+                    });
+                }
+            }, "RocketMQ-LoadConsumersTab").start();
+        };
+
+        refreshBtn.setOnAction(e -> loadConsumers.run());
+
+        deleteBtn.setOnAction(e -> {
+            javafx.collections.ObservableList<ObservableList<String>> selectedItems = consumerTable.getSelectionModel().getSelectedItems();
+            if (selectedItems.isEmpty()) {
+                Alert warn = new Alert(Alert.AlertType.WARNING);
+                warn.setTitle("提示");
+                warn.setHeaderText(null);
+                warn.setContentText("请先选择要删除的消费者组（支持Ctrl/Shift多选）");
+                warn.showAndWait();
+                return;
+            }
+            List<String> groups = new ArrayList<>();
+            for (ObservableList<String> row : selectedItems) {
+                groups.add(row.get(0));
+            }
+            String groupListStr = String.join("\n", groups);
+            Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+            confirm.setTitle("确认批量删除");
+            confirm.setHeaderText("删除 " + groups.size() + " 个消费者组");
+            confirm.setContentText(groupListStr + "\n\n删除后不可恢复，确定要删除吗？");
+            confirm.showAndWait().ifPresent(btn -> {
+                if (btn == ButtonType.OK) {
+                    new Thread(() -> {
+                        List<String> failed = new ArrayList<>();
+                        for (String group : groups) {
+                            try {
+                                RocketmqService.deleteConsumerGroup(config, group);
+                            } catch (Exception ex) {
+                                failed.add(group + ": " + ex.getMessage());
+                            }
+                        }
+                        Platform.runLater(() -> {
+                            if (failed.isEmpty()) {
+                                Alert info = new Alert(Alert.AlertType.INFORMATION);
+                                info.setTitle("成功");
+                                info.setHeaderText(null);
+                                info.setContentText("已删除 " + groups.size() + " 个消费者组");
+                                info.showAndWait();
+                            } else {
+                                Alert err = new Alert(Alert.AlertType.ERROR);
+                                err.setTitle("部分删除失败");
+                                err.setHeaderText(null);
+                                TextArea area = new TextArea(String.join("\n", failed));
+                                area.setEditable(false);
+                                area.setWrapText(true);
+                                area.setPrefRowCount(Math.min(failed.size() + 1, 10));
+                                err.getDialogPane().setContent(area);
+                                err.showAndWait();
+                            }
+                            loadConsumers.run();
+                        });
+                    }, "RocketMQ-BatchDeleteConsumer").start();
+                }
+            });
+        });
+
+        consumerContent.getChildren().addAll(toolbar, consumerTable, new Label("消费详情:"), consumerDetailArea);
+        VBox.setVgrow(consumerTable, Priority.ALWAYS);
+
+        String tabTitle = "消费者组(" + config.getHost() + ":" + config.getPort() + ")";
+        Tab tab = new Tab(tabTitle);
+
+        try {
+            Image rocketmqIcon = new Image(getClass().getResourceAsStream("/images/connect/rocketmq.png"));
+            ImageView tabIconView = new ImageView(rocketmqIcon);
+            tabIconView.setFitWidth(18);
+            tabIconView.setFitHeight(18);
+            tab.setGraphic(tabIconView);
+        } catch (Exception ignored) {}
+
+        tab.setContent(consumerContent);
+        tab.setUserData(tabId);
+        tab.setOnClosed(e -> {
+            if (terminalTabPane.getTabs().isEmpty()) {
+                module.showWelcomeView();
+            }
+        });
+
+        terminalTabPane.getTabs().add(tab);
+        terminalTabPane.getSelectionModel().select(tab);
+        module.showDataView();
+
+        // 加载消费者组数据
+        loadConsumers.run();
+
+        // 同时加载消费者组子节点到树中
+        loadConsumersForFolder(module, item, config);
+        item.setExpanded(true);
+    }
+
+    /** 加载消费者组子节点到树中 */
+    void loadConsumersForFolder(ConnectModule module, TreeItem<String> folderItem, ConnectionConfig config) {
+        new Thread(() -> {
+            try {
+                List<Map<String, Object>> consumers = RocketmqService.getConsumerGroupList(config);
+                Platform.runLater(() -> {
+                    folderItem.getChildren().clear();
+                    for (Map<String, Object> c : consumers) {
+                        String group = String.valueOf(c.getOrDefault("group", ""));
+                        TreeItem<String> consumerItem = new TreeItem<>(group);
+                        consumerItem.setGraphic(module.getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_CONSUMER, group, config, "")));
+                        module.getDbNodeDataMap().put(consumerItem, new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_CONSUMER, group, config, ""));
+                        folderItem.getChildren().add(consumerItem);
+                    }
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("加载失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法加载消费者组列表: " + e.getMessage());
+                    alert.showAndWait();
+                });
+            }
+        }, "RocketMQ-LoadConsumers").start();
+    }
+
+    /** 在标签页中加载指定消费者组的消费详情 */
+    private void loadConsumerDetailInTab(ConnectionConfig config, String group, TextArea detailArea) {
+        new Thread(() -> {
+            try {
+                Map<String, Object> detail = RocketmqService.getConsumerGroupDetail(config, group);
+                StringBuilder sb = new StringBuilder();
+                sb.append("消费者组: ").append(group).append("\n");
+                sb.append("消费TPS: ").append(detail.getOrDefault("consumeTps", "0")).append("\n");
+                sb.append("总积压量: ").append(detail.getOrDefault("totalDiff", "0")).append("\n\n");
+
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> offsetList = (List<Map<String, Object>>) detail.get("offsetTable");
+                if (offsetList != null) {
+                    sb.append("消费偏移详情:\n");
+                    for (Map<String, Object> offset : offsetList) {
+                        sb.append("  Topic: ").append(offset.getOrDefault("topic", ""))
+                          .append(" | Broker: ").append(offset.getOrDefault("brokerName", ""))
+                          .append(" | QueueId: ").append(offset.getOrDefault("queueId", ""))
+                          .append(" | BrokerOffset: ").append(offset.getOrDefault("brokerOffset", ""))
+                          .append(" | ConsumerOffset: ").append(offset.getOrDefault("consumerOffset", ""))
+                          .append(" | Diff: ").append(offset.getOrDefault("diff", ""))
+                          .append("\n");
+                    }
+                }
+                Platform.runLater(() -> detailArea.setText(sb.toString()));
+            } catch (Exception e) {
+                Platform.runLater(() -> detailArea.setText("加载消费详情失败: " + e.getMessage()));
+            }
+        }, "RocketMQ-ConsumerDetail").start();
+    }
+
+    /** 刷新 RocketMQ 主机：清空子节点并重新触发双击连接 */
+    public void refreshHost(ConnectModule module, TreeItem<String> hostItem, ConnectionConfig config) {
+        for (TreeItem<String> child : hostItem.getChildren()) {
+            module.removeDbNodeDataRecursive(child);
+        }
+        hostItem.getChildren().clear();
+        module.triggerHostDoubleClick(hostItem, config);
+    }
+
+    /** 刷新 RocketMQ folder 节点（主题/消费者组/集群） */
+    public void refreshDbNode(ConnectModule module, TreeItem<String> item, DatabaseNodeData data) {
+        ConnectionConfig config = data.getConnectionConfig();
+        item.getChildren().clear();
+        switch (data.getType()) {
+            case ROCKETMQ_TOPICS_FOLDER -> loadTopicsForFolder(module, item, config);
+            case ROCKETMQ_CONSUMERS_FOLDER -> loadConsumersForFolder(module, item, config);
+            case ROCKETMQ_CLUSTER_FOLDER -> loadClusterForFolder(module, item, config);
+            default -> {}
+        }
+    }
+
+    /** 加载主题列表到 folder 节点 */
+    void loadTopicsForFolder(ConnectModule module, TreeItem<String> folderItem, ConnectionConfig config) {
+        new Thread(() -> {
+            try {
+                List<Map<String, Object>> topics = RocketmqService.getTopicList(config);
+                Platform.runLater(() -> {
+                    folderItem.getChildren().clear();
+                    for (Map<String, Object> t : topics) {
+                        String name = String.valueOf(t.getOrDefault("topic", ""));
+                        if (name.startsWith("%")) continue;
+                        TreeItem<String> topicItem = new TreeItem<>(name);
+                        topicItem.setGraphic(module.getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_TOPIC, name, config, "")));
+                        module.getDbNodeDataMap().put(topicItem, new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_TOPIC, name, config, ""));
+                        folderItem.getChildren().add(topicItem);
+                    }
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("加载失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法加载主题列表: " + e.getMessage());
+                    alert.showAndWait();
+                });
+            }
+        }, "RocketMQ-LoadTopics").start();
+    }
+
+    /** 加载集群信息到 folder 节点 */
+    void loadClusterForFolder(ConnectModule module, TreeItem<String> folderItem, ConnectionConfig config) {
+        new Thread(() -> {
+            try {
+                List<Map<String, Object>> cluster = RocketmqService.getClusterInfo(config);
+                Platform.runLater(() -> {
+                    folderItem.getChildren().clear();
+                    for (Map<String, Object> c : cluster) {
+                        String brokerName = String.valueOf(c.getOrDefault("brokerName", ""));
+                        String address = String.valueOf(c.getOrDefault("address", ""));
+                        String displayName = brokerName + " (" + address + ")";
+                        TreeItem<String> brokerItem = new TreeItem<>(displayName);
+                        brokerItem.setGraphic(module.getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_BROKER, displayName, config, "")));
+                        module.getDbNodeDataMap().put(brokerItem, new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_BROKER, displayName, config, ""));
+                        folderItem.getChildren().add(brokerItem);
+                    }
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("加载失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法加载集群信息: " + e.getMessage());
+                    alert.showAndWait();
+                });
+            }
+        }, "RocketMQ-LoadCluster").start();
     }
 }

@@ -23,7 +23,7 @@ public class OracleDbHandler extends AbstractDbHandler {
      */
     @Override
     public void openDatabase(TreeItem<String> dbItem, DatabaseNodeData data) {
-        module.openDatabaseWithFolders(dbItem, data);
+        openDatabaseWithFolders(dbItem, data);
     }
 
     /**
