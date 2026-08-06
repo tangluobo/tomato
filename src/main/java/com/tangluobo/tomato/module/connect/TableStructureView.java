@@ -1150,7 +1150,8 @@ public class TableStructureView extends BorderPane {
      */
     private void loadSqlPreview() {
         sqlPreviewViewer.setText("-- 加载中...");
-        boolean isSaveAs = "另存为".equals(sqlPreviewModeBox.getSelectionModel().getSelectedItem());
+        // 新建表模式始终生成CREATE TABLE预览
+        boolean isSaveAs = isNewTable || "另存为".equals(sqlPreviewModeBox.getSelectionModel().getSelectedItem());
         new Thread(() -> {
             try {
                 if (isSaveAs) {
@@ -1162,9 +1163,18 @@ public class TableStructureView extends BorderPane {
                         if (cols.isEmpty()) {
                             result = "-- 请先添加至少一个字段（字段名不能为空）";
                         } else {
-                            Map<String, String> opts = collectOptionsForCreate();
-                            String cmt = commentLoaded ? commentTextArea.getText() : null;
-                            result = DatabaseService.generateCreateTableSql(config, databaseName, "新表名", cols, opts, cmt);
+                            List<String> validationErrors = validateColumnsForCreate();
+                            if (!validationErrors.isEmpty()) {
+                                StringBuilder sb = new StringBuilder("-- 字段设置不完整，请检查：\n");
+                                for (String err : validationErrors) {
+                                    sb.append("-- ").append(err).append("\n");
+                                }
+                                result = sb.toString();
+                            } else {
+                                Map<String, String> opts = collectOptionsForCreate();
+                                String cmt = commentLoaded ? commentTextArea.getText() : null;
+                                result = DatabaseService.generateCreateTableSql(config, databaseName, "新表名", cols, opts, cmt);
+                            }
                         }
                     } else {
                         String ddl = DatabaseService.getTableDdl(config, databaseName, tableName);
@@ -1378,6 +1388,18 @@ public class TableStructureView extends BorderPane {
             return;
         }
 
+        // 验证字段完整性（类型必填、需要长度的类型是否已指定长度）
+        List<String> validationErrors = validateColumnsForCreate();
+        if (!validationErrors.isEmpty()) {
+            statusLabel.setText("字段设置不完整: " + String.join("; ", validationErrors));
+            Alert alert = new Alert(Alert.AlertType.WARNING);
+            alert.setTitle("新建表");
+            alert.setHeaderText("字段设置不完整，请检查以下问题");
+            alert.setContentText(String.join("\n", validationErrors));
+            alert.showAndWait();
+            return;
+        }
+
         // 弹出表名输入对话框
         TextInputDialog dialog = new TextInputDialog();
         dialog.setTitle("新建表");
@@ -1472,6 +1494,43 @@ public class TableStructureView extends BorderPane {
             if (collation != null && !collation.isEmpty()) options.put("排序规则", collation);
         }
         return options;
+    }
+
+    /**
+     * 验证字段完整性（用于新建表前的检查），返回错误信息列表（空列表表示通过）
+     * 检查：类型必填、需要长度的类型是否已指定长度
+     */
+    private List<String> validateColumnsForCreate() {
+        List<String> errors = new ArrayList<>();
+        if (columnTitles == null || tableView.getItems() == null) return errors;
+        int nameIdx = columnTitles.indexOf("字段名");
+        int typeIdx = columnTitles.indexOf("类型");
+        int lenIdx = columnTitles.indexOf("长度");
+        for (int i = 0; i < tableView.getItems().size(); i++) {
+            ObservableList<String> row = tableView.getItems().get(i);
+            String colName = nameIdx >= 0 && nameIdx < row.size() ? row.get(nameIdx) : "";
+            if (colName == null || colName.trim().isEmpty()) continue;
+
+            String type = typeIdx >= 0 && typeIdx < row.size() ? row.get(typeIdx) : "";
+            if (type == null || type.trim().isEmpty()) {
+                errors.add("第" + (i + 1) + "行字段\"" + colName + "\"：未设置类型");
+                continue;
+            }
+            String length = lenIdx >= 0 && lenIdx < row.size() ? row.get(lenIdx) : "";
+            if (needsLength(type) && (length == null || length.trim().isEmpty())) {
+                errors.add("第" + (i + 1) + "行字段\"" + colName + "\"：类型\"" + type + "\"需要指定长度");
+            }
+        }
+        return errors;
+    }
+
+    /** 判断类型是否需要指定长度 */
+    private boolean needsLength(String type) {
+        if (type == null) return false;
+        String t = type.toLowerCase();
+        return t.contains("varchar") || t.contains("char") || t.contains("decimal")
+                || t.contains("numeric") || t.contains("varbinary") || t.contains("binary")
+                || t.contains("bit");
     }
 
     private void handleAddField() {
@@ -2167,6 +2226,13 @@ public class TableStructureView extends BorderPane {
         }
 
         @Override
+        public void commitEdit(String newValue) {
+            // 提交编辑时同步更新数据模型，避免refresh()后丢失输入值
+            updateCellData(newValue);
+            super.commitEdit(newValue);
+        }
+
+        @Override
         protected void updateItem(String item, boolean empty) {
             // 清理旧的选中状态监听器
             if (selectionListener != null) {
@@ -2419,6 +2485,13 @@ public class TableStructureView extends BorderPane {
             setText(displayValue != null ? displayValue : "");
             setGraphic(null);
             applyRowStateStyle();
+        }
+
+        @Override
+        public void commitEdit(String newValue) {
+            // 提交编辑时同步更新数据模型，避免refresh()后丢失输入值
+            updateCellData(newValue);
+            super.commitEdit(newValue);
         }
 
         @Override
