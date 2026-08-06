@@ -1,5 +1,7 @@
 package com.tangluobo.tomato.module.connect;
 
+import com.tangluobo.tomato.module.connect.service.OssService;
+import com.tangluobo.tomato.module.connect.service.S3Service;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;

@@ -1,5 +1,9 @@
-package com.tangluobo.tomato.module.connect;
+package com.tangluobo.tomato.module.connect.view;
 
+import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.DataTypeProvider;
+import com.tangluobo.tomato.module.connect.GlobalConfig;
+import com.tangluobo.tomato.module.connect.service.DatabaseService;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;

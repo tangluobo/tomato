@@ -1,8 +1,10 @@
-package com.tangluobo.tomato.module.connect;
+package com.tangluobo.tomato.module.connect.service;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.annotations.SerializedName;
+import com.tangluobo.tomato.module.connect.ConnectType;
+import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import com.tangluobo.tomato.module.connect.dialog.BackupDialog;
 import javafx.application.Platform;
 import org.apache.commons.codec.digest.DigestUtils;

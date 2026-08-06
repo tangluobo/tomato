@@ -1,8 +1,8 @@
 package com.tangluobo.tomato.module.connect.dialog;
 
-import com.tangluobo.tomato.module.connect.BackupService;
+import com.tangluobo.tomato.module.connect.service.BackupService;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
-import com.tangluobo.tomato.module.connect.DatabaseService;
+import com.tangluobo.tomato.module.connect.service.DatabaseService;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.geometry.Insets;

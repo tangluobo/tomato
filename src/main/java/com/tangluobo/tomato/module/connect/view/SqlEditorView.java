@@ -1,5 +1,7 @@
-package com.tangluobo.tomato.module.connect;
+package com.tangluobo.tomato.module.connect.view;
 
+import com.tangluobo.tomato.module.connect.*;
+import com.tangluobo.tomato.module.connect.service.DatabaseService;
 import javafx.application.Platform;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
@@ -223,7 +225,7 @@ public class SqlEditorView extends BorderPane {
 
     // ==================== 保存逻辑 ====================
 
-    void markModified() {
+    public void markModified() {
         String current = editor.getText();
         boolean nowModified = !current.equals(savedSql);
         if (nowModified != this.modified) {

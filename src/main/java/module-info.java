@@ -82,4 +82,8 @@ module tomato {
     opens com.tangluobo.tomato.module.connect.dialog to com.google.gson, javafx.fxml;
     exports com.tangluobo.tomato.module.connect.handler;
     opens com.tangluobo.tomato.module.connect.handler to com.google.gson, javafx.fxml;
+    exports com.tangluobo.tomato.module.connect.service;
+    opens com.tangluobo.tomato.module.connect.service to com.google.gson, javafx.fxml;
+    exports com.tangluobo.tomato.module.connect.view;
+    opens com.tangluobo.tomato.module.connect.view to com.google.gson, javafx.fxml;
 }

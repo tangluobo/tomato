@@ -1,6 +1,7 @@
 package com.tangluobo.tomato.module.connect.handler;
 
 import com.tangluobo.tomato.module.connect.*;
+import com.tangluobo.tomato.module.connect.service.RocketmqService;
 import javafx.application.Platform;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
