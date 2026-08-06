@@ -2231,6 +2231,14 @@ public class ConnectModule implements Module {
         tab.setContent(structView);
         tab.setUserData(tabId);
 
+        // 新建表保存成功后：更新 tab 标题/userData（切换为设计表标识）并刷新表树
+        final Tab finalTab = tab;
+        structView.setOnTableCreated(newTableName -> {
+            finalTab.setText(newTableName + "@" + data.getDatabaseName() + "(" + config.getHost() + ":" + config.getPort() + ")-表结构");
+            finalTab.setUserData("struct_" + config.getId() + "_" + data.getDatabaseName() + "_" + newTableName);
+            handleRefreshDbNode(item, data);
+        });
+
         ContextMenu structTabContextMenu = new ContextMenu();
         MenuItem structConfigItem = new MenuItem("表格配置");
         structConfigItem.setOnAction(e -> {

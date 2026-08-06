@@ -35,9 +35,11 @@ public class TableStructureView extends BorderPane {
 
     private final ConnectionConfig config;
     private final String databaseName;
-    private final String tableName;
+    private String tableName;
     /** 新建表模式：tableName 为空时为 true，跳过数据库加载，初始化空字段表格 */
-    private final boolean isNewTable;
+    private boolean isNewTable;
+    /** 新建表保存成功回调，参数为新建的表名 */
+    private java.util.function.Consumer<String> onTableCreated;
 
     private TableView<ObservableList<String>> tableView;
     private ProgressIndicator loadingIndicator;
@@ -130,6 +132,11 @@ public class TableStructureView extends BorderPane {
         } else {
             loadStructure();
         }
+    }
+
+    /** 设置新建表保存成功回调（由 ConnectModule 设置，用于更新 tab 标题/userData 并刷新表树） */
+    public void setOnTableCreated(java.util.function.Consumer<String> callback) {
+        this.onTableCreated = callback;
     }
 
     private void initializeUI() {
@@ -1394,7 +1401,21 @@ public class TableStructureView extends BorderPane {
             try {
                 DatabaseService.createTable(config, databaseName, finalNewTableName, columns, options, tableComment);
                 Platform.runLater(() -> {
+                    // 切换为正常设计表模式
+                    tableName = finalNewTableName;
+                    isNewTable = false;
+                    indexesLoaded = false;
+                    foreignKeysLoaded = false;
+                    triggersLoaded = false;
+                    optionsLoaded = false;
+                    commentLoaded = false;
+                    sqlPreviewLoaded = false;
+                    loadStructure();
                     statusLabel.setText("表 " + finalNewTableName + " 创建成功");
+                    // 通知 ConnectModule 更新 tab 标题/userData 并刷新表树
+                    if (onTableCreated != null) {
+                        onTableCreated.accept(finalNewTableName);
+                    }
                     Alert alert = new Alert(Alert.AlertType.INFORMATION);
                     alert.setTitle("新建表");
                     alert.setHeaderText(null);
