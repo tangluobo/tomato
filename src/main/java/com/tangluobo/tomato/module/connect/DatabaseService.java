@@ -1267,6 +1267,8 @@ public class DatabaseService {
                 col.put("字段名", colName);
                 col.put("类型", rs.getString("TYPE_NAME"));
                 col.put("长度", rs.getString("COLUMN_SIZE"));
+                String decimalDigits = rs.getString("DECIMAL_DIGITS");
+                col.put("小数点", decimalDigits != null ? decimalDigits : "");
                 col.put("非空", "NO".equalsIgnoreCase(rs.getString("IS_NULLABLE")) ? "是" : "否");
                 col.put("主键", primaryKeys.contains(colName) ? "是" : "否");
                 String autoIncrement = rs.getString("IS_AUTOINCREMENT");
@@ -1782,6 +1784,161 @@ public class DatabaseService {
         try (Statement stmt = getConnection(config).createStatement()) {
             stmt.executeUpdate(sql);
         }
+    }
+
+    /**
+     * 执行DDL语句（CREATE/DROP/ALTER等，无返回结果）
+     */
+    public static void executeDdl(ConnectionConfig config, String sql) throws Exception {
+        try (Statement stmt = getConnection(config).createStatement()) {
+            stmt.executeUpdate(sql);
+        }
+    }
+
+    /**
+     * 创建新表：根据字段列表、选项和注释生成 CREATE TABLE 并执行
+     * @param columns 字段列表，每个Map包含：字段名、类型、长度、非空、主键、自增、默认值、注释、
+     *                无符号、填充零、字符集、排序规则、键长度、二进制（后几项可选，MySQL专用）
+     * @param options 表选项（引擎、字符集、排序规则等，可为null）
+     * @param comment 表注释（可为null）
+     */
+    public static void createTable(ConnectionConfig config, String databaseName, String tableName,
+                                    List<Map<String, String>> columns, Map<String, String> options,
+                                    String comment) throws Exception {
+        String sql = generateCreateTableSql(config, databaseName, tableName, columns, options, comment);
+        executeDdl(config, sql);
+    }
+
+    /**
+     * 生成CREATE TABLE SQL（支持MySQL/PostgreSQL/Oracle）
+     */
+    public static String generateCreateTableSql(ConnectionConfig config, String databaseName, String tableName,
+                                                 List<Map<String, String>> columns, Map<String, String> options,
+                                                 String comment) {
+        StringBuilder sb = new StringBuilder();
+        List<String> primaryKeys = new ArrayList<>();
+        List<String> colDefs = new ArrayList<>();
+
+        for (Map<String, String> col : columns) {
+            String colName = col.getOrDefault("字段名", "");
+            if (colName == null || colName.trim().isEmpty()) continue;
+
+            StringBuilder colDef = new StringBuilder();
+            String type = col.getOrDefault("类型", "");
+            String length = col.getOrDefault("长度", "");
+            String decimal = col.getOrDefault("小数点", "");
+            String nullable = col.getOrDefault("非空", "否");
+            String autoInc = col.getOrDefault("自增", "否");
+            String isPk = col.getOrDefault("主键", "否");
+            String defaultValue = col.getOrDefault("默认值", "");
+            String colComment = col.getOrDefault("注释", "");
+            // 构造类型长度部分：需要小数位的类型生成 (length,decimal)，其他生成 (length)
+            String typeSize = "";
+            if (length != null && !length.isEmpty()) {
+                typeSize = needsDecimalPlaces(type) && decimal != null && !decimal.isEmpty()
+                        ? "(" + length + "," + decimal + ")"
+                        : "(" + length + ")";
+            }
+
+            switch (config.getType()) {
+                case MYSQL -> {
+                    colDef.append("    `").append(colName).append("` ").append(type).append(typeSize);
+                    if ("是".equals(col.get("无符号"))) colDef.append(" UNSIGNED");
+                    if ("是".equals(col.get("填充零"))) colDef.append(" ZEROFILL");
+                    String cs = col.get("字符集");
+                    if (cs != null && !cs.isEmpty()) colDef.append(" CHARACTER SET ").append(cs);
+                    String co = col.get("排序规则");
+                    if (co != null && !co.isEmpty()) colDef.append(" COLLATE ").append(co);
+                    if ("是".equals(nullable)) colDef.append(" NOT NULL");
+                    if ("是".equals(autoInc)) colDef.append(" AUTO_INCREMENT");
+                    if (defaultValue != null && !defaultValue.isEmpty()) {
+                        if ("NULL".equalsIgnoreCase(defaultValue)) {
+                            colDef.append(" DEFAULT NULL");
+                        } else if ("CURRENT_TIMESTAMP".equalsIgnoreCase(defaultValue)) {
+                            colDef.append(" DEFAULT CURRENT_TIMESTAMP");
+                        } else {
+                            colDef.append(" DEFAULT '").append(defaultValue.replace("'", "''")).append("'");
+                        }
+                    }
+                    if (colComment != null && !colComment.isEmpty()) {
+                        colDef.append(" COMMENT '").append(colComment.replace("'", "''")).append("'");
+                    }
+                }
+                case POSTGRESQL, ORACLE -> {
+                    String quote = config.getType() == ConnectType.POSTGRESQL ? "\"" : "\"";
+                    colDef.append("    ").append(quote).append(colName).append(quote).append(" ").append(type).append(typeSize);
+                    if ("是".equals(nullable)) colDef.append(" NOT NULL");
+                }
+                default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+            }
+
+            colDefs.add(colDef.toString());
+            if ("是".equals(isPk)) {
+                primaryKeys.add(colName);
+            }
+        }
+
+        // 表名限定
+        switch (config.getType()) {
+            case MYSQL -> sb.append("CREATE TABLE `").append(databaseName).append("`.`").append(tableName).append("` (\n");
+            case POSTGRESQL, ORACLE -> sb.append("CREATE TABLE \"").append(databaseName).append("\".\"").append(tableName).append("\" (\n");
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        }
+
+        sb.append(String.join(",\n", colDefs));
+
+        // 主键
+        if (!primaryKeys.isEmpty()) {
+            sb.append(",\n    PRIMARY KEY (");
+            for (int i = 0; i < primaryKeys.size(); i++) {
+                if (i > 0) sb.append(", ");
+                if (config.getType() == ConnectType.MYSQL) {
+                    sb.append("`").append(primaryKeys.get(i)).append("`");
+                } else {
+                    sb.append("\"").append(primaryKeys.get(i)).append("\"");
+                }
+            }
+            sb.append(")");
+        }
+        sb.append("\n)");
+
+        // MySQL 表选项
+        if (config.getType() == ConnectType.MYSQL && options != null) {
+            String engine = options.get("引擎");
+            if (engine != null && !engine.isEmpty()) sb.append(" ENGINE=").append(engine);
+            String charset = options.get("字符集");
+            if (charset != null && !charset.isEmpty()) sb.append(" DEFAULT CHARSET=").append(charset);
+            String collation = options.get("排序规则");
+            if (collation != null && !collation.isEmpty()) sb.append(" COLLATE=").append(collation);
+        }
+
+        // 表注释
+        if (comment != null && !comment.isEmpty()) {
+            String escaped = comment.replace("'", "''");
+            switch (config.getType()) {
+                case MYSQL -> sb.append(" COMMENT='").append(escaped).append("'");
+                case POSTGRESQL, ORACLE -> {} // 使用单独的 COMMENT ON 语句
+            }
+        }
+        sb.append(";");
+
+        // PostgreSQL/Oracle 表注释使用单独语句
+        if (comment != null && !comment.isEmpty() && config.getType() != ConnectType.MYSQL) {
+            sb.append("\nCOMMENT ON TABLE \"").append(databaseName).append("\".\"").append(tableName)
+              .append("\" IS '").append(comment.replace("'", "''")).append("';");
+        }
+
+        return sb.toString();
+    }
+
+    /**
+     * 判断类型是否需要指定小数位数（精度类型：decimal/numeric/double/float/real）
+     */
+    public static boolean needsDecimalPlaces(String type) {
+        if (type == null) return false;
+        String t = type.toLowerCase();
+        return t.contains("decimal") || t.contains("numeric")
+                || t.contains("double") || t.contains("float") || t.contains("real");
     }
 
     /**
