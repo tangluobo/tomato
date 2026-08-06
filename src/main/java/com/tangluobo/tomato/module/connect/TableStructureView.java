@@ -11,6 +11,8 @@ import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.KeyCode;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.GridPane;
@@ -21,7 +23,6 @@ import javafx.scene.paint.Color;
 import javafx.scene.shape.Arc;
 import javafx.scene.shape.ArcType;
 import javafx.scene.shape.Polygon;
-import javafx.scene.shape.Rectangle;
 
 import java.util.*;
 
@@ -175,8 +176,8 @@ public class TableStructureView extends BorderPane {
         refreshBtn.setOnAction(e -> loadStructure());
 
         toolBar.getChildren().addAll(
-                saveBtn, addFieldBtn, insertFieldBtn, deleteFieldBtn, primaryKeyBtn,
-                moveUpBtn, moveDownBtn, separator, refreshBtn);
+                saveBtn, addFieldBtn, insertFieldBtn, deleteFieldBtn,
+                primaryKeyBtn, moveUpBtn, moveDownBtn, separator, refreshBtn);
 
         // TableView
         tableView = new TableView<>();
@@ -190,6 +191,36 @@ public class TableStructureView extends BorderPane {
                 globalConfig.getTableFontName(), globalConfig.getTableFontSize());
         tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0; -fx-table-header-height: " + rowHeight + ";");
         tableView.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+
+        // Ctrl+C 复制字段、Ctrl+V 粘贴字段（用addEventFilter确保在事件捕获阶段触发）
+        tableView.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, e -> {
+            if (tableView.getEditingCell() != null) return; // 正在编辑时不拦截
+            if (e.isControlDown() && e.getCode() == KeyCode.C) {
+                handleCopyFields();
+                e.consume();
+            } else if (e.isControlDown() && e.getCode() == KeyCode.V) {
+                handlePasteFields();
+                e.consume();
+            }
+        });
+
+        // 右键菜单：复制/粘贴/添加/插入/删除/主键
+        ContextMenu tableContextMenu = new ContextMenu();
+        MenuItem copyItem = new MenuItem("复制字段");
+        copyItem.setOnAction(e -> handleCopyFields());
+        MenuItem pasteItem = new MenuItem("粘贴字段");
+        pasteItem.setOnAction(e -> handlePasteFields());
+        MenuItem addFieldItem = new MenuItem("添加字段");
+        addFieldItem.setOnAction(e -> handleAddField());
+        MenuItem insertFieldItem = new MenuItem("插入字段");
+        insertFieldItem.setOnAction(e -> handleInsertField());
+        MenuItem deleteFieldItem = new MenuItem("删除字段");
+        deleteFieldItem.setOnAction(e -> handleDeleteField());
+        MenuItem primaryKeyItem = new MenuItem("切换主键");
+        primaryKeyItem.setOnAction(e -> handleTogglePrimaryKey());
+        tableContextMenu.getItems().addAll(copyItem, pasteItem, new SeparatorMenuItem(),
+                addFieldItem, insertFieldItem, deleteFieldItem, new SeparatorMenuItem(), primaryKeyItem);
+        tableView.setContextMenu(tableContextMenu);
 
         // 加载指示器
         loadingIndicator = new ProgressIndicator();
@@ -1648,6 +1679,111 @@ public class TableStructureView extends BorderPane {
         int count = selectedIndices.size();
         tableView.getSelectionModel().clearSelection();
         statusLabel.setText("已删除 " + count + " 个字段（未保存）");
+    }
+
+    /**
+     * 复制选中字段到系统剪贴板（JSON格式，支持跨表粘贴）
+     */
+    private void handleCopyFields() {
+        System.out.println("[TableStructureView] handleCopyFields called");
+        try {
+            if (columnTitles == null) {
+                statusLabel.setText("表结构未加载");
+                return;
+            }
+            ObservableList<ObservableList<String>> items = tableView.getItems();
+            List<Integer> selectedIndices = new ArrayList<>(tableView.getSelectionModel().getSelectedIndices());
+            if (selectedIndices.isEmpty()) {
+                statusLabel.setText("请先选择要复制的字段");
+                return;
+            }
+            Collections.sort(selectedIndices);
+            // 将选中行转换为 List<Map<String,String>>（列标题 -> 值）
+            List<Map<String, String>> copiedRows = new ArrayList<>();
+            for (int idx : selectedIndices) {
+                if (idx < 0 || idx >= items.size()) continue;
+                ObservableList<String> row = items.get(idx);
+                Map<String, String> rowMap = new LinkedHashMap<>();
+                for (int c = 0; c < columnTitles.size() && c < row.size(); c++) {
+                    rowMap.put(columnTitles.get(c), row.get(c) != null ? row.get(c) : "");
+                }
+                copiedRows.add(rowMap);
+            }
+            if (copiedRows.isEmpty()) {
+                statusLabel.setText("无可复制的字段");
+                return;
+            }
+            // 序列化为JSON并存入剪贴板
+            com.google.gson.Gson gson = new com.google.gson.GsonBuilder().create();
+            String json = gson.toJson(copiedRows);
+            ClipboardContent content = new ClipboardContent();
+            content.putString(json);
+            Clipboard.getSystemClipboard().setContent(content);
+            statusLabel.setText("已复制 " + copiedRows.size() + " 个字段到剪贴板");
+        } catch (Exception e) {
+            e.printStackTrace();
+            statusLabel.setText("复制失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 从系统剪贴板粘贴字段到表格（支持跨表粘贴，按列标题匹配）
+     */
+    private void handlePasteFields() {
+        try {
+            if (columnTitles == null) {
+                statusLabel.setText("表结构未加载");
+                return;
+            }
+            ObservableList<ObservableList<String>> items = tableView.getItems();
+            if (items.isEmpty() && !isNewTable) {
+                statusLabel.setText("请先加载表结构");
+                return;
+            }
+            // 先取消正在编辑的单元格
+            if (tableView.getEditingCell() != null) {
+                tableView.edit(-1, null);
+            }
+            String json = Clipboard.getSystemClipboard().getString();
+            if (json == null || json.trim().isEmpty()) {
+                statusLabel.setText("剪贴板无内容");
+                return;
+            }
+            List<Map<String, String>> copiedRows;
+            com.google.gson.Gson gson = new com.google.gson.Gson();
+            java.lang.reflect.Type type = new com.google.gson.reflect.TypeToken<List<Map<String, String>>>() {}.getType();
+            copiedRows = gson.fromJson(json, type);
+            if (copiedRows == null || copiedRows.isEmpty()) {
+                statusLabel.setText("剪贴板中无可粘贴的字段");
+                return;
+            }
+            // 确定插入位置：选中行之后，否则末尾
+            ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
+            int insertIndex = selected != null ? items.indexOf(selected) + 1 : items.size();
+            if (insertIndex < 0 || insertIndex > items.size()) insertIndex = items.size();
+
+            int pastedCount = 0;
+            for (Map<String, String> rowMap : copiedRows) {
+                ObservableList<String> newRow = FXCollections.observableArrayList();
+                for (int c = 0; c < dataColumnCount; c++) {
+                    String title = c < columnTitles.size() ? columnTitles.get(c) : null;
+                    String val = title != null ? rowMap.getOrDefault(title, "") : "";
+                    newRow.add(val != null ? val : "");
+                }
+                items.add(insertIndex + pastedCount, newRow);
+                pastedCount++;
+            }
+            // 选中新粘贴的行
+            tableView.getSelectionModel().clearSelection();
+            for (int i = 0; i < pastedCount; i++) {
+                tableView.getSelectionModel().select(insertIndex + i);
+            }
+            tableView.refresh();
+            statusLabel.setText("已粘贴 " + pastedCount + " 个字段（未保存）");
+        } catch (Exception e) {
+            e.printStackTrace();
+            statusLabel.setText("粘贴失败: " + e.getMessage());
+        }
     }
 
     /**
