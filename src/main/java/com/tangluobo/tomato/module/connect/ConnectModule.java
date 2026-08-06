@@ -35,7 +35,7 @@ import java.util.Set;
 
 public class ConnectModule implements Module {
     private TreeView<String> treeView;
-    private TreeItem<String> root;
+    TreeItem<String> root;
     private List<ConnectionConfig> connections;
     private Map<TreeItem<String>, ConnectionConfig> itemConfigMap;
     private Map<TreeItem<String>, DatabaseNodeData> dbNodeDataMap;
@@ -70,7 +70,7 @@ public class ConnectModule implements Module {
 
     // 内容区域
     private VBox contentArea;
-    private TabPane terminalTabPane;
+    TabPane terminalTabPane;
 
     @Override
     public String getName() {
@@ -154,7 +154,20 @@ public class ConnectModule implements Module {
         try { aliyunDomainIcon = new Image(getClass().getResourceAsStream("/images/connect/s3.png")); } catch (Exception e) { aliyunDomainIcon = null; }
     }
 
-    private ImageView getDbNodeIcon(DatabaseNodeData data) {
+    /**
+     * 根据连接类型创建对应的数据库处理器
+     */
+    AbstractDbHandler createDbHandler(ConnectionConfig config) {
+        return switch (config.getType()) {
+            case MYSQL -> new MysqlDbHandler(this);
+            case POSTGRESQL -> new PostgresDbHandler(this);
+            case ORACLE -> new OracleDbHandler(this);
+            default -> null;
+        };
+    }
+
+    /** 供 handler 调用：根据节点数据获取图标 */
+    ImageView getDbNodeIcon(DatabaseNodeData data) {
         ImageView iv = new ImageView();
         iv.setFitWidth(20);
         iv.setFitHeight(20);
@@ -315,7 +328,13 @@ public class ConnectModule implements Module {
         return imageView;
     }
 
-    private TreeItem<String> findItemById(TreeItem<String> root, String id) {
+    /** 供 handler 调用：获取树根节点 */
+    TreeItem<String> getRoot() {
+        return root;
+    }
+
+    /** 供 handler 调用：根据 ID 查找树节点 */
+    TreeItem<String> findItemById(TreeItem<String> root, String id) {
         ConnectionConfig config = itemConfigMap.get(root);
         if (config != null && config.getId().equals(id)) {
             return root;
@@ -990,6 +1009,17 @@ public class ConnectModule implements Module {
     }
 
     private void handleDbHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
+        AbstractDbHandler handler = createDbHandler(config);
+        if (handler != null) {
+            handler.handleHostDoubleClick(hostItem, config);
+        }
+    }
+
+    /**
+     * 供 handler 调用：执行数据库主机连接的公共流程（密码输入 → 加载数据库列表 → 填充节点）。
+     * MySQL/PostgreSQL/Oracle 逻辑一致。
+     */
+    void doHandleDbHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config, AbstractDbHandler handler) {
         if (connectingHosts.contains(hostItem)) {
             return;
         }
@@ -1060,7 +1090,8 @@ public class ConnectModule implements Module {
         }, "DB-LoadDatabases").start();
     }
 
-    private void handleRedisHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
+    /** 供 RedisConnectHandler 调用 */
+    void handleRedisHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
         if (!hostItem.getChildren().isEmpty()) {
             hostItem.setExpanded(!hostItem.isExpanded());
             return;
@@ -1123,7 +1154,8 @@ public class ConnectModule implements Module {
         }, "Redis-LoadDatabases").start();
     }
 
-    private void handleRocketmqHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
+    /** 供 RocketmqConnectHandler 调用 */
+    void handleRocketmqHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
         if (!hostItem.getChildren().isEmpty()) {
             hostItem.setExpanded(!hostItem.isExpanded());
             return;
@@ -1185,7 +1217,8 @@ public class ConnectModule implements Module {
         }, "RocketMQ-Connect").start();
     }
 
-    private void handleAliyunHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
+    /** 供 AliyunConnectHandler 调用 */
+    void handleAliyunHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
         if (!hostItem.getChildren().isEmpty()) {
             hostItem.setExpanded(!hostItem.isExpanded());
             return;
@@ -1988,52 +2021,12 @@ public class ConnectModule implements Module {
     }
 
     /**
-     * 双击 PostgreSQL 模式节点：若未打开则加载表/视图/函数/查询/备份文件夹，否则切换展开
+     * 双击模式节点：委托给对应类型的数据库处理器
      */
     private void handleSchemaDoubleClick(TreeItem<String> schemaItem, DatabaseNodeData data) {
-        if (!data.isOpened()) {
-            data.setOpened(true);
-            schemaItem.setGraphic(getDbNodeIcon(data));
-
-            ConnectionConfig config = data.getConnectionConfig();
-            String dbName = data.getDatabaseName();
-            String schemaName = data.getSchemaName();
-
-            TreeItem<String> tablesFolder = new TreeItem<>("表");
-            DatabaseNodeData tablesData = new DatabaseNodeData(DatabaseNodeData.NodeType.TABLES_FOLDER, "表", config, dbName, schemaName);
-            tablesFolder.setGraphic(getDbNodeIcon(tablesData));
-            dbNodeDataMap.put(tablesFolder, tablesData);
-
-            TreeItem<String> viewsFolder = new TreeItem<>("视图");
-            DatabaseNodeData viewsData = new DatabaseNodeData(DatabaseNodeData.NodeType.VIEWS_FOLDER, "视图", config, dbName, schemaName);
-            viewsFolder.setGraphic(getDbNodeIcon(viewsData));
-            dbNodeDataMap.put(viewsFolder, viewsData);
-
-            TreeItem<String> functionFolder = new TreeItem<>("函数");
-            DatabaseNodeData functionData = new DatabaseNodeData(DatabaseNodeData.NodeType.FUNCTION_FOLDER, "函数", config, dbName, schemaName);
-            functionFolder.setGraphic(getDbNodeIcon(functionData));
-            dbNodeDataMap.put(functionFolder, functionData);
-
-            TreeItem<String> queryFolder = new TreeItem<>("查询");
-            DatabaseNodeData queryData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, dbName, schemaName);
-            queryFolder.setGraphic(getDbNodeIcon(queryData));
-            dbNodeDataMap.put(queryFolder, queryData);
-            loadQueriesForFolder(queryFolder, config, dbName);
-
-            TreeItem<String> backupFolder = new TreeItem<>("备份");
-            DatabaseNodeData backupData = new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, dbName, schemaName);
-            backupFolder.setGraphic(getDbNodeIcon(backupData));
-            dbNodeDataMap.put(backupFolder, backupData);
-            loadBackupsForFolder(backupFolder, config, dbName);
-
-            schemaItem.getChildren().addAll(tablesFolder, viewsFolder, functionFolder, queryFolder, backupFolder);
-            schemaItem.setExpanded(true);
-
-            // 加载表/视图列表并自动展开文件夹，让用户立即看到所有表/视图项
-            loadTablesForFolder(tablesFolder, config, dbName, schemaName, true);
-            loadViewsForFolder(viewsFolder, config, dbName, schemaName, true);
-        } else {
-            schemaItem.setExpanded(!schemaItem.isExpanded());
+        AbstractDbHandler handler = createDbHandler(data.getConnectionConfig());
+        if (handler != null) {
+            handler.handleSchemaDoubleClick(schemaItem, data);
         }
     }
 
@@ -2100,19 +2093,25 @@ public class ConnectModule implements Module {
         showDataView();
     }
 
+    /**
+     * 打开数据库节点：委托给对应类型的数据库处理器
+     */
     private void openDatabase(TreeItem<String> dbItem, DatabaseNodeData data) {
+        AbstractDbHandler handler = createDbHandler(data.getConnectionConfig());
+        if (handler != null) {
+            handler.openDatabase(dbItem, data);
+        }
+    }
+
+    /**
+     * 供 MySQL/Oracle handler 调用：打开数据库节点并直接加载 5 个文件夹（表/视图/函数/查询/备份）
+     */
+    void openDatabaseWithFolders(TreeItem<String> dbItem, DatabaseNodeData data) {
         data.setOpened(true);
         dbItem.setGraphic(getDbNodeIcon(data));
 
         ConnectionConfig config = data.getConnectionConfig();
         String dbName = data.getDatabaseName();
-
-        // PostgreSQL: 数据库下直接加载模式(schema)节点，模式节点下再加载表/视图
-        if (config.getType() == ConnectType.POSTGRESQL) {
-            dbItem.setExpanded(true);
-            loadSchemasForDatabase(dbItem, config, dbName);
-            return;
-        }
 
         TreeItem<String> tablesFolder = new TreeItem<>("表");
         tablesFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.TABLES_FOLDER, "表", config, dbName)));
@@ -2146,34 +2145,38 @@ public class ConnectModule implements Module {
     }
 
     /**
-     * 加载 PostgreSQL 数据库下的模式(schema)列表
+     * 供 PostgreSQL handler 调用：为 schema 节点构建 5 个子文件夹（表/视图/函数/查询/备份）
+     * 返回后由 handler 触发表/视图加载
      */
-    private void loadSchemasForDatabase(TreeItem<String> dbItem, ConnectionConfig config, String dbName) {
-        new Thread(() -> {
-            try {
-                List<String> schemas = DatabaseService.getSchemas(config, dbName);
-                Platform.runLater(() -> {
-                    dbItem.getChildren().clear();
-                    // 动态加载模式节点
-                    for (String schemaName : schemas) {
-                        TreeItem<String> schemaItem = new TreeItem<>(schemaName);
-                        DatabaseNodeData schemaData = new DatabaseNodeData(DatabaseNodeData.NodeType.SCHEMA, schemaName, config, dbName, schemaName);
-                        schemaItem.setGraphic(getDbNodeIcon(schemaData));
-                        dbNodeDataMap.put(schemaItem, schemaData);
-                        dbItem.getChildren().add(schemaItem);
-                    }
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("加载失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("无法加载模式列表: " + e.getMessage());
-                    alert.showAndWait();
-                });
-                e.printStackTrace();
-            }
-        }, "PG-LoadSchemas").start();
+    void buildSchemaFolders(TreeItem<String> schemaItem, ConnectionConfig config, String dbName, String schemaName) {
+        TreeItem<String> tablesFolder = new TreeItem<>("表");
+        DatabaseNodeData tablesData = new DatabaseNodeData(DatabaseNodeData.NodeType.TABLES_FOLDER, "表", config, dbName, schemaName);
+        tablesFolder.setGraphic(getDbNodeIcon(tablesData));
+        dbNodeDataMap.put(tablesFolder, tablesData);
+
+        TreeItem<String> viewsFolder = new TreeItem<>("视图");
+        DatabaseNodeData viewsData = new DatabaseNodeData(DatabaseNodeData.NodeType.VIEWS_FOLDER, "视图", config, dbName, schemaName);
+        viewsFolder.setGraphic(getDbNodeIcon(viewsData));
+        dbNodeDataMap.put(viewsFolder, viewsData);
+
+        TreeItem<String> functionFolder = new TreeItem<>("函数");
+        DatabaseNodeData functionData = new DatabaseNodeData(DatabaseNodeData.NodeType.FUNCTION_FOLDER, "函数", config, dbName, schemaName);
+        functionFolder.setGraphic(getDbNodeIcon(functionData));
+        dbNodeDataMap.put(functionFolder, functionData);
+
+        TreeItem<String> queryFolder = new TreeItem<>("查询");
+        DatabaseNodeData queryData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, dbName, schemaName);
+        queryFolder.setGraphic(getDbNodeIcon(queryData));
+        dbNodeDataMap.put(queryFolder, queryData);
+        loadQueriesForFolder(queryFolder, config, dbName);
+
+        TreeItem<String> backupFolder = new TreeItem<>("备份");
+        DatabaseNodeData backupData = new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, dbName, schemaName);
+        backupFolder.setGraphic(getDbNodeIcon(backupData));
+        dbNodeDataMap.put(backupFolder, backupData);
+        loadBackupsForFolder(backupFolder, config, dbName);
+
+        schemaItem.getChildren().addAll(tablesFolder, viewsFolder, functionFolder, queryFolder, backupFolder);
     }
 
     private void closeDatabase(TreeItem<String> dbItem, DatabaseNodeData data) {
@@ -2211,7 +2214,8 @@ public class ConnectModule implements Module {
         }
     }
 
-    private void loadTablesForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName, String schemaName, boolean autoExpand) {
+    /** 供 handler 调用：加载表列表到指定文件夹节点 */
+    void loadTablesForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName, String schemaName, boolean autoExpand) {
         new Thread(() -> {
             try {
                 List<String> tables = DatabaseService.getTables(config, dbName, schemaName);
@@ -2239,7 +2243,8 @@ public class ConnectModule implements Module {
         }, "DB-LoadTables").start();
     }
 
-    private void loadViewsForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName, String schemaName, boolean autoExpand) {
+    /** 供 handler 调用：加载视图列表到指定文件夹节点 */
+    void loadViewsForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName, String schemaName, boolean autoExpand) {
         new Thread(() -> {
             try {
                 List<String> views = DatabaseService.getViews(config, dbName, schemaName);
@@ -2786,29 +2791,36 @@ public class ConnectModule implements Module {
 
     private void updateHostIcon(TreeItem<String> hostItem, ConnectionConfig config, boolean connected) {
         connectionStateMap.put(hostItem, connected);
-        if (config.getType() == ConnectType.MYSQL) {
-            updateMysqlHostIcon(hostItem, config);
+        AbstractDbHandler handler = createDbHandler(config);
+        if (handler != null) {
+            handler.updateHostIcon(hostItem, config, connected);
         } else {
-            ImageView imageView = new ImageView();
-            imageView.setFitWidth(16);
-            imageView.setFitHeight(16);
-            try {
-                String iconPath = config.getType().getIconPath();
-                Image icon = new Image(getClass().getResourceAsStream(iconPath));
-                if (icon != null) {
-                    imageView.setImage(icon);
-                    if (connected) {
-                        imageView.setStyle("-fx-effect: dropshadow(gaussian, #4CAF50, 2, 0.5, 0, 0);");
-                    }
-                }
-            } catch (Exception e) {
-                // fallback
-            }
-            hostItem.setGraphic(imageView);
+            updateHostIconGeneric(hostItem, config, connected);
         }
     }
 
-    private void updateMysqlHostIcon(TreeItem<String> hostItem, ConnectionConfig config) {
+    /** 供非数据库类型(SSH/RDP 等)及 PG/Oracle handler 调用：通用主机图标更新 */
+    void updateHostIconGeneric(TreeItem<String> hostItem, ConnectionConfig config, boolean connected) {
+        ImageView imageView = new ImageView();
+        imageView.setFitWidth(16);
+        imageView.setFitHeight(16);
+        try {
+            String iconPath = config.getType().getIconPath();
+            Image icon = new Image(getClass().getResourceAsStream(iconPath));
+            if (icon != null) {
+                imageView.setImage(icon);
+                if (connected) {
+                    imageView.setStyle("-fx-effect: dropshadow(gaussian, #4CAF50, 2, 0.5, 0, 0);");
+                }
+            }
+        } catch (Exception e) {
+            // fallback
+        }
+        hostItem.setGraphic(imageView);
+    }
+
+    /** 供 MySQL handler 调用：MySQL 专用主机图标更新 */
+    void updateMysqlHostIcon(TreeItem<String> hostItem, ConnectionConfig config) {
         ImageView imageView = new ImageView();
         imageView.setFitWidth(16);
         imageView.setFitHeight(16);
@@ -3016,10 +3028,9 @@ public class ConnectModule implements Module {
         // 后台关闭底层连接（避免阻塞UI线程）
         new Thread(() -> {
             try {
-                if (config.getType() == ConnectType.MYSQL
-                        || config.getType() == ConnectType.POSTGRESQL
-                        || config.getType() == ConnectType.ORACLE) {
-                    DatabaseService.closeConnection(config.getId());
+                AbstractDbHandler handler = createDbHandler(config);
+                if (handler != null) {
+                    handler.closeConnection(config);
                 } else if (config.getType() == ConnectType.REDIS) {
                     RedisService.closeJedisCluster(config);
                 } else if (config.getType() == ConnectType.ROCKETMQ) {
@@ -3091,11 +3102,17 @@ public class ConnectModule implements Module {
         }, "DB-RefreshDatabases").start();
     }
 
-    private void removeDbNodeDataRecursive(TreeItem<String> item) {
+    /** 供 handler 调用：递归移除节点映射 */
+    void removeDbNodeDataRecursive(TreeItem<String> item) {
         dbNodeDataMap.remove(item);
         for (TreeItem<String> child : item.getChildren()) {
             removeDbNodeDataRecursive(child);
         }
+    }
+
+    /** 供 handler 调用：注册节点数据映射 */
+    void putDbNodeData(TreeItem<String> item, DatabaseNodeData data) {
+        dbNodeDataMap.put(item, data);
     }
 
     private void handleRefreshDbNode(TreeItem<String> item, DatabaseNodeData data) {
@@ -3278,66 +3295,43 @@ public class ConnectModule implements Module {
 
         if (!ensureTabPaneInstalled()) return;
 
-        if (config.getType() == ConnectType.LOCAL_TERMINAL) {
-            doLocalTerminalConnect(config);
-            return;
+        ConnectHandler handler = createConnectHandler(config);
+        if (handler != null) {
+            handler.handleConnect(this, config);
+        } else {
+            // 默认：SSH 终端
+            createSshTerminalTab(config);
         }
+    }
 
-        boolean isS3orOSS = config.getType() == ConnectType.S3 || config.getType() == ConnectType.ALIYUN_OSS;
-        if (isS3orOSS) {
-            doS3Connect(config);
-            return;
+    /**
+     * 根据连接类型创建对应的连接处理器
+     */
+    private ConnectHandler createConnectHandler(ConnectionConfig config) {
+        ConnectType type = config.getType();
+        // 数据库类型（MySQL/PostgreSQL/Oracle）复用 AbstractDbHandler
+        AbstractDbHandler dbHandler = createDbHandler(config);
+        if (dbHandler != null) {
+            return dbHandler;
         }
+        // 其他类型
+        if (type == ConnectType.REDIS) return new RedisConnectHandler();
+        if (type == ConnectType.ROCKETMQ) return new RocketmqConnectHandler();
+        if (type == ConnectType.ALIYUN) return new AliyunConnectHandler();
+        if (type == ConnectType.LOCAL_TERMINAL) return new LocalTerminalConnectHandler();
+        if (type == ConnectType.S3 || type == ConnectType.ALIYUN_OSS) return new S3ConnectHandler();
+        if (type == ConnectType.RDP) return new RdpConnectHandler();
+        if (type == ConnectType.SSH) return new SshTerminalConnectHandler();
+        return null;
+    }
 
-        if (config.getType() == ConnectType.ALIYUN) {
-            TreeItem<String> hostItem = findItemById(root, config.getId());
-            if (hostItem != null) {
-                handleAliyunHostDoubleClick(hostItem, config);
-            }
-            return;
-        }
+    /** 供 SshTerminalConnectHandler 调用：创建 SSH 终端 tab 并连接 */
+    void doSshTerminalConnect(ConnectionConfig config) {
+        createSshTerminalTab(config);
+    }
 
-        if (config.getType() == ConnectType.RDP) {
-            for (Tab tab : terminalTabPane.getTabs()) {
-                if (config.getId().equals(tab.getUserData())) {
-                    terminalTabPane.getSelectionModel().select(tab);
-                    showTerminalView();
-                    return;
-                }
-            }
-            doRdpConnect(config);
-            return;
-        }
-
-        boolean isDatabase = config.getType() == ConnectType.MYSQL
-                || config.getType() == ConnectType.POSTGRESQL
-                || config.getType() == ConnectType.ORACLE;
-        boolean isRedis = config.getType() == ConnectType.REDIS;
-
-        if (isDatabase) {
-            TreeItem<String> hostItem = findItemById(root, config.getId());
-            if (hostItem != null) {
-                handleDbHostDoubleClick(hostItem, config);
-            }
-            return;
-        }
-
-        if (isRedis) {
-            TreeItem<String> hostItem = findItemById(root, config.getId());
-            if (hostItem != null) {
-                handleRedisHostDoubleClick(hostItem, config);
-            }
-            return;
-        }
-
-        if (config.getType() == ConnectType.ROCKETMQ) {
-            TreeItem<String> hostItem = findItemById(root, config.getId());
-            if (hostItem != null) {
-                handleRocketmqHostDoubleClick(hostItem, config);
-            }
-            return;
-        }
-
+    /** 创建 SSH 终端 tab 并发起连接 */
+    private void createSshTerminalTab(ConnectionConfig config) {
         SSHTerminalPane terminalPane = new SSHTerminalPane();
 
         int scrollback = config.getScrollbackLines() != null ?
@@ -3389,7 +3383,13 @@ public class ConnectModule implements Module {
         doConnect(terminalPane, config);
     }
 
-    private void showTerminalView() {
+    /** 供 handler 调用：获取终端 Tab 面板 */
+    TabPane getTerminalTabPane() {
+        return terminalTabPane;
+    }
+
+    /** 供 RdpConnectHandler 调用 */
+    void showTerminalView() {
         // 已直接使用terminalTabPane，无需隐藏/显示其他元素
         if (terminalTabPane != null) {
             terminalTabPane.setVisible(true);
@@ -3461,7 +3461,8 @@ public class ConnectModule implements Module {
         }, "SSH-Connect").start();
     }
 
-    private void doLocalTerminalConnect(ConnectionConfig config) {
+    /** 供 LocalTerminalConnectHandler 调用 */
+    void doLocalTerminalConnect(ConnectionConfig config) {
         LocalTerminalPane localTerminalPane = new LocalTerminalPane();
 
         int scrollback = config.getScrollbackLines() != null ?
@@ -3514,7 +3515,8 @@ public class ConnectModule implements Module {
         localTerminalPane.connect(terminalType);
     }
 
-    private void doS3Connect(ConnectionConfig config) {
+    /** 供 S3ConnectHandler 调用 */
+    void doS3Connect(ConnectionConfig config) {
         for (Tab tab : terminalTabPane.getTabs()) {
             if (config.getId().equals(tab.getUserData())) {
                 terminalTabPane.getSelectionModel().select(tab);
@@ -3584,7 +3586,8 @@ public class ConnectModule implements Module {
         showTerminalView();
     }
 
-    private void doRdpConnect(ConnectionConfig config) {
+    /** 供 RdpConnectHandler 调用 */
+    void doRdpConnect(ConnectionConfig config) {
         String password = config.getPassword();
         if (password == null || password.isEmpty()) {
             Dialog<String> pwdDialog = new Dialog<>();
