@@ -36,6 +36,8 @@ public class TableStructureView extends BorderPane {
     private final ConnectionConfig config;
     private final String databaseName;
     private final String tableName;
+    /** 新建表模式：tableName 为空时为 true，跳过数据库加载，初始化空字段表格 */
+    private final boolean isNewTable;
 
     private TableView<ObservableList<String>> tableView;
     private ProgressIndicator loadingIndicator;
@@ -120,9 +122,14 @@ public class TableStructureView extends BorderPane {
         this.config = config;
         this.databaseName = databaseName;
         this.tableName = tableName;
+        this.isNewTable = tableName == null || tableName.trim().isEmpty();
 
         initializeUI();
-        loadStructure();
+        if (isNewTable) {
+            initNewTableStructure();
+        } else {
+            loadStructure();
+        }
     }
 
     private void initializeUI() {
@@ -1041,7 +1048,8 @@ public class TableStructureView extends BorderPane {
         collationComboBox.setDisable(true);
         new Thread(() -> {
             try {
-                Map<String, String> options = DatabaseService.getTableOptions(config, databaseName, tableName);
+                Map<String, String> options = isNewTable ? new LinkedHashMap<>()
+                        : DatabaseService.getTableOptions(config, databaseName, tableName);
                 // 加载可用引擎列表
                 List<String> engines = DatabaseService.getEngines(config);
                 // 加载字符集列表
@@ -1052,17 +1060,25 @@ public class TableStructureView extends BorderPane {
 
                     // 引擎
                     engineComboBox.getItems().setAll(engines);
-                    engineComboBox.setValue(options.getOrDefault("引擎", ""));
+                    if (isNewTable) {
+                        // 新建表默认选 InnoDB（若可用）
+                        engineComboBox.setValue(engines.contains("InnoDB") ? "InnoDB"
+                                : (!engines.isEmpty() ? engines.get(0) : ""));
+                    } else {
+                        engineComboBox.setValue(options.getOrDefault("引擎", ""));
+                    }
 
                     // 字符集（设置value会触发监听器自动填充排序规则下拉项）
                     charsetComboBox.getItems().setAll(charsets.keySet());
-                    String charset = options.getOrDefault("字符集", "");
+                    String charset = isNewTable ? "" : options.getOrDefault("字符集", "");
                     if (!charset.isEmpty()) {
                         charsetComboBox.setValue(charset);
+                    } else if (isNewTable && charsets.containsKey("utf8mb4")) {
+                        charsetComboBox.setValue("utf8mb4");
                     }
 
                     // 排序规则（监听器已填充下拉项，这里仅设置当前值）
-                    String collation = options.getOrDefault("排序规则", "");
+                    String collation = isNewTable ? "" : options.getOrDefault("排序规则", "");
                     if (!collation.isEmpty()) {
                         collationComboBox.setValue(collation);
                     }
@@ -1081,7 +1097,7 @@ public class TableStructureView extends BorderPane {
                     engineComboBox.setDisable(false);
                     charsetComboBox.setDisable(false);
                     collationComboBox.setDisable(false);
-                    statusLabel.setText("表选项已加载");
+                    statusLabel.setText(isNewTable ? "新建表选项已加载" : "表选项已加载");
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> {
@@ -1100,6 +1116,13 @@ public class TableStructureView extends BorderPane {
      * 加载表注释
      */
     private void loadComment() {
+        if (isNewTable) {
+            commentTextArea.setText("");
+            originalTableComment = "";
+            commentLoaded = true;
+            statusLabel.setText("新建表注释");
+            return;
+        }
         new Thread(() -> {
             try {
                 String comment = DatabaseService.getTableComment(config, databaseName, tableName);
@@ -1125,8 +1148,21 @@ public class TableStructureView extends BorderPane {
             try {
                 if (isSaveAs) {
                     // 另存为模式：显示完整的CREATE TABLE DDL
-                    String ddl = DatabaseService.getTableDdl(config, databaseName, tableName);
-                    String result = ddl != null && !ddl.isEmpty() ? ddl : "-- 无法获取CREATE TABLE DDL";
+                    String result;
+                    if (isNewTable) {
+                        // 新建表模式：根据当前字段表格内容生成CREATE TABLE SQL
+                        List<Map<String, String>> cols = collectColumnsForCreate();
+                        if (cols.isEmpty()) {
+                            result = "-- 请先添加至少一个字段（字段名不能为空）";
+                        } else {
+                            Map<String, String> opts = collectOptionsForCreate();
+                            String cmt = commentLoaded ? commentTextArea.getText() : null;
+                            result = DatabaseService.generateCreateTableSql(config, databaseName, "新表名", cols, opts, cmt);
+                        }
+                    } else {
+                        String ddl = DatabaseService.getTableDdl(config, databaseName, tableName);
+                        result = ddl != null && !ddl.isEmpty() ? ddl : "-- 无法获取CREATE TABLE DDL";
+                    }
                     int fieldCount = tableView.getItems() != null ? tableView.getItems().size() : 0;
                     Platform.runLater(() -> {
                         sqlPreviewViewer.setText(result);
@@ -1248,6 +1284,10 @@ public class TableStructureView extends BorderPane {
     // ====== 工具栏动作处理（占位实现，后续对接业务逻辑） ======
 
     private void handleSave() {
+        if (isNewTable) {
+            handleCreateNewTable();
+            return;
+        }
         // 收集变更的列注释
         List<ObservableList<String>> changedColumns = new ArrayList<>();
         if (columnTitles != null && tableView.getItems() != null) {
@@ -1319,6 +1359,98 @@ public class TableStructureView extends BorderPane {
                 }
             });
         }, "DB-SaveComments").start();
+    }
+
+    /**
+     * 新建表保存：弹出表名输入对话框，收集字段数据生成CREATE TABLE并执行
+     */
+    private void handleCreateNewTable() {
+        List<Map<String, String>> columns = collectColumnsForCreate();
+        if (columns.isEmpty()) {
+            statusLabel.setText("请先添加至少一个字段（字段名不能为空）");
+            return;
+        }
+
+        // 弹出表名输入对话框
+        TextInputDialog dialog = new TextInputDialog();
+        dialog.setTitle("新建表");
+        dialog.setHeaderText("请输入表名");
+        dialog.setContentText("表名:");
+        Optional<String> result = dialog.showAndWait();
+        if (result.isEmpty()) return;
+
+        String newTableName = result.get().trim();
+        if (newTableName.isEmpty()) {
+            statusLabel.setText("表名不能为空");
+            return;
+        }
+
+        Map<String, String> options = collectOptionsForCreate();
+        String tableComment = commentLoaded ? commentTextArea.getText() : null;
+
+        statusLabel.setText("正在创建表 " + newTableName + "...");
+        String finalNewTableName = newTableName;
+        new Thread(() -> {
+            try {
+                DatabaseService.createTable(config, databaseName, finalNewTableName, columns, options, tableComment);
+                Platform.runLater(() -> {
+                    statusLabel.setText("表 " + finalNewTableName + " 创建成功");
+                    Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                    alert.setTitle("新建表");
+                    alert.setHeaderText(null);
+                    alert.setContentText("表 " + finalNewTableName + " 创建成功");
+                    alert.showAndWait();
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    statusLabel.setText("创建表失败: " + e.getMessage());
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("新建表");
+                    alert.setHeaderText("创建表失败");
+                    alert.setContentText(e.getMessage());
+                    alert.showAndWait();
+                });
+            }
+        }, "DB-CreateTable").start();
+    }
+
+    /**
+     * 收集字段表格数据为List<Map>（用于生成CREATE TABLE SQL），仅包含字段名非空的行
+     */
+    private List<Map<String, String>> collectColumnsForCreate() {
+        List<Map<String, String>> columns = new ArrayList<>();
+        if (columnTitles != null && tableView.getItems() != null) {
+            int nameIdx = columnTitles.indexOf("字段名");
+            if (nameIdx >= 0) {
+                for (ObservableList<String> row : tableView.getItems()) {
+                    String colName = nameIdx < row.size() ? row.get(nameIdx) : "";
+                    if (colName != null && !colName.trim().isEmpty()) {
+                        Map<String, String> col = new LinkedHashMap<>();
+                        for (int i = 0; i < columnTitles.size(); i++) {
+                            col.put(columnTitles.get(i), i < row.size() ? row.get(i) : "");
+                        }
+                        columns.add(col);
+                    }
+                }
+            }
+        }
+        return columns;
+    }
+
+    /**
+     * 收集表选项（引擎、字符集、排序规则），仅当选项标签页已加载时
+     */
+    private Map<String, String> collectOptionsForCreate() {
+        Map<String, String> options = new LinkedHashMap<>();
+        if (optionsLoaded) {
+            String engine = engineComboBox.getValue();
+            if (engine != null && !engine.isEmpty()) options.put("引擎", engine);
+            String charset = charsetComboBox.getValue();
+            if (charset != null && !charset.isEmpty()) options.put("字符集", charset);
+            String collation = collationComboBox.getValue();
+            if (collation != null && !collation.isEmpty()) options.put("排序规则", collation);
+        }
+        return options;
     }
 
     private void handleAddField() {
@@ -1449,6 +1581,10 @@ public class TableStructureView extends BorderPane {
     }
 
     public void loadStructure() {
+        if (isNewTable) {
+            initNewTableStructure();
+            return;
+        }
         loadingIndicator.setVisible(true);
         tableView.setDisable(true);
 
@@ -1499,6 +1635,64 @@ public class TableStructureView extends BorderPane {
                 });
             }
         }, "DB-LoadTableStructure").start();
+    }
+
+    /**
+     * 初始化新建表模式：后台加载数据类型/字符集后，初始化空字段表格
+     */
+    private void initNewTableStructure() {
+        loadingIndicator.setVisible(true);
+        tableView.setDisable(true);
+
+        new Thread(() -> {
+            try {
+                if (cachedDataTypes == null) {
+                    try {
+                        cachedDbVersion = DatabaseService.getDatabaseProductVersion(config);
+                    } catch (Exception e) {
+                        cachedDbVersion = null;
+                    }
+                    cachedDataTypes = DataTypeProvider.getDataTypes(config.getType(), cachedDbVersion);
+                }
+                if (cachedCharsets == null) {
+                    try {
+                        cachedCharsets = DatabaseService.getCharsets(config);
+                    } catch (Exception e) {
+                        cachedCharsets = new HashMap<>();
+                    }
+                }
+            } finally {
+                Platform.runLater(this::initEmptyTable);
+            }
+        }, "DB-InitNewTable").start();
+    }
+
+    /**
+     * 初始化空字段表格（新建表模式）：构造一个空行触发标准列标题创建
+     */
+    private void initEmptyTable() {
+        Map<String, String> emptyRow = new LinkedHashMap<>();
+        emptyRow.put("字段名", "");
+        emptyRow.put("类型", "");
+        emptyRow.put("长度", "");
+        emptyRow.put("非空", "否");
+        emptyRow.put("主键", "否");
+        emptyRow.put("自增", "否");
+        emptyRow.put("默认值", "");
+        emptyRow.put("注释", "");
+        // 以下列不在表格中显示（由字段属性面板编辑），但需存在以便面板读写
+        emptyRow.put("无符号", "否");
+        emptyRow.put("填充零", "否");
+        emptyRow.put("字符集", "");
+        emptyRow.put("排序规则", "");
+        emptyRow.put("键长度", "");
+        emptyRow.put("二进制", "否");
+        updateTableView(List.of(emptyRow));
+        updateFieldPropertiesPane();
+        String versionInfo = cachedDbVersion != null ? " | 版本: " + cachedDbVersion : "";
+        statusLabel.setText("新建表" + versionInfo);
+        loadingIndicator.setVisible(false);
+        tableView.setDisable(false);
     }
 
     private void updateTableView(List<Map<String, String>> columns) {
@@ -1671,7 +1865,7 @@ public class TableStructureView extends BorderPane {
                                 if (currentRow != null && currentRow.getItem() instanceof ObservableList row) {
                                     String isPk = pkColIndex < row.size() ? (String) row.get(pkColIndex) : "";
                                     if ("是".equals(isPk)) {
-                                        setStyle("-fx-font-weight: bold; -fx-text-fill: #1E88E5;");
+                                        setStyle("-fx-font-weight: bold;");
                                         return;
                                     }
                                 }
@@ -1789,7 +1983,7 @@ public class TableStructureView extends BorderPane {
             pkIcon.setFitHeight(14);
             pkIcon.setPreserveRatio(true);
             numberLabel = new Label();
-            numberLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #1E88E5; -fx-font-weight: bold; -fx-padding: 0;");
+            numberLabel.setStyle("-fx-font-size: 11px; -fx-font-weight: bold; -fx-padding: 0;");
             graphic = new HBox(2, pkIcon, numberLabel);
             graphic.setAlignment(Pos.CENTER);
             graphic.setMouseTransparent(false);
@@ -1859,7 +2053,7 @@ public class TableStructureView extends BorderPane {
                 numberLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: white; -fx-font-weight: bold; -fx-padding: 0;");
             } else {
                 setStyle("-fx-alignment: center; -fx-border-color: transparent #e0e0e0 #e0e0e0 transparent; -fx-border-width: 0 1 1 0; -fx-padding: 0;");
-                numberLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #1E88E5; -fx-font-weight: bold; -fx-padding: 0;");
+                numberLabel.setStyle("-fx-font-size: 11px; -fx-font-weight: bold; -fx-padding: 0;");
             }
         }
 
@@ -2114,14 +2308,14 @@ public class TableStructureView extends BorderPane {
                                 comboBox.getEditor().setStyle("-fx-text-fill: white; -fx-background-color: #3592CB; -fx-padding: 0 4; -fx-border-color: transparent;");
                             }
                         } else {
-                            setStyle("-fx-font-weight: bold; -fx-text-fill: #1E88E5;");
+                            setStyle("-fx-font-weight: bold;");
                             if (comboBox != null) {
                                 comboBox.setStyle(
                                     "-fx-background-radius: 0; -fx-border-radius: 0; " +
                                     "-fx-border-color: transparent; -fx-padding: 0; " +
                                     "-fx-pref-height: 24px;"
                                 );
-                                comboBox.getEditor().setStyle("-fx-text-fill: #1E88E5; -fx-padding: 0 4; -fx-border-color: transparent; -fx-background-color: transparent;");
+                                comboBox.getEditor().setStyle("-fx-padding: 0 4; -fx-border-color: transparent; -fx-background-color: transparent;");
                             }
                         }
                         return;
@@ -2291,7 +2485,7 @@ public class TableStructureView extends BorderPane {
                         if (currentRow.isSelected()) {
                             setStyle("-fx-background-color: #3592CB; -fx-text-fill: white; -fx-font-weight: bold;");
                         } else {
-                            setStyle("-fx-font-weight: bold; -fx-text-fill: #1E88E5;");
+                            setStyle("-fx-font-weight: bold;");
                         }
                         return;
                     }

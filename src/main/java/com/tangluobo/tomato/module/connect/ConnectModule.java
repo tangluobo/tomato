@@ -399,7 +399,14 @@ public class ConnectModule implements Module {
                             openItem.setOnAction(e -> handleRocketmqBrokerDoubleClick(targetItem, dbData));
                             contextMenu.getItems().addAll(openItem);
                         }
-                        case TABLES_FOLDER, VIEWS_FOLDER -> {
+                        case TABLES_FOLDER -> {
+                            MenuItem newTableItem = new MenuItem("新建表");
+                            newTableItem.setOnAction(e -> handleNewTable(targetItem, dbData));
+                            MenuItem refreshItem = new MenuItem("刷新");
+                            refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
+                            contextMenu.getItems().addAll(newTableItem, new SeparatorMenuItem(), refreshItem);
+                        }
+                        case VIEWS_FOLDER -> {
                             MenuItem refreshItem = new MenuItem("刷新");
                             refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
                             contextMenu.getItems().add(refreshItem);
@@ -2195,6 +2202,57 @@ public class ConnectModule implements Module {
                 e.printStackTrace();
             }
         }, "DB-LoadColumns").start();
+    }
+
+    private void handleNewTable(TreeItem<String> item, DatabaseNodeData data) {
+        if (contentArea == null || terminalTabPane == null) return;
+        if (!ensureTabPaneInstalled()) return;
+
+        String tabId = "newtable_" + data.getConnectionConfig().getId() + "_" + data.getDatabaseName();
+        for (Tab tab : terminalTabPane.getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                terminalTabPane.getSelectionModel().select(tab);
+                showDataView();
+                return;
+            }
+        }
+
+        TableStructureView structView = new TableStructureView(data.getConnectionConfig(), data.getDatabaseName(), null);
+
+        ConnectionConfig config = data.getConnectionConfig();
+        String tabTitle = "新建表@" + data.getDatabaseName() + "(" + config.getHost() + ":" + config.getPort() + ")-表结构";
+        Tab tab = new Tab(tabTitle);
+        if (tableIcon != null) {
+            ImageView tabIconView = new ImageView(tableIcon);
+            tabIconView.setFitWidth(18);
+            tabIconView.setFitHeight(18);
+            tab.setGraphic(tabIconView);
+        }
+        tab.setContent(structView);
+        tab.setUserData(tabId);
+
+        ContextMenu structTabContextMenu = new ContextMenu();
+        MenuItem structConfigItem = new MenuItem("表格配置");
+        structConfigItem.setOnAction(e -> {
+            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
+            GlobalConfigDialog.show(stage, GlobalConfigDialog.ConfigMode.TABLE);
+            GlobalConfig globalConfig = GlobalConfig.getInstance();
+            structView.applyTableConfig(globalConfig);
+        });
+        MenuItem structRefreshItem = new MenuItem("刷新结构");
+        structRefreshItem.setOnAction(e -> structView.loadStructure());
+        structTabContextMenu.getItems().addAll(structConfigItem, structRefreshItem);
+        tab.setContextMenu(structTabContextMenu);
+
+        tab.setOnClosed(e -> {
+            if (terminalTabPane.getTabs().isEmpty()) {
+                showWelcomeView();
+            }
+        });
+
+        terminalTabPane.getTabs().add(tab);
+        terminalTabPane.getSelectionModel().select(tab);
+        showDataView();
     }
 
     private void handleTableStructureDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
