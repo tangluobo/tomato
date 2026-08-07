@@ -7,6 +7,7 @@ public class DatabaseNodeData {
     public enum NodeType {
         DATABASE,       // 数据库节点
         REDIS_DB,       // Redis数据库节点
+        SCHEMA,         // 模式节点（PostgreSQL schema）
         TABLES_FOLDER,  // "表"文件夹节点
         VIEWS_FOLDER,   // "视图"文件夹节点
         QUERY_FOLDER,   // "查询"文件夹节点
@@ -30,13 +31,21 @@ public class DatabaseNodeData {
     private final String name;
     private final ConnectionConfig connectionConfig;
     private final String databaseName;
+    // PostgreSQL 模式名（schema）。MySQL/Oracle 忽略；PostgreSQL 表相关操作使用 schema 名，
+    // databaseName 仅用于建立绑定到具体数据库的连接。
+    private final String schemaName;
     private boolean opened;
 
     public DatabaseNodeData(NodeType type, String name, ConnectionConfig connectionConfig, String databaseName) {
+        this(type, name, connectionConfig, databaseName, null);
+    }
+
+    public DatabaseNodeData(NodeType type, String name, ConnectionConfig connectionConfig, String databaseName, String schemaName) {
         this.type = type;
         this.name = name;
         this.connectionConfig = connectionConfig;
         this.databaseName = databaseName;
+        this.schemaName = schemaName;
         this.opened = false;
     }
 
@@ -44,6 +53,7 @@ public class DatabaseNodeData {
     public String getName() { return name; }
     public ConnectionConfig getConnectionConfig() { return connectionConfig; }
     public String getDatabaseName() { return databaseName; }
+    public String getSchemaName() { return schemaName; }
     public boolean isOpened() { return opened; }
     public void setOpened(boolean opened) { this.opened = opened; }
 }

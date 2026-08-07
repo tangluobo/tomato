@@ -33,11 +33,11 @@ public class TerminalView extends Canvas {
     private double fontAscent = 12;
     private String fontFamily = "monospace";
 
-    // 颜色缓存
-    private static final Color[] FX_COLORS = new Color[16];
+    // 颜色缓存（256色）
+    private static final Color[] FX_COLORS = new Color[256];
     static {
-        for (int i = 0; i < 16; i++) {
-            int rgb = TerminalEmulator.COLOR_TABLE[i];
+        for (int i = 0; i < 256; i++) {
+            int rgb = TerminalEmulator.COLOR_TABLE_256[i];
             FX_COLORS[i] = Color.rgb((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
         }
     }
@@ -430,11 +430,23 @@ public class TerminalView extends Canvas {
 
                 if (attr != firstAttr || x == cols) {
                     if (x > runStart) {
-                        Color bg = getAttrBg(firstAttr);
+                        Color bg;
+                        Color fg;
+                        if (lineChars != null) {
+                            int bgIdx = emulator.getBg(firstAttr);
+                            bg = (bgIdx >= 0 && bgIdx < FX_COLORS.length) ? FX_COLORS[bgIdx] : defaultBg;
+                            int fgIdx = emulator.getFg(firstAttr);
+                            fg = (fgIdx >= 0 && fgIdx < FX_COLORS.length) ? FX_COLORS[fgIdx] : defaultFg;
+                            if (emulator.isReverse(firstAttr)) {
+                                Color tmp = fg; fg = bg; bg = tmp;
+                            }
+                        } else {
+                            bg = getRenderBg(firstAttr, runStart, bufY);
+                            fg = getRenderFg(firstAttr, runStart, bufY);
+                        }
                         gc.setFill(bg);
                         gc.fillRect(x0 + runStart * charWidth, py, (x - runStart) * charWidth, charHeight);
 
-                        Color fg = getAttrFg(firstAttr);
                         gc.setFill(fg);
                         for (int i = runStart; i < x; i++) {
                             char c;
@@ -453,11 +465,10 @@ public class TerminalView extends Canvas {
             }
         }
 
-        // 渲染光标（仅在没有回滚偏移时显示）
+        // 渲染光标（使用反转色确保在任何背景下都可见）
         if (emulator.isCursorVisible() && cursorBlinkOn && scrollOffset == 0) {
             int curX = emulator.getCursorX();
             int curY = emulator.getCursorY();
-            // 如果光标在宽字符占位符(\0)上，回退到宽字符的首列
             char cursorChar = emulator.getChar(curX, curY);
             int cursorCol = curX;
             if (cursorChar == '\0' && curX > 0) {
@@ -467,9 +478,19 @@ public class TerminalView extends Canvas {
             double cx = x0 + cursorCol * charWidth;
             double cy = y0 + curY * charHeight;
             double cursorWidth = (cursorChar != '\0' && emulator.isWideChar(cursorChar)) ? 2 * charWidth : charWidth;
-            gc.setFill(Color.WHITE);
+
+            // 获取光标位置单元格的前景色和背景色，反转后作为光标颜色
+            int cursorAttr = emulator.getAttr(cursorCol, curY);
+            Color cursorBg = getAttrFg(cursorAttr, cursorCol, curY);
+            Color cursorFg = getAttrBg(cursorAttr, cursorCol, curY);
+            // 如果前景和背景相同（极端情况），使用默认的黑白反转
+            if (cursorBg.equals(cursorFg)) {
+                cursorBg = Color.WHITE;
+                cursorFg = Color.BLACK;
+            }
+            gc.setFill(cursorBg);
             gc.fillRect(cx, cy, cursorWidth, charHeight);
-            gc.setFill(Color.BLACK);
+            gc.setFill(cursorFg);
             gc.fillText(String.valueOf(cursorChar == '\0' ? ' ' : cursorChar), cx, cy + fontAscent);
         }
 
@@ -504,17 +525,60 @@ public class TerminalView extends Canvas {
         notifyScrollbar();
     }
 
-    private Color getAttrFg(int attr) {
+    /**
+     * 获取指定单元格的前景色（支持256色、真彩色和反转视频）
+     */
+    private Color getAttrFg(int attr, int x, int y) {
+        // 真彩色优先
+        if (emulator.isFgTrueColor(attr)) {
+            int rgb = emulator.getFgTrueColor(x, y);
+            if (rgb >= 0) {
+                return Color.rgb((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+            }
+        }
         int fgIdx = emulator.getFg(attr);
         if (fgIdx < 0 || fgIdx >= FX_COLORS.length) return defaultFg;
         return FX_COLORS[fgIdx];
     }
 
-    private Color getAttrBg(int attr) {
+    /**
+     * 获取指定单元格的背景色（支持256色、真彩色和反转视频）
+     */
+    private Color getAttrBg(int attr, int x, int y) {
+        // 真彩色优先
+        if (emulator.isBgTrueColor(attr)) {
+            int rgb = emulator.getBgTrueColor(x, y);
+            if (rgb >= 0) {
+                return Color.rgb((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+            }
+        }
         int bgIdx = emulator.getBg(attr);
-        if (bgIdx == 0) return defaultBg;
         if (bgIdx < 0 || bgIdx >= FX_COLORS.length) return defaultBg;
         return FX_COLORS[bgIdx];
+    }
+
+    /**
+     * 获取渲染用的前景色（考虑反转视频属性）
+     */
+    private Color getRenderFg(int attr, int x, int y) {
+        Color fg = getAttrFg(attr, x, y);
+        if (emulator.isReverse(attr)) {
+            Color bg = getAttrBg(attr, x, y);
+            fg = bg;
+        }
+        return fg;
+    }
+
+    /**
+     * 获取渲染用的背景色（考虑反转视频属性）
+     */
+    private Color getRenderBg(int attr, int x, int y) {
+        Color bg = getAttrBg(attr, x, y);
+        if (emulator.isReverse(attr)) {
+            Color fg = getAttrFg(attr, x, y);
+            bg = fg;
+        }
+        return bg;
     }
 
     public TerminalEmulator getEmulator() {

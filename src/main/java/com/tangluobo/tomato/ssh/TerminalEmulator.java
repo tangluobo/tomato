@@ -34,6 +34,8 @@ public class TerminalEmulator {
     private boolean applicationCursorKeys = false;
     // 是否原点模式(DECOM) - 光标定位相对于滚动区域
     private boolean originMode = false;
+    // 是否括号粘贴模式(DECSET 2004) - 粘贴时用\033[200~...\033[201~包裹内容
+    private boolean bracketedPasteMode = false;
     // ANSI.SYS保存的光标位置（不同于DECSC的savedCursorX/Y）
     private int ansiSavedCursorX = 0;
     private int ansiSavedCursorY = 0;
@@ -76,6 +78,8 @@ public class TerminalEmulator {
     // 回滚历史缓冲区
     private java.util.LinkedList<char[]> scrollbackLines = new java.util.LinkedList<>();
     private java.util.LinkedList<int[]> scrollbackAttrs = new java.util.LinkedList<>();
+    private java.util.LinkedList<int[]> scrollbackFgTc = new java.util.LinkedList<>();
+    private java.util.LinkedList<int[]> scrollbackBgTc = new java.util.LinkedList<>();
     private int maxScrollback = DEFAULT_SCROLLBACK;
     // 用户滚动偏移（0=底部，>0=向上回看）
     private int scrollOffset = 0;
@@ -105,29 +109,68 @@ public class TerminalEmulator {
     private boolean underline = false;
     private boolean reverse = false;
 
+    // 交替缓冲区颜色状态保存（切换到alt buffer时保存，切回时恢复）
+    private int savedFg = 7;
+    private int savedBg = 0;
+    private boolean savedBold = false;
+    private boolean savedUnderline = false;
+    private boolean savedReverse = false;
+
+    // 真彩色存储（24-bit RGB值，-1表示未使用真彩色）
+    private int[] fgTrueColor;
+    private int[] bgTrueColor;
+    private int[] altFgTrueColor;
+    private int[] altBgTrueColor;
+
+    // 当前颜色是否为真彩色
+    private boolean currentFgTrueColor = false;
+    private boolean currentBgTrueColor = false;
+    private int currentFgRgb = 0;
+    private int currentBgRgb = 0;
+
+    // 保存的真彩色状态（用于alt buffer切换）
+    private boolean savedFgTrueColor = false;
+    private boolean savedBgTrueColor = false;
+    private int savedFgRgb = 0;
+    private int savedBgRgb = 0;
+
+    // 真彩色标志位（存在attr int的bit19/bit20）
+    private static final int FG_TRUE_COLOR_FLAG = 0x80000;
+    private static final int BG_TRUE_COLOR_FLAG = 0x100000;
+
     private enum ParseState {
         NORMAL, ESC, CSI, OSC, CHARSET
     }
 
-    // ANSI颜色表
-    public static final int[] COLOR_TABLE = {
-            0x000000, // 0: 黑
-            0xcd0000, // 1: 红
-            0x00cd00, // 2: 绿
-            0xcdcd00, // 3: 黄
-            0x0000ee, // 4: 蓝
-            0xcd00cd, // 5: 洋红
-            0x00cdcd, // 6: 青
-            0xe5e5e5, // 7: 白
-            0x7f7f7f, // 8: 亮黑
-            0xff0000, // 9: 亮红
-            0x00ff00, // 10: 亮绿
-            0xffff00, // 11: 亮黄
-            0x5c5cff, // 12: 亮蓝
-            0xff00ff, // 13: 亮洋红
-            0x00ffff, // 14: 亮青
-            0xffffff  // 15: 亮白
-    };
+    // ANSI 256色表（0-15: 标准色; 16-231: 6x6x6立方体; 232-255: 灰度）
+    public static final int[] COLOR_TABLE_256;
+    static {
+        COLOR_TABLE_256 = new int[256];
+        // 0-15: 标准16色
+        int[] base16 = {
+            0x000000, 0xcd0000, 0x00cd00, 0xcdcd00, 0x0000ee, 0xcd00cd, 0x00cdcd, 0xe5e5e5,
+            0x7f7f7f, 0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff, 0x00ffff, 0xffffff
+        };
+        System.arraycopy(base16, 0, COLOR_TABLE_256, 0, 16);
+        // 16-231: 6x6x6颜色立方体
+        int[] cubeValues = {0, 95, 135, 175, 215, 255};
+        for (int r = 0; r < 6; r++) {
+            for (int g = 0; g < 6; g++) {
+                for (int b = 0; b < 6; b++) {
+                    int idx = 16 + r * 36 + g * 6 + b;
+                    COLOR_TABLE_256[idx] = (cubeValues[r] << 16) | (cubeValues[g] << 8) | cubeValues[b];
+                }
+            }
+        }
+        // 232-255: 灰度
+        for (int i = 0; i < 24; i++) {
+            int gray = 8 + i * 10;
+            COLOR_TABLE_256[232 + i] = (gray << 16) | (gray << 8) | gray;
+        }
+    }
+
+    @Deprecated
+    public static final int[] COLOR_TABLE = COLOR_TABLE_256;
 
     public TerminalEmulator() {
         this(DEFAULT_COLS, DEFAULT_ROWS);
@@ -138,6 +181,14 @@ public class TerminalEmulator {
         this.rows = rows;
         this.buffer = new char[rows][cols];
         this.attrs = new int[rows][cols];
+        this.fgTrueColor = new int[rows * cols];
+        this.bgTrueColor = new int[rows * cols];
+        this.altFgTrueColor = new int[rows * cols];
+        this.altBgTrueColor = new int[rows * cols];
+        java.util.Arrays.fill(fgTrueColor, -1);
+        java.util.Arrays.fill(bgTrueColor, -1);
+        java.util.Arrays.fill(altFgTrueColor, -1);
+        java.util.Arrays.fill(altBgTrueColor, -1);
         clearBuffer(buffer, attrs);
         initAltBuffer();
     }
@@ -153,12 +204,18 @@ public class TerminalEmulator {
             for (int x = 0; x < cols; x++) {
                 buf[y][x] = ' ';
                 att[y][x] = makeAttr(7, 0, false, false, false);
+                int idx = y * cols + x;
+                fgTrueColor[idx] = -1;
+                bgTrueColor[idx] = -1;
             }
         }
     }
 
     private int makeAttr(int fg, int bg, boolean bold, boolean underline, boolean reverse) {
-        return (fg & 0xFF) | ((bg & 0xFF) << 8) | (bold ? 0x10000 : 0) | (underline ? 0x20000 : 0) | (reverse ? 0x40000 : 0);
+        return (fg & 0xFF) | ((bg & 0xFF) << 8)
+                | (bold ? 0x10000 : 0)
+                | (underline ? 0x20000 : 0)
+                | (reverse ? 0x40000 : 0);
     }
 
     public int getFg(int attr) { return attr & 0xFF; }
@@ -166,6 +223,44 @@ public class TerminalEmulator {
     public boolean isBold(int attr) { return (attr & 0x10000) != 0; }
     public boolean isUnderline(int attr) { return (attr & 0x20000) != 0; }
     public boolean isReverse(int attr) { return (attr & 0x40000) != 0; }
+    public boolean isFgTrueColor(int attr) { return (attr & FG_TRUE_COLOR_FLAG) != 0; }
+    public boolean isBgTrueColor(int attr) { return (attr & BG_TRUE_COLOR_FLAG) != 0; }
+
+    /**
+     * 获取指定单元格的前景真彩色RGB值（-1表示未使用真彩色）
+     */
+    public int getFgTrueColor(int x, int y) {
+        return fgTrueColor[y * cols + x];
+    }
+
+    /**
+     * 获取指定单元格的背景真彩色RGB值（-1表示未使用真彩色）
+     */
+    public int getBgTrueColor(int x, int y) {
+        return bgTrueColor[y * cols + x];
+    }
+
+    /**
+     * 设置指定单元格的前景真彩色
+     */
+    public void setFgTrueColor(int x, int y, int rgb) {
+        fgTrueColor[y * cols + x] = rgb;
+    }
+
+    /**
+     * 设置指定单元格的背景真彩色
+     */
+    public void setBgTrueColor(int x, int y, int rgb) {
+        bgTrueColor[y * cols + x] = rgb;
+    }
+
+    /**
+     * 清除指定单元格的真彩色标记
+     */
+    public void clearTrueColor(int x, int y) {
+        fgTrueColor[y * cols + x] = -1;
+        bgTrueColor[y * cols + x] = -1;
+    }
 
     public int getCols() { return cols; }
     public int getRows() { return rows; }
@@ -173,6 +268,7 @@ public class TerminalEmulator {
     public int getCursorY() { return cursorY; }
     public boolean isCursorVisible() { return cursorVisible; }
     public boolean isApplicationCursorKeys() { return applicationCursorKeys; }
+    public boolean isBracketedPasteMode() { return bracketedPasteMode; }
     public char getChar(int x, int y) { return buffer[y][x]; }
     public int getAttr(int x, int y) { return attrs[y][x]; }
 
@@ -405,6 +501,16 @@ public class TerminalEmulator {
         return scrollbackAttrs.get(index);
     }
 
+    public int[] getScrollbackFgTcLine(int index) {
+        if (index < 0 || index >= scrollbackFgTc.size()) return null;
+        return scrollbackFgTc.get(index);
+    }
+
+    public int[] getScrollbackBgTcLine(int index) {
+        if (index < 0 || index >= scrollbackBgTc.size()) return null;
+        return scrollbackBgTc.get(index);
+    }
+
     /**
      * 获取滚动区域（0-based）
      */
@@ -422,36 +528,45 @@ public class TerminalEmulator {
     public void resize(int newCols, int newRows) {
         char[][] newBuffer = new char[newRows][newCols];
         int[][] newAttrs = new int[newRows][newCols];
+        int[] newFgTc = new int[newRows * newCols];
+        int[] newBgTc = new int[newRows * newCols];
+        java.util.Arrays.fill(newFgTc, -1);
+        java.util.Arrays.fill(newBgTc, -1);
+
         for (int y = 0; y < newRows; y++) {
             for (int x = 0; x < newCols; x++) {
+                int newIdx = y * newCols + x;
                 if (y < rows && x < cols) {
                     newBuffer[y][x] = buffer[y][x];
                     newAttrs[y][x] = attrs[y][x];
+                    int oldIdx = y * cols + x;
+                    newFgTc[newIdx] = fgTrueColor[oldIdx];
+                    newBgTc[newIdx] = bgTrueColor[oldIdx];
                 } else {
                     newBuffer[y][x] = ' ';
                     newAttrs[y][x] = makeAttr(7, 0, false, false, false);
                 }
             }
         }
-        this.buffer = newBuffer;
-        this.attrs = newAttrs;
-        this.cols = newCols;
-        this.rows = newRows;
-        if (cursorX >= newCols) cursorX = newCols - 1;
-        if (cursorY >= newRows) cursorY = newRows - 1;
-        // 重置滚动区域
-        scrollTop = 0;
-        scrollBottom = 0;
-        // 重建交替缓冲区
+
+        // 交替缓冲区也需要调整
+        int[] newAltFgTc = new int[newRows * newCols];
+        int[] newAltBgTc = new int[newRows * newCols];
+        java.util.Arrays.fill(newAltFgTc, -1);
+        java.util.Arrays.fill(newAltBgTc, -1);
+
         if (usingAltBuffer) {
-            // 在alt buffer模式下，altBuffer保存着主缓冲区的内容，需要一并调整大小
             char[][] newAltBuffer = new char[newRows][newCols];
             int[][] newAltAttrs = new int[newRows][newCols];
             for (int y = 0; y < newRows; y++) {
                 for (int x = 0; x < newCols; x++) {
+                    int newIdx = y * newCols + x;
                     if (y < rows && x < cols) {
                         newAltBuffer[y][x] = altBuffer[y][x];
                         newAltAttrs[y][x] = altAttrs[y][x];
+                        int oldIdx = y * cols + x;
+                        newAltFgTc[newIdx] = altFgTrueColor[oldIdx];
+                        newAltBgTc[newIdx] = altBgTrueColor[oldIdx];
                     } else {
                         newAltBuffer[y][x] = ' ';
                         newAltAttrs[y][x] = makeAttr(7, 0, false, false, false);
@@ -461,8 +576,31 @@ public class TerminalEmulator {
             altBuffer = newAltBuffer;
             altAttrs = newAltAttrs;
         } else {
-            initAltBuffer();
+            // 未使用alt buffer，重建alt buffer（与原大小相同的空缓冲区）
+            altBuffer = new char[newRows][newCols];
+            altAttrs = new int[newRows][newCols];
+            java.util.Arrays.fill(newAltFgTc, -1);
+            java.util.Arrays.fill(newAltBgTc, -1);
+            for (int y = 0; y < newRows; y++) {
+                for (int x = 0; x < newCols; x++) {
+                    altBuffer[y][x] = ' ';
+                    altAttrs[y][x] = makeAttr(7, 0, false, false, false);
+                }
+            }
         }
+
+        this.buffer = newBuffer;
+        this.attrs = newAttrs;
+        this.fgTrueColor = newFgTc;
+        this.bgTrueColor = newBgTc;
+        this.altFgTrueColor = newAltFgTc;
+        this.altBgTrueColor = newAltBgTc;
+        this.cols = newCols;
+        this.rows = newRows;
+        if (cursorX >= newCols) cursorX = newCols - 1;
+        if (cursorY >= newRows) cursorY = newRows - 1;
+        scrollTop = 0;
+        scrollBottom = 0;
     }
 
     /**
@@ -574,13 +712,24 @@ public class TerminalEmulator {
                 for (int x = cols - 1; x > cursorX; x--) {
                     buffer[cursorY][x] = buffer[cursorY][x - charWidth];
                     attrs[cursorY][x] = attrs[cursorY][x - charWidth];
+                    fgTrueColor[cursorY * cols + x] = fgTrueColor[cursorY * cols + x - charWidth];
+                    bgTrueColor[cursorY * cols + x] = bgTrueColor[cursorY * cols + x - charWidth];
                 }
             }
             buffer[cursorY][cursorX] = ch;
-            attrs[cursorY][cursorX] = makeAttr(currentFg, currentBg, bold, underline, reverse);
+            int cellAttr = makeAttr(currentFg, currentBg, bold, underline, reverse);
+            if (currentFgTrueColor) cellAttr |= FG_TRUE_COLOR_FLAG;
+            if (currentBgTrueColor) cellAttr |= BG_TRUE_COLOR_FLAG;
+            attrs[cursorY][cursorX] = cellAttr;
+            int idx = cursorY * cols + cursorX;
+            fgTrueColor[idx] = currentFgTrueColor ? currentFgRgb : -1;
+            bgTrueColor[idx] = currentBgTrueColor ? currentBgRgb : -1;
             if (wideChar && cursorX + 1 < cols) {
                 buffer[cursorY][cursorX + 1] = 0;
-                attrs[cursorY][cursorX + 1] = attrs[cursorY][cursorX];
+                attrs[cursorY][cursorX + 1] = cellAttr;
+                int idx2 = cursorY * cols + cursorX + 1;
+                fgTrueColor[idx2] = fgTrueColor[idx];
+                bgTrueColor[idx2] = bgTrueColor[idx];
             }
             cursorX += charWidth;
         }
@@ -887,6 +1036,10 @@ public class TerminalEmulator {
                                 if (!usingAltBuffer) switchToAltBuffer();
                                 break;
                             case 7: autoWrap = true; break;
+                            case 2004: // 括号粘贴模式
+                                bracketedPasteMode = true;
+                                debugLogCursorState("CSI ?2004h (bracketed paste ON)");
+                                break;
                         }
                     }
                 } else {
@@ -943,6 +1096,10 @@ public class TerminalEmulator {
                                 autoAltBuffer = false;
                                 break;
                             case 7: autoWrap = false; break;
+                            case 2004: // 括号粘贴模式
+                                bracketedPasteMode = false;
+                                debugLogCursorState("CSI ?2004l (bracketed paste OFF)");
+                                break;
                         }
                     }
                 } else {
@@ -1020,20 +1177,35 @@ public class TerminalEmulator {
      */
     private void switchToAltBuffer() {
         debugLogCursorState("BEFORE switchToAltBuffer");
+        // 保存当前颜色状态（关键：防止切换后颜色泄漏到shell输出）
+        savedFg = currentFg;
+        savedBg = currentBg;
+        savedBold = bold;
+        savedUnderline = underline;
+        savedReverse = reverse;
+        savedFgTrueColor = currentFgTrueColor;
+        savedBgTrueColor = currentBgTrueColor;
+        savedFgRgb = currentFgRgb;
+        savedBgRgb = currentBgRgb;
+
         // 保存当前缓冲区（主缓冲区内容）
         char[][] tmpBuf = buffer;
         int[][] tmpAttrs = attrs;
+        int[] tmpFgTc = fgTrueColor;
+        int[] tmpBgTc = bgTrueColor;
         // 切换到交替缓冲区
         buffer = altBuffer;
         attrs = altAttrs;
+        fgTrueColor = altFgTrueColor;
+        bgTrueColor = altBgTrueColor;
         altBuffer = tmpBuf;
         altAttrs = tmpAttrs;
+        altFgTrueColor = tmpFgTc;
+        altBgTrueColor = tmpBgTc;
         // 保存DECSC光标位置（ESC 7/8使用的savedCursorX/Y）
         altSavedCursorX = savedCursorX;
         altSavedCursorY = savedCursorY;
         // 保存光标到专用字段（用于切回时恢复，不被ESC 7/8覆盖）
-        // 仅在applicationCursorKeys为false时保存，因为CSI ?1h可能已经保存了正确的光标位置
-        // 如果程序在CSI ?1h之后移动了光标(如CSI H到0,0)，不应覆盖CSI ?1h保存的正确位置
         if (!applicationCursorKeys) {
             altBufferSavedCursorX = cursorX;
             altBufferSavedCursorY = cursorY;
@@ -1059,30 +1231,42 @@ public class TerminalEmulator {
         // 保存交替缓冲区内容
         char[][] tmpBuf = buffer;
         int[][] tmpAttrs = attrs;
+        int[] tmpFgTc = fgTrueColor;
+        int[] tmpBgTc = bgTrueColor;
         // 切回主缓冲区
         buffer = altBuffer;
         attrs = altAttrs;
+        fgTrueColor = altFgTrueColor;
+        bgTrueColor = altBgTrueColor;
         altBuffer = tmpBuf;
         altAttrs = tmpAttrs;
+        altFgTrueColor = tmpFgTc;
+        altBgTrueColor = tmpBgTc;
+
+        // 恢复颜色状态（关键：确保shell输出使用正确的颜色）
+        currentFg = savedFg;
+        currentBg = savedBg;
+        bold = savedBold;
+        underline = savedUnderline;
+        reverse = savedReverse;
+        currentFgTrueColor = savedFgTrueColor;
+        currentBgTrueColor = savedBgTrueColor;
+        currentFgRgb = savedFgRgb;
+        currentBgRgb = savedBgRgb;
+
         // 恢复DECSC保存的光标位置
         savedCursorX = altSavedCursorX;
         savedCursorY = altSavedCursorY;
 
         if (autoAltBuffer) {
-            // 自动交替缓冲区模式：恢复到top启动前的光标位置
-            // 使用CSI ?1h时保存的altBufferSavedCursorX/Y（已防止被switchToAltBuffer覆盖）
             cursorX = altBufferSavedCursorX;
             cursorY = altBufferSavedCursorY;
-            // 设置抑制屏幕修改标志：top退出时可能发送清理序列，需要抑制
             activateScreenSuppress();
-            // 激活光标位置守卫：如果清理序列将光标移到第0行，强制恢复
             activateCursorGuard();
             debugLogCursorState("AFTER switchToMainBuffer (autoAlt, suppress=true)");
         } else {
-            // 标准交替缓冲区模式：使用保存的光标位置
             cursorX = altBufferSavedCursorX;
             cursorY = altBufferSavedCursorY;
-            // 激活光标位置守卫：标准交替缓冲区切回后同样需要保护光标位置
             activateCursorGuard();
             debugLogCursorState("AFTER switchToMainBuffer (standard)");
         }
@@ -1138,11 +1322,17 @@ public class TerminalEmulator {
                 for (int x = cursorX; x < cols; x++) {
                     buffer[cursorY][x] = ' ';
                     attrs[cursorY][x] = makeAttr(currentFg, currentBg, false, false, false);
+                    int idx = cursorY * cols + x;
+                    fgTrueColor[idx] = -1;
+                    bgTrueColor[idx] = -1;
                 }
                 for (int y = cursorY + 1; y < rows; y++) {
                     for (int x = 0; x < cols; x++) {
                         buffer[y][x] = ' ';
                         attrs[y][x] = makeAttr(currentFg, currentBg, false, false, false);
+                        int idx = y * cols + x;
+                        fgTrueColor[idx] = -1;
+                        bgTrueColor[idx] = -1;
                     }
                 }
                 break;
@@ -1151,11 +1341,17 @@ public class TerminalEmulator {
                     for (int x = 0; x < cols; x++) {
                         buffer[y][x] = ' ';
                         attrs[y][x] = makeAttr(currentFg, currentBg, false, false, false);
+                        int idx = y * cols + x;
+                        fgTrueColor[idx] = -1;
+                        bgTrueColor[idx] = -1;
                     }
                 }
                 for (int x = 0; x <= cursorX; x++) {
                     buffer[cursorY][x] = ' ';
                     attrs[cursorY][x] = makeAttr(currentFg, currentBg, false, false, false);
+                    int idx = cursorY * cols + x;
+                    fgTrueColor[idx] = -1;
+                    bgTrueColor[idx] = -1;
                 }
                 break;
             case 2: // 整个屏幕
@@ -1172,18 +1368,27 @@ public class TerminalEmulator {
                 for (int x = cursorX; x < cols; x++) {
                     buffer[cursorY][x] = ' ';
                     attrs[cursorY][x] = makeAttr(currentFg, currentBg, false, false, false);
+                    int idx = cursorY * cols + x;
+                    fgTrueColor[idx] = -1;
+                    bgTrueColor[idx] = -1;
                 }
                 break;
             case 1: // 从行首到光标
                 for (int x = 0; x <= cursorX; x++) {
                     buffer[cursorY][x] = ' ';
                     attrs[cursorY][x] = makeAttr(currentFg, currentBg, false, false, false);
+                    int idx = cursorY * cols + x;
+                    fgTrueColor[idx] = -1;
+                    bgTrueColor[idx] = -1;
                 }
                 break;
             case 2: // 整行
                 for (int x = 0; x < cols; x++) {
                     buffer[cursorY][x] = ' ';
                     attrs[cursorY][x] = makeAttr(currentFg, currentBg, false, false, false);
+                    int idx = cursorY * cols + x;
+                    fgTrueColor[idx] = -1;
+                    bgTrueColor[idx] = -1;
                 }
                 break;
         }
@@ -1193,7 +1398,9 @@ public class TerminalEmulator {
         if (params.length == 0) {
             params = new int[]{0};
         }
-        for (int p : params) {
+        int i = 0;
+        while (i < params.length) {
+            int p = params[i];
             switch (p) {
                 case 0: // 重置
                     currentFg = 7;
@@ -1201,6 +1408,10 @@ public class TerminalEmulator {
                     bold = false;
                     underline = false;
                     reverse = false;
+                    currentFgTrueColor = false;
+                    currentBgTrueColor = false;
+                    currentFgRgb = 0;
+                    currentBgRgb = 0;
                     break;
                 case 1: bold = true; break;
                 case 4: underline = true; break;
@@ -1208,22 +1419,89 @@ public class TerminalEmulator {
                 case 22: bold = false; break;
                 case 24: underline = false; break;
                 case 27: reverse = false; break;
+                case 38: {
+                    // 扩展前景色: 38;5;N (256色) 或 38;2;R;G;B (真彩色)
+                    if (i + 1 < params.length) {
+                        int mode = params[i + 1];
+                        if (mode == 5 && i + 2 < params.length) {
+                            // 256色模式: 38;5;N
+                            int idx = params[i + 2];
+                            currentFg = Math.max(0, Math.min(255, idx));
+                            currentFgTrueColor = false;
+                            i += 2;
+                        } else if (mode == 2 && i + 4 < params.length) {
+                            // 真彩色模式: 38;2;R;G;B
+                            int r = Math.max(0, Math.min(255, params[i + 2]));
+                            int g = Math.max(0, Math.min(255, params[i + 3]));
+                            int b = Math.max(0, Math.min(255, params[i + 4]));
+                            currentFgRgb = (r << 16) | (g << 8) | b;
+                            currentFgTrueColor = true;
+                            i += 4;
+                        } else if (mode == 3 && i + 2 < params.length) {
+                            // Linux控制台256色模式: 38;3;N
+                            int idx = params[i + 2];
+                            currentFg = Math.max(0, Math.min(255, idx));
+                            currentFgTrueColor = false;
+                            i += 2;
+                        } else {
+                            // 未知模式，跳过mode参数
+                            i += 1;
+                        }
+                    }
+                    break;
+                }
+                case 48: {
+                    // 扩展背景色: 48;5;N (256色) 或 48;2;R;G;B (真彩色)
+                    if (i + 1 < params.length) {
+                        int mode = params[i + 1];
+                        if (mode == 5 && i + 2 < params.length) {
+                            int idx = params[i + 2];
+                            currentBg = Math.max(0, Math.min(255, idx));
+                            currentBgTrueColor = false;
+                            i += 2;
+                        } else if (mode == 2 && i + 4 < params.length) {
+                            int r = Math.max(0, Math.min(255, params[i + 2]));
+                            int g = Math.max(0, Math.min(255, params[i + 3]));
+                            int b = Math.max(0, Math.min(255, params[i + 4]));
+                            currentBgRgb = (r << 16) | (g << 8) | b;
+                            currentBgTrueColor = true;
+                            i += 4;
+                        } else if (mode == 3 && i + 2 < params.length) {
+                            int idx = params[i + 2];
+                            currentBg = Math.max(0, Math.min(255, idx));
+                            currentBgTrueColor = false;
+                            i += 2;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    break;
+                }
+                case 39:
+                    currentFg = 7;
+                    currentFgTrueColor = false;
+                    break;
+                case 49:
+                    currentBg = 0;
+                    currentBgTrueColor = false;
+                    break;
                 default:
                     if (p >= 30 && p <= 37) {
                         currentFg = p - 30;
+                        currentFgTrueColor = false;
                     } else if (p >= 40 && p <= 47) {
                         currentBg = p - 40;
+                        currentBgTrueColor = false;
                     } else if (p >= 90 && p <= 97) {
                         currentFg = p - 90 + 8;
+                        currentFgTrueColor = false;
                     } else if (p >= 100 && p <= 107) {
                         currentBg = p - 100 + 8;
-                    } else if (p == 39) {
-                        currentFg = 7;
-                    } else if (p == 49) {
-                        currentBg = 0;
+                        currentBgTrueColor = false;
                     }
                     break;
             }
+            i++;
         }
     }
 
@@ -1237,22 +1515,39 @@ public class TerminalEmulator {
             if (top == 0 && !usingAltBuffer) {
                 char[] savedLine = new char[cols];
                 int[] savedAttr = new int[cols];
+                int[] savedFgTc = new int[cols];
+                int[] savedBgTc = new int[cols];
                 System.arraycopy(buffer[0], 0, savedLine, 0, cols);
                 System.arraycopy(attrs[0], 0, savedAttr, 0, cols);
+                for (int x = 0; x < cols; x++) {
+                    savedFgTc[x] = fgTrueColor[x];
+                    savedBgTc[x] = bgTrueColor[x];
+                }
                 scrollbackLines.addLast(savedLine);
                 scrollbackAttrs.addLast(savedAttr);
+                scrollbackFgTc.addLast(savedFgTc);
+                scrollbackBgTc.addLast(savedBgTc);
                 while (scrollbackLines.size() > maxScrollback) {
                     scrollbackLines.removeFirst();
                     scrollbackAttrs.removeFirst();
+                    scrollbackFgTc.removeFirst();
+                    scrollbackBgTc.removeFirst();
                 }
             }
             for (int y = top; y < bottom; y++) {
                 System.arraycopy(buffer[y + 1], 0, buffer[y], 0, cols);
                 System.arraycopy(attrs[y + 1], 0, attrs[y], 0, cols);
+                int srcIdx = (y + 1) * cols;
+                int dstIdx = y * cols;
+                System.arraycopy(fgTrueColor, srcIdx, fgTrueColor, dstIdx, cols);
+                System.arraycopy(bgTrueColor, srcIdx, bgTrueColor, dstIdx, cols);
             }
             for (int x = 0; x < cols; x++) {
                 buffer[bottom][x] = ' ';
                 attrs[bottom][x] = makeAttr(7, 0, false, false, false);
+                int idx = bottom * cols + x;
+                fgTrueColor[idx] = -1;
+                bgTrueColor[idx] = -1;
             }
         }
         if (scrollOffset > 0) {
@@ -1270,10 +1565,17 @@ public class TerminalEmulator {
             for (int y = bottom; y > top; y--) {
                 System.arraycopy(buffer[y - 1], 0, buffer[y], 0, cols);
                 System.arraycopy(attrs[y - 1], 0, attrs[y], 0, cols);
+                int srcIdx = (y - 1) * cols;
+                int dstIdx = y * cols;
+                System.arraycopy(fgTrueColor, srcIdx, fgTrueColor, dstIdx, cols);
+                System.arraycopy(bgTrueColor, srcIdx, bgTrueColor, dstIdx, cols);
             }
             for (int x = 0; x < cols; x++) {
                 buffer[top][x] = ' ';
                 attrs[top][x] = makeAttr(7, 0, false, false, false);
+                int idx = top * cols + x;
+                fgTrueColor[idx] = -1;
+                bgTrueColor[idx] = -1;
             }
         }
     }
@@ -1285,10 +1587,17 @@ public class TerminalEmulator {
                 for (int y = bottom; y > cursorY; y--) {
                     System.arraycopy(buffer[y - 1], 0, buffer[y], 0, cols);
                     System.arraycopy(attrs[y - 1], 0, attrs[y], 0, cols);
+                    int srcIdx = (y - 1) * cols;
+                    int dstIdx = y * cols;
+                    System.arraycopy(fgTrueColor, srcIdx, fgTrueColor, dstIdx, cols);
+                    System.arraycopy(bgTrueColor, srcIdx, bgTrueColor, dstIdx, cols);
                 }
                 for (int x = 0; x < cols; x++) {
                     buffer[cursorY][x] = ' ';
                     attrs[cursorY][x] = makeAttr(7, 0, false, false, false);
+                    int idx = cursorY * cols + x;
+                    fgTrueColor[idx] = -1;
+                    bgTrueColor[idx] = -1;
                 }
             }
         }
@@ -1300,34 +1609,53 @@ public class TerminalEmulator {
             for (int y = cursorY; y < bottom; y++) {
                 System.arraycopy(buffer[y + 1], 0, buffer[y], 0, cols);
                 System.arraycopy(attrs[y + 1], 0, attrs[y], 0, cols);
+                int srcIdx = (y + 1) * cols;
+                int dstIdx = y * cols;
+                System.arraycopy(fgTrueColor, srcIdx, fgTrueColor, dstIdx, cols);
+                System.arraycopy(bgTrueColor, srcIdx, bgTrueColor, dstIdx, cols);
             }
             for (int x = 0; x < cols; x++) {
                 buffer[bottom][x] = ' ';
                 attrs[bottom][x] = makeAttr(7, 0, false, false, false);
+                int idx = bottom * cols + x;
+                fgTrueColor[idx] = -1;
+                bgTrueColor[idx] = -1;
             }
         }
     }
 
     private void deleteChars(int n) {
         for (int x = cursorX; x < cols; x++) {
+            int idx = cursorY * cols + x;
             if (x + n < cols) {
                 buffer[cursorY][x] = buffer[cursorY][x + n];
                 attrs[cursorY][x] = attrs[cursorY][x + n];
+                int srcIdx = cursorY * cols + x + n;
+                fgTrueColor[idx] = fgTrueColor[srcIdx];
+                bgTrueColor[idx] = bgTrueColor[srcIdx];
             } else {
                 buffer[cursorY][x] = ' ';
                 attrs[cursorY][x] = makeAttr(7, 0, false, false, false);
+                fgTrueColor[idx] = -1;
+                bgTrueColor[idx] = -1;
             }
         }
     }
 
     private void insertChars(int n) {
         for (int x = cols - 1; x >= cursorX; x--) {
+            int idx = cursorY * cols + x;
             if (x - n >= cursorX) {
                 buffer[cursorY][x] = buffer[cursorY][x - n];
                 attrs[cursorY][x] = attrs[cursorY][x - n];
+                int srcIdx = cursorY * cols + x - n;
+                fgTrueColor[idx] = fgTrueColor[srcIdx];
+                bgTrueColor[idx] = bgTrueColor[srcIdx];
             } else {
                 buffer[cursorY][x] = ' ';
                 attrs[cursorY][x] = makeAttr(7, 0, false, false, false);
+                fgTrueColor[idx] = -1;
+                bgTrueColor[idx] = -1;
             }
         }
     }
@@ -1336,6 +1664,9 @@ public class TerminalEmulator {
         for (int i = 0; i < n && cursorX + i < cols; i++) {
             buffer[cursorY][cursorX + i] = ' ';
             attrs[cursorY][cursorX + i] = makeAttr(7, 0, false, false, false);
+            int idx = cursorY * cols + cursorX + i;
+            fgTrueColor[idx] = -1;
+            bgTrueColor[idx] = -1;
         }
     }
 
@@ -1352,11 +1683,16 @@ public class TerminalEmulator {
         bold = false;
         underline = false;
         reverse = false;
+        currentFgTrueColor = false;
+        currentBgTrueColor = false;
+        currentFgRgb = 0;
+        currentBgRgb = 0;
         cursorVisible = true;
         autoWrap = true;
         insertMode = false;
         applicationCursorKeys = false;
         originMode = false;
+        bracketedPasteMode = false;
         scrollTop = 0;
         scrollBottom = 0;
         suppressScreenModify = false;

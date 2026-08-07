@@ -212,8 +212,6 @@
     -fx-border-color: transparent;
     -fx-effect: none;
     -fx-background-radius: 0;
-    -fx-min-height: 200px;
-    -fx-pref-height: 400px;
 }
 
 .combo-box-popup .list-view .virtual-flow {
@@ -392,6 +390,7 @@
     -fx-padding: 0;
     -fx-background-radius: 0, 0, 0, 0;
     -fx-background-color: transparent, transparent, transparent, transparent;
+    -fx-table-header-height: 25;
 }
 
 .table-view:focused {
@@ -452,12 +451,36 @@
     -fx-background-color: -fx-body-color;
     -fx-border-color: transparent #DADAD8 #cccccc transparent;
     -fx-border-width: 0 1 1 0;
+    -fx-size: -fx-table-header-height;
 }
 
 /* filler：白色背景，无无边框，与数据行背景一致 */
 .table-view .column-header-background .filler {
     -fx-padding: 0;
     -fx-background-insets: 0;
+    -fx-background-color: white;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+}
+
+/* 注释标签页TextArea：去除边框和顶部线条 */
+.comment-text-area {
+    -fx-font-size: 13px;
+    -fx-background-color: white;
+    -fx-background-insets: 0;
+    -fx-background-radius: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-padding: 4;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+}
+.comment-text-area .scroll-pane {
+    -fx-background-color: white;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+}
+.comment-text-area .scroll-pane .content {
     -fx-background-color: white;
     -fx-border-color: transparent;
     -fx-border-width: 0;

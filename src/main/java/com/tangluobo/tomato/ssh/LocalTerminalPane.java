@@ -283,6 +283,13 @@ public class LocalTerminalPane extends BorderPane {
     }
 
     /**
+     * 请求终端输入焦点（切换标签时调用）
+     */
+    public void requestTerminalFocus() {
+        Platform.runLater(() -> terminalView.requestFocus());
+    }
+
+    /**
      * 连接本地终端
      * @param terminalType Windows: "cmd" 或 "powershell"; Linux/macOS: 忽略，使用系统默认Shell
      */
@@ -420,6 +427,11 @@ public class LocalTerminalPane extends BorderPane {
             String text = clipboard.getString();
             if (text != null && !text.isEmpty()) {
                 text = text.replace("\r\n", "\r").replace("\n", "\r");
+                // 括号粘贴模式：用\033[200~...\033[201~包裹内容，
+                // 让应用程序（如Claude CLI、bash）识别为粘贴而非逐字符输入
+                if (terminalView.getEmulator().isBracketedPasteMode()) {
+                    text = "\033[200~" + text + "\033[201~";
+                }
                 try {
                     if (conPTY != null) {
                         // ConPTY: 直接发送UTF-8，ConPTY像真实终端一样处理换行符

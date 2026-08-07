@@ -1,5 +1,7 @@
 package com.tangluobo.tomato.module.connect;
 
+import com.tangluobo.tomato.module.connect.service.OssService;
+import com.tangluobo.tomato.module.connect.service.S3Service;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
@@ -58,7 +60,7 @@ public class S3FileBrowserPane extends BorderPane {
 
     // 路径导航
     private HBox pathBar;
-    private Label currentPathLabel;
+    private TextField currentPathField;
     private Button refreshBtn;
     private Button upBtn;
     private Button createBucketBtn;
@@ -229,31 +231,37 @@ public class S3FileBrowserPane extends BorderPane {
     }
 
     private void initializeUI() {
+        // 当前路径输入框（可编辑，回车跳转；顶到视图切换按钮，始终显示文本框样式）
+        currentPathField = new TextField("/");
+        currentPathField.setPrefHeight(25);
+        currentPathField.setMinWidth(0);
+        currentPathField.setPrefWidth(0);
+        currentPathField.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(currentPathField, Priority.ALWAYS);
+        currentPathField.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-background-color: white; -fx-background-insets: 0; -fx-background-radius: 0; -fx-padding: 2 6; -fx-border-color: #3399ff; -fx-border-width: 1; -fx-border-insets: 0; -fx-border-radius: 0;");
+        currentPathField.setTooltip(new Tooltip("点击编辑路径，回车进入目录"));
+        // 获得焦点：全选文本；失去焦点：还原当前路径
+        currentPathField.focusedProperty().addListener((obs, oldVal, newVal) -> {
+            if (newVal) {
+                Platform.runLater(currentPathField::selectAll);
+            } else {
+                updatePathLabel();
+            }
+        });
+        // 回车：跳转到输入路径
+        currentPathField.setOnAction(e -> {
+            String input = currentPathField.getText();
+            pathBar.requestFocus(); // 转移焦点以触发失焦恢复显示
+            navigateToPath(input);
+        });
+
         // 顶部：路径导航栏
         pathBar = new HBox(8);
         pathBar.setAlignment(Pos.CENTER_LEFT);
         pathBar.setPadding(new Insets(6, 10, 6, 10));
         pathBar.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #dddddd; -fx-border-width: 0 0 1 0;");
 
-        statusDot = new Circle(5);
-        statusDot.setFill(Color.GRAY);
-        pathBar.getChildren().add(statusDot);
-
-        stateLabel = new Label("连接中...");
-        stateLabel.setStyle("-fx-font-size: 12px;");
-        pathBar.getChildren().add(stateLabel);
-
-        Label sep1 = new Label("|");
-        sep1.setStyle("-fx-text-fill: #cccccc; -fx-font-size: 11px;");
-        pathBar.getChildren().add(sep1);
-
-        connLabel = new Label(config.getName() + " (" + (config.getEndpoint() != null ? config.getEndpoint() : config.getRegion()) + ")");
-        connLabel.setStyle("-fx-font-size: 11px;");
-        pathBar.getChildren().add(connLabel);
-
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-        pathBar.getChildren().add(spacer);
+        pathBar.getChildren().add(currentPathField);
 
         // 视图切换按钮
         ToggleGroup viewToggleGroup = new ToggleGroup();
@@ -295,12 +303,32 @@ public class S3FileBrowserPane extends BorderPane {
 
         setTop(pathBar);
 
+        // 底部：状态栏（连接状态 + 主机信息）
+        HBox statusBar = new HBox(8);
+        statusBar.setAlignment(Pos.CENTER_LEFT);
+        statusBar.setPadding(new Insets(4, 10, 4, 10));
+        statusBar.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #dddddd; -fx-border-width: 1 0 0 0;");
+
+        statusDot = new Circle(5);
+        statusDot.setFill(Color.GRAY);
+        statusBar.getChildren().add(statusDot);
+
+        stateLabel = new Label("连接中...");
+        stateLabel.setStyle("-fx-font-size: 11px;");
+        statusBar.getChildren().add(stateLabel);
+
+        Label sep1 = new Label("|");
+        sep1.setStyle("-fx-text-fill: #cccccc; -fx-font-size: 11px;");
+        statusBar.getChildren().add(sep1);
+
+        connLabel = new Label(config.getName() + " (" + (config.getEndpoint() != null ? config.getEndpoint() : config.getRegion()) + ")");
+        connLabel.setStyle("-fx-font-size: 11px;");
+        statusBar.getChildren().add(connLabel);
+
+        setBottom(statusBar);
+
         initListView();
         initIconView();
-
-        currentPathLabel = new Label("/");
-        currentPathLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
-        currentPathLabel.setPadding(new Insets(4, 10, 4, 10));
     }
 
     private void initListView() {
@@ -387,7 +415,6 @@ public class S3FileBrowserPane extends BorderPane {
         currentViewMode = mode;
 
         VBox centerBox = new VBox();
-        centerBox.getChildren().add(currentPathLabel);
 
         if (mode == ViewMode.ICON) {
             rebuildIconView();
@@ -1133,11 +1160,64 @@ public class S3FileBrowserPane extends BorderPane {
 
     private void updatePathLabel() {
         if (currentBucket == null) {
-            currentPathLabel.setText("/");
+            currentPathField.setText("/");
         } else {
             String path = "/" + currentBucket + "/" + (currentPrefix != null ? currentPrefix : "");
-            currentPathLabel.setText(path);
+            currentPathField.setText(path);
         }
+    }
+
+    /**
+     * 跳转到指定路径（由路径输入框回车触发）
+     * 支持格式："/"（根=Bucket列表）、"/bucket"、"/bucket/prefix/"、"/bucket/prefix1/prefix2"
+     */
+    private void navigateToPath(String input) {
+        if (input == null) return;
+        String path = input.trim();
+        if (path.isEmpty()) {
+            updatePathLabel();
+            return;
+        }
+
+        // 规范化：确保以 / 开头
+        if (!path.startsWith("/")) {
+            path = "/" + path;
+        }
+        // 去除多余的末尾 /
+        while (path.length() > 1 && path.endsWith("/")) {
+            path = path.substring(0, path.length() - 1);
+        }
+
+        // 根目录：加载 Bucket 列表
+        if (path.equals("/")) {
+            pathHistory.clear();
+            loadBuckets();
+            return;
+        }
+
+        // /bucket 或 /bucket/prefix1/prefix2
+        String rest = path.substring(1);
+        int firstSlash = rest.indexOf('/');
+        String bucket;
+        String prefix;
+        if (firstSlash < 0) {
+            bucket = rest;
+            prefix = "";
+        } else {
+            bucket = rest.substring(0, firstSlash);
+            prefix = rest.substring(firstSlash + 1);
+            if (!prefix.isEmpty() && !prefix.endsWith("/")) {
+                prefix = prefix + "/";
+            }
+        }
+
+        if (bucket.isEmpty()) {
+            pathHistory.clear();
+            loadBuckets();
+            return;
+        }
+
+        loadObjects(bucket, prefix);
     }
 
     private void handleCreateBucket() {

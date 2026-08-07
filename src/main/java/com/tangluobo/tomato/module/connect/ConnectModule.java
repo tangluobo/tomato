@@ -1,7 +1,17 @@
 package com.tangluobo.tomato.module.connect;
 
 import com.tangluobo.tomato.module.Module;
-import com.tangluobo.tomato.rdp.RdpPane;
+import com.tangluobo.tomato.module.connect.dialog.BackupDialog;
+import com.tangluobo.tomato.module.connect.dialog.ConnectionConfigDialog;
+import com.tangluobo.tomato.module.connect.dialog.FolderDialog;
+import com.tangluobo.tomato.module.connect.dialog.RestoreDialog;
+import com.tangluobo.tomato.module.connect.handler.*;
+import com.tangluobo.tomato.module.connect.service.BackupService;
+import com.tangluobo.tomato.module.connect.service.DatabaseService;
+import com.tangluobo.tomato.module.connect.service.RedisService;
+import com.tangluobo.tomato.module.connect.service.RocketmqService;
+import com.tangluobo.tomato.module.connect.view.RocketmqDataView;
+import com.tangluobo.tomato.module.connect.view.SqlEditorView;
 import com.tangluobo.tomato.ssh.LocalTerminalPane;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
 import javafx.animation.KeyFrame;
@@ -21,7 +31,6 @@ import javafx.geometry.Pos;
 import javafx.stage.Stage;
 import javafx.beans.value.ChangeListener;
 
-import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -35,7 +44,7 @@ import java.util.Set;
 
 public class ConnectModule implements Module {
     private TreeView<String> treeView;
-    private TreeItem<String> root;
+    TreeItem<String> root;
     private List<ConnectionConfig> connections;
     private Map<TreeItem<String>, ConnectionConfig> itemConfigMap;
     private Map<TreeItem<String>, DatabaseNodeData> dbNodeDataMap;
@@ -48,6 +57,8 @@ public class ConnectModule implements Module {
     private Image folderIcon;
     private Image dbIcon;
     private Image dbIconGray;
+    private Image schemaIcon;
+    private Image schemaOpenIcon;
     private Image tableIcon;
     private Image viewIcon;
     private Image functionIcon;
@@ -68,7 +79,7 @@ public class ConnectModule implements Module {
 
     // 内容区域
     private VBox contentArea;
-    private TabPane terminalTabPane;
+    TabPane terminalTabPane;
 
     @Override
     public String getName() {
@@ -132,6 +143,8 @@ public class ConnectModule implements Module {
     private void loadDbIcons() {
         try { dbIcon = new Image(getClass().getResourceAsStream("/images/connect/database.png")); } catch (Exception e) { dbIcon = null; }
         try { dbIconGray = new Image(getClass().getResourceAsStream("/images/connect/database_gray.png")); } catch (Exception e) { dbIconGray = null; }
+        try { schemaIcon = new Image(getClass().getResourceAsStream("/images/connect/mod.png")); } catch (Exception e) { schemaIcon = null; }
+        try { schemaOpenIcon = new Image(getClass().getResourceAsStream("/images/connect/mod_open.png")); } catch (Exception e) { schemaOpenIcon = null; }
         try { tableIcon = new Image(getClass().getResourceAsStream("/images/connect/table.png")); } catch (Exception e) { tableIcon = null; }
         try { viewIcon = new Image(getClass().getResourceAsStream("/images/connect/view.png")); } catch (Exception e) { viewIcon = null; }
         try { queryIcon = new Image(getClass().getResourceAsStream("/images/connect/query.png")); } catch (Exception e) { queryIcon = null; }
@@ -150,13 +163,27 @@ public class ConnectModule implements Module {
         try { aliyunDomainIcon = new Image(getClass().getResourceAsStream("/images/connect/s3.png")); } catch (Exception e) { aliyunDomainIcon = null; }
     }
 
-    private ImageView getDbNodeIcon(DatabaseNodeData data) {
+    /**
+     * 根据连接类型创建对应的数据库处理器
+     */
+    AbstractDbHandler createDbHandler(ConnectionConfig config) {
+        return switch (config.getType()) {
+            case MYSQL -> new MysqlDbHandler(this);
+            case POSTGRESQL -> new PostgresDbHandler(this);
+            case ORACLE -> new OracleDbHandler(this);
+            default -> null;
+        };
+    }
+
+    /** 供 handler 调用：根据节点数据获取图标 */
+    public ImageView getDbNodeIcon(DatabaseNodeData data) {
         ImageView iv = new ImageView();
         iv.setFitWidth(20);
         iv.setFitHeight(20);
         Image icon = switch (data.getType()) {
             case DATABASE -> data.isOpened() ? dbIcon : dbIconGray;
             case REDIS_DB -> data.isOpened() ? dbIcon : dbIconGray;
+            case SCHEMA -> data.isOpened() ? schemaOpenIcon : schemaIcon;
             case TABLES_FOLDER -> tableIcon;
             case VIEWS_FOLDER -> viewIcon;
             case QUERY_FOLDER -> queryIcon;
@@ -180,6 +207,24 @@ public class ConnectModule implements Module {
         };
         if (icon != null) iv.setImage(icon);
         return iv;
+    }
+
+    /** 供 handler 调用：获取表图标（原始 Image） */
+    public Image getTableIcon() { return tableIcon; }
+
+    /** 供 handler 调用：获取视图图标（原始 Image） */
+    public Image getViewIcon() { return viewIcon; }
+
+    /** 供 handler 调用：获取查询图标（原始 Image） */
+    public Image getQueryIcon() { return queryIcon; }
+
+    /** 供 handler 调用：获取连接配置列表 */
+    public List<ConnectionConfig> getConnections() { return connections; }
+
+    /** 供 handler 调用：判断主机节点是否已连接 */
+    public boolean isHostConnected(TreeItem<String> hostItem) {
+        Boolean connected = connectionStateMap.get(hostItem);
+        return connected != null && connected;
     }
 
     private void loadTree() {
@@ -272,7 +317,7 @@ public class ConnectModule implements Module {
 
         if (config.getType() == ConnectType.MYSQL) {
             item.expandedProperty().addListener((obs, wasExpanded, isExpanded) -> {
-                updateMysqlHostIcon(item, config);
+                updateHostIcon(item, config, connectionStateMap.getOrDefault(item, false));
             });
         }
 
@@ -288,7 +333,8 @@ public class ConnectModule implements Module {
         return item;
     }
 
-    private ImageView getIconForConfig(ConnectionConfig config) {
+    /** 供 handler 调用：根据连接配置获取图标 */
+    public ImageView getIconForConfig(ConnectionConfig config) {
         ImageView imageView = new ImageView();
         imageView.setFitWidth(20);
         imageView.setFitHeight(20);
@@ -310,7 +356,33 @@ public class ConnectModule implements Module {
         return imageView;
     }
 
-    private TreeItem<String> findItemById(TreeItem<String> root, String id) {
+    /** 供 handler 调用：获取树根节点 */
+    public TreeItem<String> getRoot() {
+        return root;
+    }
+
+    /** 供 handler 调用：获取连接中的主机节点集合 */
+    public Set<TreeItem<String>> getConnectingHosts() {
+        return connectingHosts;
+    }
+
+    /** 供 handler 调用：获取节点数据映射 */
+    public Map<TreeItem<String>, DatabaseNodeData> getDbNodeDataMap() {
+        return dbNodeDataMap;
+    }
+
+    /** 供 handler 调用：获取树视图 */
+    public TreeView<String> getTreeView() {
+        return treeView;
+    }
+
+    /** 供 handler 调用：更新连接状态映射 */
+    public void markConnectionState(TreeItem<String> hostItem, boolean connected) {
+        connectionStateMap.put(hostItem, connected);
+    }
+
+    /** 供 handler 调用：根据 ID 查找树节点 */
+    public TreeItem<String> findItemById(TreeItem<String> root, String id) {
         ConnectionConfig config = itemConfigMap.get(root);
         if (config != null && config.getId().equals(id)) {
             return root;
@@ -353,100 +425,10 @@ public class ConnectModule implements Module {
             } else {
                 DatabaseNodeData dbData = dbNodeDataMap.get(targetItem);
                 if (dbData != null) {
-                    switch (dbData.getType()) {
-                        case DATABASE -> {
-                            if (dbData.isOpened()) {
-                                MenuItem closeDbItem = new MenuItem("关闭");
-                                closeDbItem.setOnAction(e -> closeDatabase(targetItem, dbData));
-                                contextMenu.getItems().add(closeDbItem);
-                            } else {
-                                MenuItem openDbItem = new MenuItem("打开");
-                                openDbItem.setOnAction(e -> openDatabase(targetItem, dbData));
-                                contextMenu.getItems().add(openDbItem);
-                            }
-                            MenuItem editDbItem = new MenuItem("编辑");
-                            editDbItem.setOnAction(e -> handleEditDatabase(targetItem, dbData));
-                            MenuItem deleteDbItem = new MenuItem("删除");
-                            deleteDbItem.setOnAction(e -> handleDeleteDatabase(targetItem, dbData));
-                            MenuItem refreshItem = new MenuItem("刷新");
-                            refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
-                            contextMenu.getItems().addAll(new SeparatorMenuItem(), editDbItem, deleteDbItem, new SeparatorMenuItem(), refreshItem);
-                        }
-                        case REDIS_DB -> {
-                            MenuItem openItem = new MenuItem("打开");
-                            openItem.setOnAction(e -> handleRedisDbDoubleClick(targetItem, dbData));
-                            contextMenu.getItems().add(openItem);
-                        }
-                        case ROCKETMQ_TOPICS_FOLDER, ROCKETMQ_CONSUMERS_FOLDER, ROCKETMQ_CLUSTER_FOLDER, ALIYUN_PRODUCT_FOLDER -> {
-                            MenuItem refreshItem = new MenuItem("刷新");
-                            refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
-                            contextMenu.getItems().addAll(refreshItem);
-                        }
-                        case ROCKETMQ_TOPIC -> {
-                            MenuItem openItem = new MenuItem("查看详情");
-                            openItem.setOnAction(e -> handleRocketmqTopicDoubleClick(targetItem, dbData));
-                            MenuItem deleteItem = new MenuItem("删除主题");
-                            deleteItem.setOnAction(e -> handleDeleteRocketmqTopic(targetItem, dbData));
-                            contextMenu.getItems().addAll(openItem, new SeparatorMenuItem(), deleteItem);
-                        }
-                        case ROCKETMQ_CONSUMER -> {
-                            MenuItem openItem = new MenuItem("查看详情");
-                            openItem.setOnAction(e -> handleRocketmqConsumerDoubleClick(targetItem, dbData));
-                            contextMenu.getItems().addAll(openItem);
-                        }
-                        case ROCKETMQ_BROKER -> {
-                            MenuItem openItem = new MenuItem("查看详情");
-                            openItem.setOnAction(e -> handleRocketmqBrokerDoubleClick(targetItem, dbData));
-                            contextMenu.getItems().addAll(openItem);
-                        }
-                        case TABLES_FOLDER, VIEWS_FOLDER -> {
-                            MenuItem refreshItem = new MenuItem("刷新");
-                            refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
-                            contextMenu.getItems().add(refreshItem);
-                        }
-                        case QUERY_FOLDER -> {
-                            MenuItem newQueryItem = new MenuItem("新建查询");
-                            newQueryItem.setOnAction(e -> handleNewQuery(targetItem, dbData));
-                            MenuItem refreshItem = new MenuItem("刷新");
-                            refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
-                            contextMenu.getItems().addAll(newQueryItem, new SeparatorMenuItem(), refreshItem);
-                        }
-                        case BACKUP_FOLDER -> {
-                            MenuItem newBackupItem = new MenuItem("新建备份");
-                            newBackupItem.setOnAction(e -> handleNewBackup(targetItem, dbData));
-                            MenuItem refreshItem = new MenuItem("刷新");
-                            refreshItem.setOnAction(e -> handleRefreshDbNode(targetItem, dbData));
-                            contextMenu.getItems().addAll(newBackupItem, new SeparatorMenuItem(), refreshItem);
-                        }
-                        case TABLE, VIEW -> {
-                            MenuItem designItem = new MenuItem("设计表");
-                            designItem.setOnAction(e -> handleTableStructureDoubleClick(targetItem, dbData));
-                            MenuItem openDataItem = new MenuItem("打开数据");
-                            openDataItem.setOnAction(e -> handleTableDataDoubleClick(targetItem, dbData));
-                            MenuItem deleteItem = new MenuItem("删除");
-                            deleteItem.setOnAction(e -> handleDeleteDbNodes());
-                            contextMenu.getItems().addAll(designItem, openDataItem, new SeparatorMenuItem(), deleteItem);
-                        }
-                        case QUERY -> {
-                            MenuItem openQueryItem = new MenuItem("打开");
-                            openQueryItem.setOnAction(e -> handleQueryDoubleClick(targetItem, dbData));
-                            MenuItem renameQueryItem = new MenuItem("重命名");
-                            renameQueryItem.setOnAction(e -> handleRenameQuery(targetItem, dbData));
-                            MenuItem deleteQueryItem = new MenuItem("删除");
-                            deleteQueryItem.setOnAction(e -> handleDeleteQuery(targetItem, dbData));
-                            contextMenu.getItems().addAll(openQueryItem, new SeparatorMenuItem(), renameQueryItem, deleteQueryItem);
-                        }
-                        case BACKUP -> {
-                            MenuItem restoreItem = new MenuItem("还原备份");
-                            restoreItem.setOnAction(e -> handleRestoreBackup(targetItem, dbData));
-                            MenuItem openDirItem = new MenuItem("打开备份目录");
-                            openDirItem.setOnAction(e -> handleOpenBackupDir(dbData));
-                            MenuItem renameBackupItem = new MenuItem("重命名");
-                            renameBackupItem.setOnAction(e -> handleRenameBackup(targetItem, dbData));
-                            MenuItem deleteBackupItem = new MenuItem("删除");
-                            deleteBackupItem.setOnAction(e -> handleDeleteBackup(targetItem, dbData));
-                            contextMenu.getItems().addAll(restoreItem, new SeparatorMenuItem(), openDirItem, new SeparatorMenuItem(), renameBackupItem, deleteBackupItem);
-                        }
+                    // 委托给对应连接类型的 handler 构建节点右键菜单
+                    ConnectHandler handler = createConnectHandler(dbData.getConnectionConfig());
+                    if (handler != null) {
+                        handler.populateNodeContextMenu(this, contextMenu, targetItem, dbData);
                     }
                 } else {
                     ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
@@ -459,11 +441,14 @@ public class ConnectModule implements Module {
                         boolean isAliyun = targetConfig.getType() == ConnectType.ALIYUN;
                         if (isDatabase) {
                             MenuItem createDbItem = new MenuItem("新建数据库");
-                            createDbItem.setOnAction(e -> handleCreateDatabase(targetItem, targetConfig));
+                            createDbItem.setOnAction(e -> {
+                                AbstractDbHandler h = createDbHandler(targetConfig);
+                                if (h != null) h.handleCreateDatabase(targetItem, targetConfig);
+                            });
                             contextMenu.getItems().add(createDbItem);
                             if (!targetItem.getChildren().isEmpty()) {
                                 MenuItem refreshItem = new MenuItem("刷新");
-                                refreshItem.setOnAction(e -> handleRefreshDbHost(targetItem, targetConfig));
+                                refreshItem.setOnAction(e -> refreshDbHost(targetItem, targetConfig));
                                 MenuItem closeConnItem = new MenuItem("关闭连接");
                                 closeConnItem.setOnAction(e -> closeHostConnection(targetItem, targetConfig));
                                 contextMenu.getItems().addAll(refreshItem, closeConnItem);
@@ -472,7 +457,7 @@ public class ConnectModule implements Module {
                         if (isRedis) {
                             if (!targetItem.getChildren().isEmpty()) {
                                 MenuItem refreshItem = new MenuItem("刷新");
-                                refreshItem.setOnAction(e -> handleRefreshDbHost(targetItem, targetConfig));
+                                refreshItem.setOnAction(e -> refreshDbHost(targetItem, targetConfig));
                                 MenuItem closeConnItem = new MenuItem("关闭连接");
                                 closeConnItem.setOnAction(e -> closeHostConnection(targetItem, targetConfig));
                                 contextMenu.getItems().addAll(refreshItem, closeConnItem);
@@ -481,7 +466,7 @@ public class ConnectModule implements Module {
                         if (isRocketmq) {
                             if (!targetItem.getChildren().isEmpty()) {
                                 MenuItem refreshItem = new MenuItem("刷新");
-                                refreshItem.setOnAction(e -> handleRefreshDbHost(targetItem, targetConfig));
+                                refreshItem.setOnAction(e -> refreshDbHost(targetItem, targetConfig));
                                 MenuItem closeConnItem = new MenuItem("关闭连接");
                                 closeConnItem.setOnAction(e -> closeHostConnection(targetItem, targetConfig));
                                 contextMenu.getItems().addAll(refreshItem, closeConnItem);
@@ -490,7 +475,7 @@ public class ConnectModule implements Module {
                         if (isAliyun) {
                             if (!targetItem.getChildren().isEmpty()) {
                                 MenuItem refreshItem = new MenuItem("刷新");
-                                refreshItem.setOnAction(e -> handleRefreshDbHost(targetItem, targetConfig));
+                                refreshItem.setOnAction(e -> refreshDbHost(targetItem, targetConfig));
                                 contextMenu.getItems().add(refreshItem);
                             }
                         }
@@ -631,23 +616,7 @@ public class ConnectModule implements Module {
                     treeView.setEditable(false);
                 }
                 if (isHost) {
-                    boolean isDatabase = config.getType() == ConnectType.MYSQL
-                            || config.getType() == ConnectType.POSTGRESQL
-                            || config.getType() == ConnectType.ORACLE;
-                    boolean isRedis = config.getType() == ConnectType.REDIS;
-                    boolean isRocketmq = config.getType() == ConnectType.ROCKETMQ;
-                    boolean isAliyun = config.getType() == ConnectType.ALIYUN;
-                    if (isDatabase) {
-                        handleDbHostDoubleClick(selectedItem, config);
-                    } else if (isRedis) {
-                        handleRedisHostDoubleClick(selectedItem, config);
-                    } else if (isRocketmq) {
-                        handleRocketmqHostDoubleClick(selectedItem, config);
-                    } else if (isAliyun) {
-                        handleAliyunHostDoubleClick(selectedItem, config);
-                    } else {
-                        handleConnect(config);
-                    }
+                    triggerHostDoubleClick(selectedItem, config);
                 }
                 selectedItemBeforeClick = null;
                 recentlyEditedItem = null;
@@ -970,1488 +939,100 @@ public class ConnectModule implements Module {
         ConfigManager.saveConnections(connections);
     }
 
-    private void handleDbHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
-        if (connectingHosts.contains(hostItem)) {
-            return;
-        }
-        if (!hostItem.getChildren().isEmpty()) {
-            hostItem.setExpanded(!hostItem.isExpanded());
-            return;
-        }
-
-        if (config.getPassword() == null) {
-            Dialog<String> pwdDialog = new Dialog<>();
-            pwdDialog.setTitle("输入密码");
-            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
-            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-            GridPane grid = new GridPane();
-            grid.setHgap(10);
-            grid.setVgap(10);
-            grid.setPadding(new Insets(20, 10, 10, 10));
-            PasswordField pf = new PasswordField();
-            pf.setPrefWidth(250);
-            grid.add(new Label("密码："), 0, 0);
-            grid.add(pf, 1, 0);
-            pwdDialog.getDialogPane().setContent(grid);
-            pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
-            final String[] passwordHolder = new String[1];
-            pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
-            if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
-            config.setPassword(passwordHolder[0]);
-        }
-
-        connectingHosts.add(hostItem);
-
-        ProgressIndicator loadingIndicator = new ProgressIndicator();
-        loadingIndicator.setPrefSize(16, 16);
-        loadingIndicator.setMaxSize(16, 16);
-        loadingIndicator.setStyle("-fx-progress-color: #4CAF50;");
-        hostItem.setGraphic(loadingIndicator);
-        treeView.refresh();
-
-        new Thread(() -> {
-            try {
-                List<String> databases = DatabaseService.getDatabases(config);
-                Platform.runLater(() -> {
-                    connectingHosts.remove(hostItem);
-                    updateHostIcon(hostItem, config, true);
-
-                    hostItem.getChildren().clear();
-                    for (String dbName : databases) {
-                        TreeItem<String> dbItem = new TreeItem<>(dbName);
-                        dbItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.DATABASE, dbName, config, dbName)));
-                        dbNodeDataMap.put(dbItem, new DatabaseNodeData(DatabaseNodeData.NodeType.DATABASE, dbName, config, dbName));
-                        hostItem.getChildren().add(dbItem);
-                    }
-                    hostItem.setExpanded(true);
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    connectingHosts.remove(hostItem);
-                    hostItem.setGraphic(getIconForConfig(config));
-                    treeView.refresh();
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("连接失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("无法连接到 " + config.getName() + ": " + e.getMessage());
-                    alert.showAndWait();
-                });
-                e.printStackTrace();
-            }
-        }, "DB-LoadDatabases").start();
-    }
-
-    private void handleRedisHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
-        if (!hostItem.getChildren().isEmpty()) {
-            hostItem.setExpanded(!hostItem.isExpanded());
-            return;
-        }
-
-        if (config.getPassword() == null) {
-            Dialog<String> pwdDialog = new Dialog<>();
-            pwdDialog.setTitle("输入密码");
-            pwdDialog.setHeaderText(config.getName() + " (" + config.getHost() + ":" + config.getPort() + ")");
-            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-            GridPane grid = new GridPane();
-            grid.setHgap(10);
-            grid.setVgap(10);
-            grid.setPadding(new Insets(20, 10, 10, 10));
-            PasswordField pf = new PasswordField();
-            pf.setPrefWidth(250);
-            grid.add(new Label("密码："), 0, 0);
-            grid.add(pf, 1, 0);
-            pwdDialog.getDialogPane().setContent(grid);
-            pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
-            final String[] passwordHolder = new String[1];
-            pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
-            if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
-            config.setPassword(passwordHolder[0]);
-        }
-
-        ProgressIndicator loadingIndicator = new ProgressIndicator();
-        loadingIndicator.setPrefSize(16, 16);
-        loadingIndicator.setMaxSize(16, 16);
-        loadingIndicator.setStyle("-fx-progress-color: #4CAF50;");
-        hostItem.setGraphic(loadingIndicator);
-
-        new Thread(() -> {
-            try {
-                List<String> databases = RedisService.getDatabases(config);
-                Platform.runLater(() -> {
-                    updateHostIcon(hostItem, config, true);
-
-                    hostItem.getChildren().clear();
-                    for (String dbIndex : databases) {
-                        String dbName = "db" + dbIndex;
-                        TreeItem<String> dbItem = new TreeItem<>(dbName);
-                        dbItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.REDIS_DB, dbName, config, dbName)));
-                        dbNodeDataMap.put(dbItem, new DatabaseNodeData(DatabaseNodeData.NodeType.REDIS_DB, dbName, config, dbName));
-                        hostItem.getChildren().add(dbItem);
-                    }
-                    hostItem.setExpanded(true);
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    hostItem.setGraphic(getIconForConfig(config));
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("连接失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("无法连接到Redis " + config.getName() + ": " + e.getMessage());
-                    alert.showAndWait();
-                });
-                e.printStackTrace();
-            }
-        }, "Redis-LoadDatabases").start();
-    }
-
-    private void handleRocketmqHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
-        if (!hostItem.getChildren().isEmpty()) {
-            hostItem.setExpanded(!hostItem.isExpanded());
-            return;
-        }
-
-        ProgressIndicator loadingIndicator = new ProgressIndicator();
-        loadingIndicator.setPrefSize(16, 16);
-        loadingIndicator.setMaxSize(16, 16);
-        loadingIndicator.setStyle("-fx-progress-color: #4CAF50;");
-        hostItem.setGraphic(loadingIndicator);
-
-        new Thread(() -> {
-            try {
-                boolean connected = RocketmqService.testConnection(config);
-                if (!connected) {
-                    Platform.runLater(() -> {
-                        hostItem.setGraphic(getIconForConfig(config));
-                        Alert alert = new Alert(Alert.AlertType.ERROR);
-                        alert.setTitle("连接失败");
-                        alert.setHeaderText(null);
-                        alert.setContentText("无法连接到RocketMQ NameServer: " + config.getHost() + ":" + config.getPort());
-                        alert.showAndWait();
-                    });
-                    return;
-                }
-                Platform.runLater(() -> {
-                    updateHostIcon(hostItem, config, true);
-                    hostItem.getChildren().clear();
-
-                    // 主题节点
-                    TreeItem<String> topicsFolder = new TreeItem<>("主题");
-                    topicsFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_TOPICS_FOLDER, "主题", config, "")));
-                    dbNodeDataMap.put(topicsFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_TOPICS_FOLDER, "主题", config, ""));
-
-                    // 消费者组节点
-                    TreeItem<String> consumersFolder = new TreeItem<>("消费者组");
-                    consumersFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_CONSUMERS_FOLDER, "消费者组", config, "")));
-                    dbNodeDataMap.put(consumersFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_CONSUMERS_FOLDER, "消费者组", config, ""));
-
-                    // 集群节点
-                    TreeItem<String> clusterFolder = new TreeItem<>("集群");
-                    clusterFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_CLUSTER_FOLDER, "集群", config, "")));
-                    dbNodeDataMap.put(clusterFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_CLUSTER_FOLDER, "集群", config, ""));
-
-                    hostItem.getChildren().addAll(topicsFolder, consumersFolder, clusterFolder);
-                    hostItem.setExpanded(true);
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    hostItem.setGraphic(getIconForConfig(config));
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("连接失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("无法连接到RocketMQ " + config.getName() + ": " + e.getMessage());
-                    alert.showAndWait();
-                });
-                e.printStackTrace();
-            }
-        }, "RocketMQ-Connect").start();
-    }
-
-    private void handleAliyunHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
-        if (!hostItem.getChildren().isEmpty()) {
-            hostItem.setExpanded(!hostItem.isExpanded());
-            return;
-        }
-
-        // 如果SK未保存，弹窗输入
-        if (config.getPassword() == null || config.getPassword().isEmpty()) {
-            Dialog<String> skDialog = new Dialog<>();
-            skDialog.setTitle("输入Secret Key");
-            skDialog.setHeaderText(config.getName() + " (" + config.getUsername() + ")");
-            skDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-            GridPane grid = new GridPane();
-            grid.setHgap(10);
-            grid.setVgap(10);
-            grid.setPadding(new Insets(20, 10, 10, 10));
-            PasswordField pf = new PasswordField();
-            pf.setPrefWidth(250);
-            pf.setPromptText("AccessKey Secret");
-            grid.add(new Label("Secret Key："), 0, 0);
-            grid.add(pf, 1, 0);
-            skDialog.getDialogPane().setContent(grid);
-            skDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
-            final String[] skHolder = new String[1];
-            skDialog.showAndWait().ifPresentOrElse(sk -> skHolder[0] = sk, () -> {});
-            if (skHolder[0] == null || skHolder[0].isEmpty()) return;
-            config.setPassword(skHolder[0]);
-        }
-
-        ProgressIndicator loadingIndicator = new ProgressIndicator();
-        loadingIndicator.setPrefSize(16, 16);
-        loadingIndicator.setMaxSize(16, 16);
-        loadingIndicator.setStyle("-fx-progress-color: #4CAF50;");
-        hostItem.setGraphic(loadingIndicator);
-
-        new Thread(() -> {
-            try {
-                boolean authenticated = AliyunService.verifyCredentials(config);
-                if (!authenticated) {
-                    Platform.runLater(() -> {
-                        hostItem.setGraphic(getIconForConfig(config));
-                        Alert alert = new Alert(Alert.AlertType.ERROR);
-                        alert.setTitle("认证失败");
-                        alert.setHeaderText(null);
-                        alert.setContentText("阿里云OAuth2认证失败，请检查AccessKey和SecretKey是否正确");
-                        alert.showAndWait();
-                    });
-                    return;
-                }
-                Platform.runLater(() -> {
-                    updateHostIcon(hostItem, config, true);
-                    hostItem.getChildren().clear();
-
-                    // 加载可访问的云服务产品列表为子节点
-                    for (AliyunService.AliyunProduct product : AliyunService.getSupportedProducts()) {
-                        TreeItem<String> productItem = new TreeItem<>(product.getName());
-                        productItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ALIYUN_PRODUCT_FOLDER, product.getName(), config, product.getCode())));
-                        dbNodeDataMap.put(productItem, new DatabaseNodeData(DatabaseNodeData.NodeType.ALIYUN_PRODUCT_FOLDER, product.getName(), config, product.getCode()));
-                        hostItem.getChildren().add(productItem);
-                    }
-                    hostItem.setExpanded(true);
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    hostItem.setGraphic(getIconForConfig(config));
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("连接失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("无法连接到阿里云 " + config.getName() + ": " + e.getMessage());
-                    alert.showAndWait();
-                });
-                e.printStackTrace();
-            }
-        }, "Aliyun-Connect").start();
-    }
-
-    private void handleRocketmqFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
-        ConnectionConfig config = data.getConnectionConfig();
-
-        if (!folderItem.getChildren().isEmpty()) {
-            folderItem.setExpanded(!folderItem.isExpanded());
-            return;
-        }
-
-        loadRocketmqTopicsForFolder(folderItem, config);
-        folderItem.setExpanded(true);
-    }
-
-    private void loadRocketmqTopicsForFolder(TreeItem<String> folderItem, ConnectionConfig config) {
-        new Thread(() -> {
-            try {
-                List<Map<String, Object>> topics = RocketmqService.getTopicList(config);
-                Platform.runLater(() -> {
-                    folderItem.getChildren().clear();
-                    for (Map<String, Object> t : topics) {
-                        String name = String.valueOf(t.getOrDefault("topic", ""));
-                        if (name.startsWith("%")) continue;
-                        TreeItem<String> topicItem = new TreeItem<>(name);
-                        topicItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_TOPIC, name, config, "")));
-                        dbNodeDataMap.put(topicItem, new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_TOPIC, name, config, ""));
-                        folderItem.getChildren().add(topicItem);
-                    }
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("加载失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("无法加载主题列表: " + e.getMessage());
-                    alert.showAndWait();
-                });
-            }
-        }, "RocketMQ-LoadTopics").start();
-    }
-
-    private void loadRocketmqConsumersForFolder(TreeItem<String> folderItem, ConnectionConfig config) {
-        new Thread(() -> {
-            try {
-                List<Map<String, Object>> consumers = RocketmqService.getConsumerGroupList(config);
-                Platform.runLater(() -> {
-                    folderItem.getChildren().clear();
-                    for (Map<String, Object> c : consumers) {
-                        String group = String.valueOf(c.getOrDefault("group", ""));
-                        TreeItem<String> consumerItem = new TreeItem<>(group);
-                        consumerItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_CONSUMER, group, config, "")));
-                        dbNodeDataMap.put(consumerItem, new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_CONSUMER, group, config, ""));
-                        folderItem.getChildren().add(consumerItem);
-                    }
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("加载失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("无法加载消费者组列表: " + e.getMessage());
-                    alert.showAndWait();
-                });
-            }
-        }, "RocketMQ-LoadConsumers").start();
-    }
-
-    private void loadRocketmqClusterForFolder(TreeItem<String> folderItem, ConnectionConfig config) {
-        new Thread(() -> {
-            try {
-                List<Map<String, Object>> cluster = RocketmqService.getClusterInfo(config);
-                Platform.runLater(() -> {
-                    folderItem.getChildren().clear();
-                    for (Map<String, Object> c : cluster) {
-                        String brokerName = String.valueOf(c.getOrDefault("brokerName", ""));
-                        String address = String.valueOf(c.getOrDefault("address", ""));
-                        String displayName = brokerName + " (" + address + ")";
-                        TreeItem<String> brokerItem = new TreeItem<>(displayName);
-                        brokerItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_BROKER, displayName, config, "")));
-                        dbNodeDataMap.put(brokerItem, new DatabaseNodeData(DatabaseNodeData.NodeType.ROCKETMQ_BROKER, displayName, config, ""));
-                        folderItem.getChildren().add(brokerItem);
-                    }
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("加载失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("无法加载集群信息: " + e.getMessage());
-                    alert.showAndWait();
-                });
-            }
-        }, "RocketMQ-LoadCluster").start();
-    }
-
-    private void handleAliyunProductFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
-        if (!folderItem.getChildren().isEmpty()) {
-            folderItem.setExpanded(!folderItem.isExpanded());
-            return;
-        }
-        loadAliyunProductChildren(folderItem, data);
-        folderItem.setExpanded(true);
-    }
-
-    private void loadAliyunProductChildren(TreeItem<String> productItem, DatabaseNodeData data) {
-        String productCode = data.getDatabaseName(); // product code stored in databaseName field
-        ConnectionConfig config = data.getConnectionConfig();
-
-        new Thread(() -> {
-            try {
-                switch (productCode) {
-                    case "ecs" -> {
-                        List<Map<String, Object>> instances = AliyunService.getEcsInstances(config, "cn-hangzhou");
-                        Platform.runLater(() -> {
-                            productItem.getChildren().clear();
-                            for (Map<String, Object> instance : instances) {
-                                String name = (String) instance.getOrDefault("instanceName", instance.get("instanceId"));
-                                String status = (String) instance.getOrDefault("status", "");
-                                String displayName = name + " (" + status + ")";
-                                TreeItem<String> instanceItem = new TreeItem<>(displayName);
-                                instanceItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ALIYUN_ECS_INSTANCE, displayName, config, (String) instance.get("instanceId"))));
-                                dbNodeDataMap.put(instanceItem, new DatabaseNodeData(DatabaseNodeData.NodeType.ALIYUN_ECS_INSTANCE, displayName, config, (String) instance.get("instanceId")));
-                                productItem.getChildren().add(instanceItem);
-                            }
-                            productItem.setExpanded(true);
-                        });
-                    }
-                    case "domain" -> {
-                        List<Map<String, Object>> domains = AliyunService.getDomainList(config);
-                        Platform.runLater(() -> {
-                            productItem.getChildren().clear();
-                            for (Map<String, Object> domain : domains) {
-                                String domainName = String.valueOf(domain.getOrDefault("domainName", ""));
-                                TreeItem<String> domainItem = new TreeItem<>(domainName);
-                                domainItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ALIYUN_DOMAIN, domainName, config, String.valueOf(domain.getOrDefault("instanceId", "")))));
-                                dbNodeDataMap.put(domainItem, new DatabaseNodeData(DatabaseNodeData.NodeType.ALIYUN_DOMAIN, domainName, config, String.valueOf(domain.getOrDefault("instanceId", ""))));
-                                productItem.getChildren().add(domainItem);
-                            }
-                            productItem.setExpanded(true);
-                        });
-                    }
-                    default -> {
-                        // 其他产品暂不支持展开
-                        Platform.runLater(() -> {
-                            Label placeholder = new Label("暂不支持查看" + data.getName() + "详情");
-                            placeholder.setStyle("-fx-text-fill: #999; -fx-font-size: 11px;");
-                        });
-                    }
-                }
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("加载失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("无法加载" + data.getName() + "列表: " + e.getMessage());
-                    alert.showAndWait();
-                });
-            }
-        }, "Aliyun-LoadProduct").start();
-    }
-
-    private void handleAliyunDomainDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        ConnectionConfig config = data.getConnectionConfig();
-        String domainName = data.getName();
-        String tabId = "aliyun_domain_" + config.getId() + "_" + domainName;
-
-        // 如果已有该标签，直接选中
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-
-        AliyunDomainDataView domainView = new AliyunDomainDataView(config, domainName);
-
-        String tabTitle = "子域名(" + domainName + ")";
-        Tab tab = new Tab(tabTitle);
-
-        try {
-            Image aliyunIcon = new Image(getClass().getResourceAsStream("/images/connect/aliyun.png"));
-            ImageView tabIconView = new ImageView(aliyunIcon);
-            tabIconView.setFitWidth(18);
-            tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
-        } catch (Exception ignored) {}
-
-        tab.setContent(domainView);
-        tab.setUserData(tabId);
-        tab.setOnClosed(e -> {
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showDataView();
-    }
-
-    private void handleRocketmqTopicDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        ConnectionConfig config = data.getConnectionConfig();
-        String topicName = data.getName();
-        String tabId = "rocketmq_topic_" + config.getId() + "_" + topicName;
-
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-
-        RocketmqDataView dataView = new RocketmqDataView(config, topicName);
-        dataView.selectTopicTab(topicName);
-
-        String tabTitle = topicName + "(" + config.getHost() + ":" + config.getPort() + ")";
-        Tab tab = new Tab(tabTitle);
-
-        try {
-            Image rocketmqIcon = new Image(getClass().getResourceAsStream("/images/connect/rocketmq.png"));
-            ImageView tabIconView = new ImageView(rocketmqIcon);
-            tabIconView.setFitWidth(18);
-            tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
-        } catch (Exception ignored) {}
-
-        tab.setContent(dataView);
-        tab.setUserData(tabId);
-        tab.setOnClosed(e -> {
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showDataView();
-    }
-
-    private void handleRocketmqConsumersFolderDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        ConnectionConfig config = data.getConnectionConfig();
-        String tabId = "rocketmq_consumers_" + config.getId();
-
-        // 如果已有该消费者组标签，直接选中
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-
-        // 创建消费者组一级标签
-        VBox consumerContent = new VBox(0);
-        consumerContent.setPadding(new Insets(8));
-
-        HBox toolbar = new HBox(8);
-        toolbar.setAlignment(Pos.CENTER_LEFT);
-
-        Button refreshBtn = new Button("刷新");
-        refreshBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-font-size: 12px;");
-
-        TextField filterField = new TextField();
-        filterField.setPromptText("过滤消费者组...");
-        filterField.setPrefWidth(200);
-        filterField.setStyle("-fx-font-size: 12px;");
-
-        Button deleteBtn = new Button("批量删除");
-        deleteBtn.setStyle("-fx-font-size: 12px; -fx-text-fill: #cc0000;");
-
-        toolbar.getChildren().addAll(refreshBtn, filterField, deleteBtn);
-
-        TableView<ObservableList<String>> consumerTable = new TableView<>();
-        consumerTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
-        consumerTable.setPlaceholder(new Label("无数据"));
-        consumerTable.getSelectionModel().setSelectionMode(javafx.scene.control.SelectionMode.MULTIPLE);
-
-        TableColumn<ObservableList<String>, String> groupCol = new TableColumn<>("消费者组");
-        groupCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(0)));
-        groupCol.setPrefWidth(400);
-
-        TableColumn<ObservableList<String>, String> tpsCol = new TableColumn<>("消费TPS");
-        tpsCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(1)));
-        tpsCol.setPrefWidth(150);
-
-        TableColumn<ObservableList<String>, String> diffCol = new TableColumn<>("积压量");
-        diffCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(2)));
-        diffCol.setPrefWidth(150);
-
-        consumerTable.getColumns().addAll(groupCol, tpsCol, diffCol);
-
-        javafx.collections.ObservableList<ObservableList<String>> consumerAllData = javafx.collections.FXCollections.observableArrayList();
-        javafx.collections.ObservableList<ObservableList<String>> consumerFilteredData = javafx.collections.FXCollections.observableArrayList();
-        consumerTable.setItems(consumerFilteredData);
-
-        // 过滤逻辑
-        filterField.textProperty().addListener((obs, oldVal, newVal) -> {
-            consumerFilteredData.clear();
-            String keyword = newVal == null ? "" : newVal.trim().toLowerCase();
-            for (ObservableList<String> row : consumerAllData) {
-                if (keyword.isEmpty() || row.get(0).toLowerCase().contains(keyword)) {
-                    consumerFilteredData.add(row);
-                }
-            }
-        });
-
-        // 详情区域
-        TextArea consumerDetailArea = new TextArea();
-        consumerDetailArea.setPromptText("双击消费者组查看消费详情");
-        consumerDetailArea.setPrefHeight(200);
-        consumerDetailArea.setEditable(false);
-        consumerDetailArea.setStyle("-fx-font-family: monospace; -fx-font-size: 12px;");
-
-        // 双击查看详情
-        consumerTable.setRowFactory(tv -> {
-            TableRow<ObservableList<String>> row = new TableRow<>();
-            row.setOnMouseClicked(e -> {
-                if (e.getClickCount() == 2 && !row.isEmpty()) {
-                    String group = row.getItem().get(0);
-                    loadConsumerDetailInTab(config, group, consumerDetailArea);
-                }
-            });
-            return row;
-        });
-
-        Runnable loadConsumers = () -> {
-            new Thread(() -> {
-                try {
-                    List<Map<String, Object>> consumers = RocketmqService.getConsumerGroupList(config);
-                    Platform.runLater(() -> {
-                        consumerAllData.clear();
-                        for (Map<String, Object> c : consumers) {
-                            ObservableList<String> row = javafx.collections.FXCollections.observableArrayList();
-                            row.add(String.valueOf(c.getOrDefault("group", "")));
-                            row.add(String.valueOf(c.getOrDefault("consumeTps", "0")));
-                            row.add(String.valueOf(c.getOrDefault("diffTotal", "0")));
-                            consumerAllData.add(row);
-                        }
-                        // 触发过滤刷新
-                        String keyword = filterField.getText() == null ? "" : filterField.getText().trim().toLowerCase();
-                        consumerFilteredData.clear();
-                        for (ObservableList<String> row : consumerAllData) {
-                            if (keyword.isEmpty() || row.get(0).toLowerCase().contains(keyword)) {
-                                consumerFilteredData.add(row);
-                            }
-                        }
-                    });
-                } catch (Exception e) {
-                    Platform.runLater(() -> {
-                        Alert alert = new Alert(Alert.AlertType.ERROR);
-                        alert.setTitle("加载失败");
-                        alert.setHeaderText(null);
-                        alert.setContentText("无法加载消费者组列表: " + e.getMessage());
-                        alert.showAndWait();
-                    });
-                }
-            }, "RocketMQ-LoadConsumersTab").start();
-        };
-
-        refreshBtn.setOnAction(e -> loadConsumers.run());
-
-        deleteBtn.setOnAction(e -> {
-            javafx.collections.ObservableList<ObservableList<String>> selectedItems = consumerTable.getSelectionModel().getSelectedItems();
-            if (selectedItems.isEmpty()) {
-                Alert warn = new Alert(Alert.AlertType.WARNING);
-                warn.setTitle("提示");
-                warn.setHeaderText(null);
-                warn.setContentText("请先选择要删除的消费者组（支持Ctrl/Shift多选）");
-                warn.showAndWait();
-                return;
-            }
-            List<String> groups = new ArrayList<>();
-            for (ObservableList<String> row : selectedItems) {
-                groups.add(row.get(0));
-            }
-            String groupListStr = String.join("\n", groups);
-            Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-            confirm.setTitle("确认批量删除");
-            confirm.setHeaderText("删除 " + groups.size() + " 个消费者组");
-            confirm.setContentText(groupListStr + "\n\n删除后不可恢复，确定要删除吗？");
-            confirm.showAndWait().ifPresent(btn -> {
-                if (btn == ButtonType.OK) {
-                    new Thread(() -> {
-                        List<String> failed = new ArrayList<>();
-                        for (String group : groups) {
-                            try {
-                                RocketmqService.deleteConsumerGroup(config, group);
-                            } catch (Exception ex) {
-                                failed.add(group + ": " + ex.getMessage());
-                            }
-                        }
-                        Platform.runLater(() -> {
-                            if (failed.isEmpty()) {
-                                Alert info = new Alert(Alert.AlertType.INFORMATION);
-                                info.setTitle("成功");
-                                info.setHeaderText(null);
-                                info.setContentText("已删除 " + groups.size() + " 个消费者组");
-                                info.showAndWait();
-                            } else {
-                                Alert err = new Alert(Alert.AlertType.ERROR);
-                                err.setTitle("部分删除失败");
-                                err.setHeaderText(null);
-                                TextArea area = new TextArea(String.join("\n", failed));
-                                area.setEditable(false);
-                                area.setWrapText(true);
-                                area.setPrefRowCount(Math.min(failed.size() + 1, 10));
-                                err.getDialogPane().setContent(area);
-                                err.showAndWait();
-                            }
-                            loadConsumers.run();
-                        });
-                    }, "RocketMQ-BatchDeleteConsumer").start();
-                }
-            });
-        });
-
-        consumerContent.getChildren().addAll(toolbar, consumerTable, new Label("消费详情:"), consumerDetailArea);
-        VBox.setVgrow(consumerTable, Priority.ALWAYS);
-
-        String tabTitle = "消费者组(" + config.getHost() + ":" + config.getPort() + ")";
-        Tab tab = new Tab(tabTitle);
-
-        try {
-            Image rocketmqIcon = new Image(getClass().getResourceAsStream("/images/connect/rocketmq.png"));
-            ImageView tabIconView = new ImageView(rocketmqIcon);
-            tabIconView.setFitWidth(18);
-            tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
-        } catch (Exception ignored) {}
-
-        tab.setContent(consumerContent);
-        tab.setUserData(tabId);
-        tab.setOnClosed(e -> {
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showDataView();
-
-        // 加载消费者组数据
-        loadConsumers.run();
-
-        // 同时加载消费者组子节点到树中
-        loadRocketmqConsumersForFolder(item, config);
-        item.setExpanded(true);
-    }
-
-    private void loadConsumerDetailInTab(ConnectionConfig config, String group, TextArea detailArea) {
-        new Thread(() -> {
-            try {
-                Map<String, Object> detail = RocketmqService.getConsumerGroupDetail(config, group);
-                StringBuilder sb = new StringBuilder();
-                sb.append("消费者组: ").append(group).append("\n");
-                sb.append("消费TPS: ").append(detail.getOrDefault("consumeTps", "0")).append("\n");
-                sb.append("总积压量: ").append(detail.getOrDefault("totalDiff", "0")).append("\n\n");
-
-                @SuppressWarnings("unchecked")
-                List<Map<String, Object>> offsetList = (List<Map<String, Object>>) detail.get("offsetTable");
-                if (offsetList != null) {
-                    sb.append("消费偏移详情:\n");
-                    for (Map<String, Object> offset : offsetList) {
-                        sb.append("  Topic: ").append(offset.getOrDefault("topic", ""))
-                          .append(" | Broker: ").append(offset.getOrDefault("brokerName", ""))
-                          .append(" | QueueId: ").append(offset.getOrDefault("queueId", ""))
-                          .append(" | BrokerOffset: ").append(offset.getOrDefault("brokerOffset", ""))
-                          .append(" | ConsumerOffset: ").append(offset.getOrDefault("consumerOffset", ""))
-                          .append(" | Diff: ").append(offset.getOrDefault("diff", ""))
-                          .append("\n");
-                    }
-                }
-                Platform.runLater(() -> detailArea.setText(sb.toString()));
-            } catch (Exception e) {
-                Platform.runLater(() -> detailArea.setText("加载消费详情失败: " + e.getMessage()));
-            }
-        }, "RocketMQ-ConsumerDetail").start();
-    }
-
-    private void handleRocketmqConsumerDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
-        // 双击消费者组项也打开消费者组一级标签
-        TreeItem<String> parent = item.getParent();
-        if (parent != null) {
-            DatabaseNodeData parentData = dbNodeDataMap.get(parent);
-            if (parentData != null) {
-                handleRocketmqConsumersFolderDoubleClick(parent, parentData);
-                return;
-            }
-        }
-        // 如果无法获取父节点，直接打开消费者组标签
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        ConnectionConfig config = data.getConnectionConfig();
-        String tabId = "rocketmq_consumers_" + config.getId();
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-    }
-
-    private void handleRocketmqClusterFolderDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        ConnectionConfig config = data.getConnectionConfig();
-        String tabId = "rocketmq_cluster_" + config.getId();
-
-        // 如果已有该集群标签，直接选中
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-
-        // 创建集群一级标签
-        VBox clusterContent = new VBox(0);
-        clusterContent.setPadding(new Insets(8));
-
-        HBox toolbar = new HBox(8);
-        toolbar.setAlignment(Pos.CENTER_LEFT);
-
-        Button refreshBtn = new Button("刷新");
-        refreshBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-font-size: 12px;");
-
-        toolbar.getChildren().add(refreshBtn);
-
-        TableView<ObservableList<String>> clusterTable = new TableView<>();
-        clusterTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
-        clusterTable.setPlaceholder(new Label("无数据"));
-
-        TableColumn<ObservableList<String>, String> brokerNameCol = new TableColumn<>("BrokerName");
-        brokerNameCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(0)));
-        brokerNameCol.setPrefWidth(200);
-
-        TableColumn<ObservableList<String>, String> brokerIdCol = new TableColumn<>("BrokerId");
-        brokerIdCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(1)));
-        brokerIdCol.setPrefWidth(100);
-
-        TableColumn<ObservableList<String>, String> addressCol = new TableColumn<>("地址");
-        addressCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(2)));
-        addressCol.setPrefWidth(250);
-
-        TableColumn<ObservableList<String>, String> roleCol = new TableColumn<>("角色");
-        roleCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(3)));
-        roleCol.setPrefWidth(100);
-
-        TableColumn<ObservableList<String>, String> versionCol = new TableColumn<>("版本");
-        versionCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().size() > 4 ? param.getValue().get(4) : ""));
-        versionCol.setPrefWidth(150);
-
-        clusterTable.getColumns().addAll(brokerNameCol, brokerIdCol, addressCol, roleCol, versionCol);
-
-        javafx.collections.ObservableList<ObservableList<String>> clusterData = javafx.collections.FXCollections.observableArrayList();
-
-        Runnable loadCluster = () -> {
-            new Thread(() -> {
-                try {
-                    List<Map<String, Object>> cluster = RocketmqService.getClusterInfo(config);
-                    Platform.runLater(() -> {
-                        clusterData.clear();
-                        for (Map<String, Object> c : cluster) {
-                            ObservableList<String> row = javafx.collections.FXCollections.observableArrayList();
-                            row.add(String.valueOf(c.getOrDefault("brokerName", "")));
-                            row.add(String.valueOf(c.getOrDefault("brokerId", "")));
-                            row.add(String.valueOf(c.getOrDefault("address", "")));
-                            row.add(String.valueOf(c.getOrDefault("role", "")));
-                            row.add(String.valueOf(c.getOrDefault("version", "")));
-                            clusterData.add(row);
-                        }
-                    });
-                } catch (Exception e) {
-                    Platform.runLater(() -> {
-                        Alert alert = new Alert(Alert.AlertType.ERROR);
-                        alert.setTitle("加载失败");
-                        alert.setHeaderText(null);
-                        alert.setContentText("无法加载集群信息: " + e.getMessage());
-                        alert.showAndWait();
-                    });
-                }
-            }, "RocketMQ-LoadClusterTab").start();
-        };
-
-        refreshBtn.setOnAction(e -> loadCluster.run());
-        clusterTable.setItems(clusterData);
-
-        clusterContent.getChildren().addAll(toolbar, clusterTable);
-        VBox.setVgrow(clusterTable, Priority.ALWAYS);
-
-        String tabTitle = "集群(" + config.getHost() + ":" + config.getPort() + ")";
-        Tab tab = new Tab(tabTitle);
-
-        try {
-            Image rocketmqIcon = new Image(getClass().getResourceAsStream("/images/connect/rocketmq.png"));
-            ImageView tabIconView = new ImageView(rocketmqIcon);
-            tabIconView.setFitWidth(18);
-            tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
-        } catch (Exception ignored) {}
-
-        tab.setContent(clusterContent);
-        tab.setUserData(tabId);
-        tab.setOnClosed(e -> {
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showDataView();
-
-        // 加载集群数据
-        loadCluster.run();
-
-        // 同时加载集群子节点到树中
-        loadRocketmqClusterForFolder(item, config);
-        item.setExpanded(true);
-    }
-
-    private void handleRocketmqBrokerDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
-        // 双击Broker节点也打开集群一级标签
-        TreeItem<String> parent = item.getParent();
-        if (parent != null) {
-            DatabaseNodeData parentData = dbNodeDataMap.get(parent);
-            if (parentData != null) {
-                handleRocketmqClusterFolderDoubleClick(parent, parentData);
-                return;
-            }
-        }
-        // 如果无法获取父节点，直接打开集群标签
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        ConnectionConfig config = data.getConnectionConfig();
-        String tabId = "rocketmq_cluster_" + config.getId();
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-    }
-
-    private void handleDeleteRocketmqTopic(TreeItem<String> item, DatabaseNodeData data) {
-        ConnectionConfig config = data.getConnectionConfig();
-        String topicName = data.getName();
-
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("确认删除");
-        confirm.setHeaderText("删除主题: " + topicName);
-        confirm.setContentText("删除后不可恢复，确定要删除吗？");
-        confirm.showAndWait().ifPresent(btn -> {
-            if (btn == ButtonType.OK) {
-                new Thread(() -> {
-                    try {
-                        RocketmqService.deleteTopic(config, topicName);
-                        Platform.runLater(() -> {
-                            Alert info = new Alert(Alert.AlertType.INFORMATION);
-                            info.setTitle("成功");
-                            info.setHeaderText(null);
-                            info.setContentText("主题 " + topicName + " 已删除");
-                            info.showAndWait();
-                            TreeItem<String> parent = item.getParent();
-                            if (parent != null) {
-                                parent.getChildren().remove(item);
-                                dbNodeDataMap.remove(item);
-                            }
-                        });
-                    } catch (Exception e) {
-                        Platform.runLater(() -> {
-                            Alert alert = new Alert(Alert.AlertType.ERROR);
-                            alert.setTitle("删除失败");
-                            alert.setHeaderText(null);
-                            alert.setContentText("删除主题失败: " + e.getMessage());
-                            alert.showAndWait();
-                        });
-                    }
-                }, "RocketMQ-DeleteTopic").start();
-            }
-        });
-    }
-
     private void handleDbNodeDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
         switch (data.getType()) {
-            case DATABASE -> handleDatabaseDoubleClick(item, data);
-            case REDIS_DB -> handleRedisDbDoubleClick(item, data);
-            case TABLES_FOLDER -> handleTablesFolderDoubleClick(item, data);
-            case VIEWS_FOLDER -> handleViewsFolderDoubleClick(item, data);
-            case TABLE, VIEW -> handleTableDataDoubleClick(item, data);
-            case QUERY -> handleQueryDoubleClick(item, data);
-            case BACKUP -> handleRestoreBackup(item, data);
+            case DATABASE -> {
+                AbstractDbHandler h = createDbHandler(data.getConnectionConfig());
+                if (h != null) h.handleDatabaseDoubleClick(item, data);
+            }
+            case REDIS_DB -> {
+                ConnectHandler h = createConnectHandler(data.getConnectionConfig());
+                if (h instanceof RedisConnectHandler r) {
+                    r.handleRedisDbDoubleClick(this, item, data);
+                }
+            }
+            case SCHEMA -> {
+                AbstractDbHandler h = createDbHandler(data.getConnectionConfig());
+                if (h != null) h.handleSchemaDoubleClick(item, data);
+            }
+            case TABLES_FOLDER -> {
+                AbstractDbHandler dbh = createDbHandler(data.getConnectionConfig());
+                if (dbh != null) dbh.handleTablesFolderDoubleClick(item, data);
+            }
+            case VIEWS_FOLDER -> {
+                AbstractDbHandler dbh = createDbHandler(data.getConnectionConfig());
+                if (dbh != null) dbh.handleViewsFolderDoubleClick(item, data);
+            }
+            case TABLE, VIEW -> {
+                AbstractDbHandler h = createDbHandler(data.getConnectionConfig());
+                if (h != null) h.handleTableDataDoubleClick(item, data);
+            }
+            case QUERY -> {
+                AbstractDbHandler h = createDbHandler(data.getConnectionConfig());
+                if (h != null) h.handleQueryDoubleClick(item, data);
+            }
+            case BACKUP -> {
+                AbstractDbHandler h = createDbHandler(data.getConnectionConfig());
+                if (h != null) h.handleRestoreBackup(item, data);
+            }
             case QUERY_FOLDER -> item.setExpanded(!item.isExpanded());
             case BACKUP_FOLDER -> {
-                loadBackupsForFolder(item, data.getConnectionConfig(), data.getDatabaseName());
+                AbstractDbHandler handler = createDbHandler(data.getConnectionConfig());
+                if (handler != null) {
+                    handler.loadBackupsForFolder(item, data.getConnectionConfig(), data.getDatabaseName());
+                }
                 item.setExpanded(!item.isExpanded());
             }
-            case ROCKETMQ_TOPICS_FOLDER -> handleRocketmqFolderDoubleClick(item, data);
-            case ROCKETMQ_CONSUMERS_FOLDER -> handleRocketmqConsumersFolderDoubleClick(item, data);
-            case ROCKETMQ_CLUSTER_FOLDER -> handleRocketmqClusterFolderDoubleClick(item, data);
-            case ROCKETMQ_TOPIC -> handleRocketmqTopicDoubleClick(item, data);
-            case ROCKETMQ_CONSUMER -> handleRocketmqConsumerDoubleClick(item, data);
-            case ROCKETMQ_BROKER -> handleRocketmqBrokerDoubleClick(item, data);
-            case ALIYUN_PRODUCT_FOLDER -> handleAliyunProductFolderDoubleClick(item, data);
-            case ALIYUN_ECS_INSTANCE -> { /* TODO: show ECS instance detail */ }
-            case ALIYUN_DOMAIN -> handleAliyunDomainDoubleClick(item, data);
-        }
-    }
-
-    private void handleDatabaseDoubleClick(TreeItem<String> dbItem, DatabaseNodeData data) {
-        if (data.isOpened()) {
-            dbItem.setExpanded(!dbItem.isExpanded());
-            return;
-        }
-        openDatabase(dbItem, data);
-    }
-
-    private void handleRedisDbDoubleClick(TreeItem<String> dbItem, DatabaseNodeData data) {
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        String dbName = data.getDatabaseName();
-        int dbIndex = 0;
-        if (dbName.startsWith("db")) {
-            try {
-                dbIndex = Integer.parseInt(dbName.substring(2));
-            } catch (NumberFormatException ignored) {}
-        }
-
-        String tabId = "redis_" + data.getConnectionConfig().getId() + "_" + dbName;
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-
-        RedisDataView dataView = new RedisDataView(data.getConnectionConfig(), dbIndex);
-
-        ConnectionConfig config = data.getConnectionConfig();
-        String tabTitle = dbName + "(" + config.getHost() + ":" + config.getPort() + ")-Redis";
-        Tab tab = new Tab(tabTitle);
-
-        try {
-            Image redisIcon = new Image(getClass().getResourceAsStream("/images/connect/redis.png"));
-            ImageView tabIconView = new ImageView(redisIcon);
-            tabIconView.setFitWidth(18);
-            tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
-        } catch (Exception ignored) {}
-
-        tab.setContent(dataView);
-        tab.setUserData(tabId);
-
-        ContextMenu redisTabContextMenu = new ContextMenu();
-        MenuItem refreshItem = new MenuItem("刷新");
-        refreshItem.setOnAction(e -> dataView.loadKeyTree());
-        redisTabContextMenu.getItems().add(refreshItem);
-        tab.setContextMenu(redisTabContextMenu);
-
-        tab.setOnClosed(e -> {
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showDataView();
-    }
-
-    private void openDatabase(TreeItem<String> dbItem, DatabaseNodeData data) {
-        data.setOpened(true);
-        dbItem.setGraphic(getDbNodeIcon(data));
-
-        ConnectionConfig config = data.getConnectionConfig();
-
-        TreeItem<String> tablesFolder = new TreeItem<>("表");
-        tablesFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.TABLES_FOLDER, "表", config, data.getDatabaseName())));
-        dbNodeDataMap.put(tablesFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.TABLES_FOLDER, "表", config, data.getDatabaseName()));
-
-        TreeItem<String> viewsFolder = new TreeItem<>("视图");
-        viewsFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.VIEWS_FOLDER, "视图", config, data.getDatabaseName())));
-        dbNodeDataMap.put(viewsFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.VIEWS_FOLDER, "视图", config, data.getDatabaseName()));
-
-        TreeItem<String> functionFolder = new TreeItem<>("函数");
-        functionFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.FUNCTION_FOLDER, "函数", config, data.getDatabaseName())));
-        dbNodeDataMap.put(functionFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.FUNCTION_FOLDER, "函数", config, data.getDatabaseName()));
-
-        TreeItem<String> queryFolder = new TreeItem<>("查询");
-        queryFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, data.getDatabaseName())));
-        dbNodeDataMap.put(queryFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, data.getDatabaseName()));
-
-        loadQueriesForFolder(queryFolder, config, data.getDatabaseName());
-
-        TreeItem<String> backupFolder = new TreeItem<>("备份");
-        backupFolder.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, data.getDatabaseName())));
-        dbNodeDataMap.put(backupFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, data.getDatabaseName()));
-
-        loadBackupsForFolder(backupFolder, config, data.getDatabaseName());
-
-        dbItem.getChildren().addAll(tablesFolder, viewsFolder, functionFolder, queryFolder, backupFolder);
-        dbItem.setExpanded(true);
-
-        loadTablesForFolder(tablesFolder, config, data.getDatabaseName(), false);
-        loadViewsForFolder(viewsFolder, config, data.getDatabaseName(), false);
-    }
-
-    private void closeDatabase(TreeItem<String> dbItem, DatabaseNodeData data) {
-        removeDbNodeDataRecursive(dbItem);
-        dbItem.getChildren().clear();
-        data.setOpened(false);
-        dbItem.setGraphic(getDbNodeIcon(data));
-        dbItem.setExpanded(false);
-    }
-
-    private void handleTablesFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
-        if (!folderItem.getChildren().isEmpty()) {
-            folderItem.setExpanded(!folderItem.isExpanded());
-            return;
-        }
-        loadTablesForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName(), true);
-    }
-
-    private void handleViewsFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
-        if (!folderItem.getChildren().isEmpty()) {
-            folderItem.setExpanded(!folderItem.isExpanded());
-            return;
-        }
-        loadViewsForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName(), true);
-    }
-
-    private void loadQueriesForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName) {
-        List<String> queryNames = SqlEditorView.listQueries(config.getName(), dbName);
-        folderItem.getChildren().clear();
-        for (String queryName : queryNames) {
-            TreeItem<String> queryItem = new TreeItem<>(queryName);
-            queryItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, queryName, config, dbName)));
-            dbNodeDataMap.put(queryItem, new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, queryName, config, dbName));
-            folderItem.getChildren().add(queryItem);
-        }
-    }
-
-    private void loadTablesForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName, boolean autoExpand) {
-        new Thread(() -> {
-            try {
-                List<String> tables = DatabaseService.getTables(config, dbName);
-                Platform.runLater(() -> {
-                    folderItem.getChildren().clear();
-                    for (String tableName : tables) {
-                        TreeItem<String> tableItem = new TreeItem<>(tableName);
-                        tableItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.TABLE, tableName, config, dbName)));
-                        dbNodeDataMap.put(tableItem, new DatabaseNodeData(DatabaseNodeData.NodeType.TABLE, tableName, config, dbName));
-                        folderItem.getChildren().add(tableItem);
-                    }
-                    folderItem.setExpanded(autoExpand);
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("加载失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("无法加载表列表: " + e.getMessage());
-                    alert.showAndWait();
-                });
-                e.printStackTrace();
-            }
-        }, "DB-LoadTables").start();
-    }
-
-    private void loadViewsForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName, boolean autoExpand) {
-        new Thread(() -> {
-            try {
-                List<String> views = DatabaseService.getViews(config, dbName);
-                Platform.runLater(() -> {
-                    folderItem.getChildren().clear();
-                    for (String viewName : views) {
-                        TreeItem<String> viewItem = new TreeItem<>(viewName);
-                        viewItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.VIEW, viewName, config, dbName)));
-                        dbNodeDataMap.put(viewItem, new DatabaseNodeData(DatabaseNodeData.NodeType.VIEW, viewName, config, dbName));
-                        folderItem.getChildren().add(viewItem);
-                    }
-                    folderItem.setExpanded(autoExpand);
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("加载失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("无法加载视图列表: " + e.getMessage());
-                    alert.showAndWait();
-                });
-                e.printStackTrace();
-            }
-        }, "DB-LoadViews").start();
-    }
-
-    private void loadColumnsForTable(TreeItem<String> tableItem, ConnectionConfig config, String dbName, String tableName) {
-        new Thread(() -> {
-            try {
-                List<Map<String, String>> columns = DatabaseService.getTableColumns(config, dbName, tableName);
-                Platform.runLater(() -> {
-                    tableItem.getChildren().clear();
-                    for (Map<String, String> col : columns) {
-                        String colName = col.get("字段名");
-                        String typeInfo = col.get("类型");
-                        String displayText = colName + "  " + typeInfo;
-                        TreeItem<String> colItem = new TreeItem<>(displayText);
-                        boolean isPk = "是".equals(col.get("主键"));
-                        ImageView iv = new ImageView();
-                        iv.setFitWidth(16);
-                        iv.setFitHeight(16);
-                        javafx.scene.shape.Rectangle rect = new javafx.scene.shape.Rectangle(10, 10);
-                        rect.setFill(isPk ? Color.valueOf("#1E88E5") : Color.valueOf("#999999"));
-                        rect.setArcWidth(2);
-                        rect.setArcHeight(2);
-                        javafx.scene.SnapshotParameters sp = new javafx.scene.SnapshotParameters();
-                        sp.setFill(Color.TRANSPARENT);
-                        Image colIcon = rect.snapshot(sp, null);
-                        iv.setImage(colIcon);
-                        colItem.setGraphic(iv);
-                        tableItem.getChildren().add(colItem);
-                    }
-                    tableItem.setExpanded(true);
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("加载失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("无法加载列信息: " + e.getMessage());
-                    alert.showAndWait();
-                });
-                e.printStackTrace();
-            }
-        }, "DB-LoadColumns").start();
-    }
-
-    private void handleTableStructureDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        String tabId = "struct_" + data.getConnectionConfig().getId() + "_" + data.getDatabaseName() + "_" + data.getName();
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-
-        TableStructureView structView = new TableStructureView(data.getConnectionConfig(), data.getDatabaseName(), data.getName());
-
-        ConnectionConfig config = data.getConnectionConfig();
-        String typeLabel = data.getType() == DatabaseNodeData.NodeType.VIEW ? "视图" : "表";
-        String tabTitle = data.getName() + "@" + data.getDatabaseName() + "(" + config.getHost() + ":" + config.getPort() + ")-" + typeLabel + "结构";
-        Tab tab = new Tab(tabTitle);
-        Image tabIcon = data.getType() == DatabaseNodeData.NodeType.VIEW ? viewIcon : tableIcon;
-        if (tabIcon != null) {
-            ImageView tabIconView = new ImageView(tabIcon);
-            tabIconView.setFitWidth(18);
-            tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
-        }
-        tab.setContent(structView);
-        tab.setUserData(tabId);
-
-        ContextMenu structTabContextMenu = new ContextMenu();
-        MenuItem structConfigItem = new MenuItem("表格配置");
-        structConfigItem.setOnAction(e -> {
-            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
-            GlobalConfigDialog.show(stage, GlobalConfigDialog.ConfigMode.TABLE);
-            GlobalConfig globalConfig = GlobalConfig.getInstance();
-            structView.applyTableConfig(globalConfig);
-        });
-        MenuItem structRefreshItem = new MenuItem("刷新结构");
-        structRefreshItem.setOnAction(e -> structView.loadStructure());
-        structTabContextMenu.getItems().addAll(structConfigItem, structRefreshItem);
-        tab.setContextMenu(structTabContextMenu);
-
-        tab.setOnClosed(e -> {
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showDataView();
-    }
-
-    private void handleTableDataDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        String tabId = data.getConnectionConfig().getId() + "_" + data.getDatabaseName() + "_" + data.getName();
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-
-        TableDataView dataView = new TableDataView(data.getConnectionConfig(), data.getDatabaseName(), data.getName());
-
-        ConnectionConfig config = data.getConnectionConfig();
-        String typeLabel = data.getType() == DatabaseNodeData.NodeType.VIEW ? "视图" : "表";
-        String tabTitle = data.getName() + "@" + data.getDatabaseName() + "(" + config.getHost() + ":" + config.getPort() + ")-" + typeLabel;
-        Tab tab = new Tab(tabTitle);
-        Image tabIcon = data.getType() == DatabaseNodeData.NodeType.VIEW ? viewIcon : tableIcon;
-        if (tabIcon != null) {
-            ImageView tabIconView = new ImageView(tabIcon);
-            tabIconView.setFitWidth(18);
-            tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
-        }
-        tab.setContent(dataView);
-        tab.setUserData(tabId);
-
-        ContextMenu tableTabContextMenu = new ContextMenu();
-        MenuItem tableConfigItem = new MenuItem("表格配置");
-        tableConfigItem.setOnAction(e -> {
-            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
-            GlobalConfigDialog.show(stage, GlobalConfigDialog.ConfigMode.TABLE);
-            GlobalConfig globalConfig = GlobalConfig.getInstance();
-            dataView.applyTableConfig(globalConfig);
-        });
-        MenuItem tableRefreshItem = new MenuItem("刷新数据");
-        tableRefreshItem.setOnAction(e -> dataView.refreshData());
-        tableTabContextMenu.getItems().addAll(tableConfigItem, tableRefreshItem);
-        tab.setContextMenu(tableTabContextMenu);
-
-        tab.setOnClosed(e -> {
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showDataView();
-    }
-
-    private void handleNewQuery(TreeItem<String> folderItem, DatabaseNodeData data) {
-        ConnectionConfig config = data.getConnectionConfig();
-        String dbName = data.getDatabaseName();
-
-        SqlEditorView editorView = new SqlEditorView(connections, config, dbName);
-
-        Tab tab = new Tab("*未保存查询");
-        Image tabIcon = queryIcon;
-        if (tabIcon != null) {
-            ImageView tabIconView = new ImageView(tabIcon);
-            tabIconView.setFitWidth(14);
-            tabIconView.setFitHeight(14);
-            tab.setGraphic(tabIconView);
-        }
-
-        String tabId = "query_new_" + System.currentTimeMillis();
-        tab.setUserData(tabId);
-        tab.setContent(editorView);
-
-        editorView.setOnTitleChange(title -> tab.setText(title));
-
-        editorView.setOnSaveRequest(() -> {
-            TextInputDialog dialog = new TextInputDialog("查询" + (folderItem.getChildren().size() + 1));
-            dialog.setTitle("保存查询");
-            dialog.setHeaderText(null);
-            dialog.setContentText("查询名称：");
-            dialog.showAndWait().ifPresent(name -> {
-                if (name.trim().isEmpty()) return;
-
-                String queryName = name.trim();
-                editorView.doSave(queryName);
-
-                TreeItem<String> queryItem = new TreeItem<>(queryName);
-                DatabaseNodeData queryData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, queryName, config, dbName);
-                queryItem.setGraphic(getDbNodeIcon(queryData));
-                dbNodeDataMap.put(queryItem, queryData);
-                folderItem.getChildren().add(queryItem);
-                folderItem.setExpanded(true);
-
-                editorView.setQueryNode(queryItem);
-
-                String newTabId = "query_" + config.getId() + "_" + dbName + "_" + queryName;
-                tab.setUserData(newTabId);
-            });
-        });
-
-        tab.setOnClosed(e -> {
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        editorView.markModified();
-
-        if (!ensureTabPaneInstalled()) return;
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showDataView();
-    }
-
-    private void handleQueryDoubleClick(TreeItem<String> queryItem, DatabaseNodeData data) {
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        String tabId = "query_" + data.getConnectionConfig().getId() + "_" + data.getDatabaseName() + "_" + data.getName();
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-
-        SqlEditorView editorView = new SqlEditorView(connections, data.getConnectionConfig(), data.getDatabaseName());
-        editorView.setQueryName(data.getName());
-        editorView.setQueryNode(queryItem);
-        editorView.loadFromFile(data.getConnectionConfig().getName(), data.getDatabaseName(), data.getName());
-
-        Tab tab = new Tab(data.getName());
-        Image tabIcon = queryIcon;
-        if (tabIcon != null) {
-            ImageView tabIconView = new ImageView(tabIcon);
-            tabIconView.setFitWidth(14);
-            tabIconView.setFitHeight(14);
-            tab.setGraphic(tabIconView);
-        }
-        tab.setContent(editorView);
-        tab.setUserData(tabId);
-
-        editorView.setOnTitleChange(title -> tab.setText(title));
-
-        editorView.setOnSaveRequest(() -> {
-            TextInputDialog dialog = new TextInputDialog(data.getName());
-            dialog.setTitle("保存查询");
-            dialog.setHeaderText(null);
-            dialog.setContentText("查询名称：");
-            dialog.showAndWait().ifPresent(name -> {
-                if (name.trim().isEmpty()) return;
-                editorView.doSave(name.trim());
-                queryItem.setValue(name.trim());
-            });
-        });
-
-        tab.setOnClosed(e -> {
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showDataView();
-    }
-
-    private void handleRenameQuery(TreeItem<String> queryItem, DatabaseNodeData data) {
-        TextInputDialog dialog = new TextInputDialog(data.getName());
-        dialog.setTitle("重命名查询");
-        dialog.setHeaderText(null);
-        dialog.setContentText("新名称：");
-        dialog.showAndWait().ifPresent(name -> {
-            if (name.trim().isEmpty()) return;
-            String newName = name.trim();
-
-            String oldSanitizedConn = sanitizeForFs(data.getConnectionConfig().getName());
-            String oldSanitizedDb = sanitizeForFs(data.getDatabaseName());
-            String oldSanitizedQuery = sanitizeForFs(data.getName());
-            String newSanitizedQuery = sanitizeForFs(newName);
-
-            java.nio.file.Path oldFile = Paths.get(System.getProperty("user.home") + "/.tomato",
-                    oldSanitizedConn, oldSanitizedDb, "query", oldSanitizedQuery + ".sql");
-            java.nio.file.Path newFile = Paths.get(System.getProperty("user.home") + "/.tomato",
-                    oldSanitizedConn, oldSanitizedDb, "query", newSanitizedQuery + ".sql");
-
-            try {
-                if (Files.exists(oldFile)) {
-                    String content = Files.readString(oldFile, StandardCharsets.UTF_8);
-                    Files.createDirectories(newFile.getParent());
-                    Files.writeString(newFile, content, StandardCharsets.UTF_8);
-                    Files.deleteIfExists(oldFile);
+            case ROCKETMQ_TOPICS_FOLDER -> {
+                ConnectHandler rqH = createConnectHandler(data.getConnectionConfig());
+                if (rqH instanceof RocketmqConnectHandler rq) {
+                    rq.handleTopicsFolderDoubleClick(this, item, data);
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
             }
-
-            queryItem.setValue(newName);
-            DatabaseNodeData newData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, newName, data.getConnectionConfig(), data.getDatabaseName());
-            dbNodeDataMap.remove(queryItem);
-            dbNodeDataMap.put(queryItem, newData);
-        });
+            case ROCKETMQ_CONSUMERS_FOLDER -> {
+                ConnectHandler handler = createConnectHandler(data.getConnectionConfig());
+                if (handler instanceof RocketmqConnectHandler rqHandler) {
+                    rqHandler.handleConsumersFolderDoubleClick(this, item, data);
+                }
+            }
+            case ROCKETMQ_CLUSTER_FOLDER -> {
+                ConnectHandler rqHandler = createConnectHandler(data.getConnectionConfig());
+                if (rqHandler instanceof RocketmqConnectHandler rq) {
+                    rq.handleClusterFolderDoubleClick(this, item, data);
+                }
+            }
+            case ROCKETMQ_TOPIC -> {
+                ConnectHandler rqH = createConnectHandler(data.getConnectionConfig());
+                if (rqH instanceof RocketmqConnectHandler rq) {
+                    rq.handleTopicDoubleClick(this, item, data);
+                }
+            }
+            case ROCKETMQ_CONSUMER -> {
+                ConnectHandler rqH = createConnectHandler(data.getConnectionConfig());
+                if (rqH instanceof RocketmqConnectHandler rq) {
+                    rq.handleConsumerDoubleClick(this, item, data);
+                }
+            }
+            case ROCKETMQ_BROKER -> {
+                ConnectHandler rqH = createConnectHandler(data.getConnectionConfig());
+                if (rqH instanceof RocketmqConnectHandler rq) {
+                    rq.handleBrokerDoubleClick(this, item, data);
+                }
+            }
+            case ALIYUN_PRODUCT_FOLDER -> {
+                ConnectHandler alH = createConnectHandler(data.getConnectionConfig());
+                if (alH instanceof AliyunConnectHandler al) {
+                    al.handleProductFolderDoubleClick(this, item, data);
+                }
+            }
+            case ALIYUN_ECS_INSTANCE -> { /* TODO: show ECS instance detail */ }
+            case ALIYUN_DOMAIN -> {
+                ConnectHandler alHandler = createConnectHandler(data.getConnectionConfig());
+                if (alHandler instanceof AliyunConnectHandler al) {
+                    al.handleAliyunDomainDoubleClick(this, item, data);
+                }
+            }
+        }
     }
 
     private void commitTableNameRename(TreeItem<String> item, DatabaseNodeData dbData, String oldName, String newName) {
@@ -2482,170 +1063,39 @@ public class ConnectModule implements Module {
         }, "DB-RenameTable").start();
     }
 
-    private String sanitizeForFs(String name) {
-        if (name == null || name.isEmpty()) return "unnamed";
-        return name.replaceAll("[\\\\/:*?\"<>|]", "_")
-                .replaceAll("\\s+", "_")
-                .replaceAll("_{2,}", "_")
-                .replaceAll("^_|_$", "");
-    }
-
-    private void handleDeleteQuery(TreeItem<String> queryItem, DatabaseNodeData data) {
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("删除查询");
-        confirm.setHeaderText("确定要删除查询 \"" + data.getName() + "\" 吗？");
-        confirm.showAndWait().ifPresent(response -> {
-            if (response == ButtonType.OK) {
-                SqlEditorView.cleanupQueryFile(data.getConnectionConfig().getName(), data.getDatabaseName(), data.getName());
-                dbNodeDataMap.remove(queryItem);
-                queryItem.getParent().getChildren().remove(queryItem);
-            }
-        });
-    }
-
-    private void loadBackupsForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName) {
-        List<String> backupNames = BackupService.listBackups(config.getName(), dbName);
-        folderItem.getChildren().clear();
-        for (String backupName : backupNames) {
-            TreeItem<String> backupItem = new TreeItem<>(backupName);
-            backupItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP, backupName, config, dbName)));
-            dbNodeDataMap.put(backupItem, new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP, backupName, config, dbName));
-            folderItem.getChildren().add(backupItem);
-        }
-    }
-
-    private void handleNewBackup(TreeItem<String> folderItem, DatabaseNodeData data) {
+    public void handleNewBackup(TreeItem<String> folderItem, DatabaseNodeData data) {
         BackupDialog dialog = new BackupDialog(getStage(),
                 data.getConnectionConfig(), data.getDatabaseName());
         dialog.showAndWait();
 
-        loadBackupsForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName());
-    }
-
-    private void handleDeleteBackup(TreeItem<String> backupItem, DatabaseNodeData data) {
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("删除备份");
-        confirm.setHeaderText("确定要删除备份 \"" + data.getName() + "\" 吗？");
-        confirm.showAndWait().ifPresent(response -> {
-            if (response == ButtonType.OK) {
-                BackupService.deleteBackupFile(data.getConnectionConfig().getName(),
-                        data.getDatabaseName(), data.getName());
-                dbNodeDataMap.remove(backupItem);
-                backupItem.getParent().getChildren().remove(backupItem);
-            }
-        });
-    }
-
-    private void handleRenameBackup(TreeItem<String> backupItem, DatabaseNodeData data) {
-        TextInputDialog dialog = new TextInputDialog(data.getName());
-        dialog.setTitle("重命名备份");
-        dialog.setHeaderText(null);
-        dialog.setContentText("新名称：");
-        dialog.showAndWait().ifPresent(name -> {
-            if (name.trim().isEmpty()) return;
-            String newName = name.trim();
-            try {
-                BackupService.renameBackupFile(data.getConnectionConfig().getName(),
-                        data.getDatabaseName(), data.getName(), newName);
-                backupItem.setValue(newName);
-                DatabaseNodeData newData = new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP,
-                        newName, data.getConnectionConfig(), data.getDatabaseName());
-                dbNodeDataMap.remove(backupItem);
-                dbNodeDataMap.put(backupItem, newData);
-            } catch (Exception e) {
-                Alert err = new Alert(Alert.AlertType.ERROR);
-                err.setTitle("重命名失败");
-                err.setHeaderText(null);
-                err.setContentText(e.getMessage());
-                err.showAndWait();
-            }
-        });
-    }
-
-    private void handleRestoreBackup(TreeItem<String> backupItem, DatabaseNodeData data) {
-        Stage stage = getStage();
-        if (stage == null) return;
-
-        RestoreDialog dialog = new RestoreDialog(stage,
-                data.getConnectionConfig(), data.getDatabaseName(), data.getName());
-        dialog.showAndWait();
-    }
-
-    private void handleOpenBackupDir(DatabaseNodeData data) {
-        String sanitizedConn = sanitizeForFs(data.getConnectionConfig().getName());
-        String sanitizedDb = sanitizeForFs(data.getDatabaseName());
-        java.nio.file.Path backupDir = Paths.get(System.getProperty("user.home") + "/.tomato",
-                sanitizedConn, sanitizedDb, "backup");
-        java.nio.file.Path backupFile = backupDir.resolve(data.getName() + ".nb3");
-
-        new Thread(() -> {
-            try {
-                if (java.awt.Desktop.isDesktopSupported()) {
-                    java.awt.Desktop desktop = java.awt.Desktop.getDesktop();
-                    if (backupFile.toFile().exists()) {
-                        if (desktop.isSupported(java.awt.Desktop.Action.BROWSE_FILE_DIR)) {
-                            desktop.browseFileDirectory(backupFile.toFile());
-                        } else {
-                            desktop.open(backupDir.toFile());
-                        }
-                    } else {
-                        desktop.open(backupDir.toFile());
-                    }
-                }
-            } catch (Exception e) {
-                try {
-                    String[] cmd = {
-                            "xdg-open", backupDir.toAbsolutePath().toString()
-                    };
-                    Runtime.getRuntime().exec(cmd);
-                } catch (Exception ex) {
-                    Platform.runLater(() -> {
-                        Alert alert = new Alert(Alert.AlertType.ERROR);
-                        alert.setTitle("打开目录失败");
-                        alert.setHeaderText(null);
-                        alert.setContentText("无法打开备份目录: " + ex.getMessage());
-                        alert.showAndWait();
-                    });
-                }
-            }
-        }, "OpenBackupDir").start();
-    }
-
-    private void updateHostIcon(TreeItem<String> hostItem, ConnectionConfig config, boolean connected) {
-        connectionStateMap.put(hostItem, connected);
-        if (config.getType() == ConnectType.MYSQL) {
-            updateMysqlHostIcon(hostItem, config);
-        } else {
-            ImageView imageView = new ImageView();
-            imageView.setFitWidth(16);
-            imageView.setFitHeight(16);
-            try {
-                String iconPath = config.getType().getIconPath();
-                Image icon = new Image(getClass().getResourceAsStream(iconPath));
-                if (icon != null) {
-                    imageView.setImage(icon);
-                    if (connected) {
-                        imageView.setStyle("-fx-effect: dropshadow(gaussian, #4CAF50, 2, 0.5, 0, 0);");
-                    }
-                }
-            } catch (Exception e) {
-                // fallback
-            }
-            hostItem.setGraphic(imageView);
+        AbstractDbHandler handler = createDbHandler(data.getConnectionConfig());
+        if (handler != null) {
+            handler.loadBackupsForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName());
         }
     }
 
-    private void updateMysqlHostIcon(TreeItem<String> hostItem, ConnectionConfig config) {
+    /** 供 handler 调用：更新主机节点图标（根据连接状态分发到具体 handler） */
+    public void updateHostIcon(TreeItem<String> hostItem, ConnectionConfig config, boolean connected) {
+        connectionStateMap.put(hostItem, connected);
+        AbstractDbHandler handler = createDbHandler(config);
+        if (handler != null) {
+            handler.updateHostIcon(hostItem, config, connected);
+        } else {
+            updateHostIconGeneric(hostItem, config, connected);
+        }
+    }
+
+    /** 供非数据库类型(SSH/RDP 等)及 PG/Oracle handler 调用：通用主机图标更新 */
+    public void updateHostIconGeneric(TreeItem<String> hostItem, ConnectionConfig config, boolean connected) {
         ImageView imageView = new ImageView();
         imageView.setFitWidth(16);
         imageView.setFitHeight(16);
         try {
-            String iconPath = hostItem.isExpanded() ? "/images/connect/mysql_open.png" : "/images/connect/mysql.png";
+            String iconPath = config.getType().getIconPath();
             Image icon = new Image(getClass().getResourceAsStream(iconPath));
             if (icon != null) {
                 imageView.setImage(icon);
-                Boolean connected = connectionStateMap.get(hostItem);
-                if (connected != null && connected) {
+                if (connected) {
                     imageView.setStyle("-fx-effect: dropshadow(gaussian, #4CAF50, 2, 0.5, 0, 0);");
                 }
             }
@@ -2653,186 +1103,6 @@ public class ConnectModule implements Module {
             // fallback
         }
         hostItem.setGraphic(imageView);
-    }
-
-    private void handleCreateDatabase(TreeItem<String> hostItem, ConnectionConfig config) {
-        if (config.getPassword() == null) {
-            Dialog<String> pwdDialog = new Dialog<>();
-            pwdDialog.setTitle("输入密码");
-            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
-            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-            GridPane grid = new GridPane();
-            grid.setHgap(10);
-            grid.setVgap(10);
-            grid.setPadding(new Insets(20, 10, 10, 10));
-            PasswordField pf = new PasswordField();
-            pf.setPrefWidth(250);
-            grid.add(new Label("密码："), 0, 0);
-            grid.add(pf, 1, 0);
-            pwdDialog.getDialogPane().setContent(grid);
-            pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
-            final String[] passwordHolder = new String[1];
-            pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
-            if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
-            config.setPassword(passwordHolder[0]);
-        }
-
-        Stage stage = getStage();
-        if (stage == null) return;
-
-        CreateDatabaseDialog dialog = new CreateDatabaseDialog(stage, config);
-        dialog.showAndWait();
-
-        if (!dialog.isConfirmed()) return;
-
-        String dbName = dialog.getDatabaseName();
-        String charset = dialog.getCharset();
-        String collation = dialog.getCollation();
-
-        new Thread(() -> {
-            try {
-                DatabaseService.createDatabase(config, dbName, charset, collation);
-                Platform.runLater(() -> {
-                    if (!hostItem.getChildren().isEmpty()) {
-                        handleRefreshDbHost(hostItem, config);
-                    }
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("创建失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("创建数据库失败: " + e.getMessage());
-                    alert.showAndWait();
-                });
-            }
-        }, "DB-CreateDatabase").start();
-    }
-
-    private void handleEditDatabase(TreeItem<String> dbItem, DatabaseNodeData data) {
-        ConnectionConfig config = data.getConnectionConfig();
-
-        if (config.getPassword() == null) {
-            Dialog<String> pwdDialog = new Dialog<>();
-            pwdDialog.setTitle("输入密码");
-            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
-            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-            GridPane grid = new GridPane();
-            grid.setHgap(10);
-            grid.setVgap(10);
-            grid.setPadding(new Insets(20, 10, 10, 10));
-            PasswordField pf = new PasswordField();
-            pf.setPrefWidth(250);
-            grid.add(new Label("密码："), 0, 0);
-            grid.add(pf, 1, 0);
-            pwdDialog.getDialogPane().setContent(grid);
-            pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
-            final String[] passwordHolder = new String[1];
-            pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
-            if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
-            config.setPassword(passwordHolder[0]);
-        }
-
-        Stage stage = getStage();
-        if (stage == null) return;
-
-        String dbName = data.getDatabaseName();
-
-        new Thread(() -> {
-            try {
-                String[] charsetCollation = DatabaseService.getDatabaseCharsetCollation(config, dbName);
-                String currentCharset = charsetCollation[0];
-                String currentCollation = charsetCollation[1];
-
-                Platform.runLater(() -> {
-                    EditDatabaseDialog dialog = new EditDatabaseDialog(stage, config, dbName, currentCharset, currentCollation);
-                    dialog.showAndWait();
-
-                    if (!dialog.isConfirmed()) return;
-
-                    String charset = dialog.getCharset();
-                    String collation = dialog.getCollation();
-
-                    new Thread(() -> {
-                        try {
-                            DatabaseService.alterDatabase(config, dbName, charset, collation);
-                            Platform.runLater(() -> {
-                                handleRefreshDbNode(dbItem, data);
-                            });
-                        } catch (Exception e) {
-                            Platform.runLater(() -> {
-                                Alert alert = new Alert(Alert.AlertType.ERROR);
-                                alert.setTitle("修改失败");
-                                alert.setHeaderText(null);
-                                alert.setContentText("修改数据库失败: " + e.getMessage());
-                                alert.showAndWait();
-                            });
-                        }
-                    }, "DB-AlterDatabase").start();
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("查询失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("获取数据库信息失败: " + e.getMessage());
-                    alert.showAndWait();
-                });
-            }
-        }, "DB-GetDbInfo").start();
-    }
-
-    private void handleDeleteDatabase(TreeItem<String> dbItem, DatabaseNodeData data) {
-        ConnectionConfig config = data.getConnectionConfig();
-        String dbName = data.getDatabaseName();
-
-        Alert confirm = new Alert(Alert.AlertType.WARNING);
-        confirm.setTitle("删除数据库");
-        confirm.setHeaderText("确定要删除数据库 \"" + dbName + "\" 吗？");
-        confirm.setContentText("此操作不可撤销，该数据库中的所有数据将被永久删除！");
-        confirm.getButtonTypes().setAll(ButtonType.YES, ButtonType.NO);
-        confirm.showAndWait().ifPresent(response -> {
-            if (response != ButtonType.YES) return;
-
-            if (config.getPassword() == null) {
-                Dialog<String> pwdDialog = new Dialog<>();
-                pwdDialog.setTitle("输入密码");
-                pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
-                pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-                GridPane grid = new GridPane();
-                grid.setHgap(10);
-                grid.setVgap(10);
-                grid.setPadding(new Insets(20, 10, 10, 10));
-                PasswordField pf = new PasswordField();
-                pf.setPrefWidth(250);
-                grid.add(new Label("密码："), 0, 0);
-                grid.add(pf, 1, 0);
-                pwdDialog.getDialogPane().setContent(grid);
-                pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
-                final String[] passwordHolder = new String[1];
-                pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
-                if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
-                config.setPassword(passwordHolder[0]);
-            }
-
-            new Thread(() -> {
-                try {
-                    DatabaseService.dropDatabase(config, dbName);
-                    Platform.runLater(() -> {
-                        removeDbNodeDataRecursive(dbItem);
-                        dbItem.getParent().getChildren().remove(dbItem);
-                    });
-                } catch (Exception e) {
-                    Platform.runLater(() -> {
-                        Alert alert = new Alert(Alert.AlertType.ERROR);
-                        alert.setTitle("删除失败");
-                        alert.setHeaderText(null);
-                        alert.setContentText("删除数据库失败: " + e.getMessage());
-                        alert.showAndWait();
-                    });
-                }
-            }, "DB-DropDatabase").start();
-        });
     }
 
     /**
@@ -2843,10 +1113,9 @@ public class ConnectModule implements Module {
         // 后台关闭底层连接（避免阻塞UI线程）
         new Thread(() -> {
             try {
-                if (config.getType() == ConnectType.MYSQL
-                        || config.getType() == ConnectType.POSTGRESQL
-                        || config.getType() == ConnectType.ORACLE) {
-                    DatabaseService.closeConnection(config.getId());
+                AbstractDbHandler handler = createDbHandler(config);
+                if (handler != null) {
+                    handler.closeConnection(config);
                 } else if (config.getType() == ConnectType.REDIS) {
                     RedisService.closeJedisCluster(config);
                 } else if (config.getType() == ConnectType.ROCKETMQ) {
@@ -2869,223 +1138,22 @@ public class ConnectModule implements Module {
         treeView.refresh();
     }
 
-    private void handleRefreshDbHost(TreeItem<String> hostItem, ConnectionConfig config) {
-        if (config.getType() == ConnectType.ROCKETMQ) {
-            for (TreeItem<String> child : hostItem.getChildren()) {
-                removeDbNodeDataRecursive(child);
-            }
-            hostItem.getChildren().clear();
-            handleRocketmqHostDoubleClick(hostItem, config);
-            return;
-        }
-        if (config.getType() == ConnectType.ALIYUN) {
-            for (TreeItem<String> child : hostItem.getChildren()) {
-                removeDbNodeDataRecursive(child);
-            }
-            hostItem.getChildren().clear();
-            handleAliyunHostDoubleClick(hostItem, config);
-            return;
-        }
-        if (config.getPassword() == null) {
-            handleDbHostDoubleClick(hostItem, config);
-            return;
-        }
-        new Thread(() -> {
-            try {
-                List<String> databases = DatabaseService.getDatabases(config);
-                Platform.runLater(() -> {
-                    for (TreeItem<String> child : hostItem.getChildren()) {
-                        removeDbNodeDataRecursive(child);
-                    }
-                    hostItem.getChildren().clear();
-                    for (String dbName : databases) {
-                        TreeItem<String> dbItem = new TreeItem<>(dbName);
-                        dbItem.setGraphic(getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.DATABASE, dbName, config, dbName)));
-                        dbNodeDataMap.put(dbItem, new DatabaseNodeData(DatabaseNodeData.NodeType.DATABASE, dbName, config, dbName));
-                        hostItem.getChildren().add(dbItem);
-                    }
-                    hostItem.setExpanded(true);
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("刷新失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("无法刷新数据库列表: " + e.getMessage());
-                    alert.showAndWait();
-                });
-            }
-        }, "DB-RefreshDatabases").start();
-    }
-
-    private void removeDbNodeDataRecursive(TreeItem<String> item) {
+    /** 供 handler 调用：递归移除节点映射 */
+    public void removeDbNodeDataRecursive(TreeItem<String> item) {
         dbNodeDataMap.remove(item);
         for (TreeItem<String> child : item.getChildren()) {
             removeDbNodeDataRecursive(child);
         }
     }
 
-    private void handleRefreshDbNode(TreeItem<String> item, DatabaseNodeData data) {
-        ConnectionConfig config = data.getConnectionConfig();
-        switch (data.getType()) {
-            case DATABASE -> {
-                if (data.isOpened()) {
-                    removeDbNodeDataRecursive(item);
-                    item.getChildren().clear();
-                    openDatabase(item, data);
-                }
-            }
-            case TABLES_FOLDER -> {
-                item.getChildren().clear();
-                loadTablesForFolder(item, config, data.getDatabaseName(), false);
-            }
-            case VIEWS_FOLDER -> {
-                item.getChildren().clear();
-                loadViewsForFolder(item, config, data.getDatabaseName(), false);
-            }
-            case QUERY_FOLDER -> {
-                loadQueriesForFolder(item, config, data.getDatabaseName());
-            }
-            case BACKUP_FOLDER -> {
-                loadBackupsForFolder(item, config, data.getDatabaseName());
-            }
-            case ROCKETMQ_TOPICS_FOLDER -> {
-                item.getChildren().clear();
-                loadRocketmqTopicsForFolder(item, config);
-            }
-            case ROCKETMQ_CONSUMERS_FOLDER -> {
-                item.getChildren().clear();
-                loadRocketmqConsumersForFolder(item, config);
-            }
-            case ROCKETMQ_CLUSTER_FOLDER -> {
-                item.getChildren().clear();
-                loadRocketmqClusterForFolder(item, config);
-            }
-            case ALIYUN_PRODUCT_FOLDER -> {
-                item.getChildren().clear();
-                loadAliyunProductChildren(item, data);
-            }
-            case ALIYUN_DOMAIN -> handleAliyunDomainDoubleClick(item, data);
-            default -> {}
-        }
+    /** 供 handler 调用：注册节点数据映射 */
+    public void putDbNodeData(TreeItem<String> item, DatabaseNodeData data) {
+        dbNodeDataMap.put(item, data);
     }
 
-    private void handleDeleteDbNodes() {
-        ObservableList<TreeItem<String>> selectedItems = treeView.getSelectionModel().getSelectedItems();
-        List<TreeItem<String>> tableItems = new ArrayList<>();
-        List<TreeItem<String>> viewItems = new ArrayList<>();
-
-        for (TreeItem<String> item : selectedItems) {
-            DatabaseNodeData data = dbNodeDataMap.get(item);
-            if (data != null) {
-                if (data.getType() == DatabaseNodeData.NodeType.TABLE) {
-                    tableItems.add(item);
-                } else if (data.getType() == DatabaseNodeData.NodeType.VIEW) {
-                    viewItems.add(item);
-                }
-            }
-        }
-
-        if (tableItems.isEmpty() && viewItems.isEmpty()) return;
-
-        StringBuilder msg = new StringBuilder("确定要删除以下对象吗？此操作不可恢复！\n\n");
-        if (!tableItems.isEmpty()) {
-            msg.append("表：\n");
-            for (TreeItem<String> item : tableItems) {
-                msg.append("  - ").append(item.getValue()).append("\n");
-            }
-        }
-        if (!viewItems.isEmpty()) {
-            msg.append("视图：\n");
-            for (TreeItem<String> item : viewItems) {
-                msg.append("  - ").append(item.getValue()).append("\n");
-            }
-        }
-
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("确认删除");
-        confirm.setHeaderText(null);
-        confirm.setContentText(msg.toString());
-
-        ButtonType deleteBtn = new ButtonType("确认删除");
-        confirm.getButtonTypes().setAll(deleteBtn, ButtonType.CANCEL);
-
-        Optional<ButtonType> result = confirm.showAndWait();
-        if (result.isEmpty() || result.get() != deleteBtn) return;
-
-        if (!tableItems.isEmpty()) {
-            Map<String, List<TreeItem<String>>> groupedTables = new HashMap<>();
-            for (TreeItem<String> item : tableItems) {
-                DatabaseNodeData data = dbNodeDataMap.get(item);
-                String key = data.getConnectionConfig().getId() + "|" + data.getDatabaseName();
-                groupedTables.computeIfAbsent(key, k -> new ArrayList<>()).add(item);
-            }
-            for (Map.Entry<String, List<TreeItem<String>>> entry : groupedTables.entrySet()) {
-                String[] parts = entry.getKey().split("\\|");
-                String configId = parts[0];
-                String dbName = parts[1];
-                List<String> tableNames = entry.getValue().stream()
-                        .map(TreeItem::getValue).toList();
-                ConnectionConfig cfg = connections.stream()
-                        .filter(c -> c.getId().equals(configId)).findFirst().orElse(null);
-                if (cfg == null) continue;
-
-                try {
-                    DatabaseService.dropTables(cfg, dbName, tableNames);
-                    Platform.runLater(() -> {
-                        for (TreeItem<String> item : entry.getValue()) {
-                            dbNodeDataMap.remove(item);
-                            item.getParent().getChildren().remove(item);
-                        }
-                    });
-                } catch (Exception e) {
-                    Platform.runLater(() -> {
-                        Alert err = new Alert(Alert.AlertType.ERROR);
-                        err.setTitle("删除失败");
-                        err.setHeaderText(null);
-                        err.setContentText(e.getMessage());
-                        err.showAndWait();
-                    });
-                }
-            }
-        }
-
-        if (!viewItems.isEmpty()) {
-            Map<String, List<TreeItem<String>>> groupedViews = new HashMap<>();
-            for (TreeItem<String> item : viewItems) {
-                DatabaseNodeData data = dbNodeDataMap.get(item);
-                String key = data.getConnectionConfig().getId() + "|" + data.getDatabaseName();
-                groupedViews.computeIfAbsent(key, k -> new ArrayList<>()).add(item);
-            }
-            for (Map.Entry<String, List<TreeItem<String>>> entry : groupedViews.entrySet()) {
-                String[] parts = entry.getKey().split("\\|");
-                String configId = parts[0];
-                String dbName = parts[1];
-                List<String> viewNames = entry.getValue().stream()
-                        .map(TreeItem::getValue).toList();
-                ConnectionConfig cfg = connections.stream()
-                        .filter(c -> c.getId().equals(configId)).findFirst().orElse(null);
-                if (cfg == null) continue;
-
-                try {
-                    DatabaseService.dropViews(cfg, dbName, viewNames);
-                    Platform.runLater(() -> {
-                        for (TreeItem<String> item : entry.getValue()) {
-                            dbNodeDataMap.remove(item);
-                            item.getParent().getChildren().remove(item);
-                        }
-                    });
-                } catch (Exception e) {
-                    Platform.runLater(() -> {
-                        Alert err = new Alert(Alert.AlertType.ERROR);
-                        err.setTitle("删除失败");
-                        err.setHeaderText(null);
-                        err.setContentText(e.getMessage());
-                        err.showAndWait();
-                    });
-                }
-            }
-        }
+    /** 供 handler 调用：根据 id 查找连接配置 */
+    public ConnectionConfig findConnectionById(String id) {
+        return connections.stream().filter(c -> c.getId().equals(id)).findFirst().orElse(null);
     }
 
     private void handleConnect(ConnectionConfig config) {
@@ -3093,118 +1161,40 @@ public class ConnectModule implements Module {
 
         if (!ensureTabPaneInstalled()) return;
 
-        if (config.getType() == ConnectType.LOCAL_TERMINAL) {
-            doLocalTerminalConnect(config);
-            return;
+        ConnectHandler handler = createConnectHandler(config);
+        if (handler != null) {
+            handler.handleConnect(this, config);
         }
-
-        boolean isS3orOSS = config.getType() == ConnectType.S3 || config.getType() == ConnectType.ALIYUN_OSS;
-        if (isS3orOSS) {
-            doS3Connect(config);
-            return;
-        }
-
-        if (config.getType() == ConnectType.ALIYUN) {
-            TreeItem<String> hostItem = findItemById(root, config.getId());
-            if (hostItem != null) {
-                handleAliyunHostDoubleClick(hostItem, config);
-            }
-            return;
-        }
-
-        if (config.getType() == ConnectType.RDP) {
-            for (Tab tab : terminalTabPane.getTabs()) {
-                if (config.getId().equals(tab.getUserData())) {
-                    terminalTabPane.getSelectionModel().select(tab);
-                    showTerminalView();
-                    return;
-                }
-            }
-            doRdpConnect(config);
-            return;
-        }
-
-        boolean isDatabase = config.getType() == ConnectType.MYSQL
-                || config.getType() == ConnectType.POSTGRESQL
-                || config.getType() == ConnectType.ORACLE;
-        boolean isRedis = config.getType() == ConnectType.REDIS;
-
-        if (isDatabase) {
-            TreeItem<String> hostItem = findItemById(root, config.getId());
-            if (hostItem != null) {
-                handleDbHostDoubleClick(hostItem, config);
-            }
-            return;
-        }
-
-        if (isRedis) {
-            TreeItem<String> hostItem = findItemById(root, config.getId());
-            if (hostItem != null) {
-                handleRedisHostDoubleClick(hostItem, config);
-            }
-            return;
-        }
-
-        if (config.getType() == ConnectType.ROCKETMQ) {
-            TreeItem<String> hostItem = findItemById(root, config.getId());
-            if (hostItem != null) {
-                handleRocketmqHostDoubleClick(hostItem, config);
-            }
-            return;
-        }
-
-        SSHTerminalPane terminalPane = new SSHTerminalPane();
-
-        int scrollback = config.getScrollbackLines() != null ?
-                config.getScrollbackLines() : GlobalConfig.getInstance().getScrollbackLines();
-        terminalPane.setScrollbackLines(scrollback);
-
-        Tab tab = new Tab(config.getName());
-        tab.setContent(terminalPane);
-        tab.setUserData(config.getId());
-
-        ContextMenu tabContextMenu = new ContextMenu();
-
-        MenuItem copySessionItem = new MenuItem("复制会话");
-        copySessionItem.setOnAction(e -> handleConnect(config));
-
-        MenuItem sessionConfigItem = new MenuItem("会话配置");
-        sessionConfigItem.setOnAction(e -> {
-            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
-            SessionConfigDialog.show(stage, config);
-            int newScrollback = config.getScrollbackLines() != null ?
-                    config.getScrollbackLines() : GlobalConfig.getInstance().getScrollbackLines();
-            terminalPane.setScrollbackLines(newScrollback);
-            ConfigManager.saveConnections(connections);
-        });
-
-        MenuItem globalConfigItem = new MenuItem("终端配置");
-        globalConfigItem.setOnAction(e -> {
-            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
-            GlobalConfigDialog.show(stage, GlobalConfigDialog.ConfigMode.SSH);
-            if (config.getScrollbackLines() == null) {
-                terminalPane.setScrollbackLines(GlobalConfig.getInstance().getScrollbackLines());
-            }
-        });
-
-        tabContextMenu.getItems().addAll(copySessionItem, new SeparatorMenuItem(), sessionConfigItem, globalConfigItem);
-        tab.setContextMenu(tabContextMenu);
-
-        tab.setOnClosed(e -> {
-            terminalPane.disconnect();
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showTerminalView();
-
-        doConnect(terminalPane, config);
     }
 
-    private void showTerminalView() {
+    /**
+     * 根据连接类型创建对应的连接处理器
+     */
+    private ConnectHandler createConnectHandler(ConnectionConfig config) {
+        ConnectType type = config.getType();
+        // 数据库类型（MySQL/PostgreSQL/Oracle）复用 AbstractDbHandler
+        AbstractDbHandler dbHandler = createDbHandler(config);
+        if (dbHandler != null) {
+            return dbHandler;
+        }
+        // 其他类型
+        if (type == ConnectType.REDIS) return new RedisConnectHandler();
+        if (type == ConnectType.ROCKETMQ) return new RocketmqConnectHandler();
+        if (type == ConnectType.ALIYUN) return new AliyunConnectHandler();
+        if (type == ConnectType.LOCAL_TERMINAL) return new LocalTerminalConnectHandler();
+        if (type == ConnectType.S3 || type == ConnectType.ALIYUN_OSS) return new S3ConnectHandler();
+        if (type == ConnectType.RDP) return new RdpConnectHandler();
+        if (type == ConnectType.SSH) return new SshTerminalConnectHandler();
+        return null;
+    }
+
+    /** 供 handler 调用：获取终端 Tab 面板 */
+    public TabPane getTerminalTabPane() {
+        return terminalTabPane;
+    }
+
+    /** 供 RdpConnectHandler 调用 */
+    public void showTerminalView() {
         // 已直接使用terminalTabPane，无需隐藏/显示其他元素
         if (terminalTabPane != null) {
             terminalTabPane.setVisible(true);
@@ -3212,11 +1202,8 @@ public class ConnectModule implements Module {
         }
     }
 
-    private void showDataView() {
-        showTerminalView();
-    }
-
-    private void showWelcomeView() {
+    /** 供 handler 调用：显示欢迎视图 */
+    public void showWelcomeView() {
         // 无标签时保持TabPane可见，但可以清空标签或显示提示
         if (terminalTabPane != null) {
             terminalTabPane.setVisible(true);
@@ -3224,254 +1211,93 @@ public class ConnectModule implements Module {
         }
     }
 
-    private void doConnect(SSHTerminalPane terminalPane, ConnectionConfig config) {
-        if (config.isUsePassword() && config.getPassword() == null) {
-            Dialog<String> pwdDialog = new Dialog<>();
-            pwdDialog.setTitle("输入密码");
-            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
-            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+    /** 供 handler 调用：保存连接配置 */
+    public void saveConnections() {
+        ConfigManager.saveConnections(connections);
+    }
 
-            GridPane grid = new GridPane();
-            grid.setHgap(10);
-            grid.setVgap(10);
-            grid.setPadding(new Insets(20, 10, 10, 10));
-            PasswordField pf = new PasswordField();
-            pf.setPrefWidth(250);
-            grid.add(new Label("密码："), 0, 0);
-            grid.add(pf, 1, 0);
-            pwdDialog.getDialogPane().setContent(grid);
+    /** 供 handler 调用：触发连接（用于"复制会话"菜单） */
+    public void triggerConnect(ConnectionConfig config) {
+        handleConnect(config);
+    }
 
-            pwdDialog.setResultConverter(dialogButton -> {
-                if (dialogButton == ButtonType.OK) {
-                    return pf.getText();
-                }
-                return null;
-            });
+    /** 双击主机节点：通过对应 handler 加载主机资源列表 */
+    public void triggerHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
+        ConnectHandler handler = createConnectHandler(config);
+        if (handler != null) {
+            handler.handleHostDoubleClick(this, hostItem, config);
+        }
+    }
 
-            pwdDialog.showAndWait().ifPresentOrElse(pwd -> {
-                if (pwd.isEmpty()) return;
-                connectWithAuth(terminalPane, config, pwd);
-            }, () -> {});
+    /** 刷新主机节点 dispatcher：根据连接类型分发到对应处理器 */
+    void refreshDbHost(TreeItem<String> hostItem, ConnectionConfig config) {
+        ConnectType type = config.getType();
+        boolean isDatabase = type == ConnectType.MYSQL
+                || type == ConnectType.POSTGRESQL
+                || type == ConnectType.ORACLE;
+        if (isDatabase) {
+            AbstractDbHandler handler = createDbHandler(config);
+            if (handler != null) {
+                handler.refreshDbHost(hostItem, config);
+            }
         } else {
-            connectWithAuth(terminalPane, config, config.getPassword());
+            // Redis/RocketMQ/Aliyun 等：清空子节点后重新触发双击连接
+            for (TreeItem<String> child : hostItem.getChildren()) {
+                removeDbNodeDataRecursive(child);
+            }
+            hostItem.getChildren().clear();
+            triggerHostDoubleClick(hostItem, config);
         }
     }
 
-    private void connectWithAuth(SSHTerminalPane terminalPane, ConnectionConfig config, String password) {
-        List<String> keyPaths = config.isUseKey() ? config.getPrivateKeyPaths() : null;
-        new Thread(() -> {
-            try {
-                terminalPane.connect(config.getHost(), config.getPort(), config.getUsername(), password, keyPaths);
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("连接失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("SSH连接失败: " + e.getMessage());
-                    alert.showAndWait();
-                    terminalPane.disconnect();
-                });
-                e.printStackTrace();
-            }
-        }, "SSH-Connect").start();
-    }
-
-    private void doLocalTerminalConnect(ConnectionConfig config) {
-        LocalTerminalPane localTerminalPane = new LocalTerminalPane();
-
-        int scrollback = config.getScrollbackLines() != null ?
-                config.getScrollbackLines() : GlobalConfig.getInstance().getScrollbackLines();
-        localTerminalPane.setScrollbackLines(scrollback);
-
-        Tab tab = new Tab(config.getName());
-        tab.setContent(localTerminalPane);
-        tab.setUserData(config.getId());
-
-        ContextMenu tabContextMenu = new ContextMenu();
-
-        MenuItem copySessionItem = new MenuItem("复制会话");
-        copySessionItem.setOnAction(e -> doLocalTerminalConnect(config));
-
-        MenuItem sessionConfigItem = new MenuItem("会话配置");
-        sessionConfigItem.setOnAction(e -> {
-            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
-            SessionConfigDialog.show(stage, config);
-            int newScrollback = config.getScrollbackLines() != null ?
-                    config.getScrollbackLines() : GlobalConfig.getInstance().getScrollbackLines();
-            localTerminalPane.setScrollbackLines(newScrollback);
-            ConfigManager.saveConnections(connections);
-        });
-
-        MenuItem globalConfigItem = new MenuItem("终端配置");
-        globalConfigItem.setOnAction(e -> {
-            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
-            GlobalConfigDialog.show(stage, GlobalConfigDialog.ConfigMode.SSH);
-            if (config.getScrollbackLines() == null) {
-                localTerminalPane.setScrollbackLines(GlobalConfig.getInstance().getScrollbackLines());
-            }
-        });
-
-        tabContextMenu.getItems().addAll(copySessionItem, new SeparatorMenuItem(), sessionConfigItem, globalConfigItem);
-        tab.setContextMenu(tabContextMenu);
-
-        tab.setOnClosed(e -> {
-            localTerminalPane.disconnect();
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showTerminalView();
-
-        String terminalType = config.getTerminalType() != null ? config.getTerminalType() : "cmd";
-        localTerminalPane.connect(terminalType);
-    }
-
-    private void doS3Connect(ConnectionConfig config) {
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (config.getId().equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showTerminalView();
-                return;
-            }
-        }
-
-        if (config.getPassword() == null || config.getPassword().isEmpty()) {
-            Dialog<String> pwdDialog = new Dialog<>();
-            pwdDialog.setTitle("输入Secret Key");
-            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + (config.getEndpoint() != null ? config.getEndpoint() : config.getRegion()) + ")");
-            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-            GridPane grid = new GridPane();
-            grid.setHgap(10);
-            grid.setVgap(10);
-            grid.setPadding(new Insets(20, 10, 10, 10));
-            PasswordField pf = new PasswordField();
-            pf.setPrefWidth(250);
-            pf.setPromptText("Secret Key");
-            grid.add(new Label("Secret Key："), 0, 0);
-            grid.add(pf, 1, 0);
-            pwdDialog.getDialogPane().setContent(grid);
-            pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
-            final String[] passwordHolder = new String[1];
-            pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
-            if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
-            config.setPassword(passwordHolder[0]);
-        }
-
-        S3FileBrowserPane fileBrowserPane = new S3FileBrowserPane(config);
-
-        Tab tab = new Tab(config.getName());
-        tab.setContent(fileBrowserPane);
-        tab.setUserData(config.getId());
-
-        try {
-            Image tabIcon = new Image(getClass().getResourceAsStream(config.getType().getIconPath()));
-            if (tabIcon != null) {
-                ImageView tabIconView = new ImageView(tabIcon);
-                tabIconView.setFitWidth(16);
-                tabIconView.setFitHeight(16);
-                tab.setGraphic(tabIconView);
-            }
-        } catch (Exception e) {}
-
-        ContextMenu tabContextMenu = new ContextMenu();
-        MenuItem refreshItem = new MenuItem("刷新");
-        refreshItem.setOnAction(e -> fileBrowserPane.refresh());
-        MenuItem sessionConfigItem = new MenuItem("会话配置");
-        sessionConfigItem.setOnAction(e -> {
-            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
-            SessionConfigDialog.show(stage, config);
-            ConfigManager.saveConnections(connections);
-        });
-        tabContextMenu.getItems().addAll(refreshItem, new SeparatorMenuItem(), sessionConfigItem);
-        tab.setContextMenu(tabContextMenu);
-
-        tab.setOnClosed(e -> {
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showTerminalView();
-    }
-
-    private void doRdpConnect(ConnectionConfig config) {
-        String password = config.getPassword();
-        if (password == null || password.isEmpty()) {
-            Dialog<String> pwdDialog = new Dialog<>();
-            pwdDialog.setTitle("输入密码");
-            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
-            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-
-            GridPane grid = new GridPane();
-            grid.setHgap(10);
-            grid.setVgap(10);
-            grid.setPadding(new Insets(20, 10, 10, 10));
-            PasswordField pf = new PasswordField();
-            pf.setPrefWidth(250);
-            grid.add(new Label("密码："), 0, 0);
-            grid.add(pf, 1, 0);
-            pwdDialog.getDialogPane().setContent(grid);
-
-            pwdDialog.setResultConverter(dialogButton -> {
-                if (dialogButton == ButtonType.OK) {
-                    return pf.getText();
+    /** 刷新节点 dispatcher：根据节点类型分发到对应处理器 */
+    public void refreshDbNode(TreeItem<String> item, DatabaseNodeData data) {
+        ConnectionConfig config = data.getConnectionConfig();
+        switch (data.getType()) {
+            case DATABASE, SCHEMA, TABLES_FOLDER, VIEWS_FOLDER, QUERY_FOLDER, BACKUP_FOLDER -> {
+                AbstractDbHandler handler = createDbHandler(config);
+                if (handler != null) {
+                    handler.refreshDbNode(item, data);
                 }
-                return null;
-            });
-
-            var result = pwdDialog.showAndWait();
-            if (result.isEmpty() || result.get().isEmpty()) return;
-            password = result.get();
+            }
+            case ROCKETMQ_TOPICS_FOLDER, ROCKETMQ_CONSUMERS_FOLDER, ROCKETMQ_CLUSTER_FOLDER -> {
+                item.getChildren().clear();
+                ConnectHandler handler = createConnectHandler(config);
+                if (handler instanceof RocketmqConnectHandler rq) {
+                    rq.refreshDbNode(this, item, data);
+                }
+            }
+            case ALIYUN_PRODUCT_FOLDER, ALIYUN_DOMAIN -> {
+                ConnectHandler handler = createConnectHandler(config);
+                if (handler instanceof AliyunConnectHandler al) {
+                    al.refreshDbNode(this, item, data);
+                }
+            }
+            default -> {}
         }
+    }
 
-        RdpPane rdpPane = new RdpPane();
-
-        Tab tab = new Tab(config.getName());
-        tab.setContent(rdpPane);
-        tab.setUserData(config.getId());
-
-        ContextMenu tabContextMenu = new ContextMenu();
-
-        MenuItem sessionConfigItem = new MenuItem("会话配置");
-        sessionConfigItem.setOnAction(e -> {
-            Stage stage = (Stage) terminalTabPane.getScene().getWindow();
-            SessionConfigDialog.show(stage, config);
-            ConfigManager.saveConnections(connections);
-        });
-
-        tabContextMenu.getItems().add(sessionConfigItem);
-        tab.setContextMenu(tabContextMenu);
-
-        tab.setOnClosed(e -> {
-            rdpPane.disconnect();
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
+    /** 删除节点 dispatcher：根据选中项的连接配置分发到对应数据库处理器 */
+    public void deleteDbNodes() {
+        ObservableList<TreeItem<String>> selectedItems = treeView.getSelectionModel().getSelectedItems();
+        ConnectionConfig cfg = null;
+        for (TreeItem<String> item : selectedItems) {
+            DatabaseNodeData data = dbNodeDataMap.get(item);
+            if (data != null) {
+                cfg = data.getConnectionConfig();
+                break;
             }
-        });
+        }
+        if (cfg == null) return;
+        AbstractDbHandler handler = createDbHandler(cfg);
+        if (handler != null) {
+            handler.handleDeleteDbNodes();
+        }
+    }
 
-        terminalTabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
-            if (newTab == tab) {
-                rdpPane.requestRdpFocus();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
+    /** 供 handler 调用：显示数据视图（实际为终端视图） */
+    public void showDataView() {
         showTerminalView();
-
-        int rdpPort = config.getPort() > 0 ? config.getPort() : 3389;
-        int width = config.getScreenWidth() > 0 ? config.getScreenWidth() : 1024;
-        int height = config.getScreenHeight() > 0 ? config.getScreenHeight() : 768;
-        int bpp = config.getColorDepth() > 0 ? config.getColorDepth() : 24;
-        String domain = config.getDomain();
-
-        rdpPane.connect(config.getHost(), rdpPort, config.getUsername(), password,
-                domain, width, height, bpp, config.isUseSsl());
     }
 
     private void handleAddFolder(TreeItem<String> parent) {
@@ -3634,7 +1460,8 @@ public class ConnectModule implements Module {
         });
     }
 
-    private Stage getStage() {
+    /** 供 handler 调用：获取所属 Stage */
+    public Stage getStage() {
         Node node = treeView;
         while (node != null && !(node.getScene() != null && node.getScene().getWindow() instanceof Stage)) {
             node = node.getParent();
@@ -3645,7 +1472,8 @@ public class ConnectModule implements Module {
         return null;
     }
 
-    private boolean ensureTabPaneInstalled() {
+    /** 供 handler 调用：确认 TabPane 已安装 */
+    public boolean ensureTabPaneInstalled() {
         // 现在 terminalTabPane 始终在 contentArea 中，直接返回 true
         return terminalTabPane != null;
     }
@@ -3665,5 +1493,15 @@ public class ConnectModule implements Module {
         contentArea.getChildren().add(terminalTabPane);
         terminalTabPane.setVisible(true);
         terminalTabPane.setManaged(true);
+
+        // 切换标签时自动将输入焦点转移到终端视图，无需再点击终端区域
+        terminalTabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
+            if (newTab == null) return;
+            if (newTab.getContent() instanceof SSHTerminalPane pane) {
+                pane.requestTerminalFocus();
+            } else if (newTab.getContent() instanceof LocalTerminalPane pane) {
+                pane.requestTerminalFocus();
+            }
+        });
     }
 }
