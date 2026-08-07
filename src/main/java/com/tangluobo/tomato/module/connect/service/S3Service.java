@@ -1,48 +1,52 @@
 package com.tangluobo.tomato.module.connect.service;
 
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.S3ClientBuilder;
-import software.amazon.awssdk.services.s3.model.*;
+import io.minio.GetObjectArgs;
+import io.minio.GetObjectResponse;
+import io.minio.ListObjectsArgs;
+import io.minio.MakeBucketArgs;
+import io.minio.MinioClient;
+import io.minio.PutObjectArgs;
+import io.minio.RemoveBucketArgs;
+import io.minio.RemoveObjectArgs;
+import io.minio.Result;
+import io.minio.messages.Bucket;
+import io.minio.messages.Item;
 
-import java.net.URI;
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * S3存储服务：支持AWS S3、MinIO等S3兼容存储
+ * S3存储服务：基于MinIO SDK，支持AWS S3、MinIO等S3兼容存储
  */
 public class S3Service {
 
     /**
-     * 创建S3客户端连接
+     * 创建MinIO客户端连接
      */
-    public static S3Client createClient(ConnectionConfig config) {
-        AwsBasicCredentials credentials = AwsBasicCredentials.create(
-                config.getUsername(),
-                config.getPassword()
-        );
+    public static MinioClient createClient(ConnectionConfig config) {
+        // region 为空时回退到默认值（MinIO等S3兼容服务通常不需要真实region）
+        String region = config.getRegion();
+        if (region == null || region.trim().isEmpty()) {
+            region = "us-east-1";
+        }
 
-        S3ClientBuilder builder = S3Client.builder()
-                .credentialsProvider(StaticCredentialsProvider.create(credentials))
-                .region(Region.of(config.getRegion()));
-
-        // 设置自定义端点（MinIO等S3兼容服务）
+        // 构造端点：优先使用自定义端点，否则按region构造AWS S3端点
         String endpoint = config.getEndpoint();
-        if (endpoint != null && !endpoint.isEmpty()) {
-            if (!endpoint.startsWith("http://") && !endpoint.startsWith("https://")) {
-                endpoint = "http://" + endpoint;
-            }
-            builder.endpointOverride(URI.create(endpoint));
+        if (endpoint == null || endpoint.isEmpty()) {
+            endpoint = "https://s3." + region + ".amazonaws.com";
+        } else if (!endpoint.startsWith("http://") && !endpoint.startsWith("https://")) {
+            endpoint = "http://" + endpoint;
         }
 
-        // 路径风格访问（MinIO需要）
-        if (config.isPathStyleAccess()) {
-            builder.forcePathStyle(true);
-        }
+        MinioClient.Builder builder = MinioClient.builder()
+                .endpoint(endpoint)
+                .credentials(config.getUsername(), config.getPassword())
+                .region(region);
 
         return builder.build();
     }
@@ -51,80 +55,58 @@ public class S3Service {
      * 获取Bucket列表
      */
     public static List<String> listBuckets(ConnectionConfig config) throws Exception {
-        S3Client client = createClient(config);
-        try {
-            ListBucketsResponse response = client.listBuckets();
-            List<String> bucketNames = new ArrayList<>();
-            for (Bucket bucket : response.buckets()) {
-                bucketNames.add(bucket.name());
-            }
-            return bucketNames;
-        } finally {
-            client.close();
+        MinioClient client = createClient(config);
+        List<String> bucketNames = new ArrayList<>();
+        for (Bucket bucket : client.listBuckets()) {
+            bucketNames.add(bucket.name());
         }
+        return bucketNames;
     }
 
     /**
      * 获取Bucket中的对象列表
      */
     public static List<S3ObjectInfo> listObjects(ConnectionConfig config, String bucketName, String prefix) throws Exception {
-        S3Client client = createClient(config);
+        MinioClient client = createClient(config);
         try {
-            ListObjectsV2Request request = ListObjectsV2Request.builder()
+            ListObjectsArgs.Builder argsBuilder = ListObjectsArgs.builder()
                     .bucket(bucketName)
-                    .prefix(prefix != null ? prefix : "")
-                    .delimiter("/")
-                    .maxKeys(1000)
-                    .build();
-
-            ListObjectsV2Response response = client.listObjectsV2(request);
-
-            List<S3ObjectInfo> objects = new ArrayList<>();
-
-            // 添加子目录（CommonPrefixes）
-            for (CommonPrefix commonPrefix : response.commonPrefixes()) {
-                S3ObjectInfo dirInfo = new S3ObjectInfo();
-                dirInfo.setKey(commonPrefix.prefix());
-                dirInfo.setDirectory(true);
-                dirInfo.setSize(0);
-                objects.add(dirInfo);
+                    .recursive(false);
+            if (prefix != null && !prefix.isEmpty()) {
+                argsBuilder.prefix(prefix);
             }
 
-            // 添加文件对象
-            for (S3Object s3Object : response.contents()) {
-                // 跳过目录标记对象（key以/结尾且大小为0的通常是目录标记）
-                if (s3Object.key().endsWith("/") && s3Object.size() == 0) {
-                    continue;
-                }
-                // 跳过与prefix相同自身的目录标记
-                if (prefix != null && !prefix.isEmpty() && s3Object.key().equals(prefix)) {
-                    continue;
-                }
+            List<S3ObjectInfo> objects = new ArrayList<>();
+            Iterable<Result<Item>> results = client.listObjects(argsBuilder.build());
 
+            for (Result<Item> result : results) {
+                Item item = result.get();
                 S3ObjectInfo objInfo = new S3ObjectInfo();
-                objInfo.setKey(s3Object.key());
-                objInfo.setDirectory(false);
-                objInfo.setSize(s3Object.size());
-                objInfo.setLastModified(s3Object.lastModified());
+                objInfo.setKey(item.objectName());
+                objInfo.setDirectory(item.isDir());
+                objInfo.setSize(item.isDir() ? 0 : item.size());
+                if (item.lastModified() != null) {
+                    objInfo.setLastModified(item.lastModified().toInstant());
+                }
                 objects.add(objInfo);
             }
 
             return objects;
         } finally {
-            client.close();
+            // MinioClient 无需显式关闭
         }
     }
 
     /**
      * 获取对象输入流
      */
-    public static java.io.InputStream getObjectStream(ConnectionConfig config, String bucketName, String key) throws Exception {
-        S3Client client = createClient(config);
-        GetObjectRequest request = GetObjectRequest.builder()
+    public static InputStream getObjectStream(ConnectionConfig config, String bucketName, String key) throws Exception {
+        MinioClient client = createClient(config);
+        GetObjectResponse response = client.getObject(GetObjectArgs.builder()
                 .bucket(bucketName)
-                .key(key)
-                .build();
-        return client.getObject(request);
+                .object(key)
+                .build());
+        return response;
     }
 
     /**
@@ -132,51 +114,46 @@ public class S3Service {
      * @param content 文本内容（UTF-8）
      */
     public static void putObject(ConnectionConfig config, String bucketName, String key, String content) throws Exception {
-        S3Client client = createClient(config);
-        try {
-            byte[] bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            software.amazon.awssdk.core.sync.RequestBody body =
-                    software.amazon.awssdk.core.sync.RequestBody.fromBytes(bytes);
-            PutObjectRequest request = PutObjectRequest.builder()
-                    .bucket(bucketName)
-                    .key(key)
-                    .contentType("text/markdown; charset=utf-8")
-                    .build();
-            client.putObject(request, body);
-        } finally {
-            client.close();
-        }
+        MinioClient client = createClient(config);
+        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+        ByteArrayInputStream bis = new ByteArrayInputStream(bytes);
+        client.putObject(PutObjectArgs.builder()
+                .bucket(bucketName)
+                .object(key)
+                .stream(bis, bytes.length+0L, -1L)
+                .contentType("text/markdown; charset=utf-8")
+                .build());
     }
 
     /**
      * 删除对象
      */
     public static void deleteObject(ConnectionConfig config, String bucketName, String key) throws Exception {
-        S3Client client = createClient(config);
-        try {
-            DeleteObjectRequest request = DeleteObjectRequest.builder()
-                    .bucket(bucketName)
-                    .key(key)
-                    .build();
-            client.deleteObject(request);
-        } finally {
-            client.close();
-        }
+        MinioClient client = createClient(config);
+        client.removeObject(RemoveObjectArgs.builder()
+                .bucket(bucketName)
+                .object(key)
+                .build());
     }
 
     /**
      * 创建Bucket
      */
     public static void createBucket(ConnectionConfig config, String bucketName) throws Exception {
-        S3Client client = createClient(config);
-        try {
-            CreateBucketRequest request = CreateBucketRequest.builder()
-                    .bucket(bucketName)
-                    .build();
-            client.createBucket(request);
-        } finally {
-            client.close();
-        }
+        MinioClient client = createClient(config);
+        client.makeBucket(MakeBucketArgs.builder()
+                .bucket(bucketName)
+                .build());
+    }
+
+    /**
+     * 删除Bucket（Bucket必须为空）
+     */
+    public static void deleteBucket(ConnectionConfig config, String bucketName) throws Exception {
+        MinioClient client = createClient(config);
+        client.removeBucket(RemoveBucketArgs.builder()
+                .bucket(bucketName)
+                .build());
     }
 
     /**
@@ -186,7 +163,7 @@ public class S3Service {
         private String key;
         private boolean isDirectory;
         private long size;
-        private java.time.Instant lastModified;
+        private Instant lastModified;
 
         public String getKey() { return key; }
         public void setKey(String key) { this.key = key; }
@@ -197,8 +174,8 @@ public class S3Service {
         public long getSize() { return size; }
         public void setSize(long size) { this.size = size; }
 
-        public java.time.Instant getLastModified() { return lastModified; }
-        public void setLastModified(java.time.Instant lastModified) { this.lastModified = lastModified; }
+        public Instant getLastModified() { return lastModified; }
+        public void setLastModified(Instant lastModified) { this.lastModified = lastModified; }
 
         /**
          * 获取显示名称（去掉前缀路径的最后一部分）

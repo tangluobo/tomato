@@ -1438,13 +1438,7 @@ public class S3FileBrowserPane extends BorderPane {
                         if (isAliyunOSS) {
                             throw new Exception("请通过管理控制台删除Bucket");
                         } else {
-                            software.amazon.awssdk.services.s3.S3Client s3Client = S3Service.createClient(config);
-                            try {
-                                s3Client.deleteBucket(software.amazon.awssdk.services.s3.model.DeleteBucketRequest.builder()
-                                        .bucket(selected.getName()).build());
-                            } finally {
-                                s3Client.close();
-                            }
+                            S3Service.deleteBucket(config, selected.getName());
                         }
                     } else {
                         if (isAliyunOSS) {

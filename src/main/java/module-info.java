@@ -19,10 +19,7 @@ module tomato {
     requires rdp;
     requires org.bouncycastle.provider;
     requires org.bouncycastle.tls;
-    requires software.amazon.awssdk.services.s3;
-    requires software.amazon.awssdk.auth;
-    requires software.amazon.awssdk.regions;
-    requires software.amazon.awssdk.core;
+    requires minio;
     requires aliyun.sdk.oss;
     requires aliyun.java.sdk.core;
     requires aliyun.java.sdk.ecs;
