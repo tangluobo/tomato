@@ -234,6 +234,8 @@ public class S3FileBrowserPane extends BorderPane {
         // 当前路径输入框（可编辑，回车跳转；顶到视图切换按钮，始终显示文本框样式）
         currentPathField = new TextField("/");
         currentPathField.setPrefHeight(25);
+        currentPathField.setMinWidth(0);
+        currentPathField.setPrefWidth(0);
         currentPathField.setMaxWidth(Double.MAX_VALUE);
         HBox.setHgrow(currentPathField, Priority.ALWAYS);
         currentPathField.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-background-color: white; -fx-background-insets: 0; -fx-background-radius: 0; -fx-padding: 2 6; -fx-border-color: #3399ff; -fx-border-width: 1; -fx-border-insets: 0; -fx-border-radius: 0;");
