@@ -60,7 +60,7 @@ public class S3FileBrowserPane extends BorderPane {
 
     // 路径导航
     private HBox pathBar;
-    private Label currentPathLabel;
+    private TextField currentPathField;
     private Button refreshBtn;
     private Button upBtn;
     private Button createBucketBtn;
@@ -231,9 +231,27 @@ public class S3FileBrowserPane extends BorderPane {
     }
 
     private void initializeUI() {
-        // 当前路径标签（置于顶部导航栏左侧）
-        currentPathLabel = new Label("/");
-        currentPathLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #333;");
+        // 当前路径输入框（可编辑，回车跳转到输入路径）
+        currentPathField = new TextField("/");
+        currentPathField.setPrefWidth(360);
+        currentPathField.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-background-color: transparent; -fx-background-insets: 0; -fx-background-radius: 3; -fx-padding: 2 4; -fx-border-color: transparent; -fx-border-width: 1; -fx-border-insets: 0; -fx-border-radius: 3;");
+        currentPathField.setTooltip(new Tooltip("点击编辑路径，回车进入目录"));
+        // 获得焦点：显示边框并全选文本；失去焦点：恢复透明样式并还原当前路径
+        currentPathField.focusedProperty().addListener((obs, oldVal, newVal) -> {
+            if (newVal) {
+                currentPathField.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-background-color: white; -fx-background-insets: 0; -fx-background-radius: 3; -fx-padding: 2 4; -fx-border-color: #3399ff; -fx-border-width: 1; -fx-border-insets: 0; -fx-border-radius: 3;");
+                Platform.runLater(currentPathField::selectAll);
+            } else {
+                currentPathField.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-background-color: transparent; -fx-background-insets: 0; -fx-background-radius: 3; -fx-padding: 2 4; -fx-border-color: transparent; -fx-border-width: 1; -fx-border-insets: 0; -fx-border-radius: 3;");
+                updatePathLabel();
+            }
+        });
+        // 回车：跳转到输入路径
+        currentPathField.setOnAction(e -> {
+            String input = currentPathField.getText();
+            pathBar.requestFocus(); // 转移焦点以触发失焦恢复显示
+            navigateToPath(input);
+        });
 
         // 顶部：路径导航栏
         pathBar = new HBox(8);
@@ -241,7 +259,7 @@ public class S3FileBrowserPane extends BorderPane {
         pathBar.setPadding(new Insets(6, 10, 6, 10));
         pathBar.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #dddddd; -fx-border-width: 0 0 1 0;");
 
-        pathBar.getChildren().add(currentPathLabel);
+        pathBar.getChildren().add(currentPathField);
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
@@ -1144,11 +1162,64 @@ public class S3FileBrowserPane extends BorderPane {
 
     private void updatePathLabel() {
         if (currentBucket == null) {
-            currentPathLabel.setText("/");
+            currentPathField.setText("/");
         } else {
             String path = "/" + currentBucket + "/" + (currentPrefix != null ? currentPrefix : "");
-            currentPathLabel.setText(path);
+            currentPathField.setText(path);
         }
+    }
+
+    /**
+     * 跳转到指定路径（由路径输入框回车触发）
+     * 支持格式："/"（根=Bucket列表）、"/bucket"、"/bucket/prefix/"、"/bucket/prefix1/prefix2"
+     */
+    private void navigateToPath(String input) {
+        if (input == null) return;
+        String path = input.trim();
+        if (path.isEmpty()) {
+            updatePathLabel();
+            return;
+        }
+
+        // 规范化：确保以 / 开头
+        if (!path.startsWith("/")) {
+            path = "/" + path;
+        }
+        // 去除多余的末尾 /
+        while (path.length() > 1 && path.endsWith("/")) {
+            path = path.substring(0, path.length() - 1);
+        }
+
+        // 根目录：加载 Bucket 列表
+        if (path.equals("/")) {
+            pathHistory.clear();
+            loadBuckets();
+            return;
+        }
+
+        // /bucket 或 /bucket/prefix1/prefix2
+        String rest = path.substring(1);
+        int firstSlash = rest.indexOf('/');
+        String bucket;
+        String prefix;
+        if (firstSlash < 0) {
+            bucket = rest;
+            prefix = "";
+        } else {
+            bucket = rest.substring(0, firstSlash);
+            prefix = rest.substring(firstSlash + 1);
+            if (!prefix.isEmpty() && !prefix.endsWith("/")) {
+                prefix = prefix + "/";
+            }
+        }
+
+        if (bucket.isEmpty()) {
+            pathHistory.clear();
+            loadBuckets();
+            return;
+        }
+
+        loadObjects(bucket, prefix);
     }
 
     private void handleCreateBucket() {
