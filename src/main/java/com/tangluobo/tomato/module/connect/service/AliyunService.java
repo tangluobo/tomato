@@ -1,4 +1,4 @@
-package com.tangluobo.tomato.module.connect;
+package com.tangluobo.tomato.module.connect.service;
 
 import com.aliyuncs.DefaultAcsClient;
 import com.aliyuncs.IAcsClient;
@@ -13,6 +13,7 @@ import com.aliyuncs.alidns.model.v20150109.DescribeDomainRecordsResponse;
 import com.aliyuncs.alidns.model.v20150109.AddDomainRecordRequest;
 import com.aliyuncs.alidns.model.v20150109.UpdateDomainRecordRequest;
 import com.aliyuncs.alidns.model.v20150109.DeleteDomainRecordRequest;
+import com.tangluobo.tomato.module.connect.ConnectionConfig;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;

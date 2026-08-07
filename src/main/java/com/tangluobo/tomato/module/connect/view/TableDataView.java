@@ -1,5 +1,10 @@
-package com.tangluobo.tomato.module.connect;
+package com.tangluobo.tomato.module.connect.view;
 
+import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.GlobalConfig;
+import com.tangluobo.tomato.module.connect.RowState;
+import com.tangluobo.tomato.module.connect.TableRowData;
+import com.tangluobo.tomato.module.connect.service.DatabaseService;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -9,7 +14,6 @@ import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.control.*;
 import javafx.scene.control.skin.TableColumnHeader;
-import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
@@ -18,11 +22,9 @@ import javafx.scene.layout.StackPane;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Arc;
 import javafx.scene.shape.ArcType;
-import javafx.scene.shape.Circle;
 import javafx.scene.shape.Line;
 import javafx.scene.shape.Polygon;
 import javafx.scene.shape.Rectangle;
-import javafx.scene.shape.StrokeType;
 
 import java.util.*;
 

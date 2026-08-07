@@ -2,7 +2,7 @@ package com.tangluobo.tomato.module.connect.dialog;
 
 import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
-import com.tangluobo.tomato.module.connect.DatabaseService;
+import com.tangluobo.tomato.module.connect.service.DatabaseService;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;

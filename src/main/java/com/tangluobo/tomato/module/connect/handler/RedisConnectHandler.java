@@ -1,6 +1,8 @@
 package com.tangluobo.tomato.module.connect.handler;
 
 import com.tangluobo.tomato.module.connect.*;
+import com.tangluobo.tomato.module.connect.service.RedisService;
+import com.tangluobo.tomato.module.connect.view.RedisDataView;
 import javafx.application.Platform;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;

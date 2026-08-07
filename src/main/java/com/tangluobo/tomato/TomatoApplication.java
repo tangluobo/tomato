@@ -7,7 +7,7 @@ import javafx.scene.Scene;
 import javafx.scene.image.Image;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
-import com.tangluobo.tomato.module.connect.DdnsService;
+import com.tangluobo.tomato.module.connect.service.DdnsService;
 import javafx.stage.StageStyle;
 
 import java.io.IOException;

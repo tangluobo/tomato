@@ -1,9 +1,10 @@
-package com.tangluobo.tomato.module.connect;
+package com.tangluobo.tomato.module.connect.service;
 
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.OSSClientBuilder;
 import com.aliyun.oss.model.OSSObjectSummary;
 import com.aliyun.oss.model.ObjectListing;
+import com.tangluobo.tomato.module.connect.ConnectionConfig;
 
 import java.util.ArrayList;
 import java.util.List;

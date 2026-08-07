@@ -1,5 +1,6 @@
-package com.tangluobo.tomato.module.connect;
+package com.tangluobo.tomato.module.connect.service;
 
+import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import redis.clients.jedis.*;
 import redis.clients.jedis.params.ScanParams;
 import redis.clients.jedis.resps.ScanResult;

@@ -1,5 +1,7 @@
-package com.tangluobo.tomato.module.connect;
+package com.tangluobo.tomato.module.connect.view;
 
+import com.tangluobo.tomato.module.connect.*;
+import com.tangluobo.tomato.module.connect.service.DatabaseService;
 import javafx.application.Platform;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;

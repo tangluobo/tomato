@@ -1,8 +1,10 @@
-package com.tangluobo.tomato.module.connect;
+package com.tangluobo.tomato.module.connect.service;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
+import com.tangluobo.tomato.module.connect.ConfigManager;
+import com.tangluobo.tomato.module.connect.ConnectionConfig;
 
 import java.lang.reflect.Type;
 import java.net.URI;

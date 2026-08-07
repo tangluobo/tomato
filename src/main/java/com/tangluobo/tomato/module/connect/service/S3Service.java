@@ -1,12 +1,12 @@
-package com.tangluobo.tomato.module.connect;
+package com.tangluobo.tomato.module.connect.service;
 
+import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3ClientBuilder;
 import software.amazon.awssdk.services.s3.model.*;
-import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable;
 
 import java.net.URI;
 import java.util.ArrayList;
