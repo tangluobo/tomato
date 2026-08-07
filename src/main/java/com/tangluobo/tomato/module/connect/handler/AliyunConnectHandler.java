@@ -227,4 +227,17 @@ public class AliyunConnectHandler implements ConnectHandler {
         terminalTabPane.getSelectionModel().select(tab);
         module.showDataView();
     }
+
+    /** 构建阿里云节点右键菜单：产品文件夹、域名均提供"刷新" */
+    @Override
+    public void populateNodeContextMenu(ConnectModule module, ContextMenu contextMenu, TreeItem<String> item, DatabaseNodeData data) {
+        switch (data.getType()) {
+            case ALIYUN_PRODUCT_FOLDER, ALIYUN_DOMAIN -> {
+                MenuItem refreshItem = new MenuItem("刷新");
+                refreshItem.setOnAction(e -> module.refreshDbNode(item, data));
+                contextMenu.getItems().add(refreshItem);
+            }
+            default -> {}
+        }
+    }
 }

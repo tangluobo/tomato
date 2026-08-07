@@ -453,4 +453,34 @@ public class RocketmqConnectHandler implements ConnectHandler {
             }
         }, "RocketMQ-LoadCluster").start();
     }
+
+    /** 构建 RocketMQ 节点右键菜单：主题/消费者组/集群文件夹、主题、消费者组、Broker */
+    @Override
+    public void populateNodeContextMenu(ConnectModule module, ContextMenu contextMenu, TreeItem<String> item, DatabaseNodeData data) {
+        switch (data.getType()) {
+            case ROCKETMQ_TOPICS_FOLDER, ROCKETMQ_CONSUMERS_FOLDER, ROCKETMQ_CLUSTER_FOLDER -> {
+                MenuItem refreshItem = new MenuItem("刷新");
+                refreshItem.setOnAction(e -> module.refreshDbNode(item, data));
+                contextMenu.getItems().add(refreshItem);
+            }
+            case ROCKETMQ_TOPIC -> {
+                MenuItem openItem = new MenuItem("查看详情");
+                openItem.setOnAction(e -> module.handleRocketmqTopicDoubleClick(item, data));
+                MenuItem deleteItem = new MenuItem("删除主题");
+                deleteItem.setOnAction(e -> module.handleDeleteRocketmqTopic(item, data));
+                contextMenu.getItems().addAll(openItem, new SeparatorMenuItem(), deleteItem);
+            }
+            case ROCKETMQ_CONSUMER -> {
+                MenuItem openItem = new MenuItem("查看详情");
+                openItem.setOnAction(e -> module.handleRocketmqConsumerDoubleClick(item, data));
+                contextMenu.getItems().add(openItem);
+            }
+            case ROCKETMQ_BROKER -> {
+                MenuItem openItem = new MenuItem("查看详情");
+                openItem.setOnAction(e -> module.handleRocketmqBrokerDoubleClick(item, data));
+                contextMenu.getItems().add(openItem);
+            }
+            default -> {}
+        }
+    }
 }

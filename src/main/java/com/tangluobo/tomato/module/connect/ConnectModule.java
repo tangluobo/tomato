@@ -210,7 +210,10 @@ public class ConnectModule implements Module {
     public Image getViewIcon() { return viewIcon; }
 
     /** 供 handler 调用：获取查询图标（原始 Image） */
-    Image getQueryIcon() { return queryIcon; }
+    public Image getQueryIcon() { return queryIcon; }
+
+    /** 供 handler 调用：获取连接配置列表 */
+    public List<ConnectionConfig> getConnections() { return connections; }
 
     private void loadTree() {
         root.getChildren().clear();
@@ -410,134 +413,10 @@ public class ConnectModule implements Module {
             } else {
                 DatabaseNodeData dbData = dbNodeDataMap.get(targetItem);
                 if (dbData != null) {
-                    switch (dbData.getType()) {
-                        case DATABASE -> {
-                            if (dbData.isOpened()) {
-                                MenuItem closeDbItem = new MenuItem("关闭");
-                                closeDbItem.setOnAction(e -> closeDatabase(targetItem, dbData));
-                                contextMenu.getItems().add(closeDbItem);
-                            } else {
-                                MenuItem openDbItem = new MenuItem("打开");
-                                openDbItem.setOnAction(e -> openDatabase(targetItem, dbData));
-                                contextMenu.getItems().add(openDbItem);
-                            }
-                            MenuItem editDbItem = new MenuItem("编辑");
-                            editDbItem.setOnAction(e -> {
-                                AbstractDbHandler h = createDbHandler(dbData.getConnectionConfig());
-                                if (h != null) h.handleEditDatabase(targetItem, dbData);
-                            });
-                            MenuItem deleteDbItem = new MenuItem("删除");
-                            deleteDbItem.setOnAction(e -> {
-                                AbstractDbHandler h = createDbHandler(dbData.getConnectionConfig());
-                                if (h != null) h.handleDeleteDatabase(targetItem, dbData);
-                            });
-                            MenuItem refreshItem = new MenuItem("刷新");
-                            refreshItem.setOnAction(e -> refreshDbNode(targetItem, dbData));
-                            contextMenu.getItems().addAll(new SeparatorMenuItem(), editDbItem, deleteDbItem, new SeparatorMenuItem(), refreshItem);
-                        }
-                        case REDIS_DB -> {
-                            MenuItem openItem = new MenuItem("打开");
-                            openItem.setOnAction(e -> {
-                                ConnectHandler h = createConnectHandler(dbData.getConnectionConfig());
-                                if (h instanceof RedisConnectHandler r) {
-                                    r.handleRedisDbDoubleClick(this, targetItem, dbData);
-                                }
-                            });
-                            contextMenu.getItems().add(openItem);
-                        }
-                        case SCHEMA -> {
-                            MenuItem openItem = new MenuItem("打开");
-                            openItem.setOnAction(e -> handleSchemaDoubleClick(targetItem, dbData));
-                            MenuItem refreshItem = new MenuItem("刷新");
-                            refreshItem.setOnAction(e -> refreshDbNode(targetItem, dbData));
-                            contextMenu.getItems().addAll(openItem, new SeparatorMenuItem(), refreshItem);
-                        }
-                        case ROCKETMQ_TOPICS_FOLDER, ROCKETMQ_CONSUMERS_FOLDER, ROCKETMQ_CLUSTER_FOLDER, ALIYUN_PRODUCT_FOLDER -> {
-                            MenuItem refreshItem = new MenuItem("刷新");
-                            refreshItem.setOnAction(e -> refreshDbNode(targetItem, dbData));
-                            contextMenu.getItems().addAll(refreshItem);
-                        }
-                        case ROCKETMQ_TOPIC -> {
-                            MenuItem openItem = new MenuItem("查看详情");
-                            openItem.setOnAction(e -> handleRocketmqTopicDoubleClick(targetItem, dbData));
-                            MenuItem deleteItem = new MenuItem("删除主题");
-                            deleteItem.setOnAction(e -> handleDeleteRocketmqTopic(targetItem, dbData));
-                            contextMenu.getItems().addAll(openItem, new SeparatorMenuItem(), deleteItem);
-                        }
-                        case ROCKETMQ_CONSUMER -> {
-                            MenuItem openItem = new MenuItem("查看详情");
-                            openItem.setOnAction(e -> handleRocketmqConsumerDoubleClick(targetItem, dbData));
-                            contextMenu.getItems().addAll(openItem);
-                        }
-                        case ROCKETMQ_BROKER -> {
-                            MenuItem openItem = new MenuItem("查看详情");
-                            openItem.setOnAction(e -> handleRocketmqBrokerDoubleClick(targetItem, dbData));
-                            contextMenu.getItems().addAll(openItem);
-                        }
-                        case TABLES_FOLDER -> {
-                            MenuItem newTableItem = new MenuItem("新建表");
-                            newTableItem.setOnAction(e -> {
-                                AbstractDbHandler h = createDbHandler(dbData.getConnectionConfig());
-                                if (h != null) h.handleNewTable(targetItem, dbData);
-                            });
-                            MenuItem refreshItem = new MenuItem("刷新");
-                            refreshItem.setOnAction(e -> refreshDbNode(targetItem, dbData));
-                            contextMenu.getItems().addAll(newTableItem, new SeparatorMenuItem(), refreshItem);
-                        }
-                        case VIEWS_FOLDER -> {
-                            MenuItem refreshItem = new MenuItem("刷新");
-                            refreshItem.setOnAction(e -> refreshDbNode(targetItem, dbData));
-                            contextMenu.getItems().add(refreshItem);
-                        }
-                        case QUERY_FOLDER -> {
-                            MenuItem newQueryItem = new MenuItem("新建查询");
-                            newQueryItem.setOnAction(e -> handleNewQuery(targetItem, dbData));
-                            MenuItem refreshItem = new MenuItem("刷新");
-                            refreshItem.setOnAction(e -> refreshDbNode(targetItem, dbData));
-                            contextMenu.getItems().addAll(newQueryItem, new SeparatorMenuItem(), refreshItem);
-                        }
-                        case BACKUP_FOLDER -> {
-                            MenuItem newBackupItem = new MenuItem("新建备份");
-                            newBackupItem.setOnAction(e -> handleNewBackup(targetItem, dbData));
-                            MenuItem refreshItem = new MenuItem("刷新");
-                            refreshItem.setOnAction(e -> refreshDbNode(targetItem, dbData));
-                            contextMenu.getItems().addAll(newBackupItem, new SeparatorMenuItem(), refreshItem);
-                        }
-                        case TABLE, VIEW -> {
-                            MenuItem designItem = new MenuItem("设计表");
-                            designItem.setOnAction(e -> {
-                                AbstractDbHandler h = createDbHandler(dbData.getConnectionConfig());
-                                if (h != null) h.handleTableStructureDoubleClick(targetItem, dbData);
-                            });
-                            MenuItem openDataItem = new MenuItem("打开数据");
-                            openDataItem.setOnAction(e -> {
-                                AbstractDbHandler h = createDbHandler(dbData.getConnectionConfig());
-                                if (h != null) h.handleTableDataDoubleClick(targetItem, dbData);
-                            });
-                            MenuItem deleteItem = new MenuItem("删除");
-                            deleteItem.setOnAction(e -> deleteDbNodes());
-                            contextMenu.getItems().addAll(designItem, openDataItem, new SeparatorMenuItem(), deleteItem);
-                        }
-                        case QUERY -> {
-                            MenuItem openQueryItem = new MenuItem("打开");
-                            openQueryItem.setOnAction(e -> handleQueryDoubleClick(targetItem, dbData));
-                            MenuItem renameQueryItem = new MenuItem("重命名");
-                            renameQueryItem.setOnAction(e -> handleRenameQuery(targetItem, dbData));
-                            MenuItem deleteQueryItem = new MenuItem("删除");
-                            deleteQueryItem.setOnAction(e -> handleDeleteQuery(targetItem, dbData));
-                            contextMenu.getItems().addAll(openQueryItem, new SeparatorMenuItem(), renameQueryItem, deleteQueryItem);
-                        }
-                        case BACKUP -> {
-                            MenuItem restoreItem = new MenuItem("还原备份");
-                            restoreItem.setOnAction(e -> handleRestoreBackup(targetItem, dbData));
-                            MenuItem openDirItem = new MenuItem("打开备份目录");
-                            openDirItem.setOnAction(e -> handleOpenBackupDir(dbData));
-                            MenuItem renameBackupItem = new MenuItem("重命名");
-                            renameBackupItem.setOnAction(e -> handleRenameBackup(targetItem, dbData));
-                            MenuItem deleteBackupItem = new MenuItem("删除");
-                            deleteBackupItem.setOnAction(e -> handleDeleteBackup(targetItem, dbData));
-                            contextMenu.getItems().addAll(restoreItem, new SeparatorMenuItem(), openDirItem, new SeparatorMenuItem(), renameBackupItem, deleteBackupItem);
-                        }
+                    // 委托给对应连接类型的 handler 构建节点右键菜单
+                    ConnectHandler handler = createConnectHandler(dbData.getConnectionConfig());
+                    if (handler != null) {
+                        handler.populateNodeContextMenu(this, contextMenu, targetItem, dbData);
                     }
                 } else {
                     ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
@@ -1075,7 +954,7 @@ public class ConnectModule implements Module {
         folderItem.setExpanded(true);
     }
 
-    private void handleRocketmqTopicDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
+    public void handleRocketmqTopicDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
         if (contentArea == null || terminalTabPane == null) return;
         if (!ensureTabPaneInstalled()) return;
 
@@ -1118,7 +997,7 @@ public class ConnectModule implements Module {
         showDataView();
     }
 
-    private void handleRocketmqConsumerDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
+    public void handleRocketmqConsumerDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
         // 双击消费者组项也打开消费者组一级标签
         TreeItem<String> parent = item.getParent();
         if (parent != null) {
@@ -1270,7 +1149,7 @@ public class ConnectModule implements Module {
         item.setExpanded(true);
     }
 
-    private void handleRocketmqBrokerDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
+    public void handleRocketmqBrokerDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
         // 双击Broker节点也打开集群一级标签
         TreeItem<String> parent = item.getParent();
         if (parent != null) {
@@ -1295,7 +1174,7 @@ public class ConnectModule implements Module {
         }
     }
 
-    private void handleDeleteRocketmqTopic(TreeItem<String> item, DatabaseNodeData data) {
+    public void handleDeleteRocketmqTopic(TreeItem<String> item, DatabaseNodeData data) {
         ConnectionConfig config = data.getConnectionConfig();
         String topicName = data.getName();
 
@@ -1336,14 +1215,20 @@ public class ConnectModule implements Module {
 
     private void handleDbNodeDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
         switch (data.getType()) {
-            case DATABASE -> handleDatabaseDoubleClick(item, data);
+            case DATABASE -> {
+                AbstractDbHandler h = createDbHandler(data.getConnectionConfig());
+                if (h != null) h.handleDatabaseDoubleClick(item, data);
+            }
             case REDIS_DB -> {
                 ConnectHandler h = createConnectHandler(data.getConnectionConfig());
                 if (h instanceof RedisConnectHandler r) {
                     r.handleRedisDbDoubleClick(this, item, data);
                 }
             }
-            case SCHEMA -> handleSchemaDoubleClick(item, data);
+            case SCHEMA -> {
+                AbstractDbHandler h = createDbHandler(data.getConnectionConfig());
+                if (h != null) h.handleSchemaDoubleClick(item, data);
+            }
             case TABLES_FOLDER -> {
                 AbstractDbHandler dbh = createDbHandler(data.getConnectionConfig());
                 if (dbh != null) dbh.handleTablesFolderDoubleClick(item, data);
@@ -1356,8 +1241,14 @@ public class ConnectModule implements Module {
                 AbstractDbHandler h = createDbHandler(data.getConnectionConfig());
                 if (h != null) h.handleTableDataDoubleClick(item, data);
             }
-            case QUERY -> handleQueryDoubleClick(item, data);
-            case BACKUP -> handleRestoreBackup(item, data);
+            case QUERY -> {
+                AbstractDbHandler h = createDbHandler(data.getConnectionConfig());
+                if (h != null) h.handleQueryDoubleClick(item, data);
+            }
+            case BACKUP -> {
+                AbstractDbHandler h = createDbHandler(data.getConnectionConfig());
+                if (h != null) h.handleRestoreBackup(item, data);
+            }
             case QUERY_FOLDER -> item.setExpanded(!item.isExpanded());
             case BACKUP_FOLDER -> {
                 AbstractDbHandler handler = createDbHandler(data.getConnectionConfig());
@@ -1388,43 +1279,8 @@ public class ConnectModule implements Module {
         }
     }
 
-    /**
-     * 双击模式节点：委托给对应类型的数据库处理器
-     */
-    private void handleSchemaDoubleClick(TreeItem<String> schemaItem, DatabaseNodeData data) {
-        AbstractDbHandler handler = createDbHandler(data.getConnectionConfig());
-        if (handler != null) {
-            handler.handleSchemaDoubleClick(schemaItem, data);
-        }
-    }
-
-    private void handleDatabaseDoubleClick(TreeItem<String> dbItem, DatabaseNodeData data) {
-        if (data.isOpened()) {
-            dbItem.setExpanded(!dbItem.isExpanded());
-            return;
-        }
-        openDatabase(dbItem, data);
-    }
-
-    /**
-     * 打开数据库节点：委托给对应类型的数据库处理器
-     */
-    private void openDatabase(TreeItem<String> dbItem, DatabaseNodeData data) {
-        AbstractDbHandler handler = createDbHandler(data.getConnectionConfig());
-        if (handler != null) {
-            handler.openDatabase(dbItem, data);
-        }
-    }
-
-    private void closeDatabase(TreeItem<String> dbItem, DatabaseNodeData data) {
-        removeDbNodeDataRecursive(dbItem);
-        dbItem.getChildren().clear();
-        data.setOpened(false);
-        dbItem.setGraphic(getDbNodeIcon(data));
-        dbItem.setExpanded(false);
-    }
-
-    private void handleNewQuery(TreeItem<String> folderItem, DatabaseNodeData data) {
+    /** 供 handler 调用：新建查询 */
+    public void handleNewQuery(TreeItem<String> folderItem, DatabaseNodeData data) {
         ConnectionConfig config = data.getConnectionConfig();
         String dbName = data.getDatabaseName();
 
@@ -1484,97 +1340,6 @@ public class ConnectModule implements Module {
         showDataView();
     }
 
-    private void handleQueryDoubleClick(TreeItem<String> queryItem, DatabaseNodeData data) {
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        String tabId = "query_" + data.getConnectionConfig().getId() + "_" + data.getDatabaseName() + "_" + data.getName();
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-
-        SqlEditorView editorView = new SqlEditorView(connections, data.getConnectionConfig(), data.getDatabaseName());
-        editorView.setQueryName(data.getName());
-        editorView.setQueryNode(queryItem);
-        editorView.loadFromFile(data.getConnectionConfig().getName(), data.getDatabaseName(), data.getName());
-
-        Tab tab = new Tab(data.getName());
-        Image tabIcon = queryIcon;
-        if (tabIcon != null) {
-            ImageView tabIconView = new ImageView(tabIcon);
-            tabIconView.setFitWidth(14);
-            tabIconView.setFitHeight(14);
-            tab.setGraphic(tabIconView);
-        }
-        tab.setContent(editorView);
-        tab.setUserData(tabId);
-
-        editorView.setOnTitleChange(title -> tab.setText(title));
-
-        editorView.setOnSaveRequest(() -> {
-            TextInputDialog dialog = new TextInputDialog(data.getName());
-            dialog.setTitle("保存查询");
-            dialog.setHeaderText(null);
-            dialog.setContentText("查询名称：");
-            dialog.showAndWait().ifPresent(name -> {
-                if (name.trim().isEmpty()) return;
-                editorView.doSave(name.trim());
-                queryItem.setValue(name.trim());
-            });
-        });
-
-        tab.setOnClosed(e -> {
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showDataView();
-    }
-
-    private void handleRenameQuery(TreeItem<String> queryItem, DatabaseNodeData data) {
-        TextInputDialog dialog = new TextInputDialog(data.getName());
-        dialog.setTitle("重命名查询");
-        dialog.setHeaderText(null);
-        dialog.setContentText("新名称：");
-        dialog.showAndWait().ifPresent(name -> {
-            if (name.trim().isEmpty()) return;
-            String newName = name.trim();
-
-            String oldSanitizedConn = sanitizeForFs(data.getConnectionConfig().getName());
-            String oldSanitizedDb = sanitizeForFs(data.getDatabaseName());
-            String oldSanitizedQuery = sanitizeForFs(data.getName());
-            String newSanitizedQuery = sanitizeForFs(newName);
-
-            java.nio.file.Path oldFile = Paths.get(System.getProperty("user.home") + "/.tomato",
-                    oldSanitizedConn, oldSanitizedDb, "query", oldSanitizedQuery + ".sql");
-            java.nio.file.Path newFile = Paths.get(System.getProperty("user.home") + "/.tomato",
-                    oldSanitizedConn, oldSanitizedDb, "query", newSanitizedQuery + ".sql");
-
-            try {
-                if (Files.exists(oldFile)) {
-                    String content = Files.readString(oldFile, StandardCharsets.UTF_8);
-                    Files.createDirectories(newFile.getParent());
-                    Files.writeString(newFile, content, StandardCharsets.UTF_8);
-                    Files.deleteIfExists(oldFile);
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-
-            queryItem.setValue(newName);
-            DatabaseNodeData newData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, newName, data.getConnectionConfig(), data.getDatabaseName());
-            dbNodeDataMap.remove(queryItem);
-            dbNodeDataMap.put(queryItem, newData);
-        });
-    }
-
     private void commitTableNameRename(TreeItem<String> item, DatabaseNodeData dbData, String oldName, String newName) {
         ConnectionConfig config = dbData.getConnectionConfig();
         String dbName = dbData.getDatabaseName();
@@ -1603,28 +1368,7 @@ public class ConnectModule implements Module {
         }, "DB-RenameTable").start();
     }
 
-    private String sanitizeForFs(String name) {
-        if (name == null || name.isEmpty()) return "unnamed";
-        return name.replaceAll("[\\\\/:*?\"<>|]", "_")
-                .replaceAll("\\s+", "_")
-                .replaceAll("_{2,}", "_")
-                .replaceAll("^_|_$", "");
-    }
-
-    private void handleDeleteQuery(TreeItem<String> queryItem, DatabaseNodeData data) {
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("删除查询");
-        confirm.setHeaderText("确定要删除查询 \"" + data.getName() + "\" 吗？");
-        confirm.showAndWait().ifPresent(response -> {
-            if (response == ButtonType.OK) {
-                SqlEditorView.cleanupQueryFile(data.getConnectionConfig().getName(), data.getDatabaseName(), data.getName());
-                dbNodeDataMap.remove(queryItem);
-                queryItem.getParent().getChildren().remove(queryItem);
-            }
-        });
-    }
-
-    private void handleNewBackup(TreeItem<String> folderItem, DatabaseNodeData data) {
+    public void handleNewBackup(TreeItem<String> folderItem, DatabaseNodeData data) {
         BackupDialog dialog = new BackupDialog(getStage(),
                 data.getConnectionConfig(), data.getDatabaseName());
         dialog.showAndWait();
@@ -1633,95 +1377,6 @@ public class ConnectModule implements Module {
         if (handler != null) {
             handler.loadBackupsForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName());
         }
-    }
-
-    private void handleDeleteBackup(TreeItem<String> backupItem, DatabaseNodeData data) {
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("删除备份");
-        confirm.setHeaderText("确定要删除备份 \"" + data.getName() + "\" 吗？");
-        confirm.showAndWait().ifPresent(response -> {
-            if (response == ButtonType.OK) {
-                BackupService.deleteBackupFile(data.getConnectionConfig().getName(),
-                        data.getDatabaseName(), data.getName());
-                dbNodeDataMap.remove(backupItem);
-                backupItem.getParent().getChildren().remove(backupItem);
-            }
-        });
-    }
-
-    private void handleRenameBackup(TreeItem<String> backupItem, DatabaseNodeData data) {
-        TextInputDialog dialog = new TextInputDialog(data.getName());
-        dialog.setTitle("重命名备份");
-        dialog.setHeaderText(null);
-        dialog.setContentText("新名称：");
-        dialog.showAndWait().ifPresent(name -> {
-            if (name.trim().isEmpty()) return;
-            String newName = name.trim();
-            try {
-                BackupService.renameBackupFile(data.getConnectionConfig().getName(),
-                        data.getDatabaseName(), data.getName(), newName);
-                backupItem.setValue(newName);
-                DatabaseNodeData newData = new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP,
-                        newName, data.getConnectionConfig(), data.getDatabaseName());
-                dbNodeDataMap.remove(backupItem);
-                dbNodeDataMap.put(backupItem, newData);
-            } catch (Exception e) {
-                Alert err = new Alert(Alert.AlertType.ERROR);
-                err.setTitle("重命名失败");
-                err.setHeaderText(null);
-                err.setContentText(e.getMessage());
-                err.showAndWait();
-            }
-        });
-    }
-
-    private void handleRestoreBackup(TreeItem<String> backupItem, DatabaseNodeData data) {
-        Stage stage = getStage();
-        if (stage == null) return;
-
-        RestoreDialog dialog = new RestoreDialog(stage,
-                data.getConnectionConfig(), data.getDatabaseName(), data.getName());
-        dialog.showAndWait();
-    }
-
-    private void handleOpenBackupDir(DatabaseNodeData data) {
-        String sanitizedConn = sanitizeForFs(data.getConnectionConfig().getName());
-        String sanitizedDb = sanitizeForFs(data.getDatabaseName());
-        java.nio.file.Path backupDir = Paths.get(System.getProperty("user.home") + "/.tomato",
-                sanitizedConn, sanitizedDb, "backup");
-        java.nio.file.Path backupFile = backupDir.resolve(data.getName() + ".nb3");
-
-        new Thread(() -> {
-            try {
-                if (java.awt.Desktop.isDesktopSupported()) {
-                    java.awt.Desktop desktop = java.awt.Desktop.getDesktop();
-                    if (backupFile.toFile().exists()) {
-                        if (desktop.isSupported(java.awt.Desktop.Action.BROWSE_FILE_DIR)) {
-                            desktop.browseFileDirectory(backupFile.toFile());
-                        } else {
-                            desktop.open(backupDir.toFile());
-                        }
-                    } else {
-                        desktop.open(backupDir.toFile());
-                    }
-                }
-            } catch (Exception e) {
-                try {
-                    String[] cmd = {
-                            "xdg-open", backupDir.toAbsolutePath().toString()
-                    };
-                    Runtime.getRuntime().exec(cmd);
-                } catch (Exception ex) {
-                    Platform.runLater(() -> {
-                        Alert alert = new Alert(Alert.AlertType.ERROR);
-                        alert.setTitle("打开目录失败");
-                        alert.setHeaderText(null);
-                        alert.setContentText("无法打开备份目录: " + ex.getMessage());
-                        alert.showAndWait();
-                    });
-                }
-            }
-        }, "OpenBackupDir").start();
     }
 
     /** 供 handler 调用：更新主机节点图标（根据连接状态分发到具体 handler） */
@@ -1922,7 +1577,7 @@ public class ConnectModule implements Module {
     }
 
     /** 刷新节点 dispatcher：根据节点类型分发到对应处理器 */
-    void refreshDbNode(TreeItem<String> item, DatabaseNodeData data) {
+    public void refreshDbNode(TreeItem<String> item, DatabaseNodeData data) {
         ConnectionConfig config = data.getConnectionConfig();
         switch (data.getType()) {
             case DATABASE, SCHEMA, TABLES_FOLDER, VIEWS_FOLDER, QUERY_FOLDER, BACKUP_FOLDER -> {
@@ -1949,7 +1604,7 @@ public class ConnectModule implements Module {
     }
 
     /** 删除节点 dispatcher：根据选中项的连接配置分发到对应数据库处理器 */
-    void deleteDbNodes() {
+    public void deleteDbNodes() {
         ObservableList<TreeItem<String>> selectedItems = treeView.getSelectionModel().getSelectedItems();
         ConnectionConfig cfg = null;
         for (TreeItem<String> item : selectedItems) {

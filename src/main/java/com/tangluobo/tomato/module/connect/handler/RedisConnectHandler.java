@@ -157,4 +157,14 @@ public class RedisConnectHandler implements ConnectHandler {
         module.getTerminalTabPane().getSelectionModel().select(tab);
         module.showDataView();
     }
+
+    /** 构建 Redis 节点右键菜单：REDIS_DB 提供"打开" */
+    @Override
+    public void populateNodeContextMenu(ConnectModule module, ContextMenu contextMenu, TreeItem<String> item, DatabaseNodeData data) {
+        if (data.getType() == DatabaseNodeData.NodeType.REDIS_DB) {
+            MenuItem openItem = new MenuItem("打开");
+            openItem.setOnAction(e -> handleRedisDbDoubleClick(module, item, data));
+            contextMenu.getItems().add(openItem);
+        }
+    }
 }

@@ -4,6 +4,7 @@ import com.tangluobo.tomato.module.connect.*;
 import com.tangluobo.tomato.module.connect.dialog.CreateDatabaseDialog;
 import com.tangluobo.tomato.module.connect.dialog.EditDatabaseDialog;
 import com.tangluobo.tomato.module.connect.dialog.GlobalConfigDialog;
+import com.tangluobo.tomato.module.connect.dialog.RestoreDialog;
 import javafx.application.Platform;
 import javafx.collections.ObservableList;
 import javafx.scene.control.Alert;
@@ -13,8 +14,10 @@ import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.PasswordField;
+import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.Tab;
+import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.TreeItem;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
@@ -22,6 +25,9 @@ import javafx.scene.layout.GridPane;
 import javafx.geometry.Insets;
 import javafx.stage.Stage;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -954,5 +960,331 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         module.getTerminalTabPane().getTabs().add(tab);
         module.getTerminalTabPane().getSelectionModel().select(tab);
         module.showDataView();
+    }
+
+    // ==================== 右键菜单 ====================
+
+    /**
+     * 为数据库相关节点构建右键菜单项。
+     * 处理 DATABASE/SCHEMA/TABLES_FOLDER/VIEWS_FOLDER/QUERY_FOLDER/BACKUP_FOLDER/TABLE/VIEW 类型节点。
+     */
+    @Override
+    public void populateNodeContextMenu(ConnectModule module, ContextMenu contextMenu, TreeItem<String> item, DatabaseNodeData data) {
+        switch (data.getType()) {
+            case DATABASE -> {
+                if (data.isOpened()) {
+                    MenuItem closeDbItem = new MenuItem("关闭");
+                    closeDbItem.setOnAction(e -> closeDatabase(item, data));
+                    contextMenu.getItems().add(closeDbItem);
+                } else {
+                    MenuItem openDbItem = new MenuItem("打开");
+                    openDbItem.setOnAction(e -> openDatabase(item, data));
+                    contextMenu.getItems().add(openDbItem);
+                }
+                MenuItem editDbItem = new MenuItem("编辑");
+                editDbItem.setOnAction(e -> handleEditDatabase(item, data));
+                MenuItem deleteDbItem = new MenuItem("删除");
+                deleteDbItem.setOnAction(e -> handleDeleteDatabase(item, data));
+                MenuItem refreshItem = new MenuItem("刷新");
+                refreshItem.setOnAction(e -> refreshDbNode(item, data));
+                contextMenu.getItems().addAll(new SeparatorMenuItem(), editDbItem, deleteDbItem, new SeparatorMenuItem(), refreshItem);
+            }
+            case SCHEMA -> {
+                MenuItem openItem = new MenuItem("打开");
+                openItem.setOnAction(e -> handleSchemaDoubleClick(item, data));
+                MenuItem refreshItem = new MenuItem("刷新");
+                refreshItem.setOnAction(e -> refreshDbNode(item, data));
+                contextMenu.getItems().addAll(openItem, new SeparatorMenuItem(), refreshItem);
+            }
+            case TABLES_FOLDER -> {
+                MenuItem newTableItem = new MenuItem("新建表");
+                newTableItem.setOnAction(e -> handleNewTable(item, data));
+                MenuItem refreshItem = new MenuItem("刷新");
+                refreshItem.setOnAction(e -> refreshDbNode(item, data));
+                contextMenu.getItems().addAll(newTableItem, new SeparatorMenuItem(), refreshItem);
+            }
+            case VIEWS_FOLDER -> {
+                MenuItem refreshItem = new MenuItem("刷新");
+                refreshItem.setOnAction(e -> refreshDbNode(item, data));
+                contextMenu.getItems().add(refreshItem);
+            }
+            case QUERY_FOLDER -> {
+                MenuItem newQueryItem = new MenuItem("新建查询");
+                newQueryItem.setOnAction(e -> module.handleNewQuery(item, data));
+                MenuItem refreshItem = new MenuItem("刷新");
+                refreshItem.setOnAction(e -> refreshDbNode(item, data));
+                contextMenu.getItems().addAll(newQueryItem, new SeparatorMenuItem(), refreshItem);
+            }
+            case BACKUP_FOLDER -> {
+                MenuItem newBackupItem = new MenuItem("新建备份");
+                newBackupItem.setOnAction(e -> module.handleNewBackup(item, data));
+                MenuItem refreshItem = new MenuItem("刷新");
+                refreshItem.setOnAction(e -> refreshDbNode(item, data));
+                contextMenu.getItems().addAll(newBackupItem, new SeparatorMenuItem(), refreshItem);
+            }
+            case TABLE, VIEW -> {
+                MenuItem designItem = new MenuItem("设计表");
+                designItem.setOnAction(e -> handleTableStructureDoubleClick(item, data));
+                MenuItem openDataItem = new MenuItem("打开数据");
+                openDataItem.setOnAction(e -> handleTableDataDoubleClick(item, data));
+                MenuItem deleteItem = new MenuItem("删除");
+                deleteItem.setOnAction(e -> module.deleteDbNodes());
+                contextMenu.getItems().addAll(designItem, openDataItem, new SeparatorMenuItem(), deleteItem);
+            }
+            case QUERY -> {
+                MenuItem openQueryItem = new MenuItem("打开");
+                openQueryItem.setOnAction(e -> handleQueryDoubleClick(item, data));
+                MenuItem renameQueryItem = new MenuItem("重命名");
+                renameQueryItem.setOnAction(e -> handleRenameQuery(item, data));
+                MenuItem deleteQueryItem = new MenuItem("删除");
+                deleteQueryItem.setOnAction(e -> handleDeleteQuery(item, data));
+                contextMenu.getItems().addAll(openQueryItem, new SeparatorMenuItem(), renameQueryItem, deleteQueryItem);
+            }
+            case BACKUP -> {
+                MenuItem restoreItem = new MenuItem("还原备份");
+                restoreItem.setOnAction(e -> handleRestoreBackup(item, data));
+                MenuItem openDirItem = new MenuItem("打开备份目录");
+                openDirItem.setOnAction(e -> handleOpenBackupDir(data));
+                MenuItem renameBackupItem = new MenuItem("重命名");
+                renameBackupItem.setOnAction(e -> handleRenameBackup(item, data));
+                MenuItem deleteBackupItem = new MenuItem("删除");
+                deleteBackupItem.setOnAction(e -> handleDeleteBackup(item, data));
+                contextMenu.getItems().addAll(restoreItem, new SeparatorMenuItem(), openDirItem, new SeparatorMenuItem(), renameBackupItem, deleteBackupItem);
+            }
+            default -> {}
+        }
+    }
+
+    /** 双击数据库节点：已打开则切换展开状态，未打开则打开 */
+    public void handleDatabaseDoubleClick(TreeItem<String> dbItem, DatabaseNodeData data) {
+        if (data.isOpened()) {
+            dbItem.setExpanded(!dbItem.isExpanded());
+            return;
+        }
+        openDatabase(dbItem, data);
+    }
+
+    /** 关闭数据库节点：清理子节点数据并恢复未打开状态 */
+    public void closeDatabase(TreeItem<String> dbItem, DatabaseNodeData data) {
+        module.removeDbNodeDataRecursive(dbItem);
+        dbItem.getChildren().clear();
+        data.setOpened(false);
+        dbItem.setGraphic(module.getDbNodeIcon(data));
+        dbItem.setExpanded(false);
+    }
+
+    // ==================== 查询节点 ====================
+
+    /** 双击查询节点：打开 SQL 编辑器 Tab */
+    public void handleQueryDoubleClick(TreeItem<String> queryItem, DatabaseNodeData data) {
+        if (module.getTerminalTabPane() == null) return;
+        if (!module.ensureTabPaneInstalled()) return;
+
+        String tabId = "query_" + data.getConnectionConfig().getId() + "_" + data.getDatabaseName() + "_" + data.getName();
+        for (Tab tab : module.getTerminalTabPane().getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                module.getTerminalTabPane().getSelectionModel().select(tab);
+                module.showDataView();
+                return;
+            }
+        }
+
+        SqlEditorView editorView = new SqlEditorView(module.getConnections(), data.getConnectionConfig(), data.getDatabaseName());
+        editorView.setQueryName(data.getName());
+        editorView.setQueryNode(queryItem);
+        editorView.loadFromFile(data.getConnectionConfig().getName(), data.getDatabaseName(), data.getName());
+
+        Tab tab = new Tab(data.getName());
+        Image tabIcon = module.getQueryIcon();
+        if (tabIcon != null) {
+            ImageView tabIconView = new ImageView(tabIcon);
+            tabIconView.setFitWidth(14);
+            tabIconView.setFitHeight(14);
+            tab.setGraphic(tabIconView);
+        }
+        tab.setContent(editorView);
+        tab.setUserData(tabId);
+
+        editorView.setOnTitleChange(title -> tab.setText(title));
+
+        editorView.setOnSaveRequest(() -> {
+            TextInputDialog dialog = new TextInputDialog(data.getName());
+            dialog.setTitle("保存查询");
+            dialog.setHeaderText(null);
+            dialog.setContentText("查询名称：");
+            dialog.showAndWait().ifPresent(name -> {
+                if (name.trim().isEmpty()) return;
+                editorView.doSave(name.trim());
+                queryItem.setValue(name.trim());
+            });
+        });
+
+        tab.setOnClosed(e -> {
+            if (module.getTerminalTabPane().getTabs().isEmpty()) {
+                module.showWelcomeView();
+            }
+        });
+
+        module.getTerminalTabPane().getTabs().add(tab);
+        module.getTerminalTabPane().getSelectionModel().select(tab);
+        module.showDataView();
+    }
+
+    /** 重命名查询节点：重命名文件并更新节点数据 */
+    public void handleRenameQuery(TreeItem<String> queryItem, DatabaseNodeData data) {
+        TextInputDialog dialog = new TextInputDialog(data.getName());
+        dialog.setTitle("重命名查询");
+        dialog.setHeaderText(null);
+        dialog.setContentText("新名称：");
+        dialog.showAndWait().ifPresent(name -> {
+            if (name.trim().isEmpty()) return;
+            String newName = name.trim();
+
+            String oldSanitizedConn = sanitizeForFs(data.getConnectionConfig().getName());
+            String oldSanitizedDb = sanitizeForFs(data.getDatabaseName());
+            String oldSanitizedQuery = sanitizeForFs(data.getName());
+            String newSanitizedQuery = sanitizeForFs(newName);
+
+            java.nio.file.Path oldFile = Paths.get(System.getProperty("user.home") + "/.tomato",
+                    oldSanitizedConn, oldSanitizedDb, "query", oldSanitizedQuery + ".sql");
+            java.nio.file.Path newFile = Paths.get(System.getProperty("user.home") + "/.tomato",
+                    oldSanitizedConn, oldSanitizedDb, "query", newSanitizedQuery + ".sql");
+
+            try {
+                if (Files.exists(oldFile)) {
+                    String content = Files.readString(oldFile, StandardCharsets.UTF_8);
+                    Files.createDirectories(newFile.getParent());
+                    Files.writeString(newFile, content, StandardCharsets.UTF_8);
+                    Files.deleteIfExists(oldFile);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+
+            queryItem.setValue(newName);
+            DatabaseNodeData newData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, newName, data.getConnectionConfig(), data.getDatabaseName());
+            module.getDbNodeDataMap().remove(queryItem);
+            module.getDbNodeDataMap().put(queryItem, newData);
+        });
+    }
+
+    /** 删除查询节点：清理文件并移除节点 */
+    public void handleDeleteQuery(TreeItem<String> queryItem, DatabaseNodeData data) {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("删除查询");
+        confirm.setHeaderText("确定要删除查询 \"" + data.getName() + "\" 吗？");
+        confirm.showAndWait().ifPresent(response -> {
+            if (response == ButtonType.OK) {
+                SqlEditorView.cleanupQueryFile(data.getConnectionConfig().getName(), data.getDatabaseName(), data.getName());
+                module.getDbNodeDataMap().remove(queryItem);
+                queryItem.getParent().getChildren().remove(queryItem);
+            }
+        });
+    }
+
+    // ==================== 备份节点 ====================
+
+    /** 还原备份：打开还原对话框 */
+    public void handleRestoreBackup(TreeItem<String> backupItem, DatabaseNodeData data) {
+        Stage stage = module.getStage();
+        if (stage == null) return;
+
+        RestoreDialog dialog = new RestoreDialog(stage,
+                data.getConnectionConfig(), data.getDatabaseName(), data.getName());
+        dialog.showAndWait();
+    }
+
+    /** 打开备份所在目录 */
+    public void handleOpenBackupDir(DatabaseNodeData data) {
+        String sanitizedConn = sanitizeForFs(data.getConnectionConfig().getName());
+        String sanitizedDb = sanitizeForFs(data.getDatabaseName());
+        java.nio.file.Path backupDir = Paths.get(System.getProperty("user.home") + "/.tomato",
+                sanitizedConn, sanitizedDb, "backup");
+        java.nio.file.Path backupFile = backupDir.resolve(data.getName() + ".nb3");
+
+        new Thread(() -> {
+            try {
+                if (java.awt.Desktop.isDesktopSupported()) {
+                    java.awt.Desktop desktop = java.awt.Desktop.getDesktop();
+                    if (backupFile.toFile().exists()) {
+                        if (desktop.isSupported(java.awt.Desktop.Action.BROWSE_FILE_DIR)) {
+                            desktop.browseFileDirectory(backupFile.toFile());
+                        } else {
+                            desktop.open(backupDir.toFile());
+                        }
+                    } else {
+                        desktop.open(backupDir.toFile());
+                    }
+                }
+            } catch (Exception e) {
+                try {
+                    String[] cmd = {
+                            "xdg-open", backupDir.toAbsolutePath().toString()
+                    };
+                    Runtime.getRuntime().exec(cmd);
+                } catch (Exception ex) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("打开目录失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("无法打开备份目录: " + ex.getMessage());
+                        alert.showAndWait();
+                    });
+                }
+            }
+        }, "OpenBackupDir").start();
+    }
+
+    /** 重命名备份：重命名文件并更新节点数据 */
+    public void handleRenameBackup(TreeItem<String> backupItem, DatabaseNodeData data) {
+        TextInputDialog dialog = new TextInputDialog(data.getName());
+        dialog.setTitle("重命名备份");
+        dialog.setHeaderText(null);
+        dialog.setContentText("新名称：");
+        dialog.showAndWait().ifPresent(name -> {
+            if (name.trim().isEmpty()) return;
+            String newName = name.trim();
+            try {
+                BackupService.renameBackupFile(data.getConnectionConfig().getName(),
+                        data.getDatabaseName(), data.getName(), newName);
+                backupItem.setValue(newName);
+                DatabaseNodeData newData = new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP,
+                        newName, data.getConnectionConfig(), data.getDatabaseName());
+                module.getDbNodeDataMap().remove(backupItem);
+                module.getDbNodeDataMap().put(backupItem, newData);
+            } catch (Exception e) {
+                Alert err = new Alert(Alert.AlertType.ERROR);
+                err.setTitle("重命名失败");
+                err.setHeaderText(null);
+                err.setContentText(e.getMessage());
+                err.showAndWait();
+            }
+        });
+    }
+
+    /** 删除备份节点：删除文件并移除节点 */
+    public void handleDeleteBackup(TreeItem<String> backupItem, DatabaseNodeData data) {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("删除备份");
+        confirm.setHeaderText("确定要删除备份 \"" + data.getName() + "\" 吗？");
+        confirm.showAndWait().ifPresent(response -> {
+            if (response == ButtonType.OK) {
+                BackupService.deleteBackupFile(data.getConnectionConfig().getName(),
+                        data.getDatabaseName(), data.getName());
+                module.getDbNodeDataMap().remove(backupItem);
+                backupItem.getParent().getChildren().remove(backupItem);
+            }
+        });
+    }
+
+    // ==================== 工具方法 ====================
+
+    /** 文件系统名称清理：替换非法字符 */
+    private String sanitizeForFs(String name) {
+        if (name == null || name.isEmpty()) return "unnamed";
+        return name.replaceAll("[\\\\/:*?\"<>|]", "_")
+                .replaceAll("\\s+", "_")
+                .replaceAll("_{2,}", "_")
+                .replaceAll("^_|_$", "");
     }
 }

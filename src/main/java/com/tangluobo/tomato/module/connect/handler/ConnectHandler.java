@@ -3,6 +3,8 @@ package com.tangluobo.tomato.module.connect.handler;
 import com.tangluobo.tomato.module.connect.ConnectModule;
 import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.DatabaseNodeData;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.TreeItem;
 
 /**
@@ -34,5 +36,18 @@ public interface ConnectHandler {
      */
     default void handleHostDoubleClick(ConnectModule module, TreeItem<String> hostItem, ConnectionConfig config) {
         handleConnect(module, config);
+    }
+
+    /**
+     * 为节点构建右键菜单项。
+     * 默认空实现，由各 handler 按需重写（添加该连接类型特有或共用的菜单项到 contextMenu）。
+     *
+     * @param module      关联的连接模块
+     * @param contextMenu 右键菜单（已清空，由本方法填充）
+     * @param item        触发右键的树节点
+     * @param data        节点关联数据
+     */
+    default void populateNodeContextMenu(ConnectModule module, ContextMenu contextMenu, TreeItem<String> item, DatabaseNodeData data) {
+        // 默认空：未实现菜单的 handler 不添加任何项
     }
 }
