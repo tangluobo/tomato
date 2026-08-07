@@ -231,18 +231,18 @@ public class S3FileBrowserPane extends BorderPane {
     }
 
     private void initializeUI() {
-        // 当前路径输入框（可编辑，回车跳转到输入路径）
+        // 当前路径输入框（可编辑，回车跳转；顶到视图切换按钮，始终显示文本框样式）
         currentPathField = new TextField("/");
-        currentPathField.setPrefWidth(360);
-        currentPathField.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-background-color: transparent; -fx-background-insets: 0; -fx-background-radius: 3; -fx-padding: 2 4; -fx-border-color: transparent; -fx-border-width: 1; -fx-border-insets: 0; -fx-border-radius: 3;");
+        currentPathField.setPrefHeight(25);
+        currentPathField.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(currentPathField, Priority.ALWAYS);
+        currentPathField.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-background-color: white; -fx-background-insets: 0; -fx-background-radius: 3; -fx-padding: 2 6; -fx-border-color: #3399ff; -fx-border-width: 1; -fx-border-insets: 0; -fx-border-radius: 3;");
         currentPathField.setTooltip(new Tooltip("点击编辑路径，回车进入目录"));
-        // 获得焦点：显示边框并全选文本；失去焦点：恢复透明样式并还原当前路径
+        // 获得焦点：全选文本；失去焦点：还原当前路径
         currentPathField.focusedProperty().addListener((obs, oldVal, newVal) -> {
             if (newVal) {
-                currentPathField.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-background-color: white; -fx-background-insets: 0; -fx-background-radius: 3; -fx-padding: 2 4; -fx-border-color: #3399ff; -fx-border-width: 1; -fx-border-insets: 0; -fx-border-radius: 3;");
                 Platform.runLater(currentPathField::selectAll);
             } else {
-                currentPathField.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-background-color: transparent; -fx-background-insets: 0; -fx-background-radius: 3; -fx-padding: 2 4; -fx-border-color: transparent; -fx-border-width: 1; -fx-border-insets: 0; -fx-border-radius: 3;");
                 updatePathLabel();
             }
         });
@@ -260,10 +260,6 @@ public class S3FileBrowserPane extends BorderPane {
         pathBar.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #dddddd; -fx-border-width: 0 0 1 0;");
 
         pathBar.getChildren().add(currentPathField);
-
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-        pathBar.getChildren().add(spacer);
 
         // 视图切换按钮
         ToggleGroup viewToggleGroup = new ToggleGroup();
