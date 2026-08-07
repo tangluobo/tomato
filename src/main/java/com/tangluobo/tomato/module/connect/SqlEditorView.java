@@ -223,7 +223,7 @@ public class SqlEditorView extends BorderPane {
 
     // ==================== 保存逻辑 ====================
 
-    void markModified() {
+    public void markModified() {
         String current = editor.getText();
         boolean nowModified = !current.equals(savedSql);
         if (nowModified != this.modified) {
