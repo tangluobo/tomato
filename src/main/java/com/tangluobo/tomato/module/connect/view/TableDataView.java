@@ -85,26 +85,24 @@ public class TableDataView extends BorderPane {
         this.tableName = tableName;
 
         initializeUI();
-        loadPrimaryKeys();
         loadData(1);
     }
 
     /**
-     * 异步加载主键信息
+     * 在当前线程中加载主键信息（与数据查询共用同一线程，避免JDBC连接并发使用）
      */
-    private void loadPrimaryKeys() {
-        new Thread(() -> {
-            try {
-                List<String> pks = DatabaseService.getPrimaryKeys(config, databaseName, schemaName, tableName);
-                Platform.runLater(() -> {
-                    this.primaryKeyColumns = pks;
-                    setupRowContextMenu();
-                });
-            } catch (Exception e) {
-                // 获取主键失败时不影响正常使用，仅不提供删除功能
-                this.primaryKeyColumns = new ArrayList<>();
-            }
-        }, "DB-LoadPrimaryKeys").start();
+    private void loadPrimaryKeysInCurrentThread() {
+        if (primaryKeyColumns != null) return; // 已加载过
+        try {
+            List<String> pks = DatabaseService.getPrimaryKeys(config, databaseName, schemaName, tableName);
+            Platform.runLater(() -> {
+                this.primaryKeyColumns = pks;
+                setupRowContextMenu();
+            });
+        } catch (Exception e) {
+            // 获取主键失败时不影响正常使用，仅不提供删除功能
+            this.primaryKeyColumns = new ArrayList<>();
+        }
     }
 
     /**
@@ -851,6 +849,9 @@ public class TableDataView extends BorderPane {
 
         new Thread(() -> {
             try {
+                // 首次加载时获取主键（与数据查询共用同一线程，避免JDBC连接并发使用）
+                loadPrimaryKeysInCurrentThread();
+
                 TableRowData data = DatabaseService.queryTableData(config, databaseName, schemaName, tableName, page, DEFAULT_PAGE_SIZE, sortColumn, sortDescending);
                 Platform.runLater(() -> {
                     currentPage = data.getPage();
