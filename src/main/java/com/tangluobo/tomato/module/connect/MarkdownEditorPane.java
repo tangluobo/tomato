@@ -40,6 +40,9 @@ import org.fxmisc.richtext.InlineCssTextArea;
 import org.fxmisc.flowless.VirtualizedScrollPane;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
 
+import de.jensd.fx.glyphs.fontawesome.FontAwesomeIcon;
+import de.jensd.fx.glyphs.fontawesome.utils.FontAwesomeIconFactory;
+
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -95,6 +98,13 @@ public class MarkdownEditorPane extends BorderPane {
             "|(?<QUOTEMARK>^>\\s)",
             java.util.regex.Pattern.MULTILINE
     );
+
+    // 自动续行匹配：前缀（列表/引用/任务标记）+ 行内容
+    private static final java.util.regex.Pattern AUTO_INDENT_PATTERN = java.util.regex.Pattern.compile(
+            "^(?<prefix>\\s*(?:[-*+]|\\d+\\.)\\s+(?:\\[[ xX]]\\s+)?|\\s*(?:>\\s*)+)(?<content>.*)$"
+    );
+    private static final java.util.regex.Pattern ORDERED_PREFIX_PATTERN =
+            java.util.regex.Pattern.compile("^(\\s*)(\\d+)\\.(.*)$");
 
     // 预览渲染防抖
     private final PauseTransition previewDebounce = new PauseTransition(new Duration(250));
@@ -152,18 +162,37 @@ public class MarkdownEditorPane extends BorderPane {
 
         previewDebounce.setOnFinished(e -> updatePreview());
 
-        // Ctrl+S 保存
+        // 快捷键（参考 markdown-writer-fx）
         editor.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
-            if (e.isControlDown() && e.getCode() == KeyCode.S) {
-                e.consume();
-                save();
+            if (e.isControlDown()) {
+                boolean shift = e.isShiftDown();
+                switch (e.getCode()) {
+                    case S:             e.consume(); save();                          return;
+                    case B:             e.consume(); toggleWrap("**", "**");          return;
+                    case I:             e.consume(); toggleWrap("*", "*");            return;
+                    case T:             e.consume(); toggleWrap("~~", "~~");          return;
+                    case BACK_QUOTE:    e.consume();
+                        if (shift) insertCodeBlock(); else toggleWrap("`", "`");
+                        return;
+                    case L:             e.consume(); insertLink();                    return;
+                    case G:             e.consume(); insertImage();                   return;
+                    case Q:             e.consume(); togglePrefix("> ");             return;
+                    case U:             e.consume(); togglePrefix("- ");             return;
+                    case DIGIT1:        e.consume(); togglePrefix("# ");             return;
+                    case DIGIT2:        e.consume(); togglePrefix("## ");            return;
+                    case DIGIT3:        e.consume(); togglePrefix("### ");           return;
+                    default: break;
+                }
             }
-        });
-        // Tab 缩进
-        editor.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
             if (e.getCode() == KeyCode.TAB) {
                 e.consume();
-                editor.insertText(editor.getCaretPosition(), "    ");
+                handleTab(e.isShiftDown());
+                return;
+            }
+            if (e.getCode() == KeyCode.ENTER && !e.isShiftDown()) {
+                if (handleEnter()) {
+                    e.consume();
+                }
             }
         });
 
@@ -171,66 +200,89 @@ public class MarkdownEditorPane extends BorderPane {
     }
 
     // ==================== 工具栏 ====================
+    // 参考 markdown-writer-fx：原生 ToolBar + FontAwesome 图标 + 透明/hover/selected 样式
+    // ActionUtils.createToolBarButton 同款实现：graphic=图标、tooltip=文字+快捷键、focusTraversable=false
 
     private Node buildToolbar() {
-        HBox toolbar = new HBox(6);
-        toolbar.setPadding(new Insets(6, 10, 6, 10));
-        toolbar.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #dddddd; -fx-border-width: 0 0 1 0;");
-        toolbar.setAlignment(Pos.CENTER_LEFT);
+        ToolBar toolBar = new ToolBar();
+        toolBar.getStyleClass().add("markdown-tool-bar");
+        toolBar.getStylesheets().add(getClass().getResource("/css/markdown-editor-toolbar.css").toExternalForm());
+
+        // 撤销 / 重做
+        toolBar.getItems().addAll(
+                iconBtn(FontAwesomeIcon.UNDO, "撤销", "Ctrl+Z", editor::undo),
+                iconBtn(FontAwesomeIcon.REPEAT, "重做", "Ctrl+Y", editor::redo),
+                new Separator());
+
+        // 行内格式
+        toolBar.getItems().addAll(
+                iconBtn(FontAwesomeIcon.BOLD, "加粗", "Ctrl+B", () -> toggleWrap("**", "**")),
+                iconBtn(FontAwesomeIcon.ITALIC, "斜体", "Ctrl+I", () -> toggleWrap("*", "*")),
+                iconBtn(FontAwesomeIcon.STRIKETHROUGH, "删除线", "Ctrl+T", () -> toggleWrap("~~", "~~")),
+                iconBtn(FontAwesomeIcon.CODE, "行内代码", "Ctrl+`", () -> toggleWrap("`", "`")),
+                new Separator());
+
+        // 链接 / 图片
+        toolBar.getItems().addAll(
+                iconBtn(FontAwesomeIcon.LINK, "链接", "Ctrl+L", this::insertLink),
+                iconBtn(FontAwesomeIcon.PICTURE_ALT, "图片", "Ctrl+G", this::insertImage),
+                new Separator());
+
+        // 标题（图标相同，用 tooltip 区分级别）
+        toolBar.getItems().addAll(
+                iconBtn(FontAwesomeIcon.HEADER, "标题1", "Ctrl+1", () -> togglePrefix("# ")),
+                iconBtn(FontAwesomeIcon.HEADER, "标题2", "Ctrl+2", () -> togglePrefix("## ")),
+                iconBtn(FontAwesomeIcon.HEADER, "标题3", "Ctrl+3", () -> togglePrefix("### ")),
+                new Separator());
+
+        // 块级
+        toolBar.getItems().addAll(
+                iconBtn(FontAwesomeIcon.LIST_UL, "无序列表", "Ctrl+U", () -> togglePrefix("- ")),
+                iconBtn(FontAwesomeIcon.LIST_OL, "有序列表", null, () -> togglePrefix("1. ")),
+                iconBtn(FontAwesomeIcon.CHECK_SQUARE, "任务列表", null, () -> togglePrefix("- [ ] ")),
+                iconBtn(FontAwesomeIcon.QUOTE_LEFT, "引用", "Ctrl+Q", () -> togglePrefix("> ")),
+                iconBtn(FontAwesomeIcon.FILE_CODE_ALT, "代码块", "Ctrl+Shift+`", this::insertCodeBlock),
+                iconBtn(FontAwesomeIcon.MINUS, "分隔线", null, this::insertHr),
+                iconBtn(FontAwesomeIcon.TABLE, "表格", null, this::insertTable));
+
+        // 弹性空白（ToolBar 内部为 HBox，HBox.setHgrow 有效）
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        toolBar.getItems().add(spacer);
 
         // 模式切换
         ToggleGroup modeGroup = new ToggleGroup();
-        ToggleButton editBtn = new ToggleButton("编辑");
-        ToggleButton splitBtn = new ToggleButton("编辑+预览");
-        ToggleButton previewBtn = new ToggleButton("预览");
-        editBtn.setToggleGroup(modeGroup);
-        splitBtn.setToggleGroup(modeGroup);
-        previewBtn.setToggleGroup(modeGroup);
+        ToggleButton editBtn = modeToggle(modeGroup, FontAwesomeIcon.PENCIL, "编辑", Mode.EDIT);
+        ToggleButton splitBtn = modeToggle(modeGroup, FontAwesomeIcon.COLUMNS, "编辑+预览", Mode.EDIT_PREVIEW);
+        ToggleButton previewBtn = modeToggle(modeGroup, FontAwesomeIcon.EYE, "预览", Mode.PREVIEW);
         splitBtn.setSelected(true);
-        editBtn.setStyle("-fx-font-size: 11px; -fx-padding: 3 8;");
-        splitBtn.setStyle("-fx-font-size: 11px; -fx-padding: 3 8;");
-        previewBtn.setStyle("-fx-font-size: 11px; -fx-padding: 3 8;");
-        editBtn.setOnAction(e -> { currentMode = Mode.EDIT; applyMode(); });
-        splitBtn.setOnAction(e -> { currentMode = Mode.EDIT_PREVIEW; applyMode(); });
-        previewBtn.setOnAction(e -> { currentMode = Mode.PREVIEW; applyMode(); });
-        toolbar.getChildren().addAll(editBtn, splitBtn, previewBtn);
+        toolBar.getItems().addAll(editBtn, splitBtn, previewBtn, new Separator());
 
-        toolbar.getChildren().add(createSep());
+        // 保存
+        Button saveBtn = iconBtn(FontAwesomeIcon.FLOPPY_ALT, "保存", "Ctrl+S", this::save);
+        saveBtn.getStyleClass().add("save-button");
+        toolBar.getItems().add(saveBtn);
 
-        // 插入按钮
-        toolbar.getChildren().add(smallBtn("H1", () -> prefixLine("# ")));
-        toolbar.getChildren().add(smallBtn("H2", () -> prefixLine("## ")));
-        toolbar.getChildren().add(smallBtn("H3", () -> prefixLine("### ")));
-        toolbar.getChildren().add(smallBtn("加粗", () -> wrapSelection("**", "**")));
-        toolbar.getChildren().add(smallBtn("斜体", () -> wrapSelection("*", "*")));
-        toolbar.getChildren().add(smallBtn("代码", () -> wrapSelection("`", "`")));
-        toolbar.getChildren().add(smallBtn("链接", () -> wrapSelection("[", "](url)")));
-        toolbar.getChildren().add(smallBtn("列表", () -> prefixLine("- ")));
-        toolbar.getChildren().add(smallBtn("引用", () -> prefixLine("> ")));
-
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-        toolbar.getChildren().add(spacer);
-
-        Button saveBtn = new Button("保存");
-        saveBtn.setStyle("-fx-font-size: 11px; -fx-padding: 3 12; -fx-text-fill: #07c160; -fx-border-color: #07c160; -fx-background-radius: 4; -fx-border-radius: 4;");
-        saveBtn.setOnAction(e -> save());
-        toolbar.getChildren().add(saveBtn);
-
-        return toolbar;
+        return toolBar;
     }
 
-    private Separator createSep() {
-        Separator s = new Separator();
-        s.setOrientation(javafx.geometry.Orientation.VERTICAL);
-        s.setPrefHeight(22);
-        return s;
-    }
-
-    private Button smallBtn(String text, Runnable action) {
-        Button b = new Button(text);
-        b.setStyle("-fx-font-size: 11px; -fx-padding: 3 8;");
+    /** 工具栏图标按钮：FontAwesome 图标 + tooltip(文字+快捷键) + 不抢焦点 */
+    private Button iconBtn(FontAwesomeIcon icon, String text, String shortcut, Runnable action) {
+        Button b = new Button();
+        b.setGraphic(FontAwesomeIconFactory.get().createIcon(icon, "1.2em"));
+        b.setTooltip(new Tooltip(shortcut != null ? text + " (" + shortcut + ")" : text));
+        b.setFocusTraversable(false);
         b.setOnAction(e -> action.run());
+        return b;
+    }
+
+    private ToggleButton modeToggle(ToggleGroup group, FontAwesomeIcon icon, String text, Mode mode) {
+        ToggleButton b = new ToggleButton();
+        b.setToggleGroup(group);
+        b.setGraphic(FontAwesomeIconFactory.get().createIcon(icon, "1.2em"));
+        b.setTooltip(new Tooltip(text));
+        b.setFocusTraversable(false);
+        b.setOnAction(e -> { currentMode = mode; applyMode(); });
         return b;
     }
 
@@ -250,8 +302,10 @@ public class MarkdownEditorPane extends BorderPane {
     }
 
     // ==================== 编辑器操作 ====================
+    // 参考 markdown-writer-fx SmartEdit：智能切换（已包裹/已有前缀则取消）
 
-    private void wrapSelection(String before, String after) {
+    /** 行内包裹：选区已包裹 before/after 则去除，否则包裹。无选区时插入占位并选中占位文本。 */
+    private void toggleWrap(String before, String after) {
         var sel = editor.getSelection();
         if (sel.getLength() == 0) {
             int pos = editor.getCaretPosition();
@@ -259,21 +313,197 @@ public class MarkdownEditorPane extends BorderPane {
             editor.moveTo(pos + before.length());
         } else {
             String selected = editor.getSelectedText();
-            editor.replaceText(sel.getStart(), sel.getEnd(), before + selected + after);
+            int s = sel.getStart(), e = sel.getEnd();
+            String text = editor.getText();
+            boolean wrapped =
+                    s + before.length() <= e - after.length() + after.length()
+                    && s + before.length() <= text.length()
+                    && e - after.length() >= 0
+                    && text.startsWith(before, s)
+                    && text.startsWith(after, e - after.length())
+                    && (e - after.length()) >= (s + before.length());
+            if (wrapped) {
+                String inner = text.substring(s + before.length(), e - after.length());
+                editor.replaceText(s, e, inner);
+                editor.selectRange(s, s + inner.length());
+            } else {
+                editor.replaceText(s, e, before + selected + after);
+                editor.selectRange(s + before.length(), s + before.length() + selected.length());
+            }
         }
         editor.requestFocus();
     }
 
-    private void prefixLine(String prefix) {
+    /** 行首前缀：当前行已有该前缀则去除，否则添加。支持多行选区逐行切换。 */
+    private void togglePrefix(String prefix) {
+        var sel = editor.getSelection();
+        String text = editor.getText();
+        int start = sel.getStart();
+        int end = sel.getEnd();
+        if (start == end) {
+            // 单行：以光标所在行为准
+            start = lineStart(text, start);
+            end = (text.indexOf('\n', start) < 0 ? text.length() : text.indexOf('\n', start));
+        } else {
+            start = lineStart(text, start);
+            if (end < text.length() && text.charAt(end) != '\n') {
+                end = (text.indexOf('\n', end) < 0 ? text.length() : text.indexOf('\n', end));
+            }
+        }
+        String block = text.substring(start, end);
+        boolean allPrefixed = true;
+        for (String ln : block.split("\n", -1)) {
+            if (!ln.startsWith(prefix)) { allPrefixed = false; break; }
+        }
+        StringBuilder nb = new StringBuilder();
+        for (String ln : block.split("\n", -1)) {
+            if (nb.length() > 0) nb.append('\n');
+            if (allPrefixed) {
+                if (ln.startsWith(prefix)) nb.append(ln.substring(prefix.length()));
+                else nb.append(ln);
+            } else {
+                nb.append(prefix).append(ln);
+            }
+        }
+        editor.replaceText(start, end, nb.toString());
+        editor.selectRange(start, start + nb.length());
+        editor.requestFocus();
+    }
+
+    private void insertLink() {
+        var sel = editor.getSelection();
+        String selected = sel.getLength() == 0 ? "链接文本" : editor.getSelectedText();
+        int s = sel.getStart(), e = sel.getEnd();
+        String url = "url";
+        String md = "[" + selected + "](" + url + ")";
+        editor.replaceText(s, e, md);
+        // 选中 url 便于直接输入
+        int urlStart = s + selected.length() + 3;
+        editor.selectRange(urlStart, urlStart + url.length());
+        editor.requestFocus();
+    }
+
+    private void insertImage() {
+        var sel = editor.getSelection();
+        String selected = sel.getLength() == 0 ? "替代文本" : editor.getSelectedText();
+        int s = sel.getStart(), e = sel.getEnd();
+        String url = "url";
+        String md = "![" + selected + "](" + url + ")";
+        editor.replaceText(s, e, md);
+        int urlStart = s + selected.length() + 4;
+        editor.selectRange(urlStart, urlStart + url.length());
+        editor.requestFocus();
+    }
+
+    private void insertCodeBlock() {
+        String block = "\n```\n\n```\n";
+        int pos = editor.getCaretPosition();
+        editor.insertText(pos, block);
+        // 光标放到代码块中间空行
+        editor.moveTo(pos + 5);
+        editor.requestFocus();
+    }
+
+    private void insertHr() {
+        int pos = editor.getCaretPosition();
+        String text = editor.getText();
+        String ins = (pos > 0 && text.charAt(pos - 1) != '\n' ? "\n\n" : "\n") + "---\n";
+        editor.insertText(pos, ins);
+        editor.moveTo(pos + ins.length());
+        editor.requestFocus();
+    }
+
+    private void insertTable() {
+        String tbl = "\n| 列1 | 列2 | 列3 |\n|---|---|---|\n|  |  |  |\n|  |  |  |\n";
+        int pos = editor.getCaretPosition();
+        editor.insertText(pos, tbl);
+        editor.moveTo(pos + tbl.length());
+        editor.requestFocus();
+    }
+
+    private static int lineStart(String text, int pos) {
+        if (pos <= 0) return 0;
+        int idx = text.lastIndexOf('\n', pos - 1);
+        return idx < 0 ? 0 : idx + 1;
+    }
+
+    /** ENTER 自动续行：列表/引用/任务标记行续上相同前缀，有序列表数字递增；空标记行清空标记。 */
+    private boolean handleEnter() {
         int caret = editor.getCaretPosition();
         String text = editor.getText();
-        int lineStart = 0;
-        if (caret > 0) {
-            int idx = text.lastIndexOf('\n', caret - 1);
-            lineStart = idx < 0 ? 0 : idx + 1;
+        int ls = lineStart(text, caret);
+        int nl = text.indexOf('\n', caret);
+        String line = nl < 0 ? text.substring(ls) : text.substring(ls, nl);
+
+        java.util.regex.Matcher m = AUTO_INDENT_PATTERN.matcher(line);
+        if (!m.matches()) return false;
+        String prefix = m.group("prefix");
+        String content = m.group("content");
+
+        if (content.isEmpty()) {
+            // 空标记行：清除当前行标记
+            int end = nl < 0 ? text.length() : nl;
+            editor.replaceText(ls, end, "");
+            editor.moveTo(ls);
+            return true;
         }
-        editor.insertText(lineStart, prefix);
-        editor.requestFocus();
+        String newPrefix = incrementPrefix(prefix);
+        String insert = "\n" + newPrefix;
+        editor.insertText(caret, insert);
+        editor.moveTo(caret + insert.length());
+        return true;
+    }
+
+    private static String incrementPrefix(String prefix) {
+        java.util.regex.Matcher m = ORDERED_PREFIX_PATTERN.matcher(prefix);
+        if (m.matches()) {
+            int n = Integer.parseInt(m.group(2)) + 1;
+            return m.group(1) + n + "." + m.group(3);
+        }
+        return prefix;
+    }
+
+    /** Tab：无选区插入 4 空格；多行选区逐行加 4 空格。Shift+Tab：逐行去前导最多 4 空格。 */
+    private void handleTab(boolean shift) {
+        var sel = editor.getSelection();
+        String text = editor.getText();
+        int s = sel.getStart(), e = sel.getEnd();
+        if (s == e) {
+            if (shift) {
+                int ls = lineStart(text, s);
+                int max = Math.min(4, text.length() - ls);
+                int cnt = 0;
+                while (cnt < max && text.charAt(ls + cnt) == ' ') cnt++;
+                if (cnt > 0) {
+                    editor.replaceText(ls, ls + cnt, "");
+                    editor.moveTo(s - cnt);
+                }
+            } else {
+                editor.insertText(s, "    ");
+            }
+            return;
+        }
+        int start = lineStart(text, s);
+        int end = e;
+        if (end < text.length() && text.charAt(end) != '\n') {
+            int n = text.indexOf('\n', end);
+            end = n < 0 ? text.length() : n;
+        }
+        String block = text.substring(start, end);
+        StringBuilder nb = new StringBuilder();
+        for (String ln : block.split("\n", -1)) {
+            if (nb.length() > 0) nb.append('\n');
+            if (shift) {
+                int cnt = 0;
+                int max = Math.min(4, ln.length());
+                while (cnt < max && ln.charAt(cnt) == ' ') cnt++;
+                nb.append(ln.substring(cnt));
+            } else {
+                nb.append("    ").append(ln);
+            }
+        }
+        editor.replaceText(start, end, nb.toString());
+        editor.selectRange(start, start + nb.length());
     }
 
     // ==================== 语法高亮 ====================

@@ -51,6 +51,8 @@ module tomato {
     requires org.apache.xmlgraphics.batik.script;
     requires org.apache.xmlgraphics.batik.xml;
     requires org.commonmark;
+    requires de.jensd.fx.glyphs.commons;
+    requires de.jensd.fx.glyphs.fontawesome;
     requires com.fasterxml.jackson.databind;
 
     opens com.tangluobo.tomato to javafx.fxml;
