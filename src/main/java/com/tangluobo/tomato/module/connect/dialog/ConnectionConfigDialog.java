@@ -146,6 +146,19 @@ public class ConnectionConfigDialog {
     private TextField localDirectoryPathField;
     private TextField localDirectoryDescriptionField;
 
+    // 目录类型连接的存储后端选择：本地目录 / S3
+    private ComboBox<String> directoryTypeCombo;
+    private VBox localDirTypeContent;   // 本地目录子区
+    private VBox s3DirTypeContent;      // S3 子区
+    private TextField s3DirAccessKeyField;
+    private PasswordField s3DirSecretKeyField;
+    private CheckBox s3DirSaveSecretKeyCheckBox;
+    private TextField s3DirBucketField;
+    private TextField s3DirPrefixField;
+    private TextField s3DirEndpointField;
+    private TextField s3DirRegionField;
+    private CheckBox s3DirPathStyleCheckBox;
+
     /**
      * 密钥条目：每行一个密钥文件（复选框 + 路径 + 浏览 + 删除）
      */
@@ -1057,6 +1070,7 @@ public class ConnectionConfigDialog {
 
     /**
      * 构建本地目录类型的配置内容
+     * 支持两种存储后端：本地目录、S3（S3兼容存储，配置 AK/SK 与 bucket 目录）
      */
     private void buildLocalDirectoryConfigContent() {
         localDirectoryConfigContent = new VBox(15);
@@ -1076,43 +1090,134 @@ public class ConnectionConfigDialog {
         localDirectoryNameField.setPrefWidth(280);
         grid.add(localDirectoryNameField, 1, row++);
 
-        grid.add(new Label("目录路径："), 0, row);
-        HBox pathBox = new HBox(6);
-        pathBox.setAlignment(Pos.CENTER_LEFT);
-        localDirectoryPathField = new TextField();
-        localDirectoryPathField.setPromptText("选择或输入本地目录路径");
-        localDirectoryPathField.setPrefWidth(220);
-        Button browseBtn = new Button("浏览");
-        browseBtn.setStyle("-fx-font-size: 11px; -fx-padding: 2 8;");
-        browseBtn.setOnAction(e -> {
-            DirectoryChooser dirChooser = new DirectoryChooser();
-            dirChooser.setTitle("选择本地目录");
-            String current = localDirectoryPathField.getText().trim();
-            if (!current.isEmpty()) {
-                File currentDir = new File(current);
-                if (currentDir.isDirectory()) {
-                    dirChooser.setInitialDirectory(currentDir);
+        // 目录类型选择：本地目录 / S3
+        grid.add(new Label("目录类型："), 0, row);
+        directoryTypeCombo = new ComboBox<>();
+        directoryTypeCombo.getItems().addAll("本地目录", "S3");
+        directoryTypeCombo.setValue("本地目录");
+        directoryTypeCombo.setPrefWidth(150);
+        grid.add(directoryTypeCombo, 1, row++);
+
+        // ===== 本地目录子区 =====
+        localDirTypeContent = new VBox(10);
+        {
+            GridPane localGrid = new GridPane();
+            localGrid.setHgap(10);
+            localGrid.setVgap(10);
+            localGrid.add(new Label("目录路径："), 0, 0);
+            HBox pathBox = new HBox(6);
+            pathBox.setAlignment(Pos.CENTER_LEFT);
+            localDirectoryPathField = new TextField();
+            localDirectoryPathField.setPromptText("选择或输入本地目录路径");
+            localDirectoryPathField.setPrefWidth(220);
+            Button browseBtn = new Button("浏览");
+            browseBtn.setStyle("-fx-font-size: 11px; -fx-padding: 2 8;");
+            browseBtn.setOnAction(e -> {
+                DirectoryChooser dirChooser = new DirectoryChooser();
+                dirChooser.setTitle("选择本地目录");
+                String current = localDirectoryPathField.getText().trim();
+                if (!current.isEmpty()) {
+                    File currentDir = new File(current);
+                    if (currentDir.isDirectory()) {
+                        dirChooser.setInitialDirectory(currentDir);
+                    }
                 }
-            }
-            File selected = dirChooser.showDialog(dialogStage);
-            if (selected != null) {
-                localDirectoryPathField.setText(selected.getAbsolutePath());
-            }
-        });
-        pathBox.getChildren().addAll(localDirectoryPathField, browseBtn);
-        grid.add(pathBox, 1, row++);
+                File selected = dirChooser.showDialog(dialogStage);
+                if (selected != null) {
+                    localDirectoryPathField.setText(selected.getAbsolutePath());
+                }
+            });
+            pathBox.getChildren().addAll(localDirectoryPathField, browseBtn);
+            localGrid.add(pathBox, 1, 0);
+            localDirTypeContent.getChildren().add(localGrid);
+        }
+
+        // ===== S3 子区 =====
+        s3DirTypeContent = new VBox(10);
+        {
+            GridPane s3Grid = new GridPane();
+            s3Grid.setHgap(10);
+            s3Grid.setVgap(10);
+            int r = 0;
+
+            s3Grid.add(new Label("Access Key："), 0, r);
+            s3DirAccessKeyField = new TextField();
+            s3DirAccessKeyField.setPromptText("访问密钥ID（AK）");
+            s3DirAccessKeyField.setPrefWidth(280);
+            s3Grid.add(s3DirAccessKeyField, 1, r++);
+
+            s3Grid.add(new Label("Secret Key："), 0, r);
+            VBox s3SecretBox = new VBox(4);
+            s3DirSecretKeyField = new PasswordField();
+            s3DirSecretKeyField.setPromptText("访问密钥密码（SK）");
+            s3DirSecretKeyField.setPrefWidth(260);
+            s3DirSaveSecretKeyCheckBox = new CheckBox("保存密钥");
+            s3DirSaveSecretKeyCheckBox.setSelected(true);
+            s3DirSaveSecretKeyCheckBox.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+            s3SecretBox.getChildren().addAll(s3DirSecretKeyField, s3DirSaveSecretKeyCheckBox);
+            s3Grid.add(s3SecretBox, 1, r++);
+
+            s3Grid.add(new Label("目录(Bucket)："), 0, r);
+            s3DirBucketField = new TextField();
+            s3DirBucketField.setPromptText("S3 Bucket 名称");
+            s3DirBucketField.setPrefWidth(280);
+            s3Grid.add(s3DirBucketField, 1, r++);
+
+            s3Grid.add(new Label("子目录："), 0, r);
+            s3DirPrefixField = new TextField();
+            s3DirPrefixField.setPromptText("Bucket 内子目录前缀（可空，如 docs/）");
+            s3DirPrefixField.setPrefWidth(280);
+            s3Grid.add(s3DirPrefixField, 1, r++);
+
+            s3Grid.add(new Label("端点："), 0, r);
+            s3DirEndpointField = new TextField();
+            s3DirEndpointField.setPromptText("S3端点URL（可空，如 http://127.0.0.1:9000）");
+            s3DirEndpointField.setPrefWidth(280);
+            s3Grid.add(s3DirEndpointField, 1, r++);
+
+            s3Grid.add(new Label("区域："), 0, r);
+            s3DirRegionField = new TextField();
+            s3DirRegionField.setPromptText("区域（可空，如 us-east-1）");
+            s3DirRegionField.setPrefWidth(280);
+            s3Grid.add(s3DirRegionField, 1, r++);
+
+            s3DirPathStyleCheckBox = new CheckBox("路径风格访问（Path-Style，MinIO 需要）");
+            s3DirPathStyleCheckBox.setStyle("-fx-font-size: 11px;");
+            s3Grid.add(new Label(""), 0, r);
+            s3Grid.add(s3DirPathStyleCheckBox, 1, r);
+
+            s3DirTypeContent.getChildren().add(s3Grid);
+        }
+
+        // 切换显示对应子区
+        directoryTypeCombo.setOnAction(e -> updateDirectoryTypeVisibility());
 
         grid.add(new Label("备注："), 0, row);
         localDirectoryDescriptionField = new TextField();
         localDirectoryDescriptionField.setPromptText("备注信息");
         localDirectoryDescriptionField.setPrefWidth(280);
-        grid.add(localDirectoryDescriptionField, 1, row);
+        grid.add(localDirectoryDescriptionField, 1, row++);
+
+        grid.add(localDirTypeContent, 0, row, 2, 1);
+        grid.add(s3DirTypeContent, 0, row + 1, 2, 1);
 
         Label hint = new Label("双击连接时将以树形浏览该目录，支持 Markdown 文件的查看与编辑");
         hint.setStyle("-fx-font-size: 10px; -fx-text-fill: #999;");
         hint.setWrapText(true);
 
         localDirectoryConfigContent.getChildren().addAll(grid, hint);
+
+        // 初始显示本地目录子区
+        updateDirectoryTypeVisibility();
+    }
+
+    /** 根据"目录类型"选择切换本地目录/S3 子区可见性 */
+    private void updateDirectoryTypeVisibility() {
+        boolean isS3 = "S3".equals(directoryTypeCombo.getValue());
+        localDirTypeContent.setVisible(!isS3);
+        localDirTypeContent.setManaged(!isS3);
+        s3DirTypeContent.setVisible(isS3);
+        s3DirTypeContent.setManaged(isS3);
     }
 
     // ==================== 密钥条目管理 ====================
@@ -1453,8 +1558,21 @@ public class ConnectionConfigDialog {
             aliyunDescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
         } else if (isLocalDirectory) {
             localDirectoryNameField.setText(existingConfig.getName());
-            localDirectoryPathField.setText(existingConfig.getLocalDirectoryPath() != null ? existingConfig.getLocalDirectoryPath() : "");
             localDirectoryDescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
+            boolean s3 = existingConfig.isS3Directory();
+            directoryTypeCombo.setValue(s3 ? "S3" : "本地目录");
+            localDirectoryPathField.setText(existingConfig.getLocalDirectoryPath() != null ? existingConfig.getLocalDirectoryPath() : "");
+            s3DirAccessKeyField.setText(existingConfig.getUsername() != null ? existingConfig.getUsername() : "");
+            if (existingConfig.getPassword() != null) {
+                s3DirSecretKeyField.setText(existingConfig.getPassword());
+            }
+            s3DirSaveSecretKeyCheckBox.setSelected(existingConfig.isSavePassword());
+            s3DirBucketField.setText(existingConfig.getBucket() != null ? existingConfig.getBucket() : "");
+            s3DirPrefixField.setText(existingConfig.getS3Prefix() != null ? existingConfig.getS3Prefix() : "");
+            s3DirEndpointField.setText(existingConfig.getEndpoint() != null ? existingConfig.getEndpoint() : "");
+            s3DirRegionField.setText(existingConfig.getRegion() != null ? existingConfig.getRegion() : "");
+            s3DirPathStyleCheckBox.setSelected(existingConfig.isPathStyleAccess());
+            updateDirectoryTypeVisibility();
         } else {
             simpleNameField.setText(existingConfig.getName());
             simpleHostField.setText(existingConfig.getHost());
@@ -1661,8 +1779,27 @@ public class ConnectionConfigDialog {
 
         } else if (isLocalDirectory) {
             config.setName(localDirectoryNameField.getText().trim());
-            config.setLocalDirectoryPath(localDirectoryPathField.getText().trim());
             config.setDescription(localDirectoryDescriptionField.getText().trim());
+            boolean s3 = "S3".equals(directoryTypeCombo.getValue());
+            config.setDirectoryType(s3 ? "S3" : "LOCAL");
+            if (s3) {
+                config.setUsername(s3DirAccessKeyField.getText().trim());
+                config.setUsePassword(true);
+                config.setUseKey(false);
+                config.setSavePassword(s3DirSaveSecretKeyCheckBox.isSelected());
+                if (s3DirSaveSecretKeyCheckBox.isSelected()) {
+                    config.setPassword(s3DirSecretKeyField.getText());
+                } else {
+                    config.setPassword(null);
+                }
+                config.setBucket(s3DirBucketField.getText().trim());
+                config.setS3Prefix(s3DirPrefixField.getText().trim());
+                config.setEndpoint(s3DirEndpointField.getText().trim());
+                config.setRegion(s3DirRegionField.getText().trim());
+                config.setPathStyleAccess(s3DirPathStyleCheckBox.isSelected());
+            } else {
+                config.setLocalDirectoryPath(localDirectoryPathField.getText().trim());
+            }
 
         } else {
             config.setName(simpleNameField.getText().trim());
@@ -1743,9 +1880,25 @@ public class ConnectionConfigDialog {
             showAlert("请输入连接名称");
             return false;
         }
-        if (localDirectoryPathField.getText().trim().isEmpty()) {
-            showAlert("请输入或选择目录路径");
-            return false;
+        boolean s3 = "S3".equals(directoryTypeCombo.getValue());
+        if (s3) {
+            if (s3DirAccessKeyField.getText().trim().isEmpty()) {
+                showAlert("请输入 Access Key");
+                return false;
+            }
+            if (s3DirSecretKeyField.getText().trim().isEmpty()) {
+                showAlert("请输入 Secret Key");
+                return false;
+            }
+            if (s3DirBucketField.getText().trim().isEmpty()) {
+                showAlert("请输入目录(Bucket)");
+                return false;
+            }
+        } else {
+            if (localDirectoryPathField.getText().trim().isEmpty()) {
+                showAlert("请输入或选择目录路径");
+                return false;
+            }
         }
         return true;
     }

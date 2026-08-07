@@ -33,6 +33,14 @@ public class ConnectionConfig {
     // 本地目录配置
     private String localDirectoryPath; // 本地目录路径
 
+    // 目录类型连接的存储后端类型：LOCAL（本地目录）或 S3（S3兼容存储）。
+    // 旧配置无此字段时按 LOCAL 处理。
+    private String directoryType = "LOCAL";
+    // S3 目录后端：bucket 名（用户配置的"目录"）
+    private String bucket;
+    // S3 目录后端：bucket 内子目录前缀（可空，以 / 结尾）
+    private String s3Prefix;
+
     // S3/OSS专属配置
     private String region;
     private boolean pathStyleAccess = false; // S3路径风格访问（MinIO需要）
@@ -129,6 +137,19 @@ public class ConnectionConfig {
 
     public String getLocalDirectoryPath() { return localDirectoryPath; }
     public void setLocalDirectoryPath(String localDirectoryPath) { this.localDirectoryPath = localDirectoryPath; }
+
+    /** 目录类型连接的存储后端类型："LOCAL" 或 "S3"；null 视为 "LOCAL" */
+    public String getDirectoryType() { return directoryType; }
+    public void setDirectoryType(String directoryType) { this.directoryType = directoryType; }
+
+    /** 是否为 S3 目录后端 */
+    public boolean isS3Directory() { return "S3".equalsIgnoreCase(directoryType); }
+
+    public String getBucket() { return bucket; }
+    public void setBucket(String bucket) { this.bucket = bucket; }
+
+    public String getS3Prefix() { return s3Prefix; }
+    public void setS3Prefix(String s3Prefix) { this.s3Prefix = s3Prefix; }
 
     public String getRegion() { return region; }
     public void setRegion(String region) { this.region = region; }

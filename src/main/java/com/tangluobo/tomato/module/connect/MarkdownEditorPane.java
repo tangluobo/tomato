@@ -36,6 +36,12 @@ import org.commonmark.node.SoftLineBreak;
 import org.commonmark.node.StrongEmphasis;
 import org.commonmark.node.ThematicBreak;
 import org.commonmark.parser.Parser;
+import org.commonmark.ext.gfm.tables.Table;
+import org.commonmark.ext.gfm.tables.TableBody;
+import org.commonmark.ext.gfm.tables.TableCell;
+import org.commonmark.ext.gfm.tables.TableHead;
+import org.commonmark.ext.gfm.tables.TableRow;
+import org.commonmark.ext.gfm.tables.TablesExtension;
 import org.fxmisc.richtext.InlineCssTextArea;
 import org.fxmisc.flowless.VirtualizedScrollPane;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
@@ -94,6 +100,11 @@ public class MarkdownEditorPane extends BorderPane {
     private static final String STYLE_ITALIC = "-fx-font-posture: italic;";
     private static final String STYLE_LISTMARK = "-fx-fill: #d14; -fx-font-weight: bold;";
     private static final String STYLE_QUOTEMARK = "-fx-fill: #1a73e8; -fx-font-weight: bold;";
+
+    // 预览解析器：启用 GFM 表格扩展（Parser 线程安全，构建一次复用）
+    private static final Parser PREVIEW_PARSER = Parser.builder()
+            .extensions(java.util.List.of(TablesExtension.create()))
+            .build();
 
     private static final java.util.regex.Pattern MD_PATTERN = java.util.regex.Pattern.compile(
             "(?<HEADING>^#{1,6}\\s.*$)" +
@@ -570,8 +581,7 @@ public class MarkdownEditorPane extends BorderPane {
         String md = editor.getText();
         previewBox.getChildren().clear();
         try {
-            Parser parser = Parser.builder().build();
-            org.commonmark.node.Node document = parser.parse(md);
+            org.commonmark.node.Node document = PREVIEW_PARSER.parse(md);
             InlineStyle base = new InlineStyle();
             renderBlocks(document, base, previewBox.getChildren());
         } catch (Exception e) {
@@ -616,9 +626,11 @@ public class MarkdownEditorPane extends BorderPane {
         } else if (node instanceof OrderedList ol) {
             renderList(ol, base, target, true, ol.getStartNumber());
         } else if (node instanceof FencedCodeBlock fcb) {
-            target.add(codeBlockLabel(fcb.getLiteral()));
+            target.add(renderCodeBlock(fcb.getLiteral(), fcb.getInfo()));
         } else if (node instanceof IndentedCodeBlock icb) {
-            target.add(codeBlockLabel(icb.getLiteral()));
+            target.add(renderCodeBlock(icb.getLiteral(), ""));
+        } else if (node instanceof Table table) {
+            renderTable(table, base, target);
         } else if (node instanceof ThematicBreak) {
             Separator sep = new Separator();
             sep.setPadding(new Insets(8, 0, 8, 0));
@@ -633,13 +645,171 @@ public class MarkdownEditorPane extends BorderPane {
         }
     }
 
-    private Label codeBlockLabel(String literal) {
-        Label l = new Label(literal);
-        l.setStyle("-fx-font-family: 'Consolas','Courier New',monospace; -fx-font-size: 12px; " +
-                "-fx-text-fill: #333; -fx-background-color: #f5f5f5; -fx-background-radius: 4; " +
-                "-fx-padding: 8 12; -fx-border-color: #e0e0e0; -fx-border-radius: 4;");
-        l.setWrapText(true);
-        return l;
+    /** 渲染代码块：按语言做轻量语法高亮，放入带背景的容器 */
+    private Node renderCodeBlock(String literal, String info) {
+        String lang = info == null ? "" : info.trim().toLowerCase();
+        List<Text> parts = new ArrayList<>();
+        highlightCode(literal, lang, parts);
+        if (parts.isEmpty()) {
+            Text t = new Text(literal);
+            t.setStyle("-fx-fill: #333; -fx-font-family: 'Consolas','Courier New',monospace; -fx-font-size: 12px;");
+            parts.add(t);
+        }
+        TextFlow flow = new TextFlow(parts.toArray(new Text[0]));
+        flow.setPadding(new Insets(8, 12, 8, 12));
+        StackPane pane = new StackPane(flow);
+        pane.setStyle("-fx-background-color: #f6f8fa; -fx-background-radius: 4; " +
+                "-fx-border-color: #e0e0e0; -fx-border-radius: 4;");
+        return pane;
+    }
+
+    // 代码高亮配色
+    private static final String HL_KEYWORD = "-fx-fill: #d73a49;";   // 关键字 红
+    private static final String HL_STRING = "-fx-fill: #032f62;";   // 字符串 深蓝
+    private static final String HL_COMMENT = "-fx-fill: #6a737d;";  // 注释 灰
+    private static final String HL_NUMBER = "-fx-fill: #005cc5;";    // 数字 蓝
+    private static final String HL_ANNOT = "-fx-fill: #6f42c1;";    // 注解/装饰器 紫
+    private static final String HL_BASE = "-fx-fill: #24292e;";     // 默认文本
+    private static final String HL_FUNC = "-fx-fill: #6f42c1;";     // 函数名 紫
+
+    /** 通用关键字集合（覆盖 Java/JS/TS/Python/SQL/Go/C/C++/PHP/Shell 等常见词）。
+     *  用 HashSet 容纳，各语言区段可能有重复词，去重后存入。 */
+    private static final java.util.Set<String> KEYWORDS = new java.util.HashSet<>(java.util.Arrays.asList(
+            // 通用
+            "if","else","for","while","do","return","break","continue","switch","case","default",
+            "true","false","null","none","nil","undefined","and","or","not","in","is","as","lambda",
+            "import","from","package","include","require","export","class","struct","enum","interface",
+            "extends","implements","public","private","protected","static","final","const","let","var",
+            "def","func","fun","function","fn","void","new","this","super","self","try","catch","finally",
+            "throw","throws","raise","yield","async","await","with","using","namespace","typedef",
+            // Java
+            "abstract","boolean","byte","char","double","float","int","long","short","instanceof","synchronized","volatile","transient","native",
+            // SQL
+            "select","where","insert","update","delete","create","table","drop","alter","into","values","set","join","left","right","inner","outer","group","by","order","having","limit","distinct","primary","key","foreign","references","index","unique","between","like","exists","union","all",
+            // Python
+            "elif","endif","endfor","print","assert","global","nonlocal","del","pass",
+            // Go/Rust/C/C++
+            "go","defer","chan","range","map","make","len","ptr","ref","mut","pub","crate","mod","impl","trait","unsafe","move","sizeof",
+            // Shell
+            "echo","exit","then","fi","done","esac","local","declare"
+    ));
+
+    /** 行注释前缀（按语言）：`//` 用于 C 系，`#` 用于脚本/配置类，`--` 用于 SQL */
+    private static String lineCommentPrefix(String lang) {
+        return switch (lang) {
+            case "", "python", "py", "ruby", "rb", "perl", "pl", "shell", "sh", "bash", "zsh",
+                 "yaml", "yml", "toml", "ini", "properties", "conf", "dockerfile", "makefile",
+                 "ps1", "powershell", "r", "plaintext" -> "#";
+            case "sql" -> "--";
+            default -> "//"; // java, js, ts, go, rust, c, cpp, php, css, json, kotlin, scala, swift...
+        };
+    }
+
+    /** 轻量正则语法高亮：按 token 切分并着色，结果追加到 out。非线程安全（仅 JavaFX 线程调用）。 */
+    private void highlightCode(String code, String lang, List<Text> out) {
+        if (code == null || code.isEmpty()) return;
+        String linePrefix = lineCommentPrefix(lang);
+        // token 顺序：块注释 → 字符串(含模板/原始) → 行注释 → 数字 → 注解 → 标识符(关键字/函数)
+        String blockComment = "/\\*[\\s\\S]*?\\*/";
+        String stringPat = "\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|`(?:\\\\.|[^`\\\\])*`";
+        String lineComment = java.util.regex.Pattern.quote(linePrefix) + "[^\\n]*";
+        String number = "\\b\\d[\\d_]*\\.?\\d*([eE][+-]?\\d+)?[fFdDuUlL]?\\b|0[xX][0-9a-fA-F_]+|0[bB][01_]+";
+        String annotation = "@[A-Za-z_][A-Za-z0-9_]*";
+        String ident = "[A-Za-z_$][A-Za-z0-9_$]*";
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile(
+                "(?<BLOCK>" + blockComment + ")" +
+                "|(?<STRING>" + stringPat + ")" +
+                "|(?<LINE>" + lineComment + ")" +
+                "|(?<NUMBER>" + number + ")" +
+                "|(?<ANNOT>" + annotation + ")" +
+                "|(?<IDENT>" + ident + ")"
+        );
+        java.util.regex.Matcher m = p.matcher(code);
+        int last = 0;
+        while (m.find()) {
+            if (m.start() > last) {
+                out.add(codeText(code.substring(last, m.start()), HL_BASE));
+            }
+            String style;
+            if (m.group("BLOCK") != null || m.group("LINE") != null) {
+                style = HL_COMMENT;
+            } else if (m.group("STRING") != null) {
+                style = HL_STRING;
+            } else if (m.group("NUMBER") != null) {
+                style = HL_NUMBER;
+            } else if (m.group("ANNOT") != null) {
+                style = HL_ANNOT;
+            } else {
+                String word = m.group("IDENT");
+                if (KEYWORDS.contains(word)) {
+                    style = HL_KEYWORD;
+                } else {
+                    // 函数调用：标识符后跟空白*(
+                    int end = m.end();
+                    int j = end;
+                    while (j < code.length() && (code.charAt(j) == ' ' || code.charAt(j) == '\t')) j++;
+                    style = (j < code.length() && code.charAt(j) == '(') ? HL_FUNC : HL_BASE;
+                }
+            }
+            out.add(codeText(m.group(), style));
+            last = m.end();
+        }
+        if (last < code.length()) {
+            out.add(codeText(code.substring(last), HL_BASE));
+        }
+    }
+
+    private Text codeText(String content, String style) {
+        Text t = new Text(content);
+        t.setStyle(style + " -fx-font-family: 'Consolas','Courier New',monospace; -fx-font-size: 12px;");
+        return t;
+    }
+
+    /** 渲染 GFM 表格为 JavaFX GridPane：表头加粗+浅灰底，单元格按对齐方式排版，带边框 */
+    private void renderTable(Table table, InlineStyle base, ObservableList<Node> target) {
+        GridPane grid = new GridPane();
+        grid.setHgap(0);
+        grid.setVgap(0);
+        grid.setStyle("-fx-border-color: #dfe2e5; -fx-border-width: 1 1 0 0; -fx-background-color: white;");
+
+        int row = 0;
+        for (org.commonmark.node.Node section = table.getFirstChild(); section != null; section = section.getNext()) {
+            boolean headerSection = section instanceof TableHead;
+            for (org.commonmark.node.Node r = section.getFirstChild(); r != null; r = r.getNext()) {
+                if (!(r instanceof TableRow)) continue;
+                int col = 0;
+                for (org.commonmark.node.Node c = r.getFirstChild(); c != null; c = c.getNext()) {
+                    if (!(c instanceof TableCell cell)) continue;
+                    List<Text> inlines = new ArrayList<>();
+                    renderInline(cell, base, inlines);
+                    TextFlow flow = new TextFlow(inlines.toArray(new Text[0]));
+                    if (headerSection) {
+                        for (Text t : inlines) {
+                            String s = t.getStyle() == null ? "" : t.getStyle();
+                            t.setStyle(s + " -fx-font-weight: bold;");
+                        }
+                    }
+                    StackPane cellPane = new StackPane(flow);
+                    cellPane.setPadding(new Insets(6, 10, 6, 10));
+                    String bg = headerSection ? "#f6f8fa" : "white";
+                    TableCell.Alignment align = cell.getAlignment();
+                    String alignCss;
+                    if (align == TableCell.Alignment.CENTER) {
+                        alignCss = "-fx-alignment: center; -fx-text-alignment: center;";
+                    } else if (align == TableCell.Alignment.RIGHT) {
+                        alignCss = "-fx-alignment: center-right; -fx-text-alignment: right;";
+                    } else {
+                        alignCss = "-fx-alignment: center-left; -fx-text-alignment: left;";
+                    }
+                    cellPane.setStyle("-fx-border-color: #dfe2e5; -fx-border-width: 0 0 1 1; " +
+                            "-fx-background-color: " + bg + "; " + alignCss);
+                    grid.add(cellPane, col, row);
+                    col++;
+                }
+                row++;
+            }
+        }
+        target.add(grid);
     }
 
     private void renderList(org.commonmark.node.Node list, InlineStyle base, ObservableList<Node> target, boolean ordered, int start) {

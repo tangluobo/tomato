@@ -3,6 +3,8 @@ package com.tangluobo.tomato.module.connect.service;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.google.gson.JsonParseException;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import io.minio.CopyObjectArgs;
+import io.minio.CopySource;
 import io.minio.GetObjectArgs;
 import io.minio.GetObjectResponse;
 import io.minio.ListObjectsArgs;
@@ -144,6 +146,49 @@ public class S3Service {
                 .bucket(bucketName)
                 .object(key)
                 .build());
+    }
+
+    /**
+     * 服务端复制对象（用于 S3 重命名/移动）。同 bucket 内复制。
+     */
+    public static void copyObject(ConnectionConfig config, String bucketName, String sourceKey, String destKey) throws Exception {
+        MinioClient client = createClient(config);
+        client.copyObject(CopyObjectArgs.builder()
+                .bucket(bucketName)
+                .object(destKey)
+                .source(CopySource.builder().bucket(bucketName).object(sourceKey).build())
+                .build());
+    }
+
+    /**
+     * 递归列出 prefix 下所有对象（用于目录删除/重命名/移动）。
+     */
+    public static List<S3ObjectInfo> listObjectsRecursive(ConnectionConfig config, String bucketName, String prefix) throws Exception {
+        MinioClient client = createClient(config);
+        ListObjectsArgs.Builder argsBuilder = ListObjectsArgs.builder()
+                .bucket(bucketName)
+                .recursive(true);
+        if (prefix != null && !prefix.isEmpty()) {
+            argsBuilder.prefix(prefix);
+        }
+        List<S3ObjectInfo> objects = new ArrayList<>();
+        Iterable<Result<Item>> results = client.listObjects(argsBuilder.build());
+        for (Result<Item> result : results) {
+            try {
+                Item item = result.get();
+                S3ObjectInfo objInfo = new S3ObjectInfo();
+                objInfo.setKey(item.objectName());
+                objInfo.setDirectory(item.isDir());
+                objInfo.setSize(item.isDir() ? 0 : item.size());
+                if (item.lastModified() != null) {
+                    objInfo.setLastModified(item.lastModified().toInstant());
+                }
+                objects.add(objInfo);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+        return objects;
     }
 
     /**

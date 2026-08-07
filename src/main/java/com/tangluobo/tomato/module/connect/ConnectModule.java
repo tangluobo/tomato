@@ -927,19 +927,24 @@ public class ConnectModule implements Module {
                 if (db.hasString()) {
                     String s = db.getString();
                     if (s.equals(LOCAL_DIR_DRAG)) {
-                        // 本地目录文件/文件夹移动到目标目录
+                        // 目录连接文件/文件夹移动到目标目录（本地目录或 S3 后端）
                         TreeItem<String> targetItem = cell.getTreeItem();
                         if (draggedLocalDirItem != null && isValidLocalDirDropTarget(draggedLocalDirItem, targetItem)) {
                             DatabaseNodeData dd = dbNodeDataMap.get(draggedLocalDirItem);
                             if (dd != null) {
-                                Path sourcePath = Path.of(dd.getDatabaseName());
-                                Path targetDir = getLocalDirTargetPath(targetItem);
-                                if (targetDir != null) {
-                                    Path destPath = targetDir.resolve(sourcePath.getFileName());
-                                    ConnectHandler h = createConnectHandler(dd.getConnectionConfig());
-                                    if (h instanceof LocalDirectoryConnectHandler ld) {
-                                        ld.moveNode(this, draggedLocalDirItem, targetItem, sourcePath, destPath);
+                                ConnectHandler h = createConnectHandler(dd.getConnectionConfig());
+                                if (h instanceof LocalDirectoryConnectHandler ld) {
+                                    if (dd.getConnectionConfig().isS3Directory()) {
+                                        ld.moveS3NodeFromTree(this, draggedLocalDirItem, targetItem);
                                         success = true;
+                                    } else {
+                                        Path sourcePath = Path.of(dd.getDatabaseName());
+                                        Path targetDir = getLocalDirTargetPath(targetItem);
+                                        if (targetDir != null) {
+                                            Path destPath = targetDir.resolve(sourcePath.getFileName());
+                                            ld.moveNode(this, draggedLocalDirItem, targetItem, sourcePath, destPath);
+                                            success = true;
+                                        }
                                     }
                                 }
                             }
