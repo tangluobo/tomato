@@ -15,6 +15,11 @@ import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Text;
 import javafx.scene.text.TextFlow;
+import javafx.print.PageLayout;
+import javafx.print.PageOrientation;
+import javafx.print.Paper;
+import javafx.print.PrinterJob;
+import javafx.stage.FileChooser;
 
 import javafx.util.Duration;
 import org.commonmark.node.BlockQuote;
@@ -36,6 +41,11 @@ import org.commonmark.node.SoftLineBreak;
 import org.commonmark.node.StrongEmphasis;
 import org.commonmark.node.ThematicBreak;
 import org.commonmark.parser.Parser;
+import org.commonmark.renderer.NodeRenderer;
+import org.commonmark.renderer.html.HtmlNodeRendererContext;
+import org.commonmark.renderer.html.HtmlNodeRendererFactory;
+import org.commonmark.renderer.html.HtmlRenderer;
+import org.commonmark.renderer.html.HtmlWriter;
 import org.fxmisc.richtext.InlineCssTextArea;
 import org.fxmisc.flowless.VirtualizedScrollPane;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
@@ -44,8 +54,10 @@ import de.jensd.fx.glyphs.fontawesome.FontAwesomeIcon;
 import de.jensd.fx.glyphs.fontawesome.utils.FontAwesomeIconFactory;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -73,6 +85,7 @@ public class MarkdownEditorPane extends BorderPane {
 
     private final InlineCssTextArea editor;
     private final VirtualizedScrollPane<InlineCssTextArea> editorScroll;
+    // 预览面板：VBox 内混合 InlineCssTextArea（可选中文本，Ctrl+C/右键复制）+ GridPane（可视表格）
     private final VBox previewBox;
     private final ScrollPane previewScroll;
     private final StackPane centerContainer;
@@ -155,6 +168,7 @@ public class MarkdownEditorPane extends BorderPane {
         );
         this.editorScroll = new VirtualizedScrollPane<>(editor);
 
+        // 预览区：VBox + ScrollPane，子节点为 InlineCssTextArea（文本，可选中）与 GridPane（表格）混合
         this.previewBox = new VBox(6);
         this.previewBox.setPadding(new Insets(12, 16, 12, 16));
         this.previewBox.setStyle("-fx-background-color: white;");
@@ -276,6 +290,12 @@ public class MarkdownEditorPane extends BorderPane {
                 iconBtn(FontAwesomeIcon.FILE_CODE_ALT, "代码块", "Ctrl+Shift+`", this::insertCodeBlock),
                 iconBtn(FontAwesomeIcon.MINUS, "分隔线", null, this::insertHr),
                 iconBtn(FontAwesomeIcon.TABLE, "表格", null, this::insertTable));
+
+        // 导出
+        toolBar.getItems().addAll(
+                new Separator(),
+                iconBtn(FontAwesomeIcon.FILE_CODE_ALT, "导出HTML", null, this::exportHtml),
+                iconBtn(FontAwesomeIcon.FILE_PDF_ALT, "导出PDF", null, this::exportPdf));
 
         // 弹性空白（ToolBar 内部为 HBox，HBox.setHgrow 有效）
         Region spacer = new Region();
@@ -574,13 +594,215 @@ public class MarkdownEditorPane extends BorderPane {
         String md = editor.getText();
         previewBox.getChildren().clear();
         try {
-            InlineStyle base = new InlineStyle();
-            renderMarkdown(md, base, previewBox.getChildren());
+            renderMarkdownToVBox(md, new InlineStyle(), previewBox.getChildren());
         } catch (Exception e) {
             Label err = new Label("预览渲染失败: " + e.getMessage());
             err.setStyle("-fx-text-fill: #c00; -fx-font-size: 11px;");
             previewBox.getChildren().add(err);
         }
+    }
+
+    // ==================== 预览区渲染（混合：InlineCssTextArea 文本 + GridPane 表格） ====================
+    // 文本段渲染为可选中的 InlineCssTextArea（复用 renderInline/highlightCode/styledText 产出带 CSS 的 Text）；
+    // 表格段渲染为可视 GridPane（复用既有 renderTableLines/tableCell，正确处理 CJK 对齐与边框）。
+
+    /**
+     * 分段渲染到预览 VBox：文本段→可选中的 InlineCssTextArea；表格段→可视 GridPane（复用 renderTableLines）。
+     * 文本与表格各自独立节点：选中文本在文本区生效，表格保持可视化边框/对齐，互不影响。
+     */
+    private void renderMarkdownToVBox(String md, InlineStyle base, ObservableList<Node> target) {
+        String[] lines = md.split("\n", -1);
+        int i = 0;
+        StringBuilder textBuf = new StringBuilder();
+        while (i < lines.length) {
+            // 表格块：表头行 + 分隔行 + 连续数据行
+            if (i + 1 < lines.length && isTableRow(lines[i]) && isDelimiterRow(lines[i + 1])) {
+                flushTextSegmentToVBox(textBuf, base, target);
+                List<String> tableLines = new ArrayList<>();
+                tableLines.add(lines[i]);
+                tableLines.add(lines[i + 1]);
+                int j = i + 2;
+                while (j < lines.length && isTableRow(lines[j])) {
+                    tableLines.add(lines[j]);
+                    j++;
+                }
+                renderTableLines(tableLines, base, target);
+                Region gap = new Region();
+                gap.setPrefHeight(6);
+                target.add(gap);
+                i = j;
+            } else {
+                if (textBuf.length() > 0) textBuf.append('\n');
+                textBuf.append(lines[i]);
+                i++;
+            }
+        }
+        flushTextSegmentToVBox(textBuf, base, target);
+    }
+
+    /** 将累积的文本段解析并渲染为一个可选中的 InlineCssTextArea，加入预览 VBox */
+    private void flushTextSegmentToVBox(StringBuilder textBuf, InlineStyle base, ObservableList<Node> target) {
+        if (textBuf.length() == 0) return;
+        String text = textBuf.toString();
+        textBuf.setLength(0);
+        List<Text> frags = new ArrayList<>();
+        appendBlocksToArea(PREVIEW_PARSER.parse(text), base, frags);
+        if (frags.isEmpty()) return;
+        target.add(createPreviewArea(frags));
+    }
+
+    /** 由带 CSS 的 Text 片段构建只读 InlineCssTextArea：支持选中、Ctrl+C、右键复制/全选 */
+    private InlineCssTextArea createPreviewArea(List<Text> frags) {
+        InlineCssTextArea area = new InlineCssTextArea();
+        area.setEditable(false);
+        area.setWrapText(true);
+        area.setStyle(
+                "-fx-background-color: white; -fx-padding: 2 0 6 0; " +
+                "-fx-font-family: 'Segoe UI','Microsoft YaHei',sans-serif; " +
+                "-fx-font-size: 14px; -fx-text-fill: #333;"
+        );
+        StringBuilder fullText = new StringBuilder();
+        StyleSpansBuilder<String> spans = new StyleSpansBuilder<>();
+        for (Text t : frags) {
+            String s = t.getText();
+            if (s == null || s.isEmpty()) continue;
+            String style = t.getStyle() == null ? "" : t.getStyle();
+            fullText.append(s);
+            spans.add(style, s.length());
+        }
+        if (fullText.length() > 0) {
+            area.replaceText(fullText.toString());
+            area.setStyleSpans(0, spans.create());
+        }
+        // 让文本区高度随内容自适应（不放在 VirtualizedScrollPane 中，由外层 ScrollPane 统一滚动）
+        area.prefHeightProperty().bind(area.totalHeightEstimateProperty());
+
+        ContextMenu menu = new ContextMenu();
+        MenuItem copyItem = new MenuItem("复制");
+        copyItem.setOnAction(e -> area.copy());
+        MenuItem selectAllItem = new MenuItem("全选");
+        selectAllItem.setOnAction(e -> area.selectAll());
+        menu.getItems().addAll(copyItem, selectAllItem);
+        area.setOnContextMenuRequested(e -> menu.show(area, e.getScreenX(), e.getScreenY()));
+        area.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
+            if (e.isControlDown() && e.getCode() == KeyCode.C) {
+                area.copy();
+                e.consume();
+            }
+        });
+        return area;
+    }
+
+    private void appendBlocksToArea(org.commonmark.node.Node parent, InlineStyle base, List<Text> out) {
+        for (org.commonmark.node.Node child = parent.getFirstChild(); child != null; child = child.getNext()) {
+            appendBlockToArea(child, base, out);
+        }
+    }
+
+    private void appendBlockToArea(org.commonmark.node.Node node, InlineStyle base, List<Text> out) {
+        if (node instanceof Paragraph p) {
+            renderInline(p, base, out);
+            out.add(textNode("\n\n", baseCss(base)));
+        } else if (node instanceof Heading h) {
+            int size = headingSize(h.getLevel());
+            String headingCss = "-fx-font-size: " + size + "px; -fx-font-weight: bold; -fx-fill: #1163a6;";
+            List<Text> inlines = new ArrayList<>();
+            renderInline(h, base, inlines);
+            for (Text t : inlines) {
+                String s = t.getStyle() == null ? "" : t.getStyle();
+                out.add(textNode(t.getText(), s + " " + headingCss));
+            }
+            out.add(textNode("\n\n", baseCss(base)));
+        } else if (node instanceof BlockQuote bq) {
+            appendBlockQuoteToArea(bq, base, out);
+        } else if (node instanceof BulletList) {
+            appendListToArea(node, base, false, 1, "", out);
+            out.add(textNode("\n", baseCss(base)));
+        } else if (node instanceof OrderedList ol) {
+            appendListToArea(ol, base, true, ol.getStartNumber(), "", out);
+            out.add(textNode("\n", baseCss(base)));
+        } else if (node instanceof FencedCodeBlock fcb) {
+            appendCodeToArea(fcb.getLiteral(), fcb.getInfo(), out);
+            out.add(textNode("\n", baseCss(base)));
+        } else if (node instanceof IndentedCodeBlock icb) {
+            appendCodeToArea(icb.getLiteral(), "", out);
+            out.add(textNode("\n", baseCss(base)));
+        } else if (node instanceof ThematicBreak) {
+            out.add(textNode("\n———\n\n", baseCss(base)));
+        } else if (node instanceof HtmlBlock hb) {
+            out.add(textNode(hb.getLiteral(),
+                    "-fx-font-family: 'Consolas',monospace; -fx-font-size: 11px; -fx-fill: #888;"));
+            out.add(textNode("\n", baseCss(base)));
+        } else {
+            appendBlocksToArea(node, base, out);
+        }
+    }
+
+    private void appendBlockQuoteToArea(BlockQuote bq, InlineStyle base, List<Text> out) {
+        InlineStyle qs = base.copy();
+        qs.quote = true;
+        for (org.commonmark.node.Node child = bq.getFirstChild(); child != null; child = child.getNext()) {
+            out.add(textNode("> ", STYLE_QUOTEMARK));
+            if (child instanceof Paragraph p) {
+                renderInline(p, qs, out);
+                out.add(textNode("\n", baseCss(qs)));
+            } else {
+                appendBlockToArea(child, qs, out);
+            }
+        }
+        out.add(textNode("\n", baseCss(base)));
+    }
+
+    private void appendListToArea(org.commonmark.node.Node list, InlineStyle base, boolean ordered, int start,
+                                  String indent, List<Text> out) {
+        int index = start;
+        for (org.commonmark.node.Node item = list.getFirstChild(); item != null; item = item.getNext()) {
+            if (!(item instanceof ListItem)) continue;
+            String marker = indent + (ordered ? (index + ". ") : "• ");
+            out.add(textNode(marker, STYLE_LISTMARK));
+            org.commonmark.node.Node firstChild = item.getFirstChild();
+            if (firstChild instanceof Paragraph p) {
+                renderInline(p, base, out);
+                out.add(textNode("\n", baseCss(base)));
+                org.commonmark.node.Node child = firstChild.getNext();
+                while (child != null) {
+                    if (child instanceof BulletList) {
+                        appendListToArea(child, base, false, 1, indent + "  ", out);
+                    } else if (child instanceof OrderedList ol2) {
+                        appendListToArea(ol2, base, true, ol2.getStartNumber(), indent + "  ", out);
+                    } else {
+                        appendBlockToArea(child, base, out);
+                    }
+                    child = child.getNext();
+                }
+            } else if (firstChild != null) {
+                appendBlockToArea(firstChild, base, out);
+            }
+            index++;
+        }
+    }
+
+    private void appendCodeToArea(String code, String lang, List<Text> out) {
+        String l = lang == null ? "" : lang.trim().toLowerCase();
+        List<Text> parts = new ArrayList<>();
+        highlightCode(code, l, parts);
+        if (parts.isEmpty()) {
+            out.add(codeText(code, HL_BASE));
+        } else {
+            out.addAll(parts);
+        }
+    }
+
+    /** 基础样式 CSS（复用 styledText 的 CSS 生成逻辑） */
+    private String baseCss(InlineStyle s) {
+        return styledText("", s).getStyle();
+    }
+
+    /** 构造一个带指定 CSS 的 Text 节点（用于结构性文本，如换行、表格边框、列表标记） */
+    private Text textNode(String content, String css) {
+        Text t = new Text(content);
+        t.setStyle(css == null ? "" : css);
+        return t;
     }
 
     /**
@@ -1124,5 +1346,270 @@ public class MarkdownEditorPane extends BorderPane {
                 Platform.runLater(() -> onLoaded.accept(null, e.getMessage()));
             }
         }, "MD-Load").start();
+    }
+
+    // ==================== 导出 HTML / PDF ====================
+
+    /** 导出 HTML：复用 commonmark HtmlRenderer + 自定义代码块高亮渲染器 + 自渲染 GFM 表格 */
+    private static final HtmlRenderer HTML_RENDERER = HtmlRenderer.builder()
+            .nodeRendererFactory(ctx -> new CodeBlockHtmlRenderer(ctx))
+            .build();
+
+    private static final String EXPORT_CSS =
+            "body{font-family:'Segoe UI','Microsoft YaHei',-apple-system,sans-serif;color:#24292e;" +
+            "font-size:15px;line-height:1.6;max-width:780px;margin:16px auto;padding:0 16px;}" +
+            "h1{font-size:2em;margin:0.6em 0 0.3em;}h2{font-size:1.5em;}h3{font-size:1.25em;}" +
+            "h4{font-size:1em;}h5{font-size:0.875em;}h6{font-size:0.85em;color:#666;}" +
+            "h1,h2,h3,h4,h5,h6{color:#1163a6;font-weight:600;}" +
+            "a{color:#1a73e8;text-decoration:none;}a:hover{text-decoration:underline;}" +
+            "code{background:#f6f8fa;padding:2px 6px;border-radius:3px;font-family:Consolas,'Courier New',monospace;color:#c725e9;font-size:90%;}" +
+            "pre{background:#f6f8fa;border:1px solid #e0e0e0;border-radius:4px;padding:10px;overflow:auto;}" +
+            "pre code{background:none;color:#24292e;padding:0;font-size:12px;}" +
+            "blockquote{border-left:3px solid #1a73e8;margin:0.4em 0;padding:0.2em 0 0.2em 12px;color:#666;}" +
+            "table{border-collapse:collapse;margin:0.5em 0;}" +
+            "th,td{border:1px solid #dfe2e5;padding:6px 10px;}" +
+            "th{background:#f6f8fa;font-weight:bold;}" +
+            "img{max-width:100%;}hr{border:none;border-top:1px solid #e0e0e0;margin:1em 0;}";
+
+    /** 代码块 HTML 渲染器：把 ```/缩进 代码块渲染为带语法高亮 span 的 <pre><code> */
+    private static final class CodeBlockHtmlRenderer implements NodeRenderer {
+        private final HtmlWriter html;
+
+        CodeBlockHtmlRenderer(HtmlNodeRendererContext ctx) {
+            this.html = ctx.getWriter();
+        }
+
+        @Override
+        public java.util.Set<Class<? extends org.commonmark.node.Node>> getNodeTypes() {
+            return java.util.Set.of(FencedCodeBlock.class, IndentedCodeBlock.class);
+        }
+
+        @Override
+        public void render(org.commonmark.node.Node node) {
+            if (node instanceof FencedCodeBlock fcb) {
+                html.raw("<pre><code>" + codeToHtml(fcb.getLiteral(), fcb.getInfo()) + "</code></pre>\n");
+            } else if (node instanceof IndentedCodeBlock icb) {
+                html.raw("<pre><code>" + codeToHtml(icb.getLiteral(), "") + "</code></pre>\n");
+            }
+        }
+    }
+
+    /** 导出 HTML：FileChooser 选目标文件，写入完整 HTML 文档 */
+    private void exportHtml() {
+        FileChooser fc = new FileChooser();
+        fc.setTitle("导出 HTML");
+        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("HTML 文件", "*.html"));
+        fc.setInitialFileName(safeFileName(displayName) + ".html");
+        File f = fc.showSaveDialog(getScene().getWindow());
+        if (f == null) return;
+        try {
+            Files.writeString(f.toPath(), buildFullHtml(editor.getText()), StandardCharsets.UTF_8);
+            Alert a = new Alert(Alert.AlertType.INFORMATION);
+            a.setTitle("导出成功");
+            a.setHeaderText(null);
+            a.setContentText("已导出到：" + f.getAbsolutePath());
+            a.showAndWait();
+        } catch (Exception e) {
+            Alert a = new Alert(Alert.AlertType.ERROR);
+            a.setTitle("导出失败");
+            a.setHeaderText(null);
+            a.setContentText(e.getMessage());
+            a.showAndWait();
+        }
+    }
+
+    /** 拼装完整 HTML 文档：样式 + 分段（文本交 commonmark，表格自渲染） */
+    private String buildFullHtml(String md) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("<!DOCTYPE html>\n<html lang=\"zh\">\n<head>\n<meta charset=\"utf-8\">\n");
+        sb.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n");
+        sb.append("<title>").append(escapeHtml(displayName)).append("</title>\n");
+        sb.append("<style>").append(EXPORT_CSS).append("</style>\n");
+        sb.append("</head>\n<body>\n");
+        String[] lines = md.split("\n", -1);
+        int i = 0;
+        StringBuilder textBuf = new StringBuilder();
+        while (i < lines.length) {
+            if (i + 1 < lines.length && isTableRow(lines[i]) && isDelimiterRow(lines[i + 1])) {
+                flushTextToHtml(textBuf, sb);
+                List<String> tableLines = new ArrayList<>();
+                tableLines.add(lines[i]);
+                tableLines.add(lines[i + 1]);
+                int j = i + 2;
+                while (j < lines.length && isTableRow(lines[j])) {
+                    tableLines.add(lines[j]);
+                    j++;
+                }
+                sb.append(tableToHtml(tableLines));
+                i = j;
+            } else {
+                if (textBuf.length() > 0) textBuf.append('\n');
+                textBuf.append(lines[i]);
+                i++;
+            }
+        }
+        flushTextToHtml(textBuf, sb);
+        sb.append("</body>\n</html>\n");
+        return sb.toString();
+    }
+
+    private void flushTextToHtml(StringBuilder textBuf, StringBuilder out) {
+        if (textBuf.length() == 0) return;
+        String text = textBuf.toString();
+        textBuf.setLength(0);
+        out.append(HTML_RENDERER.render(PREVIEW_PARSER.parse(text)));
+    }
+
+    /** 表格行 → <table> HTML（表头/对齐/转义均处理） */
+    private String tableToHtml(List<String> tableLines) {
+        if (tableLines.size() < 2) return "";
+        List<String> headerCells = splitTableRow(tableLines.get(0));
+        List<String> delimCells = splitTableRow(tableLines.get(1));
+        int colCount = headerCells.size();
+        CellAlign[] aligns = new CellAlign[colCount];
+        for (int c = 0; c < colCount; c++) {
+            aligns[c] = (c < delimCells.size()) ? parseAlign(delimCells.get(c)) : CellAlign.LEFT;
+        }
+        StringBuilder sb = new StringBuilder("<table>\n<thead>\n<tr>");
+        for (int c = 0; c < colCount; c++) {
+            sb.append("<th").append(alignStyle(aligns[c])).append(">")
+              .append(escapeHtml(headerCells.get(c))).append("</th>");
+        }
+        sb.append("</tr>\n</thead>\n<tbody>\n");
+        for (int r = 2; r < tableLines.size(); r++) {
+            List<String> cells = splitTableRow(tableLines.get(r));
+            sb.append("<tr>");
+            for (int c = 0; c < colCount; c++) {
+                String content = c < cells.size() ? cells.get(c) : "";
+                sb.append("<td").append(alignStyle(aligns[c])).append(">")
+                  .append(escapeHtml(content)).append("</td>");
+            }
+            sb.append("</tr>\n");
+        }
+        sb.append("</tbody>\n</table>\n");
+        return sb.toString();
+    }
+
+    private static String alignStyle(CellAlign align) {
+        return switch (align) {
+            case CENTER -> " style=\"text-align:center\"";
+            case RIGHT -> " style=\"text-align:right\"";
+            default -> " style=\"text-align:left\"";
+        };
+    }
+
+    /** 代码 → 带语法高亮 span 的 HTML（与预览区 highlightCode 同款分词与配色） */
+    private static String codeToHtml(String code, String lang) {
+        if (code == null || code.isEmpty()) return "";
+        String l = lang == null ? "" : lang.trim().toLowerCase();
+        String linePrefix = lineCommentPrefix(l);
+        String blockComment = "/\\*[\\s\\S]*?\\*/";
+        String stringPat = "\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|`(?:\\\\.|[^`\\\\])*`";
+        String lineComment = java.util.regex.Pattern.quote(linePrefix) + "[^\\n]*";
+        String number = "\\b\\d[\\d_]*\\.?\\d*([eE][+-]?\\d+)?[fFdDuUlL]?\\b|0[xX][0-9a-fA-F_]+|0[bB][01_]+";
+        String annotation = "@[A-Za-z_][A-Za-z0-9_]*";
+        String ident = "[A-Za-z_$][A-Za-z0-9_$]*";
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile(
+                "(?<BLOCK>" + blockComment + ")" +
+                "|(?<STRING>" + stringPat + ")" +
+                "|(?<LINE>" + lineComment + ")" +
+                "|(?<NUMBER>" + number + ")" +
+                "|(?<ANNOT>" + annotation + ")" +
+                "|(?<IDENT>" + ident + ")"
+        );
+        java.util.regex.Matcher m = p.matcher(code);
+        StringBuilder sb = new StringBuilder();
+        int last = 0;
+        while (m.find()) {
+            if (m.start() > last) sb.append(escapeHtml(code.substring(last, m.start())));
+            String color;
+            if (m.group("BLOCK") != null || m.group("LINE") != null) color = "#6a737d";
+            else if (m.group("STRING") != null) color = "#032f62";
+            else if (m.group("NUMBER") != null) color = "#005cc5";
+            else if (m.group("ANNOT") != null) color = "#6f42c1";
+            else {
+                String word = m.group("IDENT");
+                if (KEYWORDS.contains(word)) {
+                    color = "#d73a49";
+                } else {
+                    int end = m.end();
+                    int j = end;
+                    while (j < code.length() && (code.charAt(j) == ' ' || code.charAt(j) == '\t')) j++;
+                    color = (j < code.length() && code.charAt(j) == '(') ? "#6f42c1" : "#24292e";
+                }
+            }
+            sb.append("<span style=\"color:").append(color).append("\">")
+              .append(escapeHtml(m.group())).append("</span>");
+            last = m.end();
+        }
+        if (last < code.length()) sb.append(escapeHtml(code.substring(last)));
+        return sb.toString();
+    }
+
+    private static String escapeHtml(String s) {
+        if (s == null) return "";
+        StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '&' -> sb.append("&amp;");
+                case '<' -> sb.append("&lt;");
+                case '>' -> sb.append("&gt;");
+                case '"' -> sb.append("&quot;");
+                default -> sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    /** 导出 PDF：通过系统打印对话框（可选 Microsoft Print to PDF 等虚拟打印机）输出 */
+    private void exportPdf() {
+        PrinterJob job = PrinterJob.createPrinterJob();
+        if (job == null) {
+            Alert a = new Alert(Alert.AlertType.ERROR);
+            a.setTitle("导出 PDF");
+            a.setHeaderText(null);
+            a.setContentText("未找到可用打印机，无法导出。");
+            a.showAndWait();
+            return;
+        }
+        if (!job.showPrintDialog(getScene().getWindow())) {
+            job.cancelJob();
+            return;
+        }
+        // 复用预览渲染（VBox + TextFlow + GridPane）作为打印内容
+        VBox printRoot = new VBox(6);
+        printRoot.setPadding(new Insets(12, 16, 12, 16));
+        printRoot.setStyle("-fx-background-color: white;");
+        renderMarkdown(editor.getText(), new InlineStyle(), printRoot.getChildren());
+
+        PageLayout pl = job.getPrinter().createPageLayout(Paper.A4, PageOrientation.PORTRAIT, 36, 36, 36, 36);
+        job.getJobSettings().setPageLayout(pl);
+        printRoot.setPrefWidth(pl.getPrintableWidth());
+
+        boolean ok = job.printPage(printRoot);
+        if (ok) {
+            ok = job.endJob();
+        } else {
+            job.cancelJob();
+        }
+        Alert a = new Alert(ok ? Alert.AlertType.INFORMATION : Alert.AlertType.ERROR);
+        a.setTitle(ok ? "导出成功" : "导出失败");
+        a.setHeaderText(null);
+        a.setContentText(ok ? "已发送到打印机：" + job.getJobSettings().getJobName() : "打印失败，请重试。");
+        a.showAndWait();
+    }
+
+    /** 文件名安全化：去除 Windows 非法字符 */
+    private static String safeFileName(String name) {
+        if (name == null || name.isBlank()) return "导出";
+        String s = name.trim();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            sb.append("\\/:*?\"<>|".indexOf(c) >= 0 ? '_' : c);
+        }
+        String r = sb.toString();
+        return r.isBlank() ? "导出" : r;
     }
 }
