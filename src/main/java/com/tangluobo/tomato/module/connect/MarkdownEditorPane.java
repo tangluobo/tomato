@@ -1092,6 +1092,8 @@ public class MarkdownEditorPane extends BorderPane {
         grid.setHgap(0);
         grid.setVgap(0);
         grid.setStyle("-fx-border-color: #dfe2e5; -fx-border-width: 1 1 0 0; -fx-background-color: white;");
+        // 表格宽度贴合内容（最右侧边框跟随最后一列），不被 VBox/ScrollPane 拉伸到面板最右侧
+        grid.setMaxWidth(Region.USE_PREF_SIZE);
 
         int row = 0;
         // 表头
