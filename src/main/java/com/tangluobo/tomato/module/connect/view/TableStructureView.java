@@ -1008,6 +1008,8 @@ public class TableStructureView extends BorderPane {
         indexesLoadingIndicator.setVisible(true);
         indexesTableView.setDisable(true);
         new Thread(() -> {
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
+            connLock.lock();
             try {
                 List<Map<String, String>> indexes = DatabaseService.getTableIndexes(config, databaseName, schemaName, tableName);
                 Platform.runLater(() -> {
@@ -1024,6 +1026,8 @@ public class TableStructureView extends BorderPane {
                     indexesTableView.setDisable(false);
                     statusLabel.setText("加载索引失败: " + e.getMessage());
                 });
+            } finally {
+                connLock.unlock();
             }
         }, "DB-LoadIndexes").start();
     }
@@ -1035,6 +1039,8 @@ public class TableStructureView extends BorderPane {
         foreignKeysLoadingIndicator.setVisible(true);
         foreignKeysTableView.setDisable(true);
         new Thread(() -> {
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
+            connLock.lock();
             try {
                 List<Map<String, String>> fks = DatabaseService.getTableForeignKeys(config, databaseName, schemaName, tableName);
                 Platform.runLater(() -> {
@@ -1052,6 +1058,8 @@ public class TableStructureView extends BorderPane {
                     foreignKeysTableView.setDisable(false);
                     statusLabel.setText("加载外键失败: " + e.getMessage());
                 });
+            } finally {
+                connLock.unlock();
             }
         }, "DB-LoadForeignKeys").start();
     }
@@ -1063,6 +1071,8 @@ public class TableStructureView extends BorderPane {
         triggersLoadingIndicator.setVisible(true);
         triggersTableView.setDisable(true);
         new Thread(() -> {
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
+            connLock.lock();
             try {
                 List<Map<String, String>> triggers = DatabaseService.getTableTriggers(config, databaseName, schemaName, tableName);
                 Platform.runLater(() -> {
@@ -1080,6 +1090,8 @@ public class TableStructureView extends BorderPane {
                     triggersTableView.setDisable(false);
                     statusLabel.setText("加载触发器失败: " + e.getMessage());
                 });
+            } finally {
+                connLock.unlock();
             }
         }, "DB-LoadTriggers").start();
     }
@@ -1093,6 +1105,8 @@ public class TableStructureView extends BorderPane {
         charsetComboBox.setDisable(true);
         collationComboBox.setDisable(true);
         new Thread(() -> {
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
+            connLock.lock();
             try {
                 Map<String, String> options = isNewTable ? new LinkedHashMap<>()
                         : DatabaseService.getTableOptions(config, databaseName, schemaName, tableName);
@@ -1154,6 +1168,8 @@ public class TableStructureView extends BorderPane {
                     statusLabel.setText("加载表选项失败: " + e.getMessage());
                     e.printStackTrace();
                 });
+            } finally {
+                connLock.unlock();
             }
         }, "DB-LoadOptions").start();
     }
@@ -1170,6 +1186,8 @@ public class TableStructureView extends BorderPane {
             return;
         }
         new Thread(() -> {
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
+            connLock.lock();
             try {
                 String comment = DatabaseService.getTableComment(config, databaseName, schemaName, tableName);
                 Platform.runLater(() -> {
@@ -1180,6 +1198,8 @@ public class TableStructureView extends BorderPane {
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> statusLabel.setText("加载表注释失败: " + e.getMessage()));
+            } finally {
+                connLock.unlock();
             }
         }, "DB-LoadComment").start();
     }
@@ -1192,6 +1212,8 @@ public class TableStructureView extends BorderPane {
         // 新建表模式始终生成CREATE TABLE预览
         boolean isSaveAs = isNewTable || "另存为".equals(sqlPreviewModeBox.getSelectionModel().getSelectedItem());
         new Thread(() -> {
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
+            connLock.lock();
             try {
                 if (isSaveAs) {
                     // 另存为模式：显示完整的CREATE TABLE DDL
@@ -1280,6 +1302,8 @@ public class TableStructureView extends BorderPane {
                     sqlPreviewViewer.setText("-- 加载失败: " + e.getMessage());
                     statusLabel.setText("加载SQL预览失败: " + e.getMessage());
                 });
+            } finally {
+                connLock.unlock();
             }
         }, "DB-LoadSqlPreview").start();
     }
@@ -1373,47 +1397,53 @@ public class TableStructureView extends BorderPane {
 
         statusLabel.setText("正在保存注释...");
         new Thread(() -> {
-            List<String> errors = new ArrayList<>();
-            int nameIdx = columnTitles != null ? columnTitles.indexOf("字段名") : -1;
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
+            connLock.lock();
+            try {
+                List<String> errors = new ArrayList<>();
+                int nameIdx = columnTitles != null ? columnTitles.indexOf("字段名") : -1;
 
-            // 保存表注释
-            if (tableCommentChanged) {
-                try {
-                    DatabaseService.updateTableComment(config, databaseName, schemaName, tableName, tableComment);
-                } catch (Exception e) {
-                    errors.add("表注释: " + e.getMessage());
+                // 保存表注释
+                if (tableCommentChanged) {
+                    try {
+                        DatabaseService.updateTableComment(config, databaseName, schemaName, tableName, tableComment);
+                    } catch (Exception e) {
+                        errors.add("表注释: " + e.getMessage());
+                    }
                 }
-            }
 
-            // 保存列注释
-            for (ObservableList<String> row : changedColumns) {
-                try {
-                    DatabaseService.updateColumnComment(config, databaseName, schemaName, tableName, columnTitles, row);
-                } catch (Exception e) {
-                    String colName = nameIdx >= 0 && nameIdx < row.size() ? row.get(nameIdx) : "?";
-                    errors.add(colName + ": " + e.getMessage());
+                // 保存列注释
+                for (ObservableList<String> row : changedColumns) {
+                    try {
+                        DatabaseService.updateColumnComment(config, databaseName, schemaName, tableName, columnTitles, row);
+                    } catch (Exception e) {
+                        String colName = nameIdx >= 0 && nameIdx < row.size() ? row.get(nameIdx) : "?";
+                        errors.add(colName + ": " + e.getMessage());
+                    }
                 }
-            }
 
-            Platform.runLater(() -> {
-                if (errors.isEmpty()) {
-                    // 更新原始注释缓存
-                    int commentIdx = columnTitles != null ? columnTitles.indexOf("注释") : -1;
-                    if (commentIdx >= 0 && nameIdx >= 0) {
-                        for (ObservableList<String> row : tableView.getItems()) {
-                            String colName = nameIdx < row.size() ? row.get(nameIdx) : "";
-                            String comment = commentIdx < row.size() ? row.get(commentIdx) : "";
-                            originalColumnComments.put(colName, comment != null ? comment : "");
+                Platform.runLater(() -> {
+                    if (errors.isEmpty()) {
+                        // 更新原始注释缓存
+                        int commentIdx = columnTitles != null ? columnTitles.indexOf("注释") : -1;
+                        if (commentIdx >= 0 && nameIdx >= 0) {
+                            for (ObservableList<String> row : tableView.getItems()) {
+                                String colName = nameIdx < row.size() ? row.get(nameIdx) : "";
+                                String comment = commentIdx < row.size() ? row.get(commentIdx) : "";
+                                originalColumnComments.put(colName, comment != null ? comment : "");
+                            }
                         }
+                        if (tableCommentChanged) {
+                            originalTableComment = tableComment != null ? tableComment : "";
+                        }
+                        statusLabel.setText("注释已保存");
+                    } else {
+                        statusLabel.setText("保存部分失败: " + String.join("; ", errors));
                     }
-                    if (tableCommentChanged) {
-                        originalTableComment = tableComment != null ? tableComment : "";
-                    }
-                    statusLabel.setText("注释已保存");
-                } else {
-                    statusLabel.setText("保存部分失败: " + String.join("; ", errors));
-                }
-            });
+                });
+            } finally {
+                connLock.unlock();
+            }
         }, "DB-SaveComments").start();
     }
 
@@ -1459,39 +1489,45 @@ public class TableStructureView extends BorderPane {
         statusLabel.setText("正在创建表 " + newTableName + "...");
         String finalNewTableName = newTableName;
         new Thread(() -> {
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
+            connLock.lock();
             try {
-                DatabaseService.createTable(config, databaseName, schemaName, finalNewTableName, columns, options, tableComment);
-                Platform.runLater(() -> {
-                    // 切换为正常设计表模式
-                    tableName = finalNewTableName;
-                    isNewTable = false;
-                    indexesLoaded = false;
-                    foreignKeysLoaded = false;
-                    triggersLoaded = false;
-                    optionsLoaded = false;
-                    commentLoaded = false;
-                    sqlPreviewLoaded = false;
-                    loadStructure();
-                    statusLabel.setText("表 " + finalNewTableName + " 创建成功");
-                    // 通知 ConnectModule 更新 tab 标题/userData 并刷新表树
-                    if (onTableCreated != null) {
-                        onTableCreated.accept(finalNewTableName);
-                    }
-                    Alert alert = new Alert(Alert.AlertType.INFORMATION);
-                    alert.setTitle("新建表");
-                    alert.setHeaderText(null);
-                    alert.setContentText("表 " + finalNewTableName + " 创建成功");
-                    alert.showAndWait();
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    statusLabel.setText("创建表失败: " + e.getMessage());
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("新建表");
-                    alert.setHeaderText("创建表失败");
-                    alert.setContentText(e.getMessage());
-                    alert.showAndWait();
-                });
+                try {
+                    DatabaseService.createTable(config, databaseName, schemaName, finalNewTableName, columns, options, tableComment);
+                    Platform.runLater(() -> {
+                        // 切换为正常设计表模式
+                        tableName = finalNewTableName;
+                        isNewTable = false;
+                        indexesLoaded = false;
+                        foreignKeysLoaded = false;
+                        triggersLoaded = false;
+                        optionsLoaded = false;
+                        commentLoaded = false;
+                        sqlPreviewLoaded = false;
+                        loadStructure();
+                        statusLabel.setText("表 " + finalNewTableName + " 创建成功");
+                        // 通知 ConnectModule 更新 tab 标题/userData 并刷新表树
+                        if (onTableCreated != null) {
+                            onTableCreated.accept(finalNewTableName);
+                        }
+                        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                        alert.setTitle("新建表");
+                        alert.setHeaderText(null);
+                        alert.setContentText("表 " + finalNewTableName + " 创建成功");
+                        alert.showAndWait();
+                    });
+                } catch (Exception e) {
+                    Platform.runLater(() -> {
+                        statusLabel.setText("创建表失败: " + e.getMessage());
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("新建表");
+                        alert.setHeaderText("创建表失败");
+                        alert.setContentText(e.getMessage());
+                        alert.showAndWait();
+                    });
+                }
+            } finally {
+                connLock.unlock();
             }
         }, "DB-CreateTable").start();
     }
@@ -1934,6 +1970,8 @@ public class TableStructureView extends BorderPane {
         originalTableComment = null;
 
         new Thread(() -> {
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
+            connLock.lock();
             try {
                 // 首次加载时获取数据库版本和数据类型列表
                 if (cachedDataTypes == null) {
@@ -1969,6 +2007,8 @@ public class TableStructureView extends BorderPane {
                     loadingIndicator.setVisible(false);
                     tableView.setDisable(false);
                 });
+            } finally {
+                connLock.unlock();
             }
         }, "DB-LoadTableStructure").start();
     }
@@ -1981,6 +2021,8 @@ public class TableStructureView extends BorderPane {
         tableView.setDisable(true);
 
         new Thread(() -> {
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
+            connLock.lock();
             try {
                 if (cachedDataTypes == null) {
                     try {
@@ -1998,6 +2040,7 @@ public class TableStructureView extends BorderPane {
                     }
                 }
             } finally {
+                connLock.unlock();
                 Platform.runLater(this::initEmptyTable);
             }
         }, "DB-InitNewTable").start();

@@ -64,6 +64,7 @@ public class TableDataView extends BorderPane {
 
     // 主键列名缓存
     private List<String> primaryKeyColumns;
+    private boolean isLoading = false;
 
     // 列名缓存（数据列，不含行选择器列）
     private List<String> dataColumnNames = new ArrayList<>();
@@ -385,29 +386,35 @@ public class TableDataView extends BorderPane {
                 List<String> dataColumns = getDataColumnNames();
 
                 new Thread(() -> {
+                    java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
+                    connLock.lock();
                     try {
-                        int deleted = DatabaseService.deleteRowsByPrimaryKeys(
-                                config, databaseName, schemaName, tableName,
-                                primaryKeyColumns, dataColumns, rowsToDelete);
-                        Platform.runLater(() -> {
-                            for (ObservableList<String> row : rowsToDelete) {
-                                originalValuesMap.remove(row);
-                            }
-                            tableView.getItems().removeAll(rowsToDelete);
-                            totalCount -= deleted;
-                            totalPages = (int) Math.ceil((double) totalCount / DEFAULT_PAGE_SIZE);
-                            if (totalPages < 1) totalPages = 1;
-                            if (currentPage > totalPages) currentPage = totalPages;
-                            updateStatusBar();
-                        });
-                    } catch (Exception e) {
-                        Platform.runLater(() -> {
-                            Alert err = new Alert(Alert.AlertType.ERROR);
-                            err.setTitle("删除失败");
-                            err.setHeaderText(null);
-                            err.setContentText("删除行失败: " + e.getMessage());
-                            err.showAndWait();
-                        });
+                        try {
+                            int deleted = DatabaseService.deleteRowsByPrimaryKeys(
+                                    config, databaseName, schemaName, tableName,
+                                    primaryKeyColumns, dataColumns, rowsToDelete);
+                            Platform.runLater(() -> {
+                                for (ObservableList<String> row : rowsToDelete) {
+                                    originalValuesMap.remove(row);
+                                }
+                                tableView.getItems().removeAll(rowsToDelete);
+                                totalCount -= deleted;
+                                totalPages = (int) Math.ceil((double) totalCount / DEFAULT_PAGE_SIZE);
+                                if (totalPages < 1) totalPages = 1;
+                                if (currentPage > totalPages) currentPage = totalPages;
+                                updateStatusBar();
+                            });
+                        } catch (Exception e) {
+                            Platform.runLater(() -> {
+                                Alert err = new Alert(Alert.AlertType.ERROR);
+                                err.setTitle("删除失败");
+                                err.setHeaderText(null);
+                                err.setContentText("删除行失败: " + e.getMessage());
+                                err.showAndWait();
+                            });
+                        }
+                    } finally {
+                        connLock.unlock();
                     }
                 }, "DB-DeleteRows").start();
             }
@@ -784,32 +791,38 @@ public class TableDataView extends BorderPane {
         final List<Set<Integer>> finalModifiedColumns = new ArrayList<>(modifiedColumnsPerRow);
 
         new Thread(() -> {
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
+            connLock.lock();
             try {
-                // INSERT 新行
-                if (!finalRowsToInsert.isEmpty()) {
-                    DatabaseService.insertRows(config, databaseName, schemaName, tableName,
-                            dataColumns, finalRowsToInsert, primaryKeyColumns);
-                }
+                try {
+                    // INSERT 新行
+                    if (!finalRowsToInsert.isEmpty()) {
+                        DatabaseService.insertRows(config, databaseName, schemaName, tableName,
+                                dataColumns, finalRowsToInsert, primaryKeyColumns);
+                    }
 
-                // UPDATE 修改的现有行
-                if (!finalRowsToUpdate.isEmpty()) {
-                    DatabaseService.updateRows(config, databaseName, schemaName, tableName,
-                            primaryKeyColumns, dataColumns,
-                            finalRowsToUpdate, finalOriginalValues, finalModifiedColumns);
-                }
+                    // UPDATE 修改的现有行
+                    if (!finalRowsToUpdate.isEmpty()) {
+                        DatabaseService.updateRows(config, databaseName, schemaName, tableName,
+                                primaryKeyColumns, dataColumns,
+                                finalRowsToUpdate, finalOriginalValues, finalModifiedColumns);
+                    }
 
-                Platform.runLater(() -> {
-                    // 保存成功后刷新数据，获取DB生成的值（如自增主键、默认值、触发器结果）
-                    refreshData();
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    Alert err = new Alert(Alert.AlertType.ERROR);
-                    err.setTitle("保存失败");
-                    err.setHeaderText(null);
-                    err.setContentText("保存失败: " + e.getMessage());
-                    err.showAndWait();
-                });
+                    Platform.runLater(() -> {
+                        // 保存成功后刷新数据，获取DB生成的值（如自增主键、默认值、触发器结果）
+                        refreshData();
+                    });
+                } catch (Exception e) {
+                    Platform.runLater(() -> {
+                        Alert err = new Alert(Alert.AlertType.ERROR);
+                        err.setTitle("保存失败");
+                        err.setHeaderText(null);
+                        err.setContentText("保存失败: " + e.getMessage());
+                        err.showAndWait();
+                    });
+                }
+            } finally {
+                connLock.unlock();
             }
         }, "DB-SaveChanges").start();
     }
@@ -834,6 +847,10 @@ public class TableDataView extends BorderPane {
     }
 
     private void loadData(int page) {
+        // 防止并发加载（用户快速翻页时可能触发）
+        if (isLoading) return;
+        isLoading = true;
+
         // 检查是否有未保存的更改
         if (hasUnsavedChanges() && page != currentPage) {
             Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
@@ -841,13 +858,18 @@ public class TableDataView extends BorderPane {
             confirm.setHeaderText(null);
             confirm.setContentText("有未保存的更改，切换页面将丢失这些更改。确定切换？");
             Optional<ButtonType> result = confirm.showAndWait();
-            if (result.isEmpty() || result.get() != ButtonType.OK) return;
+            if (result.isEmpty() || result.get() != ButtonType.OK) {
+                isLoading = false;
+                return;
+            }
         }
 
         loadingIndicator.setVisible(true);
         tableView.setDisable(true);
 
         new Thread(() -> {
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
+            connLock.lock();
             try {
                 // 首次加载时获取主键（与数据查询共用同一线程，避免JDBC连接并发使用）
                 loadPrimaryKeysInCurrentThread();
@@ -861,14 +883,18 @@ public class TableDataView extends BorderPane {
                     updateStatusBar();
                     loadingIndicator.setVisible(false);
                     tableView.setDisable(false);
+                    isLoading = false;
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> {
                     loadingIndicator.setVisible(false);
                     tableView.setDisable(false);
                     pageInfoLabel.setText("加载失败: " + e.getMessage());
+                    isLoading = false;
                     e.printStackTrace();
                 });
+            } finally {
+                connLock.unlock();
             }
         }, "DB-LoadTableData").start();
     }

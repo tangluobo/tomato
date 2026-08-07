@@ -3,6 +3,7 @@ package com.tangluobo.tomato.module.connect.service;
 import java.sql.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.tangluobo.tomato.module.connect.*;
 import javafx.collections.FXCollections;
@@ -21,6 +22,20 @@ public class DatabaseService {
     private static final Map<String, SshTunnel> tunnelCache = new ConcurrentHashMap<>();
     // 连接建立锁：保证同一 key 的连接建立互斥，避免并发重复建连
     private static final Map<String, Object> connectionLocks = new ConcurrentHashMap<>();
+    // 连接使用锁：保证同一连接不会被多线程并发使用（JDBC Connection非线程安全）
+    private static final Map<String, ReentrantLock> connectionUsageLocks = new ConcurrentHashMap<>();
+
+    /**
+     * 获取连接使用锁。调用方在后台线程中使用连接前应获取此锁，使用完毕后释放。
+     * JDBC Connection不是线程安全的，并发使用会导致协议损坏和无限挂起。
+     * 锁key与连接缓存key一致：PostgreSQL为 configId_databaseName，其他为 configId。
+     */
+    public static ReentrantLock acquireUsageLock(ConnectionConfig config, String databaseName) {
+        String key = (config.getType() == ConnectType.POSTGRESQL && databaseName != null)
+                ? config.getId() + "_" + databaseName
+                : config.getId();
+        return connectionUsageLocks.computeIfAbsent(key, k -> new ReentrantLock());
+    }
 
     /**
      * 获取或创建JDBC主连接（不绑定具体数据库，带SSH隧道支持）。

@@ -376,15 +376,21 @@ public class SqlEditorView extends BorderPane {
         String currentDb = databaseCombo.getValue();
         databaseCombo.getItems().clear();
         new Thread(() -> {
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, null);
+            connLock.lock();
             try {
-                if (config.getPassword() == null) return;
-                List<String> databases = DatabaseService.getDatabases(config);
-                Platform.runLater(() -> {
-                    databaseCombo.getItems().addAll(databases);
-                    if (currentDb != null && databases.contains(currentDb)) databaseCombo.setValue(currentDb);
-                    else if (!databases.isEmpty()) databaseCombo.setValue(databases.get(0));
-                });
-            } catch (Exception e) { /* 静默 */ }
+                try {
+                    if (config.getPassword() == null) return;
+                    List<String> databases = DatabaseService.getDatabases(config);
+                    Platform.runLater(() -> {
+                        databaseCombo.getItems().addAll(databases);
+                        if (currentDb != null && databases.contains(currentDb)) databaseCombo.setValue(currentDb);
+                        else if (!databases.isEmpty()) databaseCombo.setValue(databases.get(0));
+                    });
+                } catch (Exception e) { /* 静默 */ }
+            } finally {
+                connLock.unlock();
+            }
         }, "DB-RefreshDbList").start();
     }
 
@@ -409,25 +415,31 @@ public class SqlEditorView extends BorderPane {
         resultTabPane.getTabs().add(loadingTab);
 
         new Thread(() -> {
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, dbName);
+            connLock.lock();
             try {
-                MultiStatementResult multiResult = DatabaseService.executeMultiSqlQuery(config, dbName, sql, 1000);
+                try {
+                    MultiStatementResult multiResult = DatabaseService.executeMultiSqlQuery(config, dbName, sql, 1000);
 
-                // 收集剖析结果（对SELECT语句执行EXPLAIN）
-                List<TableRowData> explainResults = new java.util.ArrayList<>();
-                List<String> explainSqls = new java.util.ArrayList<>();
-                for (SqlStatementResult sr : multiResult.getResults()) {
-                    if (sr.isSuccess() && sr.isSelect() && sr.isHasResultSet()) {
-                        explainSqls.add(sr.getSql());
-                        explainResults.add(DatabaseService.executeExplainQuery(config, dbName, sr.getSql()));
+                    // 收集剖析结果（对SELECT语句执行EXPLAIN）
+                    List<TableRowData> explainResults = new java.util.ArrayList<>();
+                    List<String> explainSqls = new java.util.ArrayList<>();
+                    for (SqlStatementResult sr : multiResult.getResults()) {
+                        if (sr.isSuccess() && sr.isSelect() && sr.isHasResultSet()) {
+                            explainSqls.add(sr.getSql());
+                            explainResults.add(DatabaseService.executeExplainQuery(config, dbName, sr.getSql()));
+                        }
                     }
+
+                    // 获取服务器状态
+                    TableRowData statusResult = DatabaseService.executeStatusQuery(config, dbName);
+
+                    Platform.runLater(() -> buildResultTabs(multiResult, explainResults, explainSqls, statusResult));
+                } catch (Exception e) {
+                    Platform.runLater(() -> showInfo("执行失败: " + e.getMessage()));
                 }
-
-                // 获取服务器状态
-                TableRowData statusResult = DatabaseService.executeStatusQuery(config, dbName);
-
-                Platform.runLater(() -> buildResultTabs(multiResult, explainResults, explainSqls, statusResult));
-            } catch (Exception e) {
-                Platform.runLater(() -> showInfo("执行失败: " + e.getMessage()));
+            } finally {
+                connLock.unlock();
             }
         }, "DB-ExecuteQuery").start();
     }
@@ -450,28 +462,34 @@ public class SqlEditorView extends BorderPane {
         resultTabPane.getTabs().add(loadingTab);
 
         new Thread(() -> {
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, dbName);
+            connLock.lock();
             try {
-                List<String> statements = SqlSplitter.split(sql);
-                List<TableRowData> explainResults = new java.util.ArrayList<>();
-                List<String> explainSqls = new java.util.ArrayList<>();
-                for (String stmt : statements) {
-                    if (SqlSplitter.isSelectStatement(stmt)) {
-                        explainSqls.add(stmt);
-                        explainResults.add(DatabaseService.executeExplainQuery(config, dbName, stmt));
+                try {
+                    List<String> statements = SqlSplitter.split(sql);
+                    List<TableRowData> explainResults = new java.util.ArrayList<>();
+                    List<String> explainSqls = new java.util.ArrayList<>();
+                    for (String stmt : statements) {
+                        if (SqlSplitter.isSelectStatement(stmt)) {
+                            explainSqls.add(stmt);
+                            explainResults.add(DatabaseService.executeExplainQuery(config, dbName, stmt));
+                        }
                     }
-                }
 
-                Platform.runLater(() -> {
-                    resultTabPane.getTabs().clear();
-                    if (explainResults.isEmpty()) {
-                        showInfo("没有可解释的SELECT语句");
-                    } else {
-                        resultTabPane.getTabs().add(buildExplainTab(explainResults, explainSqls));
-                        resultTabPane.getSelectionModel().select(0);
-                    }
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> showInfo("解释失败: " + e.getMessage()));
+                    Platform.runLater(() -> {
+                        resultTabPane.getTabs().clear();
+                        if (explainResults.isEmpty()) {
+                            showInfo("没有可解释的SELECT语句");
+                        } else {
+                            resultTabPane.getTabs().add(buildExplainTab(explainResults, explainSqls));
+                            resultTabPane.getSelectionModel().select(0);
+                        }
+                    });
+                } catch (Exception e) {
+                    Platform.runLater(() -> showInfo("解释失败: " + e.getMessage()));
+                }
+            } finally {
+                connLock.unlock();
             }
         }, "DB-ExplainQuery").start();
     }
@@ -808,25 +826,31 @@ public class SqlEditorView extends BorderPane {
         if (config == null || dbName == null) return;
 
         new Thread(() -> {
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, dbName);
+            connLock.lock();
             try {
-                List<String> pks = DatabaseService.getPrimaryKeys(config, dbName, tableName);
-                if (pks.isEmpty()) return;
-                Platform.runLater(() -> {
-                    ContextMenu contextMenu = new ContextMenu();
-                    MenuItem deleteItem = new MenuItem();
-                    deleteItem.setStyle("-fx-text-fill: #c00;");
-                    deleteItem.setOnAction(e -> handleQueryResultDeleteRows(tableView, tableName, pks, columnNames));
-                    contextMenu.getItems().add(deleteItem);
-                    tableView.setContextMenu(contextMenu);
+                try {
+                    List<String> pks = DatabaseService.getPrimaryKeys(config, dbName, tableName);
+                    if (pks.isEmpty()) return;
+                    Platform.runLater(() -> {
+                        ContextMenu contextMenu = new ContextMenu();
+                        MenuItem deleteItem = new MenuItem();
+                        deleteItem.setStyle("-fx-text-fill: #c00;");
+                        deleteItem.setOnAction(e -> handleQueryResultDeleteRows(tableView, tableName, pks, columnNames));
+                        contextMenu.getItems().add(deleteItem);
+                        tableView.setContextMenu(contextMenu);
 
-                    // 右键时根据选中行数动态更新菜单文字
-                    tableView.setOnContextMenuRequested(event -> {
-                        int count = (int) tableView.getSelectionModel().getSelectedItems().stream().distinct().count();
-                        deleteItem.setText("删除" + (count > 0 ? count : 1) + "条数据");
+                        // 右键时根据选中行数动态更新菜单文字
+                        tableView.setOnContextMenuRequested(event -> {
+                            int count = (int) tableView.getSelectionModel().getSelectedItems().stream().distinct().count();
+                            deleteItem.setText("删除" + (count > 0 ? count : 1) + "条数据");
+                        });
                     });
-                });
-            } catch (Exception e) {
-                // 获取主键失败，不提供删除功能
+                } catch (Exception e) {
+                    // 获取主键失败，不提供删除功能
+                }
+            } finally {
+                connLock.unlock();
             }
         }, "DB-LoadPrimaryKeys-Query").start();
     }
@@ -855,21 +879,27 @@ public class SqlEditorView extends BorderPane {
             List<ObservableList<String>> rowsToDelete = new ArrayList<>(selectedRows);
 
             new Thread(() -> {
+                java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, dbName);
+                connLock.lock();
                 try {
-                    int deleted = DatabaseService.deleteRowsByPrimaryKeys(
-                            config, dbName, tableName,
-                            primaryKeyColumns, columnNames, rowsToDelete);
-                    Platform.runLater(() -> {
-                        tableView.getItems().removeAll(rowsToDelete);
-                    });
-                } catch (Exception e) {
-                    Platform.runLater(() -> {
-                        Alert err = new Alert(Alert.AlertType.ERROR);
-                        err.setTitle("删除失败");
-                        err.setHeaderText(null);
-                        err.setContentText("删除行失败: " + e.getMessage());
-                        err.showAndWait();
-                    });
+                    try {
+                        int deleted = DatabaseService.deleteRowsByPrimaryKeys(
+                                config, dbName, tableName,
+                                primaryKeyColumns, columnNames, rowsToDelete);
+                        Platform.runLater(() -> {
+                            tableView.getItems().removeAll(rowsToDelete);
+                        });
+                    } catch (Exception e) {
+                        Platform.runLater(() -> {
+                            Alert err = new Alert(Alert.AlertType.ERROR);
+                            err.setTitle("删除失败");
+                            err.setHeaderText(null);
+                            err.setContentText("删除行失败: " + e.getMessage());
+                            err.showAndWait();
+                        });
+                    }
+                } finally {
+                    connLock.unlock();
                 }
             }, "DB-DeleteRows-Query").start();
         });

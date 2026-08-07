@@ -670,6 +670,71 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         }, "DB-LoadViews").start();
     }
 
+    /**
+     * 在单个线程中顺序加载表和视图列表，避免两个线程并发使用同一JDBC连接。
+     * JDBC Connection不是线程安全的，并发使用会导致协议损坏和挂起。
+     */
+    public void loadTablesAndViewsForFolder(TreeItem<String> tablesFolder, TreeItem<String> viewsFolder,
+                                             ConnectionConfig config, String dbName, String schemaName, boolean autoExpand) {
+        new Thread(() -> {
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, dbName);
+            connLock.lock();
+            try {
+            // 顺序加载表列表
+            try {
+                List<String> tables = DatabaseService.getTables(config, dbName, schemaName);
+                Platform.runLater(() -> {
+                    tablesFolder.getChildren().clear();
+                    for (String tableName : tables) {
+                        TreeItem<String> tableItem = new TreeItem<>(tableName);
+                        DatabaseNodeData tableData = new DatabaseNodeData(DatabaseNodeData.NodeType.TABLE, tableName, config, dbName, schemaName);
+                        tableItem.setGraphic(module.getDbNodeIcon(tableData));
+                        module.getDbNodeDataMap().put(tableItem, tableData);
+                        tablesFolder.getChildren().add(tableItem);
+                    }
+                    tablesFolder.setExpanded(autoExpand);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("加载失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法加载表列表: " + e.getMessage());
+                    alert.showAndWait();
+                });
+                e.printStackTrace();
+            }
+
+            // 顺序加载视图列表（在表列表加载完成后，确保不并发使用连接）
+            try {
+                List<String> views = DatabaseService.getViews(config, dbName, schemaName);
+                Platform.runLater(() -> {
+                    viewsFolder.getChildren().clear();
+                    for (String viewName : views) {
+                        TreeItem<String> viewItem = new TreeItem<>(viewName);
+                        DatabaseNodeData viewData = new DatabaseNodeData(DatabaseNodeData.NodeType.VIEW, viewName, config, dbName, schemaName);
+                        viewItem.setGraphic(module.getDbNodeIcon(viewData));
+                        module.getDbNodeDataMap().put(viewItem, viewData);
+                        viewsFolder.getChildren().add(viewItem);
+                    }
+                    viewsFolder.setExpanded(autoExpand);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("加载失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法加载视图列表: " + e.getMessage());
+                    alert.showAndWait();
+                });
+                e.printStackTrace();
+            }
+            } finally {
+                connLock.unlock();
+            }
+        }, "DB-LoadTablesAndViews").start();
+    }
+
     /** 加载查询列表到指定文件夹节点 */
     public void loadQueriesForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName) {
         List<String> queryNames = SqlEditorView.listQueries(config.getName(), dbName);
@@ -734,8 +799,8 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         dbItem.getChildren().addAll(tablesFolder, viewsFolder, functionFolder, queryFolder, backupFolder);
         dbItem.setExpanded(true);
 
-        loadTablesForFolder(tablesFolder, config, dbName, null, false);
-        loadViewsForFolder(viewsFolder, config, dbName, null, false);
+        // 使用单线程顺序加载表和视图，避免并发使用同一JDBC连接
+        loadTablesAndViewsForFolder(tablesFolder, viewsFolder, config, dbName, null, false);
     }
 
     /**
