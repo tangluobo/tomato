@@ -1078,6 +1078,29 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         dbItem.setExpanded(false);
     }
 
+    /**
+     * MySQL 专用主机图标更新：展开时使用 mysql_open.png，收起时使用 mysql.png，
+     * 已连接时叠加绿色光晕。
+     */
+    protected void updateMysqlHostIcon(TreeItem<String> hostItem, ConnectionConfig config) {
+        ImageView imageView = new ImageView();
+        imageView.setFitWidth(16);
+        imageView.setFitHeight(16);
+        try {
+            String iconPath = hostItem.isExpanded() ? "/images/connect/mysql_open.png" : "/images/connect/mysql.png";
+            Image icon = new Image(getClass().getResourceAsStream(iconPath));
+            if (icon != null) {
+                imageView.setImage(icon);
+                if (module.isHostConnected(hostItem)) {
+                    imageView.setStyle("-fx-effect: dropshadow(gaussian, #4CAF50, 2, 0.5, 0, 0);");
+                }
+            }
+        } catch (Exception e) {
+            // fallback
+        }
+        hostItem.setGraphic(imageView);
+    }
+
     // ==================== 查询节点 ====================
 
     /** 新建查询：打开未保存的 SQL 编辑器 Tab，保存时创建查询节点 */

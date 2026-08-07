@@ -455,6 +455,131 @@ public class RocketmqConnectHandler implements ConnectHandler {
         }, "RocketMQ-LoadCluster").start();
     }
 
+    /**
+     * 双击"集群"folder节点：创建/选中"集群"一级标签，并加载子节点到树。
+     */
+    public void handleClusterFolderDoubleClick(ConnectModule module, TreeItem<String> item, DatabaseNodeData data) {
+        javafx.scene.control.TabPane terminalTabPane = module.getTerminalTabPane();
+        if (terminalTabPane == null) return;
+        if (!module.ensureTabPaneInstalled()) return;
+
+        ConnectionConfig config = data.getConnectionConfig();
+        String tabId = "rocketmq_cluster_" + config.getId();
+
+        // 如果已有该集群标签，直接选中
+        for (javafx.scene.control.Tab tab : terminalTabPane.getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                terminalTabPane.getSelectionModel().select(tab);
+                module.showDataView();
+                return;
+            }
+        }
+
+        // 创建集群一级标签
+        VBox clusterContent = new VBox(0);
+        clusterContent.setPadding(new Insets(8));
+
+        HBox toolbar = new HBox(8);
+        toolbar.setAlignment(Pos.CENTER_LEFT);
+
+        Button refreshBtn = new Button("刷新");
+        refreshBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-font-size: 12px;");
+
+        toolbar.getChildren().add(refreshBtn);
+
+        TableView<ObservableList<String>> clusterTable = new TableView<>();
+        clusterTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
+        clusterTable.setPlaceholder(new Label("无数据"));
+
+        TableColumn<ObservableList<String>, String> brokerNameCol = new TableColumn<>("BrokerName");
+        brokerNameCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(0)));
+        brokerNameCol.setPrefWidth(200);
+
+        TableColumn<ObservableList<String>, String> brokerIdCol = new TableColumn<>("BrokerId");
+        brokerIdCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(1)));
+        brokerIdCol.setPrefWidth(100);
+
+        TableColumn<ObservableList<String>, String> addressCol = new TableColumn<>("地址");
+        addressCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(2)));
+        addressCol.setPrefWidth(250);
+
+        TableColumn<ObservableList<String>, String> roleCol = new TableColumn<>("角色");
+        roleCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(3)));
+        roleCol.setPrefWidth(100);
+
+        TableColumn<ObservableList<String>, String> versionCol = new TableColumn<>("版本");
+        versionCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().size() > 4 ? param.getValue().get(4) : ""));
+        versionCol.setPrefWidth(150);
+
+        clusterTable.getColumns().addAll(brokerNameCol, brokerIdCol, addressCol, roleCol, versionCol);
+
+        javafx.collections.ObservableList<ObservableList<String>> clusterData = javafx.collections.FXCollections.observableArrayList();
+
+        Runnable loadCluster = () -> {
+            new Thread(() -> {
+                try {
+                    List<Map<String, Object>> cluster = RocketmqService.getClusterInfo(config);
+                    Platform.runLater(() -> {
+                        clusterData.clear();
+                        for (Map<String, Object> c : cluster) {
+                            ObservableList<String> row = javafx.collections.FXCollections.observableArrayList();
+                            row.add(String.valueOf(c.getOrDefault("brokerName", "")));
+                            row.add(String.valueOf(c.getOrDefault("brokerId", "")));
+                            row.add(String.valueOf(c.getOrDefault("address", "")));
+                            row.add(String.valueOf(c.getOrDefault("role", "")));
+                            row.add(String.valueOf(c.getOrDefault("version", "")));
+                            clusterData.add(row);
+                        }
+                    });
+                } catch (Exception e) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("加载失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("无法加载集群信息: " + e.getMessage());
+                        alert.showAndWait();
+                    });
+                }
+            }, "RocketMQ-LoadClusterTab").start();
+        };
+
+        refreshBtn.setOnAction(e -> loadCluster.run());
+        clusterTable.setItems(clusterData);
+
+        clusterContent.getChildren().addAll(toolbar, clusterTable);
+        VBox.setVgrow(clusterTable, Priority.ALWAYS);
+
+        String tabTitle = "集群(" + config.getHost() + ":" + config.getPort() + ")";
+        javafx.scene.control.Tab tab = new javafx.scene.control.Tab(tabTitle);
+
+        try {
+            Image rocketmqIcon = new Image(getClass().getResourceAsStream("/images/connect/rocketmq.png"));
+            ImageView tabIconView = new ImageView(rocketmqIcon);
+            tabIconView.setFitWidth(18);
+            tabIconView.setFitHeight(18);
+            tab.setGraphic(tabIconView);
+        } catch (Exception ignored) {}
+
+        tab.setContent(clusterContent);
+        tab.setUserData(tabId);
+        tab.setOnClosed(e -> {
+            if (terminalTabPane.getTabs().isEmpty()) {
+                module.showWelcomeView();
+            }
+        });
+
+        terminalTabPane.getTabs().add(tab);
+        terminalTabPane.getSelectionModel().select(tab);
+        module.showDataView();
+
+        // 加载集群数据
+        loadCluster.run();
+
+        // 同时加载集群子节点到树中
+        loadClusterForFolder(module, item, config);
+        item.setExpanded(true);
+    }
+
     /** 构建 RocketMQ 节点右键菜单：主题/消费者组/集群文件夹、主题、消费者组、Broker */
     @Override
     public void populateNodeContextMenu(ConnectModule module, ContextMenu contextMenu, TreeItem<String> item, DatabaseNodeData data) {

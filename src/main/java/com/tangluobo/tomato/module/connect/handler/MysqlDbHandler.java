@@ -35,7 +35,7 @@ public class MysqlDbHandler extends AbstractDbHandler {
      */
     @Override
     public void updateHostIcon(TreeItem<String> hostItem, ConnectionConfig config, boolean connected) {
-        module.updateMysqlHostIcon(hostItem, config);
+        updateMysqlHostIcon(hostItem, config);
     }
 
     @Override

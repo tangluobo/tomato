@@ -221,6 +221,12 @@ public class ConnectModule implements Module {
     /** 供 handler 调用：获取连接配置列表 */
     public List<ConnectionConfig> getConnections() { return connections; }
 
+    /** 供 handler 调用：判断主机节点是否已连接 */
+    public boolean isHostConnected(TreeItem<String> hostItem) {
+        Boolean connected = connectionStateMap.get(hostItem);
+        return connected != null && connected;
+    }
+
     private void loadTree() {
         root.getChildren().clear();
         itemConfigMap.clear();
@@ -311,7 +317,7 @@ public class ConnectModule implements Module {
 
         if (config.getType() == ConnectType.MYSQL) {
             item.expandedProperty().addListener((obs, wasExpanded, isExpanded) -> {
-                updateMysqlHostIcon(item, config);
+                updateHostIcon(item, config, connectionStateMap.getOrDefault(item, false));
             });
         }
 
@@ -1031,137 +1037,16 @@ public class ConnectModule implements Module {
         }
     }
 
-    private void handleRocketmqClusterFolderDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        ConnectionConfig config = data.getConnectionConfig();
-        String tabId = "rocketmq_cluster_" + config.getId();
-
-        // 如果已有该集群标签，直接选中
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-
-        // 创建集群一级标签
-        VBox clusterContent = new VBox(0);
-        clusterContent.setPadding(new Insets(8));
-
-        HBox toolbar = new HBox(8);
-        toolbar.setAlignment(Pos.CENTER_LEFT);
-
-        Button refreshBtn = new Button("刷新");
-        refreshBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-font-size: 12px;");
-
-        toolbar.getChildren().add(refreshBtn);
-
-        TableView<ObservableList<String>> clusterTable = new TableView<>();
-        clusterTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
-        clusterTable.setPlaceholder(new Label("无数据"));
-
-        TableColumn<ObservableList<String>, String> brokerNameCol = new TableColumn<>("BrokerName");
-        brokerNameCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(0)));
-        brokerNameCol.setPrefWidth(200);
-
-        TableColumn<ObservableList<String>, String> brokerIdCol = new TableColumn<>("BrokerId");
-        brokerIdCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(1)));
-        brokerIdCol.setPrefWidth(100);
-
-        TableColumn<ObservableList<String>, String> addressCol = new TableColumn<>("地址");
-        addressCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(2)));
-        addressCol.setPrefWidth(250);
-
-        TableColumn<ObservableList<String>, String> roleCol = new TableColumn<>("角色");
-        roleCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().get(3)));
-        roleCol.setPrefWidth(100);
-
-        TableColumn<ObservableList<String>, String> versionCol = new TableColumn<>("版本");
-        versionCol.setCellValueFactory(param -> new javafx.beans.property.SimpleStringProperty(param.getValue().size() > 4 ? param.getValue().get(4) : ""));
-        versionCol.setPrefWidth(150);
-
-        clusterTable.getColumns().addAll(brokerNameCol, brokerIdCol, addressCol, roleCol, versionCol);
-
-        javafx.collections.ObservableList<ObservableList<String>> clusterData = javafx.collections.FXCollections.observableArrayList();
-
-        Runnable loadCluster = () -> {
-            new Thread(() -> {
-                try {
-                    List<Map<String, Object>> cluster = RocketmqService.getClusterInfo(config);
-                    Platform.runLater(() -> {
-                        clusterData.clear();
-                        for (Map<String, Object> c : cluster) {
-                            ObservableList<String> row = javafx.collections.FXCollections.observableArrayList();
-                            row.add(String.valueOf(c.getOrDefault("brokerName", "")));
-                            row.add(String.valueOf(c.getOrDefault("brokerId", "")));
-                            row.add(String.valueOf(c.getOrDefault("address", "")));
-                            row.add(String.valueOf(c.getOrDefault("role", "")));
-                            row.add(String.valueOf(c.getOrDefault("version", "")));
-                            clusterData.add(row);
-                        }
-                    });
-                } catch (Exception e) {
-                    Platform.runLater(() -> {
-                        Alert alert = new Alert(Alert.AlertType.ERROR);
-                        alert.setTitle("加载失败");
-                        alert.setHeaderText(null);
-                        alert.setContentText("无法加载集群信息: " + e.getMessage());
-                        alert.showAndWait();
-                    });
-                }
-            }, "RocketMQ-LoadClusterTab").start();
-        };
-
-        refreshBtn.setOnAction(e -> loadCluster.run());
-        clusterTable.setItems(clusterData);
-
-        clusterContent.getChildren().addAll(toolbar, clusterTable);
-        VBox.setVgrow(clusterTable, Priority.ALWAYS);
-
-        String tabTitle = "集群(" + config.getHost() + ":" + config.getPort() + ")";
-        Tab tab = new Tab(tabTitle);
-
-        try {
-            Image rocketmqIcon = new Image(getClass().getResourceAsStream("/images/connect/rocketmq.png"));
-            ImageView tabIconView = new ImageView(rocketmqIcon);
-            tabIconView.setFitWidth(18);
-            tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
-        } catch (Exception ignored) {}
-
-        tab.setContent(clusterContent);
-        tab.setUserData(tabId);
-        tab.setOnClosed(e -> {
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showDataView();
-
-        // 加载集群数据
-        loadCluster.run();
-
-        // 同时加载集群子节点到树中
-        ConnectHandler rqHandler = createConnectHandler(config);
-        if (rqHandler instanceof RocketmqConnectHandler rq) {
-            rq.loadClusterForFolder(this, item, config);
-        }
-        item.setExpanded(true);
-    }
-
     public void handleRocketmqBrokerDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
         // 双击Broker节点也打开集群一级标签
         TreeItem<String> parent = item.getParent();
         if (parent != null) {
             DatabaseNodeData parentData = dbNodeDataMap.get(parent);
             if (parentData != null) {
-                handleRocketmqClusterFolderDoubleClick(parent, parentData);
+                ConnectHandler rqHandler = createConnectHandler(parentData.getConnectionConfig());
+                if (rqHandler instanceof RocketmqConnectHandler rq) {
+                    rq.handleClusterFolderDoubleClick(this, parent, parentData);
+                }
                 return;
             }
         }
@@ -1270,7 +1155,12 @@ public class ConnectModule implements Module {
                     rqHandler.handleConsumersFolderDoubleClick(this, item, data);
                 }
             }
-            case ROCKETMQ_CLUSTER_FOLDER -> handleRocketmqClusterFolderDoubleClick(item, data);
+            case ROCKETMQ_CLUSTER_FOLDER -> {
+                ConnectHandler rqHandler = createConnectHandler(data.getConnectionConfig());
+                if (rqHandler instanceof RocketmqConnectHandler rq) {
+                    rq.handleClusterFolderDoubleClick(this, item, data);
+                }
+            }
             case ROCKETMQ_TOPIC -> handleRocketmqTopicDoubleClick(item, data);
             case ROCKETMQ_CONSUMER -> handleRocketmqConsumerDoubleClick(item, data);
             case ROCKETMQ_BROKER -> handleRocketmqBrokerDoubleClick(item, data);
@@ -1346,27 +1236,6 @@ public class ConnectModule implements Module {
             if (icon != null) {
                 imageView.setImage(icon);
                 if (connected) {
-                    imageView.setStyle("-fx-effect: dropshadow(gaussian, #4CAF50, 2, 0.5, 0, 0);");
-                }
-            }
-        } catch (Exception e) {
-            // fallback
-        }
-        hostItem.setGraphic(imageView);
-    }
-
-    /** 供 MySQL handler 调用：MySQL 专用主机图标更新 */
-    public void updateMysqlHostIcon(TreeItem<String> hostItem, ConnectionConfig config) {
-        ImageView imageView = new ImageView();
-        imageView.setFitWidth(16);
-        imageView.setFitHeight(16);
-        try {
-            String iconPath = hostItem.isExpanded() ? "/images/connect/mysql_open.png" : "/images/connect/mysql.png";
-            Image icon = new Image(getClass().getResourceAsStream(iconPath));
-            if (icon != null) {
-                imageView.setImage(icon);
-                Boolean connected = connectionStateMap.get(hostItem);
-                if (connected != null && connected) {
                     imageView.setStyle("-fx-effect: dropshadow(gaussian, #4CAF50, 2, 0.5, 0, 0);");
                 }
             }
