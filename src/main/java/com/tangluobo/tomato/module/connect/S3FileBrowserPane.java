@@ -579,6 +579,7 @@ public class S3FileBrowserPane extends BorderPane {
 
                     upBtn.setDisable(true);
                     createBucketBtn.setVisible(true);
+                    createBucketBtn.setManaged(true);
 
                     if (currentViewMode == ViewMode.ICON) {
                         rebuildIconView();
@@ -643,6 +644,7 @@ public class S3FileBrowserPane extends BorderPane {
 
                     upBtn.setDisable(false);
                     createBucketBtn.setVisible(false);
+                    createBucketBtn.setManaged(false);
                     selectedItem = null;
 
                     if (currentViewMode == ViewMode.ICON) {
