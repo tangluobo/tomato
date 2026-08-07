@@ -330,7 +330,7 @@
                             </agent>
                             <buildArgs>
 
-                                <buildArg>--static --libc=musl</buildArg>
+<!--                                <buildArg>&#45;&#45;static &#45;&#45;libc=musl</buildArg>-->
                                 <buildArg>--enable-native-access=ALL-UNNAMED</buildArg> <!-- 未添加此参数会有警告，提示添加此参数，添加后就不会有警告 -->
                                 <buildArg>--no-fallback</buildArg>
                                 <!--包含所有字符编码，会增大打包结果的大小，我本地测试会增大十几MB-->
