@@ -939,171 +939,6 @@ public class ConnectModule implements Module {
         ConfigManager.saveConnections(connections);
     }
 
-    private void handleRocketmqFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
-        ConnectionConfig config = data.getConnectionConfig();
-
-        if (!folderItem.getChildren().isEmpty()) {
-            folderItem.setExpanded(!folderItem.isExpanded());
-            return;
-        }
-
-        ConnectHandler rqHandler = createConnectHandler(config);
-        if (rqHandler instanceof RocketmqConnectHandler rq) {
-            rq.loadTopicsForFolder(this, folderItem, config);
-        }
-        folderItem.setExpanded(true);
-    }
-
-    private void handleAliyunProductFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
-        if (!folderItem.getChildren().isEmpty()) {
-            folderItem.setExpanded(!folderItem.isExpanded());
-            return;
-        }
-        ConnectHandler alHandler = createConnectHandler(data.getConnectionConfig());
-        if (alHandler instanceof AliyunConnectHandler al) {
-            al.loadAliyunProductChildren(this, folderItem, data);
-        }
-        folderItem.setExpanded(true);
-    }
-
-    public void handleRocketmqTopicDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        ConnectionConfig config = data.getConnectionConfig();
-        String topicName = data.getName();
-        String tabId = "rocketmq_topic_" + config.getId() + "_" + topicName;
-
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-
-        RocketmqDataView dataView = new RocketmqDataView(config, topicName);
-        dataView.selectTopicTab(topicName);
-
-        String tabTitle = topicName + "(" + config.getHost() + ":" + config.getPort() + ")";
-        Tab tab = new Tab(tabTitle);
-
-        try {
-            Image rocketmqIcon = new Image(getClass().getResourceAsStream("/images/connect/rocketmq.png"));
-            ImageView tabIconView = new ImageView(rocketmqIcon);
-            tabIconView.setFitWidth(18);
-            tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
-        } catch (Exception ignored) {}
-
-        tab.setContent(dataView);
-        tab.setUserData(tabId);
-        tab.setOnClosed(e -> {
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showDataView();
-    }
-
-    public void handleRocketmqConsumerDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
-        // 双击消费者组项也打开消费者组一级标签
-        TreeItem<String> parent = item.getParent();
-        if (parent != null) {
-            DatabaseNodeData parentData = dbNodeDataMap.get(parent);
-            if (parentData != null) {
-                ConnectHandler handler = createConnectHandler(parentData.getConnectionConfig());
-                if (handler instanceof RocketmqConnectHandler rqHandler) {
-                    rqHandler.handleConsumersFolderDoubleClick(this, parent, parentData);
-                }
-                return;
-            }
-        }
-        // 如果无法获取父节点，直接打开消费者组标签
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        ConnectionConfig config = data.getConnectionConfig();
-        String tabId = "rocketmq_consumers_" + config.getId();
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-    }
-
-    public void handleRocketmqBrokerDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
-        // 双击Broker节点也打开集群一级标签
-        TreeItem<String> parent = item.getParent();
-        if (parent != null) {
-            DatabaseNodeData parentData = dbNodeDataMap.get(parent);
-            if (parentData != null) {
-                ConnectHandler rqHandler = createConnectHandler(parentData.getConnectionConfig());
-                if (rqHandler instanceof RocketmqConnectHandler rq) {
-                    rq.handleClusterFolderDoubleClick(this, parent, parentData);
-                }
-                return;
-            }
-        }
-        // 如果无法获取父节点，直接打开集群标签
-        if (contentArea == null || terminalTabPane == null) return;
-        if (!ensureTabPaneInstalled()) return;
-
-        ConnectionConfig config = data.getConnectionConfig();
-        String tabId = "rocketmq_cluster_" + config.getId();
-        for (Tab tab : terminalTabPane.getTabs()) {
-            if (tabId.equals(tab.getUserData())) {
-                terminalTabPane.getSelectionModel().select(tab);
-                showDataView();
-                return;
-            }
-        }
-    }
-
-    public void handleDeleteRocketmqTopic(TreeItem<String> item, DatabaseNodeData data) {
-        ConnectionConfig config = data.getConnectionConfig();
-        String topicName = data.getName();
-
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("确认删除");
-        confirm.setHeaderText("删除主题: " + topicName);
-        confirm.setContentText("删除后不可恢复，确定要删除吗？");
-        confirm.showAndWait().ifPresent(btn -> {
-            if (btn == ButtonType.OK) {
-                new Thread(() -> {
-                    try {
-                        RocketmqService.deleteTopic(config, topicName);
-                        Platform.runLater(() -> {
-                            Alert info = new Alert(Alert.AlertType.INFORMATION);
-                            info.setTitle("成功");
-                            info.setHeaderText(null);
-                            info.setContentText("主题 " + topicName + " 已删除");
-                            info.showAndWait();
-                            TreeItem<String> parent = item.getParent();
-                            if (parent != null) {
-                                parent.getChildren().remove(item);
-                                dbNodeDataMap.remove(item);
-                            }
-                        });
-                    } catch (Exception e) {
-                        Platform.runLater(() -> {
-                            Alert alert = new Alert(Alert.AlertType.ERROR);
-                            alert.setTitle("删除失败");
-                            alert.setHeaderText(null);
-                            alert.setContentText("删除主题失败: " + e.getMessage());
-                            alert.showAndWait();
-                        });
-                    }
-                }, "RocketMQ-DeleteTopic").start();
-            }
-        });
-    }
-
     private void handleDbNodeDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
         switch (data.getType()) {
             case DATABASE -> {
@@ -1148,7 +983,12 @@ public class ConnectModule implements Module {
                 }
                 item.setExpanded(!item.isExpanded());
             }
-            case ROCKETMQ_TOPICS_FOLDER -> handleRocketmqFolderDoubleClick(item, data);
+            case ROCKETMQ_TOPICS_FOLDER -> {
+                ConnectHandler rqH = createConnectHandler(data.getConnectionConfig());
+                if (rqH instanceof RocketmqConnectHandler rq) {
+                    rq.handleTopicsFolderDoubleClick(this, item, data);
+                }
+            }
             case ROCKETMQ_CONSUMERS_FOLDER -> {
                 ConnectHandler handler = createConnectHandler(data.getConnectionConfig());
                 if (handler instanceof RocketmqConnectHandler rqHandler) {
@@ -1161,10 +1001,30 @@ public class ConnectModule implements Module {
                     rq.handleClusterFolderDoubleClick(this, item, data);
                 }
             }
-            case ROCKETMQ_TOPIC -> handleRocketmqTopicDoubleClick(item, data);
-            case ROCKETMQ_CONSUMER -> handleRocketmqConsumerDoubleClick(item, data);
-            case ROCKETMQ_BROKER -> handleRocketmqBrokerDoubleClick(item, data);
-            case ALIYUN_PRODUCT_FOLDER -> handleAliyunProductFolderDoubleClick(item, data);
+            case ROCKETMQ_TOPIC -> {
+                ConnectHandler rqH = createConnectHandler(data.getConnectionConfig());
+                if (rqH instanceof RocketmqConnectHandler rq) {
+                    rq.handleTopicDoubleClick(this, item, data);
+                }
+            }
+            case ROCKETMQ_CONSUMER -> {
+                ConnectHandler rqH = createConnectHandler(data.getConnectionConfig());
+                if (rqH instanceof RocketmqConnectHandler rq) {
+                    rq.handleConsumerDoubleClick(this, item, data);
+                }
+            }
+            case ROCKETMQ_BROKER -> {
+                ConnectHandler rqH = createConnectHandler(data.getConnectionConfig());
+                if (rqH instanceof RocketmqConnectHandler rq) {
+                    rq.handleBrokerDoubleClick(this, item, data);
+                }
+            }
+            case ALIYUN_PRODUCT_FOLDER -> {
+                ConnectHandler alH = createConnectHandler(data.getConnectionConfig());
+                if (alH instanceof AliyunConnectHandler al) {
+                    al.handleProductFolderDoubleClick(this, item, data);
+                }
+            }
             case ALIYUN_ECS_INSTANCE -> { /* TODO: show ECS instance detail */ }
             case ALIYUN_DOMAIN -> {
                 ConnectHandler alHandler = createConnectHandler(data.getConnectionConfig());

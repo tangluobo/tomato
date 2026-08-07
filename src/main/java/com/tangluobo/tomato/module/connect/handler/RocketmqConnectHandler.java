@@ -2,6 +2,7 @@ package com.tangluobo.tomato.module.connect.handler;
 
 import com.tangluobo.tomato.module.connect.*;
 import com.tangluobo.tomato.module.connect.service.RocketmqService;
+import com.tangluobo.tomato.module.connect.view.RocketmqDataView;
 import javafx.application.Platform;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
@@ -580,6 +581,155 @@ public class RocketmqConnectHandler implements ConnectHandler {
         item.setExpanded(true);
     }
 
+    /** 双击"主题"folder节点：若已加载则切换展开状态，否则加载主题列表 */
+    public void handleTopicsFolderDoubleClick(ConnectModule module, TreeItem<String> folderItem, DatabaseNodeData data) {
+        if (!folderItem.getChildren().isEmpty()) {
+            folderItem.setExpanded(!folderItem.isExpanded());
+            return;
+        }
+        loadTopicsForFolder(module, folderItem, data.getConnectionConfig());
+        folderItem.setExpanded(true);
+    }
+
+    /** 双击主题节点：打开主题详情 Tab */
+    public void handleTopicDoubleClick(ConnectModule module, TreeItem<String> item, DatabaseNodeData data) {
+        javafx.scene.control.TabPane terminalTabPane = module.getTerminalTabPane();
+        if (terminalTabPane == null) return;
+        if (!module.ensureTabPaneInstalled()) return;
+
+        ConnectionConfig config = data.getConnectionConfig();
+        String topicName = data.getName();
+        String tabId = "rocketmq_topic_" + config.getId() + "_" + topicName;
+
+        for (javafx.scene.control.Tab tab : terminalTabPane.getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                terminalTabPane.getSelectionModel().select(tab);
+                module.showDataView();
+                return;
+            }
+        }
+
+        RocketmqDataView dataView = new RocketmqDataView(config, topicName);
+        dataView.selectTopicTab(topicName);
+
+        String tabTitle = topicName + "(" + config.getHost() + ":" + config.getPort() + ")";
+        javafx.scene.control.Tab tab = new javafx.scene.control.Tab(tabTitle);
+
+        try {
+            Image rocketmqIcon = new Image(getClass().getResourceAsStream("/images/connect/rocketmq.png"));
+            ImageView tabIconView = new ImageView(rocketmqIcon);
+            tabIconView.setFitWidth(18);
+            tabIconView.setFitHeight(18);
+            tab.setGraphic(tabIconView);
+        } catch (Exception ignored) {}
+
+        tab.setContent(dataView);
+        tab.setUserData(tabId);
+        tab.setOnClosed(e -> {
+            if (terminalTabPane.getTabs().isEmpty()) {
+                module.showWelcomeView();
+            }
+        });
+
+        terminalTabPane.getTabs().add(tab);
+        terminalTabPane.getSelectionModel().select(tab);
+        module.showDataView();
+    }
+
+    /** 双击消费者组节点：打开消费者组一级标签 */
+    public void handleConsumerDoubleClick(ConnectModule module, TreeItem<String> item, DatabaseNodeData data) {
+        // 双击消费者组项也打开消费者组一级标签
+        TreeItem<String> parent = item.getParent();
+        if (parent != null) {
+            DatabaseNodeData parentData = module.getDbNodeDataMap().get(parent);
+            if (parentData != null) {
+                handleConsumersFolderDoubleClick(module, parent, parentData);
+                return;
+            }
+        }
+        // 如果无法获取父节点，直接打开消费者组标签
+        javafx.scene.control.TabPane terminalTabPane = module.getTerminalTabPane();
+        if (terminalTabPane == null) return;
+        if (!module.ensureTabPaneInstalled()) return;
+
+        ConnectionConfig config = data.getConnectionConfig();
+        String tabId = "rocketmq_consumers_" + config.getId();
+        for (javafx.scene.control.Tab tab : terminalTabPane.getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                terminalTabPane.getSelectionModel().select(tab);
+                module.showDataView();
+                return;
+            }
+        }
+    }
+
+    /** 双击 Broker 节点：打开集群一级标签 */
+    public void handleBrokerDoubleClick(ConnectModule module, TreeItem<String> item, DatabaseNodeData data) {
+        // 双击Broker节点也打开集群一级标签
+        TreeItem<String> parent = item.getParent();
+        if (parent != null) {
+            DatabaseNodeData parentData = module.getDbNodeDataMap().get(parent);
+            if (parentData != null) {
+                handleClusterFolderDoubleClick(module, parent, parentData);
+                return;
+            }
+        }
+        // 如果无法获取父节点，直接打开集群标签
+        javafx.scene.control.TabPane terminalTabPane = module.getTerminalTabPane();
+        if (terminalTabPane == null) return;
+        if (!module.ensureTabPaneInstalled()) return;
+
+        ConnectionConfig config = data.getConnectionConfig();
+        String tabId = "rocketmq_cluster_" + config.getId();
+        for (javafx.scene.control.Tab tab : terminalTabPane.getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                terminalTabPane.getSelectionModel().select(tab);
+                module.showDataView();
+                return;
+            }
+        }
+    }
+
+    /** 删除主题节点 */
+    public void handleDeleteTopic(ConnectModule module, TreeItem<String> item, DatabaseNodeData data) {
+        ConnectionConfig config = data.getConnectionConfig();
+        String topicName = data.getName();
+
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("确认删除");
+        confirm.setHeaderText("删除主题: " + topicName);
+        confirm.setContentText("删除后不可恢复，确定要删除吗？");
+        confirm.showAndWait().ifPresent(btn -> {
+            if (btn == ButtonType.OK) {
+                new Thread(() -> {
+                    try {
+                        RocketmqService.deleteTopic(config, topicName);
+                        Platform.runLater(() -> {
+                            Alert info = new Alert(Alert.AlertType.INFORMATION);
+                            info.setTitle("成功");
+                            info.setHeaderText(null);
+                            info.setContentText("主题 " + topicName + " 已删除");
+                            info.showAndWait();
+                            TreeItem<String> parent = item.getParent();
+                            if (parent != null) {
+                                parent.getChildren().remove(item);
+                                module.getDbNodeDataMap().remove(item);
+                            }
+                        });
+                    } catch (Exception e) {
+                        Platform.runLater(() -> {
+                            Alert alert = new Alert(Alert.AlertType.ERROR);
+                            alert.setTitle("删除失败");
+                            alert.setHeaderText(null);
+                            alert.setContentText("删除主题失败: " + e.getMessage());
+                            alert.showAndWait();
+                        });
+                    }
+                }, "RocketMQ-DeleteTopic").start();
+            }
+        });
+    }
+
     /** 构建 RocketMQ 节点右键菜单：主题/消费者组/集群文件夹、主题、消费者组、Broker */
     @Override
     public void populateNodeContextMenu(ConnectModule module, ContextMenu contextMenu, TreeItem<String> item, DatabaseNodeData data) {
@@ -591,19 +741,19 @@ public class RocketmqConnectHandler implements ConnectHandler {
             }
             case ROCKETMQ_TOPIC -> {
                 MenuItem openItem = new MenuItem("查看详情");
-                openItem.setOnAction(e -> module.handleRocketmqTopicDoubleClick(item, data));
+                openItem.setOnAction(e -> handleTopicDoubleClick(module, item, data));
                 MenuItem deleteItem = new MenuItem("删除主题");
-                deleteItem.setOnAction(e -> module.handleDeleteRocketmqTopic(item, data));
+                deleteItem.setOnAction(e -> handleDeleteTopic(module, item, data));
                 contextMenu.getItems().addAll(openItem, new SeparatorMenuItem(), deleteItem);
             }
             case ROCKETMQ_CONSUMER -> {
                 MenuItem openItem = new MenuItem("查看详情");
-                openItem.setOnAction(e -> module.handleRocketmqConsumerDoubleClick(item, data));
+                openItem.setOnAction(e -> handleConsumerDoubleClick(module, item, data));
                 contextMenu.getItems().add(openItem);
             }
             case ROCKETMQ_BROKER -> {
                 MenuItem openItem = new MenuItem("查看详情");
-                openItem.setOnAction(e -> module.handleRocketmqBrokerDoubleClick(item, data));
+                openItem.setOnAction(e -> handleBrokerDoubleClick(module, item, data));
                 contextMenu.getItems().add(openItem);
             }
             default -> {}

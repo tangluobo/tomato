@@ -230,6 +230,16 @@ public class AliyunConnectHandler implements ConnectHandler {
         module.showDataView();
     }
 
+    /** 双击产品 folder 节点：若已加载则切换展开状态，否则加载子节点 */
+    public void handleProductFolderDoubleClick(ConnectModule module, TreeItem<String> folderItem, DatabaseNodeData data) {
+        if (!folderItem.getChildren().isEmpty()) {
+            folderItem.setExpanded(!folderItem.isExpanded());
+            return;
+        }
+        loadAliyunProductChildren(module, folderItem, data);
+        folderItem.setExpanded(true);
+    }
+
     /** 构建阿里云节点右键菜单：产品文件夹、域名均提供"刷新" */
     @Override
     public void populateNodeContextMenu(ConnectModule module, ContextMenu contextMenu, TreeItem<String> item, DatabaseNodeData data) {
