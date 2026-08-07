@@ -108,6 +108,24 @@ public class OssService {
     }
 
     /**
+     * 上传字符串内容到指定对象（覆盖已存在对象）
+     * @param content 文本内容（UTF-8）
+     */
+    public static void putObject(ConnectionConfig config, String bucketName, String key, String content) throws Exception {
+        OSS client = createClient(config);
+        try {
+            byte[] bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            com.aliyun.oss.model.ObjectMetadata metadata = new com.aliyun.oss.model.ObjectMetadata();
+            metadata.setContentLength(bytes.length);
+            metadata.setContentType("text/markdown; charset=utf-8");
+            java.io.ByteArrayInputStream bis = new java.io.ByteArrayInputStream(bytes);
+            client.putObject(bucketName, key, bis, metadata);
+        } finally {
+            client.shutdown();
+        }
+    }
+
+    /**
      * 删除对象
      */
     public static void deleteObject(ConnectionConfig config, String bucketName, String key) throws Exception {

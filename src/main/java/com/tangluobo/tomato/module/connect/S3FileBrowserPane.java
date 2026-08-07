@@ -49,6 +49,15 @@ public class S3FileBrowserPane extends BorderPane {
         IMAGE_EXTENSIONS.add("tiff"); IMAGE_EXTENSIONS.add("tif");
     }
 
+    // Markdown 扩展名集合
+    private static final Set<String> MARKDOWN_EXTENSIONS = new HashSet<>();
+    static {
+        MARKDOWN_EXTENSIONS.add("md");
+        MARKDOWN_EXTENSIONS.add("markdown");
+        MARKDOWN_EXTENSIONS.add("mdown");
+        MARKDOWN_EXTENSIONS.add("mkd");
+    }
+
     // 视图模式
     private enum ViewMode { ICON, LIST }
     private ViewMode currentViewMode = ViewMode.ICON;
@@ -84,6 +93,10 @@ public class S3FileBrowserPane extends BorderPane {
 
     // 选中状态
     private FileItem selectedItem = null;
+
+    // 编辑器 Tab 页（中心区域：文件浏览 + 多个 markdown 编辑器）
+    private TabPane editorTabPane;
+    private Tab browseTab;
 
     // 图标
     private Image folderIcon;
@@ -216,6 +229,17 @@ public class S3FileBrowserPane extends BorderPane {
         return IMAGE_EXTENSIONS.contains(ext);
     }
 
+    /**
+     * 判断文件名是否为 Markdown 文件
+     */
+    private boolean isMarkdownFile(String name) {
+        if (name == null) return false;
+        int dotIdx = name.lastIndexOf('.');
+        if (dotIdx < 0 || dotIdx == name.length() - 1) return false;
+        String ext = name.substring(dotIdx + 1).toLowerCase();
+        return MARKDOWN_EXTENSIONS.contains(ext);
+    }
+
     private Image getIconForItem(FileItem item, boolean large) {
         if (item.isDirectory()) {
             if (item.isBucket()) {
@@ -327,6 +351,14 @@ public class S3FileBrowserPane extends BorderPane {
 
         setBottom(statusBar);
 
+        // 中心区域：TabPane（第一个 Tab 为文件浏览，后续为 markdown 编辑器）
+        editorTabPane = new TabPane();
+        editorTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.ALL_TABS);
+        browseTab = new Tab("文件浏览");
+        browseTab.setClosable(false);
+        editorTabPane.getTabs().add(browseTab);
+        setCenter(editorTabPane);
+
         initListView();
         initIconView();
     }
@@ -425,7 +457,9 @@ public class S3FileBrowserPane extends BorderPane {
             VBox.setVgrow(fileTable, Priority.ALWAYS);
         }
 
-        setCenter(centerBox);
+        // 切换浏览视图时回到浏览 Tab
+        browseTab.setContent(centerBox);
+        editorTabPane.getSelectionModel().select(browseTab);
     }
 
     private void rebuildIconView() {
@@ -515,6 +549,17 @@ public class S3FileBrowserPane extends BorderPane {
         MenuItem previewItem = new MenuItem("预览图片");
         previewItem.setOnAction(e -> handlePreview());
 
+        // 编辑菜单项（仅 markdown 文件显示）
+        MenuItem editMdItem = new MenuItem("编辑 Markdown");
+        editMdItem.setOnAction(e -> {
+            FileItem selected = getSelectedItem();
+            if (selected != null) openMarkdownEditor(selected);
+        });
+
+        // 创建文件（仅 Bucket 内可用）
+        MenuItem createFileItem = new MenuItem("创建文件");
+        createFileItem.setOnAction(e -> handleCreateFile());
+
         MenuItem deleteItem = new MenuItem("删除");
         deleteItem.setOnAction(e -> handleDelete());
 
@@ -528,12 +573,15 @@ public class S3FileBrowserPane extends BorderPane {
         listViewItem.setOnAction(e -> switchViewMode(ViewMode.LIST));
         viewMenu.getItems().addAll(iconViewItem, listViewItem);
 
-        menu.getItems().addAll(openItem, previewItem, new SeparatorMenuItem(), deleteItem, new SeparatorMenuItem(), viewMenu, new SeparatorMenuItem(), refreshItem);
+        menu.getItems().addAll(openItem, previewItem, editMdItem, new SeparatorMenuItem(),
+                createFileItem, deleteItem, new SeparatorMenuItem(), viewMenu, new SeparatorMenuItem(), refreshItem);
 
-        // 右键菜单显示时动态控制预览项可见性
+        // 右键菜单显示时动态控制各项可见性
         menu.setOnShowing(e -> {
             FileItem selected = getSelectedItem();
             previewItem.setVisible(selected != null && !selected.isDirectory() && isImageFile(selected.getDisplayName()));
+            editMdItem.setVisible(selected != null && !selected.isDirectory() && isMarkdownFile(selected.getDisplayName()));
+            createFileItem.setVisible(currentBucket != null);
         });
 
         return menu;
@@ -666,7 +714,7 @@ public class S3FileBrowserPane extends BorderPane {
     }
 
     /**
-     * 处理双击：目录进入，图片预览
+     * 处理双击：目录进入，图片预览，markdown 编辑
      */
     private void handleDoubleClick(FileItem item) {
         if (item == null) return;
@@ -682,7 +730,123 @@ public class S3FileBrowserPane extends BorderPane {
         } else if (isImageFile(item.getDisplayName())) {
             // 双击图片文件 -> 预览
             handlePreview(item);
+        } else if (isMarkdownFile(item.getDisplayName())) {
+            // 双击 markdown 文件 -> 编辑器
+            openMarkdownEditor(item);
         }
+    }
+
+    /**
+     * 打开 Markdown 编辑器 Tab：异步下载内容后新建编辑器 Tab
+     * 若该 key 已有打开的 Tab，则直接选中
+     */
+    private void openMarkdownEditor(FileItem item) {
+        if (currentBucket == null) return;
+        String fileKey = item.getKey();
+        String fileName = item.getDisplayName();
+
+        // 复用已打开的 Tab
+        for (Tab tab : editorTabPane.getTabs()) {
+            if (tab.getUserData() instanceof String tabKey && tabKey.equals(fileKey)) {
+                editorTabPane.getSelectionModel().select(tab);
+                return;
+            }
+        }
+
+        // 占位 Tab，先显示加载状态
+        Tab editorTab = new Tab(fileName);
+        editorTab.setUserData(fileKey);
+        ProgressIndicator indicator = new ProgressIndicator();
+        indicator.setPrefSize(40, 40);
+        StackPane loading = new StackPane(indicator);
+        loading.setStyle("-fx-background-color: white;");
+        editorTab.setContent(loading);
+        editorTabPane.getTabs().add(editorTab);
+        editorTabPane.getSelectionModel().select(editorTab);
+
+        MarkdownEditorPane.loadMarkdownContent(config, currentBucket, fileKey, (content, err) -> {
+            if (err != null) {
+                editorTab.setContent(new Label("加载失败: " + err));
+                return;
+            }
+            MarkdownEditorPane editor = new MarkdownEditorPane(config, currentBucket, fileKey, fileName, content);
+            editorTab.setContent(editor);
+            editor.setOnTitleChange(title -> editorTab.setText(title));
+            editorTab.setText(editor.getDisplayTitle());
+            // 关闭前检查未保存
+            editorTab.setOnCloseRequest(ev -> {
+                if (editor.isModified()) {
+                    ev.consume();
+                    Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+                    confirm.setTitle("未保存");
+                    confirm.setHeaderText("文件 \"" + fileName + "\" 已修改未保存，是否保存？");
+                    ButtonType saveBtn = new ButtonType("保存", ButtonBar.ButtonData.YES);
+                    ButtonType discardBtn = new ButtonType("不保存", ButtonBar.ButtonData.NO);
+                    ButtonType cancelBtn = new ButtonType("取消", ButtonBar.ButtonData.CANCEL_CLOSE);
+                    confirm.getButtonTypes().setAll(saveBtn, discardBtn, cancelBtn);
+                    confirm.showAndWait().ifPresent(resp -> {
+                        if (resp == saveBtn) {
+                            editor.save();
+                        } else if (resp == cancelBtn) {
+                            return;
+                        }
+                        // 保存或不保存：移除 Tab
+                        editorTabPane.getTabs().remove(editorTab);
+                    });
+                }
+            });
+        });
+    }
+
+    /**
+     * 右键创建文件：弹窗输入文件名，在当前 bucket/prefix 下新建空 markdown 并打开编辑器
+     */
+    private void handleCreateFile() {
+        if (currentBucket == null) {
+            Alert alert = new Alert(Alert.AlertType.WARNING);
+            alert.setTitle("提示");
+            alert.setHeaderText(null);
+            alert.setContentText("请先进入一个 Bucket 再创建文件");
+            alert.showAndWait();
+            return;
+        }
+        TextInputDialog dialog = new TextInputDialog("新文件.md");
+        dialog.setTitle("创建文件");
+        dialog.setHeaderText(null);
+        dialog.setContentText("文件名：");
+        dialog.showAndWait().ifPresent(name -> {
+            String fileName = name.trim();
+            if (fileName.isEmpty()) return;
+            // 拼接完整 key
+            String fileKey = (currentPrefix != null ? currentPrefix : "") + fileName;
+            new Thread(() -> {
+                try {
+                    if (isAliyunOSS) {
+                        OssService.putObject(config, currentBucket, fileKey, "");
+                    } else {
+                        S3Service.putObject(config, currentBucket, fileKey, "");
+                    }
+                    Platform.runLater(() -> {
+                        refresh();
+                        // 直接打开编辑器 Tab
+                        FileItem newItem = new FileItem();
+                        newItem.setName(fileName);
+                        newItem.setKey(fileKey);
+                        newItem.setDirectory(false);
+                        newItem.setBucket(false);
+                        openMarkdownEditor(newItem);
+                    });
+                } catch (Exception e) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("创建失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("创建文件失败: " + e.getMessage());
+                        alert.showAndWait();
+                    });
+                }
+            }, "MD-CreateFile").start();
+        });
     }
 
     /**

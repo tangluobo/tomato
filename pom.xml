@@ -171,6 +171,11 @@
             <artifactId>batik-codec</artifactId>
             <version>1.18</version>
         </dependency>
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark</artifactId>
+            <version>0.21.0</version>
+        </dependency>
     </dependencies>
 
     <build>

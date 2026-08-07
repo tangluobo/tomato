@@ -53,6 +53,7 @@ module tomato {
     requires org.apache.xmlgraphics.batik.i18n;
     requires org.apache.xmlgraphics.batik.script;
     requires org.apache.xmlgraphics.batik.xml;
+    requires org.commonmark;
 
     opens com.tangluobo.tomato to javafx.fxml;
     exports com.tangluobo.tomato;
