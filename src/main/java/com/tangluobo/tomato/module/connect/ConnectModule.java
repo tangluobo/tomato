@@ -1279,67 +1279,6 @@ public class ConnectModule implements Module {
         }
     }
 
-    /** 供 handler 调用：新建查询 */
-    public void handleNewQuery(TreeItem<String> folderItem, DatabaseNodeData data) {
-        ConnectionConfig config = data.getConnectionConfig();
-        String dbName = data.getDatabaseName();
-
-        SqlEditorView editorView = new SqlEditorView(connections, config, dbName);
-
-        Tab tab = new Tab("*未保存查询");
-        Image tabIcon = queryIcon;
-        if (tabIcon != null) {
-            ImageView tabIconView = new ImageView(tabIcon);
-            tabIconView.setFitWidth(14);
-            tabIconView.setFitHeight(14);
-            tab.setGraphic(tabIconView);
-        }
-
-        String tabId = "query_new_" + System.currentTimeMillis();
-        tab.setUserData(tabId);
-        tab.setContent(editorView);
-
-        editorView.setOnTitleChange(title -> tab.setText(title));
-
-        editorView.setOnSaveRequest(() -> {
-            TextInputDialog dialog = new TextInputDialog("查询" + (folderItem.getChildren().size() + 1));
-            dialog.setTitle("保存查询");
-            dialog.setHeaderText(null);
-            dialog.setContentText("查询名称：");
-            dialog.showAndWait().ifPresent(name -> {
-                if (name.trim().isEmpty()) return;
-
-                String queryName = name.trim();
-                editorView.doSave(queryName);
-
-                TreeItem<String> queryItem = new TreeItem<>(queryName);
-                DatabaseNodeData queryData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, queryName, config, dbName);
-                queryItem.setGraphic(getDbNodeIcon(queryData));
-                dbNodeDataMap.put(queryItem, queryData);
-                folderItem.getChildren().add(queryItem);
-                folderItem.setExpanded(true);
-
-                editorView.setQueryNode(queryItem);
-
-                String newTabId = "query_" + config.getId() + "_" + dbName + "_" + queryName;
-                tab.setUserData(newTabId);
-            });
-        });
-
-        tab.setOnClosed(e -> {
-            if (terminalTabPane.getTabs().isEmpty()) {
-                showWelcomeView();
-            }
-        });
-
-        editorView.markModified();
-
-        if (!ensureTabPaneInstalled()) return;
-        terminalTabPane.getTabs().add(tab);
-        terminalTabPane.getSelectionModel().select(tab);
-        showDataView();
-    }
-
     private void commitTableNameRename(TreeItem<String> item, DatabaseNodeData dbData, String oldName, String newName) {
         ConnectionConfig config = dbData.getConnectionConfig();
         String dbName = dbData.getDatabaseName();
