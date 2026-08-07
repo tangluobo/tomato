@@ -30,6 +30,9 @@ public class ConnectionConfig {
     // 本地终端配置
     private String terminalType; // Windows: "cmd" 或 "powershell"; Linux/macOS: "system"
 
+    // 本地目录配置
+    private String localDirectoryPath; // 本地目录路径
+
     // S3/OSS专属配置
     private String region;
     private boolean pathStyleAccess = false; // S3路径风格访问（MinIO需要）
@@ -123,6 +126,9 @@ public class ConnectionConfig {
 
     public String getTerminalType() { return terminalType; }
     public void setTerminalType(String terminalType) { this.terminalType = terminalType; }
+
+    public String getLocalDirectoryPath() { return localDirectoryPath; }
+    public void setLocalDirectoryPath(String localDirectoryPath) { this.localDirectoryPath = localDirectoryPath; }
 
     public String getRegion() { return region; }
     public void setRegion(String region) { this.region = region; }

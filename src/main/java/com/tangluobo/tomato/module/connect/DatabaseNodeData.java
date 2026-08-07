@@ -24,7 +24,9 @@ public class DatabaseNodeData {
         ROCKETMQ_MESSAGE,           // RocketMQ单条消息
         ALIYUN_PRODUCT_FOLDER,      // 阿里云产品文件夹（如ECS、RDS等）
         ALIYUN_ECS_INSTANCE,        // 阿里云ECS实例
-        ALIYUN_DOMAIN               // 阿里云域名
+        ALIYUN_DOMAIN,              // 阿里云域名
+        LOCAL_DIR_FOLDER,           // 本地目录文件夹
+        LOCAL_DIR_FILE              // 本地目录文件
     }
 
     private final NodeType type;

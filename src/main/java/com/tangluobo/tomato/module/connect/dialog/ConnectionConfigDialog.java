@@ -12,6 +12,7 @@ import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
@@ -138,6 +139,12 @@ public class ConnectionConfigDialog {
     private PasswordField aliyunSecretKeyField;
     private CheckBox aliyunSaveSecretKeyCheckBox;
     private TextField aliyunDescriptionField;
+
+    // ===== 本地目录专属字段 =====
+    private VBox localDirectoryConfigContent;
+    private TextField localDirectoryNameField;
+    private TextField localDirectoryPathField;
+    private TextField localDirectoryDescriptionField;
 
     /**
      * 密钥条目：每行一个密钥文件（复选框 + 路径 + 浏览 + 删除）
@@ -288,6 +295,9 @@ public class ConnectionConfigDialog {
         // ---- 构建阿里云类型的配置 ----
         buildAliyunConfigContent();
 
+        // ---- 构建本地目录类型的配置 ----
+        buildLocalDirectoryConfigContent();
+
         // 按钮区域
         HBox configButtons = new HBox(10);
         configButtons.setAlignment(Pos.CENTER_RIGHT);
@@ -306,7 +316,7 @@ public class ConnectionConfigDialog {
 
         configButtons.getChildren().addAll(backBtn, cancelBtn2, okBtn);
 
-        configPage.getChildren().addAll(configTitle, dbTabPane, sshConfigContent, simpleConfigContent, localTerminalConfigContent, s3ConfigContent, redisConfigContent, rocketmqConfigContent, aliyunConfigContent, configButtons);
+        configPage.getChildren().addAll(configTitle, dbTabPane, sshConfigContent, simpleConfigContent, localTerminalConfigContent, s3ConfigContent, redisConfigContent, rocketmqConfigContent, aliyunConfigContent, localDirectoryConfigContent, configButtons);
 
         // 编辑已有连接时直接显示配置页
         if (existingConfig != null) {
@@ -1045,6 +1055,66 @@ public class ConnectionConfigDialog {
         aliyunConfigContent.getChildren().addAll(grid, hint);
     }
 
+    /**
+     * 构建本地目录类型的配置内容
+     */
+    private void buildLocalDirectoryConfigContent() {
+        localDirectoryConfigContent = new VBox(15);
+        localDirectoryConfigContent.setVisible(false);
+        localDirectoryConfigContent.setManaged(false);
+
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(10);
+        grid.setPadding(new Insets(10, 0, 0, 0));
+
+        int row = 0;
+
+        grid.add(new Label("名称："), 0, row);
+        localDirectoryNameField = new TextField();
+        localDirectoryNameField.setPromptText("连接名称");
+        localDirectoryNameField.setPrefWidth(280);
+        grid.add(localDirectoryNameField, 1, row++);
+
+        grid.add(new Label("目录路径："), 0, row);
+        HBox pathBox = new HBox(6);
+        pathBox.setAlignment(Pos.CENTER_LEFT);
+        localDirectoryPathField = new TextField();
+        localDirectoryPathField.setPromptText("选择或输入本地目录路径");
+        localDirectoryPathField.setPrefWidth(220);
+        Button browseBtn = new Button("浏览");
+        browseBtn.setStyle("-fx-font-size: 11px; -fx-padding: 2 8;");
+        browseBtn.setOnAction(e -> {
+            DirectoryChooser dirChooser = new DirectoryChooser();
+            dirChooser.setTitle("选择本地目录");
+            String current = localDirectoryPathField.getText().trim();
+            if (!current.isEmpty()) {
+                File currentDir = new File(current);
+                if (currentDir.isDirectory()) {
+                    dirChooser.setInitialDirectory(currentDir);
+                }
+            }
+            File selected = dirChooser.showDialog(dialogStage);
+            if (selected != null) {
+                localDirectoryPathField.setText(selected.getAbsolutePath());
+            }
+        });
+        pathBox.getChildren().addAll(localDirectoryPathField, browseBtn);
+        grid.add(pathBox, 1, row++);
+
+        grid.add(new Label("备注："), 0, row);
+        localDirectoryDescriptionField = new TextField();
+        localDirectoryDescriptionField.setPromptText("备注信息");
+        localDirectoryDescriptionField.setPrefWidth(280);
+        grid.add(localDirectoryDescriptionField, 1, row);
+
+        Label hint = new Label("双击连接时将以树形浏览该目录，支持 Markdown 文件的查看与编辑");
+        hint.setStyle("-fx-font-size: 10px; -fx-text-fill: #999;");
+        hint.setWrapText(true);
+
+        localDirectoryConfigContent.getChildren().addAll(grid, hint);
+    }
+
     // ==================== 密钥条目管理 ====================
 
     /**
@@ -1170,6 +1240,8 @@ public class ConnectionConfigDialog {
         boolean isRedis = selectedType == ConnectType.REDIS;
         boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
         boolean isAliyun = selectedType == ConnectType.ALIYUN;
+        boolean isLocalDirectory = selectedType == ConnectType.LOCAL_DIRECTORY;
+        boolean isSimple = !isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis && !isRocketmq && !isAliyun && !isLocalDirectory;
 
         // 数据库类型TabPane已有标签标题，隐藏顶部标题避免重复
         configTitle.setVisible(!isDatabase);
@@ -1185,8 +1257,8 @@ public class ConnectionConfigDialog {
         dbTabPane.setManaged(isDatabase);
         sshConfigContent.setVisible(isSSH);
         sshConfigContent.setManaged(isSSH);
-        simpleConfigContent.setVisible(!isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis && !isRocketmq && !isAliyun);
-        simpleConfigContent.setManaged(!isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis && !isRocketmq && !isAliyun);
+        simpleConfigContent.setVisible(isSimple);
+        simpleConfigContent.setManaged(isSimple);
         localTerminalConfigContent.setVisible(isLocalTerminal);
         localTerminalConfigContent.setManaged(isLocalTerminal);
         s3ConfigContent.setVisible(isS3orOSS);
@@ -1197,6 +1269,8 @@ public class ConnectionConfigDialog {
         rocketmqConfigContent.setManaged(isRocketmq);
         aliyunConfigContent.setVisible(isAliyun);
         aliyunConfigContent.setManaged(isAliyun);
+        localDirectoryConfigContent.setVisible(isLocalDirectory);
+        localDirectoryConfigContent.setManaged(isLocalDirectory);
 
         if (isDatabase) {
             // 设置默认端口
@@ -1252,6 +1326,7 @@ public class ConnectionConfigDialog {
         boolean isRedis = selectedType == ConnectType.REDIS;
         boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
         boolean isAliyun = selectedType == ConnectType.ALIYUN;
+        boolean isLocalDirectory = selectedType == ConnectType.LOCAL_DIRECTORY;
 
         if (isLocalTerminal) {
             localTerminalNameField.setText(existingConfig.getName());
@@ -1376,6 +1451,10 @@ public class ConnectionConfigDialog {
             }
             aliyunSaveSecretKeyCheckBox.setSelected(existingConfig.isSavePassword());
             aliyunDescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
+        } else if (isLocalDirectory) {
+            localDirectoryNameField.setText(existingConfig.getName());
+            localDirectoryPathField.setText(existingConfig.getLocalDirectoryPath() != null ? existingConfig.getLocalDirectoryPath() : "");
+            localDirectoryDescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
         } else {
             simpleNameField.setText(existingConfig.getName());
             simpleHostField.setText(existingConfig.getHost());
@@ -1428,6 +1507,7 @@ public class ConnectionConfigDialog {
         boolean isRedis = selectedType == ConnectType.REDIS;
         boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
         boolean isAliyun = selectedType == ConnectType.ALIYUN;
+        boolean isLocalDirectory = selectedType == ConnectType.LOCAL_DIRECTORY;
 
         if (isLocalTerminal) {
             config.setName(localTerminalNameField.getText().trim());
@@ -1579,6 +1659,11 @@ public class ConnectionConfigDialog {
             }
             config.setDescription(aliyunDescriptionField.getText().trim());
 
+        } else if (isLocalDirectory) {
+            config.setName(localDirectoryNameField.getText().trim());
+            config.setLocalDirectoryPath(localDirectoryPathField.getText().trim());
+            config.setDescription(localDirectoryDescriptionField.getText().trim());
+
         } else {
             config.setName(simpleNameField.getText().trim());
             config.setHost(simpleHostField.getText().trim());
@@ -1630,6 +1715,7 @@ public class ConnectionConfigDialog {
         boolean isRedis = selectedType == ConnectType.REDIS;
         boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
         boolean isAliyun = selectedType == ConnectType.ALIYUN;
+        boolean isLocalDirectory = selectedType == ConnectType.LOCAL_DIRECTORY;
 
         if (isLocalTerminal) {
             return validateLocalTerminalInput();
@@ -1645,9 +1731,23 @@ public class ConnectionConfigDialog {
             return validateRocketmqInput();
         } else if (isAliyun) {
             return validateAliyunInput();
+        } else if (isLocalDirectory) {
+            return validateLocalDirectoryInput();
         } else {
             return validateSimpleInput();
         }
+    }
+
+    private boolean validateLocalDirectoryInput() {
+        if (localDirectoryNameField.getText().trim().isEmpty()) {
+            showAlert("请输入连接名称");
+            return false;
+        }
+        if (localDirectoryPathField.getText().trim().isEmpty()) {
+            showAlert("请输入或选择目录路径");
+            return false;
+        }
+        return true;
     }
 
     private boolean validateLocalTerminalInput() {
@@ -1895,6 +1995,7 @@ public class ConnectionConfigDialog {
             case REDIS -> 6379;
             case ROCKETMQ -> 8080;
             case LOCAL_TERMINAL -> 0;
+            case LOCAL_DIRECTORY -> 0;
         };
     }
 

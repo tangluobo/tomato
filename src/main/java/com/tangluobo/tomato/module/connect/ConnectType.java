@@ -13,7 +13,8 @@ public enum ConnectType {
     ALIYUN_OSS("AliyunOSS", "阿里云OSS", "/images/connect/aliyun_oss.png"),
     REDIS("Redis", "Redis", "/images/connect/redis.png"),
     ROCKETMQ("RocketMQ", "RocketMQ", "/images/connect/rocketmq.png"),
-    LOCAL_TERMINAL("LocalTerminal", "本地终端", "/images/connect/shell.png");
+    LOCAL_TERMINAL("LocalTerminal", "本地终端", "/images/connect/shell.png"),
+    LOCAL_DIRECTORY("LocalDirectory", "本地目录", "/images/connect/folder.png");
 
     private final String code;
     private final String displayName;

@@ -33,6 +33,7 @@ import javafx.beans.value.ChangeListener;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.ArrayList;
@@ -75,6 +76,8 @@ public class ConnectModule implements Module {
     private Image aliyunProductIcon;
     private Image aliyunEcsIcon;
     private Image aliyunDomainIcon;
+    private Image localFileIcon;
+    private Image mdFileIcon;
     private TextField searchField;
 
     // 内容区域
@@ -161,6 +164,8 @@ public class ConnectModule implements Module {
         try { aliyunProductIcon = new Image(getClass().getResourceAsStream("/images/connect/monitor.png")); } catch (Exception e) { aliyunProductIcon = null; }
         try { aliyunEcsIcon = new Image(getClass().getResourceAsStream("/images/connect/server.png")); } catch (Exception e) { aliyunEcsIcon = null; }
         try { aliyunDomainIcon = new Image(getClass().getResourceAsStream("/images/connect/s3.png")); } catch (Exception e) { aliyunDomainIcon = null; }
+        try { localFileIcon = new Image(getClass().getResourceAsStream("/images/connect/code.png")); } catch (Exception e) { localFileIcon = null; }
+        try { mdFileIcon = new Image(getClass().getResourceAsStream("/images/connect/md.png")); } catch (Exception e) { mdFileIcon = null; }
     }
 
     /**
@@ -204,6 +209,17 @@ public class ConnectModule implements Module {
             case ALIYUN_PRODUCT_FOLDER -> aliyunProductIcon;
             case ALIYUN_ECS_INSTANCE -> aliyunEcsIcon;
             case ALIYUN_DOMAIN -> aliyunDomainIcon;
+            case LOCAL_DIR_FOLDER -> folderIcon;
+            case LOCAL_DIR_FILE -> {
+                String n = data.getName();
+                if (n != null) {
+                    String lower = n.toLowerCase();
+                    if (lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".mdown") || lower.endsWith(".mkd")) {
+                        yield mdFileIcon != null ? mdFileIcon : localFileIcon;
+                    }
+                }
+                yield localFileIcon;
+            }
         };
         if (icon != null) iv.setImage(icon);
         return iv;
@@ -439,6 +455,7 @@ public class ConnectModule implements Module {
                         boolean isRedis = targetConfig.getType() == ConnectType.REDIS;
                         boolean isRocketmq = targetConfig.getType() == ConnectType.ROCKETMQ;
                         boolean isAliyun = targetConfig.getType() == ConnectType.ALIYUN;
+                        boolean isLocalDirectory = targetConfig.getType() == ConnectType.LOCAL_DIRECTORY;
                         if (isDatabase) {
                             MenuItem createDbItem = new MenuItem("新建数据库");
                             createDbItem.setOnAction(e -> {
@@ -473,6 +490,32 @@ public class ConnectModule implements Module {
                             }
                         }
                         if (isAliyun) {
+                            if (!targetItem.getChildren().isEmpty()) {
+                                MenuItem refreshItem = new MenuItem("刷新");
+                                refreshItem.setOnAction(e -> refreshDbHost(targetItem, targetConfig));
+                                contextMenu.getItems().add(refreshItem);
+                            }
+                        }
+                        if (isLocalDirectory) {
+                            MenuItem createDirItem = new MenuItem("新建目录");
+                            createDirItem.setGraphic(createMenuIcon("folder.png"));
+                            createDirItem.setOnAction(e -> {
+                                ConnectHandler dh = createConnectHandler(targetConfig);
+                                if (dh instanceof LocalDirectoryConnectHandler ld) {
+                                    ld.handleCreateSubdirectoryAtHost(this, targetItem, targetConfig);
+                                }
+                            });
+                            contextMenu.getItems().add(createDirItem);
+
+                            MenuItem createMdItem = new MenuItem("新建 Markdown 文档");
+                            createMdItem.setGraphic(createMenuIcon("md_add.png"));
+                            createMdItem.setOnAction(e -> {
+                                ConnectHandler h = createConnectHandler(targetConfig);
+                                if (h instanceof LocalDirectoryConnectHandler ld) {
+                                    ld.handleCreateMarkdownAtHost(this, targetItem, targetConfig);
+                                }
+                            });
+                            contextMenu.getItems().add(createMdItem);
                             if (!targetItem.getChildren().isEmpty()) {
                                 MenuItem refreshItem = new MenuItem("刷新");
                                 refreshItem.setOnAction(e -> refreshDbHost(targetItem, targetConfig));
@@ -556,6 +599,8 @@ public class ConnectModule implements Module {
             ConnectionConfig config = itemConfigMap.get(selectedItem);
             boolean isTableOrView = dbData != null
                     && (dbData.getType() == DatabaseNodeData.NodeType.TABLE || dbData.getType() == DatabaseNodeData.NodeType.VIEW);
+            boolean isLocalDirNode = dbData != null
+                    && (dbData.getType() == DatabaseNodeData.NodeType.LOCAL_DIR_FOLDER || dbData.getType() == DatabaseNodeData.NodeType.LOCAL_DIR_FILE);
             boolean isFolder = dbData == null && config != null && config.getType() == null;
             boolean isHost = dbData == null && config != null && config.getType() != null;
 
@@ -583,7 +628,7 @@ public class ConnectModule implements Module {
                 }
 
                 if (event.getClickCount() == 1) {
-                    if (isTableOrView && canReedit && editingItem == null) {
+                    if ((isTableOrView || isLocalDirNode) && canReedit && editingItem == null) {
                         TreeItem<String> itemToEdit = selectedItem;
                         if (singleClickTimer != null) {
                             singleClickTimer.stop();
@@ -645,18 +690,21 @@ public class ConnectModule implements Module {
     }
 
     private static final String DRAG_PREFIX = "ConnectItem|";
+    private static final String LOCAL_DIR_DRAG = "LocalDirDrag|";
+    /** 本地目录拖动中的源节点（拖动期间临时持有） */
+    private TreeItem<String> draggedLocalDirItem;
 
     private void setupDragAndDrop() {
         treeView.setCellFactory(tv -> {
             TreeCell<String> cell = new TreeCell<>() {
-                private final Path arrowPath;
+                private final javafx.scene.shape.Path arrowPath;
                 private final StackPane disclosurePane;
                 private TreeItem<String> currentTreeItem;
                 private ChangeListener<Boolean> expandedListener;
                 private TextField editField;
 
                 {
-                    arrowPath = new Path(
+                    arrowPath = new javafx.scene.shape.Path(
                             new MoveTo(2, 0),
                             new LineTo(7, 5),
                             new LineTo(2, 10)
@@ -803,6 +851,19 @@ public class ConnectModule implements Module {
                     event.consume();
                     return;
                 }
+                // 本地目录文件/文件夹拖动：用于跨目录移动
+                DatabaseNodeData dd = dbNodeDataMap.get(item);
+                if (dd != null && (dd.getType() == DatabaseNodeData.NodeType.LOCAL_DIR_FOLDER
+                        || dd.getType() == DatabaseNodeData.NodeType.LOCAL_DIR_FILE)) {
+                    Dragboard db = cell.startDragAndDrop(TransferMode.MOVE);
+                    ClipboardContent content = new ClipboardContent();
+                    content.putString(LOCAL_DIR_DRAG);
+                    db.setContent(content);
+                    draggedLocalDirItem = item;
+                    event.consume();
+                    return;
+                }
+                // 连接节点拖动（原有：用于重排连接顺序）
                 Dragboard db = cell.startDragAndDrop(TransferMode.MOVE);
                 ClipboardContent content = new ClipboardContent();
                 ConnectionConfig config = itemConfigMap.get(item);
@@ -833,14 +894,22 @@ public class ConnectModule implements Module {
 
             cell.setOnDragEntered(event -> {
                 Dragboard db = event.getDragboard();
-                if (db.hasString() && db.getString().startsWith(DRAG_PREFIX)) {
-                    TreeItem<String> targetItem = cell.getTreeItem();
-                    if (targetItem == null || targetItem == root) {
-                        cell.setStyle("-fx-background-color: #e0e0e0;");
-                    } else {
-                        ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
-                        if (targetConfig != null && targetConfig.getType() == null) {
+                if (db.hasString()) {
+                    String s = db.getString();
+                    if (s.equals(LOCAL_DIR_DRAG)) {
+                        TreeItem<String> targetItem = cell.getTreeItem();
+                        if (isValidLocalDirDropTarget(draggedLocalDirItem, targetItem)) {
                             cell.setStyle("-fx-background-color: #e0e0e0;");
+                        }
+                    } else if (s.startsWith(DRAG_PREFIX)) {
+                        TreeItem<String> targetItem = cell.getTreeItem();
+                        if (targetItem == null || targetItem == root) {
+                            cell.setStyle("-fx-background-color: #e0e0e0;");
+                        } else {
+                            ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
+                            if (targetConfig != null && targetConfig.getType() == null) {
+                                cell.setStyle("-fx-background-color: #e0e0e0;");
+                            }
                         }
                     }
                 }
@@ -855,26 +924,48 @@ public class ConnectModule implements Module {
             cell.setOnDragDropped(event -> {
                 Dragboard db = event.getDragboard();
                 boolean success = false;
-                if (db.hasString() && db.getString().startsWith(DRAG_PREFIX)) {
-                    String dragId = db.getString().substring(DRAG_PREFIX.length());
-                    TreeItem<String> targetItem = cell.getTreeItem();
-
-                    TreeItem<String> newParent;
-                    if (targetItem == null || targetItem == root) {
-                        newParent = root;
-                    } else {
-                        ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
-                        if (targetConfig != null && targetConfig.getType() == null) {
-                            newParent = targetItem;
-                        } else {
-                            newParent = root;
+                if (db.hasString()) {
+                    String s = db.getString();
+                    if (s.equals(LOCAL_DIR_DRAG)) {
+                        // 本地目录文件/文件夹移动到目标目录
+                        TreeItem<String> targetItem = cell.getTreeItem();
+                        if (draggedLocalDirItem != null && isValidLocalDirDropTarget(draggedLocalDirItem, targetItem)) {
+                            DatabaseNodeData dd = dbNodeDataMap.get(draggedLocalDirItem);
+                            if (dd != null) {
+                                Path sourcePath = Path.of(dd.getDatabaseName());
+                                Path targetDir = getLocalDirTargetPath(targetItem);
+                                if (targetDir != null) {
+                                    Path destPath = targetDir.resolve(sourcePath.getFileName());
+                                    ConnectHandler h = createConnectHandler(dd.getConnectionConfig());
+                                    if (h instanceof LocalDirectoryConnectHandler ld) {
+                                        ld.moveNode(this, draggedLocalDirItem, targetItem, sourcePath, destPath);
+                                        success = true;
+                                    }
+                                }
+                            }
                         }
-                    }
+                        draggedLocalDirItem = null;
+                    } else if (s.startsWith(DRAG_PREFIX)) {
+                        String dragId = s.substring(DRAG_PREFIX.length());
+                        TreeItem<String> targetItem = cell.getTreeItem();
 
-                    TreeItem<String> draggedItem = findItemById(root, dragId);
-                    if (draggedItem != null && draggedItem != newParent && !isDescendant(draggedItem, newParent)) {
-                        moveItem(draggedItem, newParent);
-                        success = true;
+                        TreeItem<String> newParent;
+                        if (targetItem == null || targetItem == root) {
+                            newParent = root;
+                        } else {
+                            ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
+                            if (targetConfig != null && targetConfig.getType() == null) {
+                                newParent = targetItem;
+                            } else {
+                                newParent = root;
+                            }
+                        }
+
+                        TreeItem<String> draggedItem = findItemById(root, dragId);
+                        if (draggedItem != null && draggedItem != newParent && !isDescendant(draggedItem, newParent)) {
+                            moveItem(draggedItem, newParent);
+                            success = true;
+                        }
                     }
                 }
                 event.setDropCompleted(success);
@@ -906,6 +997,42 @@ public class ConnectModule implements Module {
             event.setDropCompleted(success);
             event.consume();
         });
+    }
+
+    /** 本地目录拖放目标是否有效：须为 LOCAL_DIR_FOLDER 或本地目录连接根，且与源同一连接、非自身/后代 */
+    private boolean isValidLocalDirDropTarget(TreeItem<String> draggedItem, TreeItem<String> targetItem) {
+        if (targetItem == null || targetItem == root) return false;
+        if (draggedItem == null || draggedItem == targetItem) return false;
+        if (isDescendant(draggedItem, targetItem)) return false; // 不能拖入自身后代
+        ConnectionConfig targetCfg = getConfigForItem(targetItem);
+        ConnectionConfig draggedCfg = getConfigForItem(draggedItem);
+        if (targetCfg == null || draggedCfg == null) return false;
+        if (!java.util.Objects.equals(targetCfg.getId(), draggedCfg.getId())) return false; // 仅限同一连接
+        DatabaseNodeData td = dbNodeDataMap.get(targetItem);
+        if (td != null && td.getType() == DatabaseNodeData.NodeType.LOCAL_DIR_FOLDER) return true;
+        return targetCfg.getType() == ConnectType.LOCAL_DIRECTORY; // 连接根
+    }
+
+    /** 取本地目录拖放目标路径（目标为目录节点或连接根） */
+    private Path getLocalDirTargetPath(TreeItem<String> targetItem) {
+        DatabaseNodeData td = dbNodeDataMap.get(targetItem);
+        if (td != null && td.getType() == DatabaseNodeData.NodeType.LOCAL_DIR_FOLDER) {
+            return Path.of(td.getDatabaseName());
+        }
+        ConnectionConfig cfg = itemConfigMap.get(targetItem);
+        if (cfg != null && cfg.getType() == ConnectType.LOCAL_DIRECTORY) {
+            return Path.of(cfg.getLocalDirectoryPath());
+        }
+        return null;
+    }
+
+    /** 取节点关联的连接配置（连接根或 db/local-dir 子节点） */
+    private ConnectionConfig getConfigForItem(TreeItem<String> item) {
+        if (item == null) return null;
+        ConnectionConfig cfg = itemConfigMap.get(item);
+        if (cfg != null) return cfg;
+        DatabaseNodeData d = dbNodeDataMap.get(item);
+        return d != null ? d.getConnectionConfig() : null;
     }
 
     private boolean isDescendant(TreeItem<String> ancestor, TreeItem<String> possibleDescendant) {
@@ -1032,12 +1159,55 @@ public class ConnectModule implements Module {
                     al.handleAliyunDomainDoubleClick(this, item, data);
                 }
             }
+            case LOCAL_DIR_FOLDER -> {
+                ConnectHandler ldH = createConnectHandler(data.getConnectionConfig());
+                if (ldH instanceof LocalDirectoryConnectHandler ld) {
+                    ld.handleFolderDoubleClick(this, item, data);
+                }
+            }
+            case LOCAL_DIR_FILE -> {
+                ConnectHandler ldHandler = createConnectHandler(data.getConnectionConfig());
+                if (ldHandler instanceof LocalDirectoryConnectHandler ld) {
+                    ld.handleFileDoubleClick(this, item, data);
+                }
+            }
         }
+    }
+
+    /** 加载连接图标为 16x16 ImageView，供右键菜单项使用 */
+    public ImageView createMenuIcon(String fileName) {
+        try {
+            ImageView iv = new ImageView(new Image(getClass().getResourceAsStream("/images/connect/" + fileName)));
+            iv.setFitWidth(16);
+            iv.setFitHeight(16);
+            return iv;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 进入节点重命名编辑状态（供连接处理器构建右键菜单时调用） */
+    public void startRenameEdit(TreeItem<String> item) {
+        editingItem = item;
+        Platform.runLater(() -> {
+            treeView.requestFocus();
+            treeView.setEditable(true);
+            treeView.edit(item);
+        });
     }
 
     private void commitTableNameRename(TreeItem<String> item, DatabaseNodeData dbData, String oldName, String newName) {
         ConnectionConfig config = dbData.getConnectionConfig();
         String dbName = dbData.getDatabaseName();
+        // 本地目录文件/文件夹重命名：委托给 LocalDirectoryConnectHandler 改名磁盘文件并更新节点
+        if (dbData.getType() == DatabaseNodeData.NodeType.LOCAL_DIR_FOLDER
+                || dbData.getType() == DatabaseNodeData.NodeType.LOCAL_DIR_FILE) {
+            ConnectHandler h = createConnectHandler(config);
+            if (h instanceof LocalDirectoryConnectHandler ld) {
+                ld.renameNode(this, item, dbData, oldName, newName);
+            }
+            return;
+        }
         new Thread(() -> {
             try {
                 if (dbData.getType() == DatabaseNodeData.NodeType.TABLE) {
@@ -1182,6 +1352,7 @@ public class ConnectModule implements Module {
         if (type == ConnectType.ROCKETMQ) return new RocketmqConnectHandler();
         if (type == ConnectType.ALIYUN) return new AliyunConnectHandler();
         if (type == ConnectType.LOCAL_TERMINAL) return new LocalTerminalConnectHandler();
+        if (type == ConnectType.LOCAL_DIRECTORY) return new LocalDirectoryConnectHandler();
         if (type == ConnectType.S3 || type == ConnectType.ALIYUN_OSS) return new S3ConnectHandler();
         if (type == ConnectType.RDP) return new RdpConnectHandler();
         if (type == ConnectType.SSH) return new SshTerminalConnectHandler();
@@ -1230,7 +1401,7 @@ public class ConnectModule implements Module {
     }
 
     /** 刷新主机节点 dispatcher：根据连接类型分发到对应处理器 */
-    void refreshDbHost(TreeItem<String> hostItem, ConnectionConfig config) {
+    public void refreshDbHost(TreeItem<String> hostItem, ConnectionConfig config) {
         ConnectType type = config.getType();
         boolean isDatabase = type == ConnectType.MYSQL
                 || type == ConnectType.POSTGRESQL
@@ -1273,6 +1444,12 @@ public class ConnectModule implements Module {
                     al.refreshDbNode(this, item, data);
                 }
             }
+            case LOCAL_DIR_FOLDER -> {
+                ConnectHandler handler = createConnectHandler(config);
+                if (handler instanceof LocalDirectoryConnectHandler ld) {
+                    ld.refreshDbNode(this, item, data);
+                }
+            }
             default -> {}
         }
     }
@@ -1292,6 +1469,25 @@ public class ConnectModule implements Module {
         AbstractDbHandler handler = createDbHandler(cfg);
         if (handler != null) {
             handler.handleDeleteDbNodes();
+        }
+    }
+
+    /** 删除本地目录文件/文件夹 dispatcher：支持多选，委托给 LocalDirectoryConnectHandler */
+    public void deleteLocalDirNodes() {
+        ObservableList<TreeItem<String>> selectedItems = treeView.getSelectionModel().getSelectedItems();
+        ConnectionConfig cfg = null;
+        for (TreeItem<String> item : selectedItems) {
+            DatabaseNodeData data = dbNodeDataMap.get(item);
+            if (data != null && (data.getType() == DatabaseNodeData.NodeType.LOCAL_DIR_FOLDER
+                    || data.getType() == DatabaseNodeData.NodeType.LOCAL_DIR_FILE)) {
+                cfg = data.getConnectionConfig();
+                break;
+            }
+        }
+        if (cfg == null) return;
+        ConnectHandler h = createConnectHandler(cfg);
+        if (h instanceof LocalDirectoryConnectHandler ld) {
+            ld.handleDeleteNodes(this);
         }
     }
 

@@ -2,6 +2,7 @@ package com.tangluobo.tomato.module.connect;
 
 import com.tangluobo.tomato.module.connect.service.OssService;
 import com.tangluobo.tomato.module.connect.service.S3Service;
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
@@ -14,9 +15,8 @@ import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Text;
 import javafx.scene.text.TextFlow;
-import javafx.util.Duration;
-import javafx.animation.PauseTransition;
 
+import javafx.util.Duration;
 import org.commonmark.node.BlockQuote;
 import org.commonmark.node.BulletList;
 import org.commonmark.node.Code;
@@ -58,11 +58,18 @@ import java.util.function.Consumer;
  */
 public class MarkdownEditorPane extends BorderPane {
 
-    private final ConnectionConfig config;
-    private final boolean isAliyunOSS;
-    private final String bucket;
-    private final String key;
+    /**
+     * 可插拔存储：保存 Markdown 内容到任意后端（S3/OSS/本地文件等）。
+     * onSuccess 在 JavaFX 线程之外执行完成后由实现负责切回 JavaFX 线程调用；
+     * onError 接收错误消息。
+     */
+    @FunctionalInterface
+    public interface Storage {
+        void save(String content, Runnable onSuccess, Consumer<String> onError);
+    }
+
     private final String displayName;
+    private final Storage storage;
 
     private final InlineCssTextArea editor;
     private final VirtualizedScrollPane<InlineCssTextArea> editorScroll;
@@ -109,12 +116,33 @@ public class MarkdownEditorPane extends BorderPane {
     // 预览渲染防抖
     private final PauseTransition previewDebounce = new PauseTransition(new Duration(250));
 
+    /**
+     * S3/OSS 编辑器构造：通过 config/bucket/key 保存到对象存储。
+     * 委托给通用 {@link #MarkdownEditorPane(String, String, Storage)}。
+     */
     public MarkdownEditorPane(ConnectionConfig config, String bucket, String key, String displayName, String initialContent) {
-        this.config = config;
-        this.isAliyunOSS = config.getType() == ConnectType.ALIYUN_OSS;
-        this.bucket = bucket;
-        this.key = key;
+        this(displayName, initialContent, (content, onSuccess, onError) -> new Thread(() -> {
+            try {
+                boolean isOSS = config.getType() == ConnectType.ALIYUN_OSS;
+                if (isOSS) {
+                    OssService.putObject(config, bucket, key, content);
+                } else {
+                    S3Service.putObject(config, bucket, key, content);
+                }
+                Platform.runLater(onSuccess);
+            } catch (Exception e) {
+                Platform.runLater(() -> onError.accept(e.getMessage()));
+            }
+        }, "MD-Save").start());
+    }
+
+    /**
+     * 通用 Markdown 编辑器构造：保存逻辑由 {@link Storage} 注入，
+     * 可对接 S3/OSS/本地文件等任意后端。
+     */
+    public MarkdownEditorPane(String displayName, String initialContent, Storage storage) {
         this.displayName = displayName;
+        this.storage = storage;
 
         this.editor = new InlineCssTextArea();
         this.editor.setStyle(
@@ -149,18 +177,18 @@ public class MarkdownEditorPane extends BorderPane {
         applyHighlighting();
         updatePreview();
 
-        // 编辑器内容变化
+        // 编辑器内容变化：实时更新高亮与预览（纯编辑模式下不渲染预览以省开销）
         editor.textProperty().addListener((obs, oldVal, newVal) -> {
             applyHighlighting();
-            previewDebounce.playFromStart();
+            if (currentMode != Mode.EDIT) {
+                updatePreview();
+            }
             boolean nowModified = !newVal.equals(originalContent);
             if (nowModified != modified) {
                 modified = nowModified;
                 notifyTitleChange();
             }
         });
-
-        previewDebounce.setOnFinished(e -> updatePreview());
 
         // 快捷键（参考 markdown-writer-fx）
         editor.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
@@ -747,37 +775,24 @@ public class MarkdownEditorPane extends BorderPane {
         if (saving) return;
         saving = true;
         final String content = editor.getText();
-        new Thread(() -> {
-            try {
-                if (isAliyunOSS) {
-                    OssService.putObject(config, bucket, key, content);
-                } else {
-                    S3Service.putObject(config, bucket, key, content);
-                }
-                Platform.runLater(() -> {
-                    saving = false;
-                    originalContent = content;
-                    if (modified) {
-                        modified = false;
-                        notifyTitleChange();
-                    }
-                    Alert alert = new Alert(Alert.AlertType.INFORMATION);
-                    alert.setTitle("保存成功");
-                    alert.setHeaderText(null);
-                    alert.setContentText("文件已保存到 " + bucket + "/" + key);
-                    alert.showAndWait();
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    saving = false;
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("保存失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText(e.getMessage());
-                    alert.showAndWait();
-                });
+        storage.save(content, () -> {
+            // 成功回调（已在 JavaFX 线程）
+            saving = false;
+            originalContent = content;
+            if (modified) {
+                modified = false;
+                notifyTitleChange();
             }
-        }, "MD-Save").start();
+            // 保存成功不再弹窗，标题栏的 * 消失即为成功反馈
+        }, (errMsg) -> {
+            // 错误回调（已在 JavaFX 线程）
+            saving = false;
+            Alert alert = new Alert(Alert.AlertType.ERROR);
+            alert.setTitle("保存失败");
+            alert.setHeaderText(null);
+            alert.setContentText(errMsg);
+            alert.showAndWait();
+        });
     }
 
     // ==================== 状态回调 ====================
