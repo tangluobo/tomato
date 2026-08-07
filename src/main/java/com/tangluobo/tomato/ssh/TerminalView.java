@@ -283,9 +283,9 @@ public class TerminalView extends Canvas {
             }
             event.consume();
             return;
-        } else if (event.getCode() == javafx.scene.input.KeyCode.C && event.isControlDown()) {
+        } else if (event.getCode() == javafx.scene.input.KeyCode.C && event.isControlDown() && !event.isShiftDown()) {
             data = "\003".getBytes();
-        } else if (event.getCode() == javafx.scene.input.KeyCode.D && event.isControlDown()) {
+        } else if (event.getCode() == javafx.scene.input.KeyCode.D && event.isControlDown() && !event.isShiftDown()) {
             data = "\004".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.Z && event.isControlDown()) {
             data = "\032".getBytes();
@@ -295,6 +295,32 @@ public class TerminalView extends Canvas {
             data = "\001".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.E && event.isControlDown()) {
             data = "\005".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.B && event.isControlDown()) {
+            data = "\002".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.F && event.isControlDown()) {
+            data = "\006".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.N && event.isControlDown()) {
+            data = "\016".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.P && event.isControlDown()) {
+            data = "\020".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.T && event.isControlDown()) {
+            data = "\024".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.Y && event.isControlDown()) {
+            data = "\031".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.G && event.isControlDown()) {
+            data = "\007".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.O && event.isControlDown()) {
+            data = "\017".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.V && event.isControlDown() && !event.isShiftDown()) {
+            data = "\026".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.X && event.isControlDown()) {
+            data = "\030".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.S && event.isControlDown()) {
+            data = "\023".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.Q && event.isControlDown()) {
+            data = "\021".getBytes();
+        } else if (event.getCode() == javafx.scene.input.KeyCode.BACK_SLASH && event.isControlDown()) {
+            data = "\034".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.U && event.isControlDown()) {
             data = "\025".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.K && event.isControlDown()) {
@@ -334,8 +360,13 @@ public class TerminalView extends Canvas {
         // 用户按键，清除屏幕修改抑制标志
         emulator.onUserInput();
 
-        // 过滤Ctrl+Shift组合键（如Ctrl+Shift+C/V复制粘贴），避免在Linux下将大写字母作为普通输入发送
-        if (event.isControlDown() && event.isShiftDown()) {
+        // 过滤所有Ctrl组合键：
+        // 1. Ctrl+Shift组合键（如Ctrl+Shift+C/V复制粘贴）
+        // 2. 纯Ctrl组合键（如Ctrl+A/E/C）
+        // 在Linux/GTK上，handleKeyPressed中event.consume()不能完全阻止handleKeyTyped被触发，
+        // 若不过滤，Ctrl+A会产生额外的"A"字符发送给shell，导致光标位置错乱
+        // （shell先收到0x01移动光标，再收到"A"插入字符）
+        if (event.isControlDown()) {
             event.consume();
             return;
         }
