@@ -310,11 +310,16 @@ public class DatabaseService {
 
         // 获取总行数
         long totalCount;
-        String countSql = buildCountSql(config, databaseName, schemaName, tableName);
-        try (Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(countSql)) {
-            rs.next();
-            totalCount = rs.getLong(1);
+        if (config.getType() == ConnectType.POSTGRESQL) {
+            // PostgreSQL: 使用 pg_class.reltuples 估算行数，避免 COUNT(*) 全表扫描导致大表卡顿
+            totalCount = getEstimatedRowCount(conn, schemaName, databaseName, tableName);
+        } else {
+            String countSql = buildCountSql(config, databaseName, schemaName, tableName);
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery(countSql)) {
+                rs.next();
+                totalCount = rs.getLong(1);
+            }
         }
 
         result.setTotalCount(totalCount);
@@ -349,7 +354,55 @@ public class DatabaseService {
             result.setRows(rows);
         }
 
+        // PostgreSQL: 根据实际返回行数修正分页信息（估算值可能不准确或过时）
+        if (config.getType() == ConnectType.POSTGRESQL) {
+            int actualRows = result.getRows().size();
+            if (actualRows == pageSize && result.getTotalPages() <= page) {
+                // 返回了满页但估算总页数不足，说明还有更多数据
+                result.setTotalPages(page + 1);
+                if (totalCount < (long) page * pageSize + 1) {
+                    result.setTotalCount((long) page * pageSize + 1);
+                }
+            } else if (actualRows < pageSize && result.getTotalPages() > page) {
+                // 不足一页，这是最后一页
+                result.setTotalPages(page);
+                long actualCount = (long) (page - 1) * pageSize + actualRows;
+                if (totalCount > actualCount) {
+                    result.setTotalCount(actualCount);
+                }
+            }
+            // 如果估算值为0但实际有数据，修正
+            if (totalCount == 0 && actualRows > 0) {
+                result.setTotalCount((long) (page - 1) * pageSize + actualRows);
+                result.setTotalPages(actualRows == pageSize ? page + 1 : page);
+            }
+        }
+
         return result;
+    }
+
+    /**
+     * 获取PostgreSQL表的估算行数（基于pg_class.reltuples，由ANALYZE更新）。
+     * 避免对大表执行 COUNT(*) 全表扫描导致的性能问题。
+     * 估算值可能不完全准确，调用方会根据实际返回行数修正分页信息。
+     */
+    private static long getEstimatedRowCount(Connection conn, String schemaName, String databaseName, String tableName) {
+        String pgSchema = schemaName != null ? schemaName : databaseName;
+        String sql = "SELECT GREATEST(c.reltuples, 0)::bigint FROM pg_class c "
+                + "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                + "WHERE n.nspname = ? AND c.relname = ?";
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, pgSchema);
+            stmt.setString(2, tableName);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getLong(1);
+                }
+            }
+        } catch (SQLException e) {
+            // 估算失败时返回0，调用方会根据实际数据修正
+        }
+        return 0;
     }
 
     /**
@@ -2421,7 +2474,7 @@ public class DatabaseService {
                     + "&maintainTimeStats=false&prepStmtCacheEnabled=true&prepStmtCacheSize=250"
                     + "&useServerPrepStmts=true&rewriteBatchedStatements=true"
                     + "&connectTimeout=5000&socketTimeout=30000";
-            case POSTGRESQL -> "jdbc:postgresql://" + host + ":" + port + "/" + db + "?connectTimeout=5&socketTimeout=30";
+            case POSTGRESQL -> "jdbc:postgresql://" + host + ":" + port + "/" + db + "?connectTimeout=5&socketTimeout=300";
             case ORACLE -> "jdbc:oracle:thin:@" + host + ":" + port + ":" + db;
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
