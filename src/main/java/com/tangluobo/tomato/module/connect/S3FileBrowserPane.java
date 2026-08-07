@@ -231,27 +231,17 @@ public class S3FileBrowserPane extends BorderPane {
     }
 
     private void initializeUI() {
+        // 当前路径标签（置于顶部导航栏左侧）
+        currentPathLabel = new Label("/");
+        currentPathLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #333;");
+
         // 顶部：路径导航栏
         pathBar = new HBox(8);
         pathBar.setAlignment(Pos.CENTER_LEFT);
         pathBar.setPadding(new Insets(6, 10, 6, 10));
         pathBar.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #dddddd; -fx-border-width: 0 0 1 0;");
 
-        statusDot = new Circle(5);
-        statusDot.setFill(Color.GRAY);
-        pathBar.getChildren().add(statusDot);
-
-        stateLabel = new Label("连接中...");
-        stateLabel.setStyle("-fx-font-size: 12px;");
-        pathBar.getChildren().add(stateLabel);
-
-        Label sep1 = new Label("|");
-        sep1.setStyle("-fx-text-fill: #cccccc; -fx-font-size: 11px;");
-        pathBar.getChildren().add(sep1);
-
-        connLabel = new Label(config.getName() + " (" + (config.getEndpoint() != null ? config.getEndpoint() : config.getRegion()) + ")");
-        connLabel.setStyle("-fx-font-size: 11px;");
-        pathBar.getChildren().add(connLabel);
+        pathBar.getChildren().add(currentPathLabel);
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
@@ -297,12 +287,32 @@ public class S3FileBrowserPane extends BorderPane {
 
         setTop(pathBar);
 
+        // 底部：状态栏（连接状态 + 主机信息）
+        HBox statusBar = new HBox(8);
+        statusBar.setAlignment(Pos.CENTER_LEFT);
+        statusBar.setPadding(new Insets(4, 10, 4, 10));
+        statusBar.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #dddddd; -fx-border-width: 1 0 0 0;");
+
+        statusDot = new Circle(5);
+        statusDot.setFill(Color.GRAY);
+        statusBar.getChildren().add(statusDot);
+
+        stateLabel = new Label("连接中...");
+        stateLabel.setStyle("-fx-font-size: 11px;");
+        statusBar.getChildren().add(stateLabel);
+
+        Label sep1 = new Label("|");
+        sep1.setStyle("-fx-text-fill: #cccccc; -fx-font-size: 11px;");
+        statusBar.getChildren().add(sep1);
+
+        connLabel = new Label(config.getName() + " (" + (config.getEndpoint() != null ? config.getEndpoint() : config.getRegion()) + ")");
+        connLabel.setStyle("-fx-font-size: 11px;");
+        statusBar.getChildren().add(connLabel);
+
+        setBottom(statusBar);
+
         initListView();
         initIconView();
-
-        currentPathLabel = new Label("/");
-        currentPathLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
-        currentPathLabel.setPadding(new Insets(4, 10, 4, 10));
     }
 
     private void initListView() {
@@ -389,7 +399,6 @@ public class S3FileBrowserPane extends BorderPane {
         currentViewMode = mode;
 
         VBox centerBox = new VBox();
-        centerBox.getChildren().add(currentPathLabel);
 
         if (mode == ViewMode.ICON) {
             rebuildIconView();
