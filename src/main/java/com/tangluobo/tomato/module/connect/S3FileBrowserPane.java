@@ -236,7 +236,7 @@ public class S3FileBrowserPane extends BorderPane {
         currentPathField.setPrefHeight(25);
         currentPathField.setMaxWidth(Double.MAX_VALUE);
         HBox.setHgrow(currentPathField, Priority.ALWAYS);
-        currentPathField.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-background-color: white; -fx-background-insets: 0; -fx-background-radius: 3; -fx-padding: 2 6; -fx-border-color: #3399ff; -fx-border-width: 1; -fx-border-insets: 0; -fx-border-radius: 3;");
+        currentPathField.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-background-color: white; -fx-background-insets: 0; -fx-background-radius: 0; -fx-padding: 2 6; -fx-border-color: #3399ff; -fx-border-width: 1; -fx-border-insets: 0; -fx-border-radius: 0;");
         currentPathField.setTooltip(new Tooltip("点击编辑路径，回车进入目录"));
         // 获得焦点：全选文本；失去焦点：还原当前路径
         currentPathField.focusedProperty().addListener((obs, oldVal, newVal) -> {
