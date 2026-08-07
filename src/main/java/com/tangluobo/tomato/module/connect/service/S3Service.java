@@ -1,5 +1,7 @@
 package com.tangluobo.tomato.module.connect.service;
 
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.google.gson.JsonParseException;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import io.minio.GetObjectArgs;
 import io.minio.GetObjectResponse;
@@ -10,12 +12,16 @@ import io.minio.PutObjectArgs;
 import io.minio.RemoveBucketArgs;
 import io.minio.RemoveObjectArgs;
 import io.minio.Result;
+import io.minio.errors.*;
 import io.minio.messages.Bucket;
 import io.minio.messages.Item;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -80,15 +86,19 @@ public class S3Service {
             Iterable<Result<Item>> results = client.listObjects(argsBuilder.build());
 
             for (Result<Item> result : results) {
-                Item item = result.get();
-                S3ObjectInfo objInfo = new S3ObjectInfo();
-                objInfo.setKey(item.objectName());
-                objInfo.setDirectory(item.isDir());
-                objInfo.setSize(item.isDir() ? 0 : item.size());
-                if (item.lastModified() != null) {
-                    objInfo.setLastModified(item.lastModified().toInstant());
+                try {
+                    Item item = result.get();
+                    S3ObjectInfo objInfo = new S3ObjectInfo();
+                    objInfo.setKey(item.objectName());
+                    objInfo.setDirectory(item.isDir());
+                    objInfo.setSize(item.isDir() ? 0 : item.size());
+                    if (item.lastModified() != null) {
+                        objInfo.setLastModified(item.lastModified().toInstant());
+                    }
+                    objects.add(objInfo);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
                 }
-                objects.add(objInfo);
             }
 
             return objects;
