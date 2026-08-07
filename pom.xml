@@ -176,12 +176,6 @@
             <artifactId>commonmark</artifactId>
             <version>0.21.0</version>
         </dependency>
-        <!-- GFM 表格扩展：让 commonmark 解析 Markdown 表格语法 -->
-        <dependency>
-            <groupId>org.commonmark</groupId>
-            <artifactId>commonmark-ext-gfm-tables</artifactId>
-            <version>0.21.0</version>
-        </dependency>
         <!-- Markdown 编辑器工具栏图标（参考 markdown-writer-fx） -->
         <dependency>
             <groupId>de.jensd</groupId>

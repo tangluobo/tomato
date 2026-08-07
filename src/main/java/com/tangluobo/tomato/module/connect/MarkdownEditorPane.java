@@ -36,12 +36,6 @@ import org.commonmark.node.SoftLineBreak;
 import org.commonmark.node.StrongEmphasis;
 import org.commonmark.node.ThematicBreak;
 import org.commonmark.parser.Parser;
-import org.commonmark.ext.gfm.tables.Table;
-import org.commonmark.ext.gfm.tables.TableBody;
-import org.commonmark.ext.gfm.tables.TableCell;
-import org.commonmark.ext.gfm.tables.TableHead;
-import org.commonmark.ext.gfm.tables.TableRow;
-import org.commonmark.ext.gfm.tables.TablesExtension;
 import org.fxmisc.richtext.InlineCssTextArea;
 import org.fxmisc.flowless.VirtualizedScrollPane;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
@@ -101,10 +95,9 @@ public class MarkdownEditorPane extends BorderPane {
     private static final String STYLE_LISTMARK = "-fx-fill: #d14; -fx-font-weight: bold;";
     private static final String STYLE_QUOTEMARK = "-fx-fill: #1a73e8; -fx-font-weight: bold;";
 
-    // 预览解析器：启用 GFM 表格扩展（Parser 线程安全，构建一次复用）
-    private static final Parser PREVIEW_PARSER = Parser.builder()
-            .extensions(java.util.List.of(TablesExtension.create()))
-            .build();
+    // 预览解析器：解析非表格片段的 Markdown（Parser 线程安全，构建一次复用）。
+    // 表格不依赖 commonmark 扩展，由 renderMarkdown 自行检测并渲染。
+    private static final Parser PREVIEW_PARSER = Parser.builder().build();
 
     private static final java.util.regex.Pattern MD_PATTERN = java.util.regex.Pattern.compile(
             "(?<HEADING>^#{1,6}\\s.*$)" +
@@ -581,14 +574,108 @@ public class MarkdownEditorPane extends BorderPane {
         String md = editor.getText();
         previewBox.getChildren().clear();
         try {
-            org.commonmark.node.Node document = PREVIEW_PARSER.parse(md);
             InlineStyle base = new InlineStyle();
-            renderBlocks(document, base, previewBox.getChildren());
+            renderMarkdown(md, base, previewBox.getChildren());
         } catch (Exception e) {
             Label err = new Label("预览渲染失败: " + e.getMessage());
             err.setStyle("-fx-text-fill: #c00; -fx-font-size: 11px;");
             previewBox.getChildren().add(err);
         }
+    }
+
+    /**
+     * 分段渲染 Markdown：自行检测 GFM 表格块并渲染为表格，其余文本交给 commonmark 解析。
+     * 不依赖 commonmark-ext-gfm-tables 扩展。
+     */
+    private void renderMarkdown(String md, InlineStyle base, ObservableList<Node> target) {
+        String[] lines = md.split("\n", -1);
+        int i = 0;
+        StringBuilder textBuf = new StringBuilder();
+        while (i < lines.length) {
+            // 表格块：第 i 行为表头行，第 i+1 行为分隔行，且分隔行有效
+            if (i + 1 < lines.length && isTableRow(lines[i]) && isDelimiterRow(lines[i + 1])) {
+                // 先把累积的文本片段渲染出来
+                flushText(textBuf, base, target);
+                // 收集表格块：表头 + 分隔行 + 连续的数据行
+                java.util.List<String> tableLines = new ArrayList<>();
+                tableLines.add(lines[i]);
+                tableLines.add(lines[i + 1]);
+                int j = i + 2;
+                while (j < lines.length && isTableRow(lines[j])) {
+                    tableLines.add(lines[j]);
+                    j++;
+                }
+                renderTableLines(tableLines, base, target);
+                i = j;
+            } else {
+                if (textBuf.length() > 0) textBuf.append('\n');
+                textBuf.append(lines[i]);
+                i++;
+            }
+        }
+        flushText(textBuf, base, target);
+    }
+
+    /** 将累积的文本片段交给 commonmark 解析并渲染为块 */
+    private void flushText(StringBuilder textBuf, InlineStyle base, ObservableList<Node> target) {
+        if (textBuf.length() == 0) return;
+        String text = textBuf.toString();
+        textBuf.setLength(0);
+        org.commonmark.node.Node document = PREVIEW_PARSER.parse(text);
+        renderBlocks(document, base, target);
+    }
+
+    /** 是否为表格行：非空且包含 | */
+    private boolean isTableRow(String line) {
+        String t = line.trim();
+        return !t.isEmpty() && t.indexOf('|') >= 0;
+    }
+
+    /** 是否为表格分隔行：形如 |---|:---:|---:| 或 ---|--- ，每段至少一个 - */
+    private static final java.util.regex.Pattern DELIM_ROW =
+            java.util.regex.Pattern.compile("^\\s*\\|?\\s*:?-+:?\\s*(\\|\\s*:?-+:?\\s*)*\\|?\\s*$");
+
+    private boolean isDelimiterRow(String line) {
+        if (line == null || !line.contains("-")) return false;
+        if (!DELIM_ROW.matcher(line).matches()) return false;
+        // 至少有一个 | 或本身就是 ---...（单列无 | 也允许）
+        return line.contains("|") || line.contains("-");
+    }
+
+    /** 拆分表格行为单元格：去掉首尾 | 后按 | 切分，保留转义 \\| */
+    private java.util.List<String> splitTableRow(String line) {
+        String t = line.trim();
+        // 去掉首尾的 |（仅当两端都有时）
+        if (t.startsWith("|")) t = t.substring(1);
+        if (t.endsWith("|") && !t.endsWith("\\|")) t = t.substring(0, t.length() - 1);
+        java.util.List<String> cells = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        for (int k = 0; k < t.length(); k++) {
+            char c = t.charAt(k);
+            if (c == '\\' && k + 1 < t.length() && t.charAt(k + 1) == '|') {
+                cur.append('|');
+                k++;
+            } else if (c == '|') {
+                cells.add(cur.toString().trim());
+                cur.setLength(0);
+            } else {
+                cur.append(c);
+            }
+        }
+        cells.add(cur.toString().trim());
+        return cells;
+    }
+
+    /** 单元格对齐方式 */
+    private enum CellAlign { LEFT, CENTER, RIGHT }
+
+    private CellAlign parseAlign(String delimCell) {
+        String c = delimCell.trim();
+        boolean left = c.startsWith(":");
+        boolean right = c.endsWith(":");
+        if (left && right) return CellAlign.CENTER;
+        if (right) return CellAlign.RIGHT;
+        return CellAlign.LEFT; // 默认/仅左冒号都按左
     }
 
     private void renderBlocks(org.commonmark.node.Node parent, InlineStyle base, ObservableList<Node> target) {
@@ -629,8 +716,6 @@ public class MarkdownEditorPane extends BorderPane {
             target.add(renderCodeBlock(fcb.getLiteral(), fcb.getInfo()));
         } else if (node instanceof IndentedCodeBlock icb) {
             target.add(renderCodeBlock(icb.getLiteral(), ""));
-        } else if (node instanceof Table table) {
-            renderTable(table, base, target);
         } else if (node instanceof ThematicBreak) {
             Separator sep = new Separator();
             sep.setPadding(new Insets(8, 0, 8, 0));
@@ -765,51 +850,78 @@ public class MarkdownEditorPane extends BorderPane {
         return t;
     }
 
-    /** 渲染 GFM 表格为 JavaFX GridPane：表头加粗+浅灰底，单元格按对齐方式排版，带边框 */
-    private void renderTable(Table table, InlineStyle base, ObservableList<Node> target) {
+    /**
+     * 由原始表格行（表头行、分隔行、数据行）渲染为 JavaFX GridPane。
+     * 表头加粗+浅灰底，单元格按分隔行声明的对齐方式排版，带边框。
+     */
+    private void renderTableLines(java.util.List<String> tableLines, InlineStyle base, ObservableList<Node> target) {
+        if (tableLines.size() < 2) return;
+        // 第 0 行：表头；第 1 行：分隔（决定对齐）；其余：数据行
+        java.util.List<String> headerCells = splitTableRow(tableLines.get(0));
+        java.util.List<String> delimCells = splitTableRow(tableLines.get(1));
+        int colCount = headerCells.size();
+        // 解析每列对齐
+        CellAlign[] aligns = new CellAlign[colCount];
+        for (int c = 0; c < colCount; c++) {
+            aligns[c] = (c < delimCells.size()) ? parseAlign(delimCells.get(c)) : CellAlign.LEFT;
+        }
+
         GridPane grid = new GridPane();
         grid.setHgap(0);
         grid.setVgap(0);
         grid.setStyle("-fx-border-color: #dfe2e5; -fx-border-width: 1 1 0 0; -fx-background-color: white;");
 
         int row = 0;
-        for (org.commonmark.node.Node section = table.getFirstChild(); section != null; section = section.getNext()) {
-            boolean headerSection = section instanceof TableHead;
-            for (org.commonmark.node.Node r = section.getFirstChild(); r != null; r = r.getNext()) {
-                if (!(r instanceof TableRow)) continue;
-                int col = 0;
-                for (org.commonmark.node.Node c = r.getFirstChild(); c != null; c = c.getNext()) {
-                    if (!(c instanceof TableCell cell)) continue;
-                    List<Text> inlines = new ArrayList<>();
-                    renderInline(cell, base, inlines);
-                    TextFlow flow = new TextFlow(inlines.toArray(new Text[0]));
-                    if (headerSection) {
-                        for (Text t : inlines) {
-                            String s = t.getStyle() == null ? "" : t.getStyle();
-                            t.setStyle(s + " -fx-font-weight: bold;");
-                        }
-                    }
-                    StackPane cellPane = new StackPane(flow);
-                    cellPane.setPadding(new Insets(6, 10, 6, 10));
-                    String bg = headerSection ? "#f6f8fa" : "white";
-                    TableCell.Alignment align = cell.getAlignment();
-                    String alignCss;
-                    if (align == TableCell.Alignment.CENTER) {
-                        alignCss = "-fx-alignment: center; -fx-text-alignment: center;";
-                    } else if (align == TableCell.Alignment.RIGHT) {
-                        alignCss = "-fx-alignment: center-right; -fx-text-alignment: right;";
-                    } else {
-                        alignCss = "-fx-alignment: center-left; -fx-text-alignment: left;";
-                    }
-                    cellPane.setStyle("-fx-border-color: #dfe2e5; -fx-border-width: 0 0 1 1; " +
-                            "-fx-background-color: " + bg + "; " + alignCss);
-                    grid.add(cellPane, col, row);
-                    col++;
-                }
-                row++;
+        // 表头
+        for (int c = 0; c < colCount; c++) {
+            grid.add(tableCell(headerCells.get(c), aligns[c], true, base), c, row);
+        }
+        row++;
+        // 数据行
+        for (int r = 2; r < tableLines.size(); r++) {
+            java.util.List<String> cells = splitTableRow(tableLines.get(r));
+            for (int c = 0; c < colCount; c++) {
+                String content = c < cells.size() ? cells.get(c) : "";
+                grid.add(tableCell(content, aligns[c], false, base), c, row);
             }
+            row++;
         }
         target.add(grid);
+    }
+
+    /** 渲染单个表格单元格为带边框/背景的 StackPane，内部为解析行内格式的 TextFlow */
+    private StackPane tableCell(String content, CellAlign align, boolean header, InlineStyle base) {
+        List<Text> inlines = new ArrayList<>();
+        if (content.isEmpty()) {
+            inlines.add(styledText("", base));
+        } else {
+            // 用 commonmark 解析单元格内的行内格式（粗体/代码/链接等）
+            org.commonmark.node.Node cellDoc = PREVIEW_PARSER.parse(content);
+            org.commonmark.node.Node first = cellDoc.getFirstChild();
+            if (first instanceof Paragraph p) {
+                renderInline(p, base, inlines);
+            } else {
+                inlines.add(styledText(content, base));
+            }
+        }
+        if (header) {
+            for (Text t : inlines) {
+                String s = t.getStyle() == null ? "" : t.getStyle();
+                t.setStyle(s + " -fx-font-weight: bold;");
+            }
+        }
+        TextFlow flow = new TextFlow(inlines.toArray(new Text[0]));
+        StackPane pane = new StackPane(flow);
+        pane.setPadding(new Insets(6, 10, 6, 10));
+        String bg = header ? "#f6f8fa" : "white";
+        String alignCss = switch (align) {
+            case CENTER -> "-fx-alignment: center; -fx-text-alignment: center;";
+            case RIGHT -> "-fx-alignment: center-right; -fx-text-alignment: right;";
+            default -> "-fx-alignment: center-left; -fx-text-alignment: left;";
+        };
+        pane.setStyle("-fx-border-color: #dfe2e5; -fx-border-width: 0 0 1 1; " +
+                "-fx-background-color: " + bg + "; " + alignCss);
+        return pane;
     }
 
     private void renderList(org.commonmark.node.Node list, InlineStyle base, ObservableList<Node> target, boolean ordered, int start) {
