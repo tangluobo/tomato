@@ -155,6 +155,10 @@ public class ToolsModule implements Module {
         // Hosts 文件管理工具
         Node hostsFileIcon = createHostsFileIcon();
         toolItems.add(new ToolItem("hosts_file", "Hosts文件管理", "管理和切换不同环境的Hosts配置", hostsFileIcon));
+
+        // Trae 会话管理工具
+        Node traeSessionIcon = createTraeSessionIcon();
+        toolItems.add(new ToolItem("trae_session", "Trae会话管理", "管理 Trae CN 多账号会话切换", traeSessionIcon));
     }
 
     private Node createImageConvertIcon() {
@@ -201,6 +205,16 @@ public class ToolsModule implements Module {
         // Material Icons: dns (域名解析/Hosts 文件图标)
         SVGPath path = new SVGPath();
         path.setContent("M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM9 17H7v-5h2v5zm4 0h-2V7h2v10zm4 0h-2v-7h2v7z");
+        path.setFill(Color.web("#1976D2"));
+        path.setScaleX(0.9);
+        path.setScaleY(0.9);
+        return path;
+    }
+
+    private Node createTraeSessionIcon() {
+        // Material Icons: people (多账号会话管理)
+        SVGPath path = new SVGPath();
+        path.setContent("M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z");
         path.setFill(Color.web("#1976D2"));
         path.setScaleX(0.9);
         path.setScaleY(0.9);
@@ -320,6 +334,11 @@ public class ToolsModule implements Module {
                 HostsFilePane hostsFilePane = new HostsFilePane();
                 contentArea.getChildren().add(hostsFilePane);
                 VBox.setVgrow(hostsFilePane, Priority.ALWAYS);
+                break;
+            case "trae_session":
+                TraeSessionPane traeSessionPane = new TraeSessionPane();
+                contentArea.getChildren().add(traeSessionPane);
+                VBox.setVgrow(traeSessionPane, Priority.ALWAYS);
                 break;
             default:
                 VBox placeholderBox = new VBox();

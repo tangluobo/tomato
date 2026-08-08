@@ -10,7 +10,8 @@ public enum ToolType {
     DATASET_CONVERTER("dataset_converter", "数据集格式转换", "/images/connect/table.png"),
     JSON_TOOL("json_tool", "JSON处理工具", "/images/connect/code.png"),
     DESKTOP_SHORTCUT("desktop_shortcut", "桌面快捷方式", "/images/connect/execute.png"),
-    HOSTS_FILE("hosts_file", "Hosts文件管理", "/images/connect/server.png");
+    HOSTS_FILE("hosts_file", "Hosts文件管理", "/images/connect/server.png"),
+    TRAE_SESSION("trae_session", "Trae会话管理", "/images/connect/user.png");
 
     private final String code;
     private final String displayName;

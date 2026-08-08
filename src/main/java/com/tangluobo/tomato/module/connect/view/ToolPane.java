@@ -6,6 +6,7 @@ import com.tangluobo.tomato.module.tools.DesktopShortcutPane;
 import com.tangluobo.tomato.module.tools.HostsFilePane;
 import com.tangluobo.tomato.module.tools.ImageFormatConverterPane;
 import com.tangluobo.tomato.module.tools.JsonToolPane;
+import com.tangluobo.tomato.module.tools.TraeSessionPane;
 import javafx.scene.Node;
 import javafx.scene.control.Label;
 import javafx.scene.layout.BorderPane;
@@ -42,6 +43,7 @@ public class ToolPane extends BorderPane {
             case JSON_TOOL -> pane = new JsonToolPane();
             case DESKTOP_SHORTCUT -> pane = new DesktopShortcutPane();
             case HOSTS_FILE -> pane = new HostsFilePane();
+            case TRAE_SESSION -> pane = new TraeSessionPane();
             default -> {
                 return buildPlaceholder();
             }
