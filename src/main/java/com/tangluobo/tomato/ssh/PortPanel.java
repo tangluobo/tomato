@@ -5,26 +5,35 @@ import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
+import javafx.geometry.Pos;
+import javafx.scene.Node;
+import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.ContentDisplay;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.SelectionMode;
 import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
+import javafx.scene.control.TablePosition;
 import javafx.scene.control.TableRow;
 import javafx.scene.control.TableView;
+import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.Polygon;
 
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Timer;
-import java.util.TimerTask;
 
 /**
  * 端口视图面板
@@ -32,8 +41,9 @@ import java.util.TimerTask;
  */
 public class PortPanel extends BorderPane {
 
+    private static final String ROW_SELECTOR_COL = "__ROW_SELECTOR__";
+
     private final SSHSession sshSession;
-    private Timer timer;
 
     private final TableView<PortItem> portTable;
     private final ObservableList<PortItem> portList = FXCollections.observableArrayList();
@@ -57,10 +67,26 @@ public class PortPanel extends BorderPane {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        Label updateLabel = new Label("每3秒更新");
-        updateLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: #888;");
+        Button refreshBtn = new Button();
+        refreshBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
+        javafx.scene.image.ImageView refreshIcon = new javafx.scene.image.ImageView(
+                new javafx.scene.image.Image(getClass().getResourceAsStream("/images/connect/refresh.png")));
+        refreshIcon.setFitWidth(16);
+        refreshIcon.setFitHeight(16);
+        refreshBtn.setGraphic(refreshIcon);
+        refreshBtn.setTooltip(new javafx.scene.control.Tooltip("刷新"));
+        refreshBtn.setOnAction(e -> {
+            refreshBtn.setDisable(true);
+            new Thread(() -> {
+                try {
+                    refresh();
+                } finally {
+                    Platform.runLater(() -> refreshBtn.setDisable(false));
+                }
+            }, "Port-ManualRefresh").start();
+        });
 
-        topBar.getChildren().addAll(titleLabel, spacer, updateLabel);
+        topBar.getChildren().addAll(titleLabel, spacer, refreshBtn);
 
         // 协议过滤栏
         HBox filterBar = new HBox(8);
@@ -86,6 +112,85 @@ public class PortPanel extends BorderPane {
         portTable = new TableView<>();
         portTable.setItems(portList);
         portTable.setStyle("-fx-font-size: 11px; -fx-background-color: #FFFFFF;");
+        // 使用与应用内其他表格相同的样式表（connect-tree.css），选中行样式一致且失焦不消失
+        portTable.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+        // 支持多选（行选择器可选中多行）
+        portTable.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+
+        // 行选择器列（参考 TableDataView 的实现）
+        TableColumn<PortItem, String> selectorCol = new TableColumn<>();
+        selectorCol.setPrefWidth(15);
+        selectorCol.setMaxWidth(15);
+        selectorCol.setMinWidth(15);
+        selectorCol.setSortable(false);
+        selectorCol.setReorderable(false);
+        selectorCol.setResizable(false);
+        selectorCol.setStyle("-fx-alignment: CENTER;");
+        selectorCol.setUserData(ROW_SELECTOR_COL);
+        selectorCol.setCellFactory(col -> new TableCell<>() {
+            private final Polygon arrow = new Polygon(0, -0.5, 5, 4.5, 0, 9.5);
+            private javafx.beans.InvalidationListener selectionListener;
+
+            {
+                arrow.setFill(Color.BLACK);
+                setGraphic(arrow);
+                setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+                setAlignment(Pos.CENTER);
+                arrow.setVisible(false);
+                setStyle("-fx-border-color: transparent #BEBEBC transparent #BEBEBC; -fx-border-width: 0 1 0 1;");
+                // 点击行选择器列时选中整行（Ctrl/Shift 支持多选）
+                addEventFilter(MouseEvent.MOUSE_PRESSED, event -> {
+                    if (getTableRow() != null && getTableRow().getItem() != null) {
+                        int row = getTableRow().getIndex();
+                        if (event.isControlDown()) {
+                            if (isRowSelected(row)) {
+                                portTable.getSelectionModel().clearSelection(row);
+                            } else {
+                                portTable.getSelectionModel().select(row);
+                            }
+                        } else if (event.isShiftDown()) {
+                            int anchor = portTable.getSelectionModel().getFocusedIndex();
+                            if (anchor >= 0) {
+                                int start = Math.min(row, anchor);
+                                int end = Math.max(row, anchor);
+                                portTable.getSelectionModel().clearSelection();
+                                portTable.getSelectionModel().selectRange(start, end + 1);
+                            } else {
+                                portTable.getSelectionModel().clearSelection();
+                                portTable.getSelectionModel().select(row);
+                            }
+                        } else {
+                            portTable.getSelectionModel().clearSelection();
+                            portTable.getSelectionModel().select(row);
+                        }
+                        event.consume();
+                    }
+                });
+            }
+
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                if (selectionListener != null) {
+                    portTable.getSelectionModel().getSelectedCells().removeListener(selectionListener);
+                    selectionListener = null;
+                }
+                super.updateItem(item, empty);
+                if (empty || getTableRow() == null || getTableRow().getItem() == null) {
+                    arrow.setVisible(false);
+                    setStyle("-fx-border-color: transparent; -fx-border-width: 0;");
+                    return;
+                }
+                setStyle("-fx-border-color: transparent #BEBEBC #BEBEBC #BEBEBC; -fx-border-width: 0 1 1 1;");
+                arrow.setVisible(isRowSelected(getTableRow().getIndex()));
+                selectionListener = obs -> {
+                    if (getTableRow() != null) {
+                        arrow.setVisible(isRowSelected(getTableRow().getIndex()));
+                    }
+                };
+                portTable.getSelectionModel().getSelectedCells().addListener(selectionListener);
+            }
+        });
+        portTable.getColumns().add(selectorCol);
 
         TableColumn<PortItem, String> protoCol = new TableColumn<>("协议");
         protoCol.setCellValueFactory(c -> c.getValue().protocolProperty());
@@ -120,27 +225,36 @@ public class PortPanel extends BorderPane {
 
         MenuItem stopItem = new MenuItem("停止");
         stopItem.setOnAction(e -> {
-            PortItem item = portTable.getSelectionModel().getSelectedItem();
-            if (item != null && !item.getPid().isEmpty() && !item.getPid().equals("-")) {
-                stopProcess(item.getPid(), item.getProcess());
+            List<PortItem> selected = portTable.getSelectionModel().getSelectedItems();
+            for (PortItem item : selected) {
+                if (item != null && !item.getPid().isEmpty() && !item.getPid().equals("-")) {
+                    stopProcess(item.getPid(), item.getProcess());
+                }
             }
         });
 
         MenuItem firewallItem = new MenuItem("加入防火墙白名单");
         firewallItem.setOnAction(e -> {
-            PortItem item = portTable.getSelectionModel().getSelectedItem();
-            if (item != null) {
-                addToFirewall(item.getPort(), item.getProtocol());
+            List<PortItem> selected = portTable.getSelectionModel().getSelectedItems();
+            for (PortItem item : selected) {
+                if (item != null) {
+                    addToFirewall(item.getPort(), item.getProtocol());
+                }
             }
         });
 
         MenuItem copyItem = new MenuItem("复制端口");
         copyItem.setOnAction(e -> {
-            PortItem item = portTable.getSelectionModel().getSelectedItem();
-            if (item != null) {
+            List<PortItem> selected = portTable.getSelectionModel().getSelectedItems();
+            if (!selected.isEmpty()) {
+                StringBuilder sb = new StringBuilder();
+                for (PortItem item : selected) {
+                    if (sb.length() > 0) sb.append("\n");
+                    sb.append(item.getPort());
+                }
                 javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
                 javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
-                content.putString(item.getPort());
+                content.putString(sb.toString());
                 clipboard.setContent(content);
             }
         });
@@ -152,21 +266,44 @@ public class PortPanel extends BorderPane {
 
         portTable.setRowFactory(tv -> {
             TableRow<PortItem> row = new TableRow<>();
-            // 选中行始终高亮（即使表格失去焦点，右键菜单弹出时仍可见）
-            row.styleProperty().bind(javafx.beans.binding.Bindings.when(row.selectedProperty())
-                    .then("-fx-background-color: #cfe8fc; -fx-text-fill: #000;")
-                    .otherwise(""));
-            row.emptyProperty().addListener((obs, wasEmpty, isNowEmpty) -> {
-                if (isNowEmpty) {
-                    row.setContextMenu(null);
-                } else {
-                    row.setContextMenu(contextMenu);
-                    PortItem item = row.getItem();
-                    // 无PID时禁用停止
-                    stopItem.setDisable(item == null || item.getPid().isEmpty() || item.getPid().equals("-"));
+            // 右键时保持已选中行不变：若右键点击的行已选中，不改变选择；否则只选中该行
+            row.setOnMousePressed(event -> {
+                if (event.getButton() == MouseButton.SECONDARY && !row.isEmpty()) {
+                    int index = row.getIndex();
+                    if (!portTable.getSelectionModel().isSelected(index)) {
+                        portTable.getSelectionModel().clearSelection();
+                        portTable.getSelectionModel().select(index);
+                    }
+                    updateMenuState(stopItem, firewallItem, copyItem);
+                    contextMenu.show(row, event.getScreenX(), event.getScreenY());
+                    event.consume();
                 }
             });
             return row;
+        });
+
+        // 点击空白区域时隐藏右键菜单并清除选择
+        portTable.setOnMousePressed(event -> {
+            if (isClickOnEmptyArea(event.getPickResult().getIntersectedNode())) {
+                contextMenu.hide();
+                portTable.getSelectionModel().clearSelection();
+            }
+        });
+
+        // 键盘 ContextMenu 键或右键空白区域
+        portTable.setOnContextMenuRequested(event -> {
+            if (isClickOnEmptyArea(event.getPickResult().getIntersectedNode())) {
+                contextMenu.hide();
+                event.consume();
+                return;
+            }
+            if (portTable.getSelectionModel().getSelectedItems().isEmpty()) {
+                event.consume();
+                return;
+            }
+            updateMenuState(stopItem, firewallItem, copyItem);
+            contextMenu.show(portTable, event.getScreenX(), event.getScreenY());
+            event.consume();
         });
 
         setCenter(portTable);
@@ -195,6 +332,48 @@ public class PortPanel extends BorderPane {
         }
         portList.setAll(filtered);
         statusLabel.setText("共 " + filtered.size() + " 个监听端口（总计 " + allPorts.size() + "）");
+    }
+
+    /**
+     * 判断指定行是否处于选中状态
+     */
+    private boolean isRowSelected(int rowIndex) {
+        for (TablePosition<?, ?> pos : portTable.getSelectionModel().getSelectedCells()) {
+            if (pos.getRow() == rowIndex) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 判断点击位置是否在表格空白区域（空行或表格背景）
+     */
+    private boolean isClickOnEmptyArea(Node node) {
+        while (node != null && node != portTable) {
+            if (node instanceof TableRow) {
+                return ((TableRow<?>) node).isEmpty();
+            }
+            node = node.getParent();
+        }
+        return true;
+    }
+
+    /**
+     * 根据当前选中项更新右键菜单状态（禁用/文本）
+     */
+    private void updateMenuState(MenuItem stopItem, MenuItem firewallItem, MenuItem copyItem) {
+        List<PortItem> selected = portTable.getSelectionModel().getSelectedItems();
+        boolean hasStoppable = false;
+        for (PortItem item : selected) {
+            if (item != null && !item.getPid().isEmpty() && !item.getPid().equals("-")) {
+                hasStoppable = true;
+                break;
+            }
+        }
+        stopItem.setDisable(!hasStoppable);
+        int count = selected.size();
+        stopItem.setText("停止" + (count > 1 ? "(" + count + "个)" : ""));
+        firewallItem.setText("加入防火墙白名单" + (count > 1 ? "(" + count + "个)" : ""));
+        copyItem.setText("复制端口" + (count > 1 ? "(" + count + "个)" : ""));
     }
 
     /**
@@ -228,28 +407,8 @@ public class PortPanel extends BorderPane {
         public String getProcess() { return process.get(); }
     }
 
-    public void startMonitoring() {
-        if (timer != null) {
-            timer.cancel();
-        }
-        timer = new Timer("Port-Timer", true);
-        timer.scheduleAtFixedRate(new TimerTask() {
-            @Override
-            public void run() {
-                refresh();
-            }
-        }, 0, 3000);
-    }
-
-    public void stopMonitoring() {
-        if (timer != null) {
-            timer.cancel();
-            timer = null;
-        }
-    }
-
     /**
-     * 手动刷新（在后台线程中执行，避免阻塞 UI）
+     * 刷新端口列表（在后台线程中执行，避免阻塞 UI）
      */
     public void refresh() {
         if (sshSession == null || !sshSession.isConnected()) {

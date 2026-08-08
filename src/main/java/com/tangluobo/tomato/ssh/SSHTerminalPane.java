@@ -424,7 +424,6 @@ public class SSHTerminalPane extends BorderPane {
         if (portVisible) {
             // 关闭端口视图
             if (portPanel != null) {
-                portPanel.stopMonitoring();
                 if (rightPanel.getChildren().contains(portPanel)) {
                     rightPanel.getChildren().remove(portPanel);
                 }
@@ -444,7 +443,7 @@ public class SSHTerminalPane extends BorderPane {
             if (!rightPanel.getChildren().contains(portPanel)) {
                 rightPanel.getChildren().add(portPanel);
             }
-            portPanel.startMonitoring();
+            portPanel.refresh();
             portVisible = true;
             portBtn.setStyle("-fx-background-color: #e0e0e0; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand; -fx-border-radius: 3;");
             portBtn.setGraphic(createPortIcon(true));
@@ -684,7 +683,6 @@ public class SSHTerminalPane extends BorderPane {
 
         // 关闭端口视图
         if (portPanel != null) {
-            portPanel.stopMonitoring();
             if (rightPanel.getChildren().contains(portPanel)) {
                 rightPanel.getChildren().remove(portPanel);
             }
@@ -742,7 +740,6 @@ public class SSHTerminalPane extends BorderPane {
 
                 // 如果端口视图打开，重新绑定新会话
                 if (portVisible && portPanel != null) {
-                    portPanel.stopMonitoring();
                     PortPanel oldPanel = portPanel;
                     portPanel = new PortPanel(sshSession);
                     Platform.runLater(() -> {
@@ -750,7 +747,7 @@ public class SSHTerminalPane extends BorderPane {
                             int idx = rightPanel.getChildren().indexOf(oldPanel);
                             rightPanel.getChildren().set(idx, portPanel);
                         }
-                        portPanel.startMonitoring();
+                        portPanel.refresh();
                     });
                 }
 
