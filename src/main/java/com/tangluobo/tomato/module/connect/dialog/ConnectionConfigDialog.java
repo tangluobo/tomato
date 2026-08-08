@@ -2,6 +2,7 @@ package com.tangluobo.tomato.module.connect.dialog;
 
 import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.ToolType;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -31,6 +32,7 @@ public class ConnectionConfigDialog {
     // 类型选择页
     private VBox typeSelectionPage;
     private ConnectType selectedType;
+    private ToolType selectedToolType;
 
     // 配置页
     private VBox configPage;
@@ -209,59 +211,27 @@ public class ConnectionConfigDialog {
         root.setMinWidth(520);
         root.setMinHeight(620);
 
-        // ===== 类型选择页 =====
+        // ===== 类型选择页（多标签：数据库 / 其他 / 工具）=====
         typeSelectionPage = new VBox(15);
 
         Label title = new Label("选择连接类型");
         title.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
 
-        FlowPane tilePane = new FlowPane();
-        tilePane.setHgap(10);
-        tilePane.setVgap(10);
-        tilePane.setPadding(new Insets(5, 0, 5, 0));
-        tilePane.setAlignment(Pos.CENTER);
+        TabPane categoryTabPane = new TabPane();
+        categoryTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        categoryTabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
 
-        for (ConnectType type : ConnectType.values()) {
-            VBox tile = new VBox(8);
-            tile.setAlignment(Pos.CENTER);
-            tile.setPadding(new Insets(14, 18, 14, 18));
-            tile.setPrefWidth(120);
-            tile.setPrefHeight(90);
-            tile.setStyle("-fx-background-color: #f5f5f5; -fx-background-radius: 8; -fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-cursor: hand;");
+        // 数据库标签
+        Tab dbTab = new Tab("数据库");
+        dbTab.setContent(buildCategoryTilePane(ConnectType.Category.DATABASE, false));
+        // 其他标签
+        Tab othersTab = new Tab("其他");
+        othersTab.setContent(buildCategoryTilePane(ConnectType.Category.OTHERS, false));
+        // 工具标签
+        Tab toolTab = new Tab("工具");
+        toolTab.setContent(buildToolTilePane());
 
-            ImageView icon = new ImageView();
-            icon.setFitWidth(32);
-            icon.setFitHeight(32);
-            try {
-                Image img = new Image(getClass().getResourceAsStream(type.getIconPath()));
-                icon.setImage(img);
-            } catch (Exception ignored) {}
-
-            Label nameLabel = new Label(type.getDisplayName());
-            nameLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-font-weight: bold;");
-
-            tile.getChildren().addAll(icon, nameLabel);
-
-            tile.setOnMouseEntered(e ->
-                tile.setStyle("-fx-background-color: #e8f5e9; -fx-background-radius: 8; -fx-border-color: #07c160; -fx-border-radius: 8; -fx-cursor: hand; -fx-border-width: 2;")
-            );
-            tile.setOnMouseExited(e ->
-                tile.setStyle("-fx-background-color: #f5f5f5; -fx-background-radius: 8; -fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-cursor: hand;")
-            );
-            tile.setOnMousePressed(e ->
-                tile.setStyle("-fx-background-color: #c8e6c9; -fx-background-radius: 8; -fx-border-color: #07c160; -fx-border-radius: 8; -fx-cursor: hand; -fx-border-width: 2;")
-            );
-            tile.setOnMouseReleased(e ->
-                tile.setStyle("-fx-background-color: #e8f5e9; -fx-background-radius: 8; -fx-border-color: #07c160; -fx-border-radius: 8; -fx-cursor: hand; -fx-border-width: 2;")
-            );
-
-            tile.setOnMouseClicked(e -> {
-                selectedType = type;
-                showConfigPage();
-            });
-
-            tilePane.getChildren().add(tile);
-        }
+        categoryTabPane.getTabs().addAll(dbTab, othersTab, toolTab);
 
         HBox typeButtons = new HBox(10);
         typeButtons.setAlignment(Pos.CENTER_RIGHT);
@@ -270,7 +240,7 @@ public class ConnectionConfigDialog {
         cancelBtn.setOnAction(e -> dialogStage.close());
         typeButtons.getChildren().add(cancelBtn);
 
-        typeSelectionPage.getChildren().addAll(title, tilePane, typeButtons);
+        typeSelectionPage.getChildren().addAll(title, categoryTabPane, typeButtons);
 
         // ===== 配置页 =====
         configPage = new VBox(15);
@@ -343,6 +313,130 @@ public class ConnectionConfigDialog {
 
         Scene scene = new Scene(root);
         dialogStage.setScene(scene);
+    }
+
+    /**
+     * 构建指定分类的连接类型方块面板
+     * @param category 连接分类
+     * @param includeTool 是否包含 TOOL 类型本身（工具标签页单独处理，此处为 false）
+     */
+    private FlowPane buildCategoryTilePane(ConnectType.Category category, boolean includeTool) {
+        FlowPane tilePane = new FlowPane();
+        tilePane.setHgap(10);
+        tilePane.setVgap(10);
+        tilePane.setPadding(new Insets(10, 5, 5, 5));
+        tilePane.setAlignment(Pos.CENTER);
+
+        for (ConnectType type : ConnectType.values()) {
+            if (type.getCategory() != category) continue;
+            if (type == ConnectType.TOOL && !includeTool) continue;
+            tilePane.getChildren().add(createConnectTypeTile(type));
+        }
+        return tilePane;
+    }
+
+    /**
+     * 构建工具标签页的方块面板
+     */
+    private FlowPane buildToolTilePane() {
+        FlowPane tilePane = new FlowPane();
+        tilePane.setHgap(10);
+        tilePane.setVgap(10);
+        tilePane.setPadding(new Insets(10, 5, 5, 5));
+        tilePane.setAlignment(Pos.CENTER);
+
+        for (ToolType toolType : ToolType.values()) {
+            tilePane.getChildren().add(createToolTile(toolType));
+        }
+        return tilePane;
+    }
+
+    /**
+     * 创建连接类型方块
+     */
+    private VBox createConnectTypeTile(ConnectType type) {
+        VBox tile = new VBox(8);
+        tile.setAlignment(Pos.CENTER);
+        tile.setPadding(new Insets(14, 18, 14, 18));
+        tile.setPrefWidth(120);
+        tile.setPrefHeight(90);
+        tile.setStyle("-fx-background-color: #f5f5f5; -fx-background-radius: 8; -fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-cursor: hand;");
+
+        ImageView icon = new ImageView();
+        icon.setFitWidth(32);
+        icon.setFitHeight(32);
+        try {
+            Image img = new Image(getClass().getResourceAsStream(type.getIconPath()));
+            icon.setImage(img);
+        } catch (Exception ignored) {}
+
+        Label nameLabel = new Label(type.getDisplayName());
+        nameLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-font-weight: bold;");
+
+        tile.getChildren().addAll(icon, nameLabel);
+
+        attachTileHoverStyle(tile);
+        tile.setOnMouseClicked(e -> {
+            selectedType = type;
+            selectedToolType = null;
+            showConfigPage();
+        });
+        return tile;
+    }
+
+    /**
+     * 创建工具方块：选择后直接确认（无需配置页）
+     */
+    private VBox createToolTile(ToolType toolType) {
+        VBox tile = new VBox(8);
+        tile.setAlignment(Pos.CENTER);
+        tile.setPadding(new Insets(14, 18, 14, 18));
+        tile.setPrefWidth(120);
+        tile.setPrefHeight(90);
+        tile.setStyle("-fx-background-color: #f5f5f5; -fx-background-radius: 8; -fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-cursor: hand;");
+
+        ImageView icon = new ImageView();
+        icon.setFitWidth(32);
+        icon.setFitHeight(32);
+        try {
+            Image img = new Image(getClass().getResourceAsStream(toolType.getIconPath()));
+            icon.setImage(img);
+        } catch (Exception ignored) {}
+
+        Label nameLabel = new Label(toolType.getDisplayName());
+        nameLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-font-weight: bold;");
+
+        tile.getChildren().addAll(icon, nameLabel);
+
+        attachTileHoverStyle(tile);
+        tile.setOnMouseClicked(e -> {
+            selectedType = ConnectType.TOOL;
+            selectedToolType = toolType;
+            // 工具无需配置页，直接构建配置并确认
+            config = new ConnectionConfig();
+            config.setType(ConnectType.TOOL);
+            config.setToolType(toolType.getCode());
+            config.setName(toolType.getDisplayName());
+            confirmed = true;
+            dialogStage.close();
+        });
+        return tile;
+    }
+
+    /** 为方块附加悬停/按压样式 */
+    private void attachTileHoverStyle(VBox tile) {
+        tile.setOnMouseEntered(e ->
+            tile.setStyle("-fx-background-color: #e8f5e9; -fx-background-radius: 8; -fx-border-color: #07c160; -fx-border-radius: 8; -fx-cursor: hand; -fx-border-width: 2;")
+        );
+        tile.setOnMouseExited(e ->
+            tile.setStyle("-fx-background-color: #f5f5f5; -fx-background-radius: 8; -fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-cursor: hand;")
+        );
+        tile.setOnMousePressed(e ->
+            tile.setStyle("-fx-background-color: #c8e6c9; -fx-background-radius: 8; -fx-border-color: #07c160; -fx-border-radius: 8; -fx-cursor: hand; -fx-border-width: 2;")
+        );
+        tile.setOnMouseReleased(e ->
+            tile.setStyle("-fx-background-color: #e8f5e9; -fx-background-radius: 8; -fx-border-color: #07c160; -fx-border-radius: 8; -fx-cursor: hand; -fx-border-width: 2;")
+        );
     }
 
     /**
@@ -2149,6 +2243,7 @@ public class ConnectionConfigDialog {
             case ROCKETMQ -> 8080;
             case LOCAL_TERMINAL -> 0;
             case LOCAL_DIRECTORY -> 0;
+            case TOOL -> 0;
         };
     }
 

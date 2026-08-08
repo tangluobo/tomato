@@ -7,12 +7,14 @@ import com.tangluobo.tomato.module.connect.dialog.ExportConnectionDialog;
 import com.tangluobo.tomato.module.connect.dialog.FolderDialog;
 import com.tangluobo.tomato.module.connect.dialog.RestoreDialog;
 import com.tangluobo.tomato.module.connect.handler.*;
+import com.tangluobo.tomato.module.connect.ToolType;
 import com.tangluobo.tomato.module.connect.service.BackupService;
 import com.tangluobo.tomato.module.connect.service.DatabaseService;
 import com.tangluobo.tomato.module.connect.service.RedisService;
 import com.tangluobo.tomato.module.connect.service.RocketmqService;
 import com.tangluobo.tomato.module.connect.view.RocketmqDataView;
 import com.tangluobo.tomato.module.connect.view.SqlEditorView;
+import com.tangluobo.tomato.module.connect.view.ToolPane;
 import com.tangluobo.tomato.ssh.LocalTerminalPane;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
 import com.tangluobo.tomato.utils.SecurityUtils;
@@ -366,6 +368,17 @@ public class ConnectModule implements Module {
             if (folderIcon != null) {
                 imageView.setImage(folderIcon);
             }
+        } else if (config.getType() == ConnectType.TOOL) {
+            // 工具节点：按 toolType 显示对应图标
+            ToolType toolType = ToolType.fromCode(config.getToolType());
+            String iconPath = toolType != null ? toolType.getIconPath() : ConnectType.TOOL.getIconPath();
+            try {
+                Image icon = new Image(getClass().getResourceAsStream(iconPath));
+                if (icon != null) {
+                    imageView.setImage(icon);
+                }
+            } catch (Exception e) {
+            }
         } else {
             try {
                 String iconPath = config.getType().getIconPath();
@@ -533,10 +546,6 @@ public class ConnectModule implements Module {
                                 contextMenu.getItems().add(refreshItem);
                             }
                         }
-                        MenuItem connectItem = new MenuItem("连接");
-                        connectItem.setOnAction(e -> handleConnect(targetConfig));
-                        MenuItem editItem = new MenuItem("编辑");
-                        editItem.setOnAction(e -> handleEdit(targetItem));
                         MenuItem renameItem = new MenuItem("重命名");
                         renameItem.setOnAction(e -> {
                             editingItem = targetItem;
@@ -550,7 +559,17 @@ public class ConnectModule implements Module {
                         copyItem.setOnAction(e -> handleCopyConnection(targetItem, targetConfig));
                         MenuItem deleteItem = new MenuItem("删除");
                         deleteItem.setOnAction(e -> handleDelete(targetItem));
-                        contextMenu.getItems().addAll(connectItem, new SeparatorMenuItem(), editItem, renameItem, copyItem, new SeparatorMenuItem(), deleteItem);
+                        boolean isTool = targetConfig.getType() == ConnectType.TOOL;
+                        if (isTool) {
+                            // 工具节点：仅支持重命名、复制、删除（无连接/编辑）
+                            contextMenu.getItems().addAll(renameItem, copyItem, new SeparatorMenuItem(), deleteItem);
+                        } else {
+                            MenuItem connectItem = new MenuItem("连接");
+                            connectItem.setOnAction(e -> handleConnect(targetConfig));
+                            MenuItem editItem = new MenuItem("编辑");
+                            editItem.setOnAction(e -> handleEdit(targetItem));
+                            contextMenu.getItems().addAll(connectItem, new SeparatorMenuItem(), editItem, renameItem, copyItem, new SeparatorMenuItem(), deleteItem);
+                        }
                     } else {
                         MenuItem addFolder = new MenuItem("新建目录");
                         addFolder.setOnAction(e -> handleAddFolder(targetItem));
@@ -674,6 +693,15 @@ public class ConnectModule implements Module {
                 if (isHost) {
                     triggerHostDoubleClick(selectedItem, config);
                 }
+                selectedItemBeforeClick = null;
+                recentlyEditedItem = null;
+            } else if (isHost && config.getType() == ConnectType.TOOL && event.getClickCount() == 1) {
+                // 工具节点单击即打开工具标签页（与双击效果一致）
+                if (singleClickTimer != null) {
+                    singleClickTimer.stop();
+                    singleClickTimer = null;
+                }
+                triggerHostDoubleClick(selectedItem, config);
                 selectedItemBeforeClick = null;
                 recentlyEditedItem = null;
             } else if ((isFolder || isHost) && event.getClickCount() == 1 && canReedit && editingItem == null) {
@@ -1410,10 +1438,36 @@ public class ConnectModule implements Module {
 
     /** 双击主机节点：通过对应 handler 加载主机资源列表 */
     public void triggerHostDoubleClick(TreeItem<String> hostItem, ConnectionConfig config) {
+        if (config.getType() == ConnectType.TOOL) {
+            handleToolDoubleClick(hostItem, config);
+            return;
+        }
         ConnectHandler handler = createConnectHandler(config);
         if (handler != null) {
             handler.handleHostDoubleClick(this, hostItem, config);
         }
+    }
+
+    /** 工具节点双击：打开工具视图 */
+    private void handleToolDoubleClick(TreeItem<String> item, ConnectionConfig config) {
+        if (!ensureTabPaneInstalled()) return;
+        ToolType toolType = ToolType.fromCode(config.getToolType());
+        String toolName = toolType != null ? toolType.getDisplayName() : "工具";
+
+        // 避免重复打开同一工具标签
+        for (Tab t : terminalTabPane.getTabs()) {
+            if (toolName.equals(t.getText()) && t.getUserData() == config.getId()) {
+                terminalTabPane.getSelectionModel().select(t);
+                return;
+            }
+        }
+
+        Tab toolTab = new Tab(toolName);
+        toolTab.setUserData(config.getId());
+        ToolPane toolPane = new ToolPane(toolType);
+        toolTab.setContent(toolPane);
+        terminalTabPane.getTabs().add(toolTab);
+        terminalTabPane.getSelectionModel().select(toolTab);
     }
 
     /** 刷新主机节点 dispatcher：根据连接类型分发到对应处理器 */
@@ -1567,6 +1621,7 @@ public class ConnectModule implements Module {
     private void handleEdit(TreeItem<String> item) {
         ConnectionConfig existingConfig = itemConfigMap.get(item);
         if (existingConfig == null || existingConfig.getType() == null) return;
+        if (existingConfig.getType() == ConnectType.TOOL) return; // 工具不支持编辑
 
         Stage stage = getStage();
         if (stage == null) return;

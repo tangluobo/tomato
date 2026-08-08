@@ -27,13 +27,16 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.paint.Color;
+import javafx.scene.shape.Circle;
 import javafx.scene.shape.Polygon;
 
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 端口视图面板
@@ -44,6 +47,10 @@ public class PortPanel extends BorderPane {
     private static final String ROW_SELECTOR_COL = "__ROW_SELECTOR__";
 
     private final SSHSession sshSession;
+    /** 直接通过端口加入防火墙白名单的（firewalld --add-port / iptables --dport） */
+    private final Set<String> portWhitelist = new HashSet<>();
+    /** 通过 firewalld 服务加入白名单的端口（如 ssh→22/tcp） */
+    private final Set<String> serviceWhitelist = new HashSet<>();
 
     private final TableView<PortItem> portTable;
     private final ObservableList<PortItem> portList = FXCollections.observableArrayList();
@@ -137,7 +144,7 @@ public class PortPanel extends BorderPane {
                 setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
                 setAlignment(Pos.CENTER);
                 arrow.setVisible(false);
-                setStyle("-fx-border-color: transparent #BEBEBC transparent #BEBEBC; -fx-border-width: 0 1 0 1;");
+                setStyle("-fx-border-color: transparent #e0e0e0 transparent #e0e0e0; -fx-border-width: 0 1 0 1;");
                 // 点击行选择器列时选中整行（Ctrl/Shift 支持多选）
                 addEventFilter(MouseEvent.MOUSE_PRESSED, event -> {
                     if (getTableRow() != null && getTableRow().getItem() != null) {
@@ -180,7 +187,7 @@ public class PortPanel extends BorderPane {
                     setStyle("-fx-border-color: transparent; -fx-border-width: 0;");
                     return;
                 }
-                setStyle("-fx-border-color: transparent #BEBEBC #BEBEBC #BEBEBC; -fx-border-width: 0 1 1 1;");
+                setStyle("-fx-border-color: transparent #e0e0e0 #e0e0e0 #e0e0e0; -fx-border-width: 0 1 1 1;");
                 arrow.setVisible(isRowSelected(getTableRow().getIndex()));
                 selectionListener = obs -> {
                     if (getTableRow() != null) {
@@ -204,8 +211,33 @@ public class PortPanel extends BorderPane {
 
         TableColumn<PortItem, String> portCol = new TableColumn<>("端口");
         portCol.setCellValueFactory(c -> c.getValue().portProperty());
-        portCol.setMinWidth(40);
-        portCol.setPrefWidth(60);
+        portCol.setMinWidth(50);
+        portCol.setPrefWidth(80);
+        // 端口号前面显示绿圆点：直接通过端口加入防火墙白名单的
+        portCol.setCellFactory(col -> new TableCell<>() {
+            private final Circle dot = new Circle(3);
+            private final Label portLabel = new Label();
+            private final HBox box = new HBox(4, dot, portLabel);
+            {
+                dot.setFill(Color.valueOf("#4CAF50"));
+                dot.setVisible(false);
+                box.setAlignment(Pos.CENTER_LEFT);
+                setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+            }
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setGraphic(null);
+                } else {
+                    portLabel.setText(item);
+                    PortItem pi = getTableRow() != null ? getTableRow().getItem() : null;
+                    boolean whitelisted = pi != null && portWhitelist.contains(pi.getPort() + "/" + pi.getProtocol());
+                    dot.setVisible(whitelisted);
+                    setGraphic(box);
+                }
+            }
+        });
 
         TableColumn<PortItem, String> pidCol = new TableColumn<>("PID");
         pidCol.setMinWidth(40);
@@ -215,6 +247,31 @@ public class PortPanel extends BorderPane {
         procCol.setCellValueFactory(c -> c.getValue().processProperty());
         procCol.setMinWidth(60);
         procCol.setPrefWidth(180);
+        // 进程名前面显示绿圆点：通过 firewalld 服务加入白名单的端口
+        procCol.setCellFactory(col -> new TableCell<>() {
+            private final Circle dot = new Circle(3);
+            private final Label procLabel = new Label();
+            private final HBox box = new HBox(4, dot, procLabel);
+            {
+                dot.setFill(Color.valueOf("#4CAF50"));
+                dot.setVisible(false);
+                box.setAlignment(Pos.CENTER_LEFT);
+                setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+            }
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setGraphic(null);
+                } else {
+                    procLabel.setText(item);
+                    PortItem pi = getTableRow() != null ? getTableRow().getItem() : null;
+                    boolean whitelisted = pi != null && serviceWhitelist.contains(pi.getPort() + "/" + pi.getProtocol());
+                    dot.setVisible(whitelisted);
+                    setGraphic(box);
+                }
+            }
+        });
 
         portTable.getColumns().addAll(protoCol, addrCol, portCol, pidCol, procCol);
         // 所有列压缩到可见范围内，确保全部列默认可见
@@ -423,11 +480,18 @@ public class PortPanel extends BorderPane {
                 output = executeCommand("netstat -tlnp 2>/dev/null");
                 items = parsePorts(output);
             }
+            // 查询防火墙已放行的端口（firewalld + iptables）
+            FirewallWhitelist fw = loadFirewallWhitelist();
             List<PortItem> finalItems = items;
             Platform.runLater(() -> {
+                portWhitelist.clear();
+                portWhitelist.addAll(fw.portDirect);
+                serviceWhitelist.clear();
+                serviceWhitelist.addAll(fw.portService);
                 allPorts.clear();
                 allPorts.addAll(finalItems);
                 applyFilter();
+                portTable.refresh();
             });
         } catch (Exception e) {
             Platform.runLater(() -> statusLabel.setText("获取端口失败: " + e.getMessage()));
@@ -453,30 +517,172 @@ public class PortPanel extends BorderPane {
 
     /**
      * 加入防火墙白名单
-     * 尝试 firewall-cmd（firewalld），失败则尝试 iptables
+     * 自动检测 firewalld 或 iptables，使用对应的命令放行端口
      */
     private void addToFirewall(String port, String protocol) {
         new Thread(() -> {
             try {
                 String proto = protocol.toLowerCase().startsWith("udp") ? "udp" : "tcp";
-                String cmd = "firewall-cmd --add-port=" + port + "/" + proto + " --permanent 2>/dev/null && " +
-                        "firewall-cmd --reload 2>/dev/null; echo EXIT:$?";
-                String result = executeCommand(cmd);
+                // 检测当前使用的防火墙：firewalld 优先，否则用 iptables
+                String fwCheck = executeCommand(
+                        "systemctl is-active firewalld 2>/dev/null");
+                boolean useFirewalld = fwCheck != null && fwCheck.trim().equals("active");
+
+                String result;
+                boolean success;
                 String msg;
-                if (result.contains("EXIT:0")) {
-                    msg = "已将端口 " + port + "/" + proto + " 加入防火墙白名单";
+
+                if (useFirewalld) {
+                    result = executeCommand(
+                            "firewall-cmd --add-port=" + port + "/" + proto + " --permanent 2>&1 && " +
+                            "firewall-cmd --reload 2>&1; echo EXIT:$?");
+                    success = result.contains("EXIT:0");
+                    msg = success ? "已通过 firewalld 放行端口 " + port + "/" + proto
+                            : "放行失败，可能需要 root 权限";
                 } else {
-                    // 回退 iptables
-                    String iptResult = executeCommand("iptables -I INPUT -p " + proto + " --dport " + port + " -j ACCEPT 2>&1; echo EXIT:$?");
-                    msg = iptResult.contains("EXIT:0") ? "已通过 iptables 放行端口 " + port + "/" + proto :
-                            "放行失败，可能需要 root 权限或防火墙未安装";
+                    result = executeCommand(
+                            "iptables -I INPUT -p " + proto + " --dport " + port + " -j ACCEPT 2>&1; echo EXIT:$?");
+                    success = result.contains("EXIT:0");
+                    msg = success ? "已通过 iptables 放行端口 " + port + "/" + proto
+                            : "放行失败，可能需要 root 权限或防火墙未安装";
                 }
+
+                final boolean finalSuccess = success;
                 String finalMsg = msg;
-                Platform.runLater(() -> statusLabel.setText(finalMsg));
+                Platform.runLater(() -> {
+                    statusLabel.setText(finalMsg);
+                    if (finalSuccess) {
+                        // 从服务器重新加载实际白名单状态，确保绿圆点准确
+                        new Thread(() -> {
+                            FirewallWhitelist wl = loadFirewallWhitelist();
+                            Platform.runLater(() -> {
+                                portWhitelist.clear();
+                                portWhitelist.addAll(wl.portDirect);
+                                serviceWhitelist.clear();
+                                serviceWhitelist.addAll(wl.portService);
+                                portTable.refresh();
+                            });
+                        }, "Port-FirewallReload").start();
+                    }
+                });
             } catch (Exception e) {
                 Platform.runLater(() -> statusLabel.setText("防火墙操作失败: " + e.getMessage()));
             }
         }, "Port-Firewall").start();
+    }
+
+    /**
+     * 防火墙白名单查询结果
+     * portDirect: 直接通过端口放行的（firewalld --add-port / iptables --dport）
+     * portService: 通过 firewalld 服务放行的端口（如 ssh→22/tcp）
+     */
+    private static class FirewallWhitelist {
+        final Set<String> portDirect = new HashSet<>();
+        final Set<String> portService = new HashSet<>();
+    }
+
+    /**
+     * 查询防火墙已放行（白名单）的端口
+     * firewalld 活跃时只查 firewall-cmd（端口+服务），避免与 iptables 重复；
+     * firewalld 未运行时才查 iptables -S INPUT（仅 INPUT 链，避免 OUTPUT 等误判）。
+     * 直接端口白名单放入 portDirect，服务对应的端口放入 portService。
+     */
+    private FirewallWhitelist loadFirewallWhitelist() {
+        FirewallWhitelist wl = new FirewallWhitelist();
+
+        // 检测 firewalld 是否活跃
+        boolean firewalldActive = false;
+        try {
+            String fwStatus = executeCommand("systemctl is-active firewalld 2>/dev/null");
+            firewalldActive = fwStatus != null && fwStatus.trim().equals("active");
+        } catch (Exception ignored) {
+        }
+
+        if (firewalldActive) {
+            // ===== firewalld 活跃：只查 firewall-cmd，不查 iptables =====
+
+            // 1. firewalld 端口：firewall-cmd --list-ports 输出如 "80/tcp 443/tcp 22/udp"
+            try {
+                String result = executeCommand("firewall-cmd --list-ports 2>/dev/null");
+                if (result != null && !result.trim().isEmpty()
+                        && !result.contains("error") && !result.contains("Usage")) {
+                    for (String token : result.trim().split("\\s+")) {
+                        token = token.trim();
+                        if (token.matches("\\d+/(tcp|udp)")) {
+                            wl.portDirect.add(token);
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+
+            // 2. firewalld 服务：firewall-cmd --list-services 输出如 "cockpit dhcpv6-client ssh"
+            //    每个服务通过 --info-service 解析出对应端口（如 ssh→22/tcp, cockpit→9090/tcp）
+            try {
+                String services = executeCommand("firewall-cmd --list-services 2>/dev/null");
+                if (services != null && !services.trim().isEmpty()
+                        && !services.contains("error") && !services.contains("Usage")) {
+                    // 拼接一条命令查询所有服务的端口信息，减少 SSH 往返
+                    StringBuilder cmd = new StringBuilder();
+                    for (String svc : services.trim().split("\\s+")) {
+                        if (cmd.length() > 0) cmd.append(";");
+                        cmd.append("firewall-cmd --info-service=").append(svc).append(" 2>/dev/null");
+                    }
+                    String svcInfo = executeCommand(cmd.toString());
+                    if (svcInfo != null) {
+                        for (String line : svcInfo.split("\n")) {
+                            line = line.trim();
+                            // --info-service 输出中端口行形如 "ports: 22/tcp" 或 "ports: 80/tcp 443/tcp"
+                            if (line.startsWith("ports:")) {
+                                String portsPart = line.substring(6).trim();
+                                for (String token : portsPart.split("\\s+")) {
+                                    token = token.trim();
+                                    if (token.matches("\\d+/(tcp|udp)")) {
+                                        wl.portService.add(token);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        } else {
+            // ===== firewalld 未运行：查 iptables，仅 INPUT 链 =====
+            //    形如 "-A INPUT -p tcp -m tcp --dport 80 -j ACCEPT"
+            //    或 multiport "--dports 80,443"
+            try {
+                String result = executeCommand("iptables -S INPUT 2>/dev/null");
+                if (result != null && !result.trim().isEmpty()) {
+                    for (String line : result.split("\n")) {
+                        line = line.trim();
+                        if (!line.contains("ACCEPT")) continue;
+                        String proto = line.contains("-p udp") ? "udp" : "tcp";
+                        if (line.contains("--dports")) {
+                            // multiport: --dports 80,443
+                            int idx = line.indexOf("--dports");
+                            String after = line.substring(idx + 9).trim();
+                            String portsPart = after.split("\\s+")[0];
+                            for (String p : portsPart.split(",")) {
+                                if (p.matches("\\d+")) {
+                                    wl.portDirect.add(p + "/" + proto);
+                                }
+                            }
+                        } else if (line.contains("--dport")) {
+                            int idx = line.indexOf("--dport");
+                            String after = line.substring(idx + 8).trim();
+                            String portStr = after.split("\\s+")[0];
+                            if (portStr.matches("\\d+")) {
+                                wl.portDirect.add(portStr + "/" + proto);
+                            }
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+
+        return wl;
     }
 
     /**

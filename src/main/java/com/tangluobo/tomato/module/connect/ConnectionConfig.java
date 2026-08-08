@@ -8,6 +8,8 @@ public class ConnectionConfig {
     private String name;
     private String parentId;
     private ConnectType type;
+    // 工具类型代码（仅当 type == ConnectType.TOOL 时使用），对应 ToolType.code
+    private String toolType;
     private String host;
     private int port;
     private String username;
@@ -83,6 +85,9 @@ public class ConnectionConfig {
 
     public ConnectType getType() { return type; }
     public void setType(ConnectType type) { this.type = type; }
+
+    public String getToolType() { return toolType; }
+    public void setToolType(String toolType) { this.toolType = toolType; }
 
     public String getHost() { return host; }
     public void setHost(String host) { this.host = host; }
