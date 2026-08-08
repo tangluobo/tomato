@@ -54,36 +54,43 @@
       <children>
         <HBox fx:id="titleBar" style="-fx-background-color: #ffffff; -fx-border-color: #D9D9D7; -fx-border-width: 0 0 1 0;" prefHeight="52" minHeight="52" maxHeight="52" spacing="10">
           <padding>
-            <Insets bottom="10.0" left="15.0" right="15.0" top="10.0"/>
+            <Insets bottom="10.0" left="15.0" right="0.0" top="10.0"/>
           </padding>
           <children>
             <ImageView fx:id="logoView" fitWidth="28" fitHeight="28" preserveRatio="true"/>
             <Label fx:id="chatTitle" text="选择一个模块"/>
             <Region HBox.hgrow="ALWAYS"/>
-            <ToggleButton fx:id="sidebarToggleBtn" selected="false" style="-fx-background-color: transparent; -fx-pref-width: 24px; -fx-pref-height: 24px; -fx-background-radius: 4px;"
-                    onAction="#onSidebarToggle">
-              <graphic>
-                <ImageView fx:id="sidebarToggleIcon" fitWidth="18" fitHeight="18" preserveRatio="true"/>
-              </graphic>
-            </ToggleButton>
-            <Button fx:id="minimizeBtn" style="-fx-background-color: transparent; -fx-pref-width: 24px; -fx-pref-height: 24px;"
-                    onAction="#onMinimize">
-              <graphic>
-                <SVGPath content="M6 14h12v-2H6v2z" fill="#cccccc"/>
-              </graphic>
-            </Button>
-            <Button fx:id="maximizeBtn" style="-fx-background-color: transparent; -fx-pref-width: 24px; -fx-pref-height: 24px;"
-                    onAction="#onMaximize">
-              <graphic>
-                <SVGPath content="M3 3h18v18H3V3zm2 2v14h14V5H5z" fill="#e5e5e5"/>
-              </graphic>
-            </Button>
-            <Button fx:id="closeBtn" style="-fx-background-color: transparent; -fx-pref-width: 24px; -fx-pref-height: 24px;"
-                    onAction="#onClose">
-              <graphic>
-                <SVGPath content="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="#ff5f56"/>
-              </graphic>
-            </Button>
+            <HBox fx:id="windowButtons" alignment="TOP_RIGHT" spacing="2" style="-fx-padding: 0 0 0 0;">
+              <children>
+                <ToggleButton fx:id="sidebarToggleBtn" selected="false" style="-fx-background-color: transparent; -fx-pref-width: 20px; -fx-pref-height: 20px; -fx-padding: 0 6px 0 6px; -fx-background-radius: 4px;"
+                        onAction="#onSidebarToggle">
+                  <graphic>
+                    <ImageView fx:id="sidebarToggleIcon" fitWidth="14" fitHeight="14" preserveRatio="true"/>
+                  </graphic>
+                </ToggleButton>
+                <Button fx:id="minimizeBtn" style="-fx-background-color: transparent; -fx-pref-width: 20px; -fx-pref-height: 20px; -fx-padding: 0 8px 0 8px;"
+                        onAction="#onMinimize">
+                  <graphic>
+                    <SVGPath content="M6 14h12v-2H6v2z" fill="#cccccc"/>
+                  </graphic>
+                </Button>
+                <Button fx:id="maximizeBtn" style="-fx-background-color: transparent; -fx-pref-width: 20px; -fx-pref-height: 20px; -fx-padding: 0 8px 0 0;"
+                        onAction="#onMaximize">
+                  <graphic>
+                    <SVGPath content="M3 3h18v18H3V3zm2 2v14h14V5H5z" fill="#e5e5e5"/>
+                  </graphic>
+                </Button>
+                <Button fx:id="closeBtn" style="-fx-background-color: transparent; -fx-pref-width: 20px; -fx-pref-height: 20px; -fx-padding: 0 8px 0 0;"
+                        onAction="#onClose">
+                  <graphic>
+                    <SVGPath content="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" fill="#ff5f56"/>
+                  </graphic>
+                </Button>
+              </children>
+              <HBox.margin>
+                <Insets top="-10.0" right="0.0" bottom="0.0" left="0.0"/>
+              </HBox.margin>
+            </HBox>
           </children>
         </HBox>
         

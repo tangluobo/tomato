@@ -207,9 +207,9 @@ public class TomatoController {
         navPane.setVisible(show);
         navPane.setManaged(show);
         if (show) {
-            sidebarToggleBtn.setStyle("-fx-background-color: #e0e0e0; -fx-pref-width: 24px; -fx-pref-height: 24px; -fx-background-radius: 4px;");
+            sidebarToggleBtn.setStyle("-fx-background-color: #e0e0e0; -fx-pref-width: 20px; -fx-pref-height: 20px; -fx-padding: 0 6px 0 6px; -fx-background-radius: 4px;");
         } else {
-            sidebarToggleBtn.setStyle("-fx-background-color: transparent; -fx-pref-width: 24px; -fx-pref-height: 24px; -fx-background-radius: 4px;");
+            sidebarToggleBtn.setStyle("-fx-background-color: transparent; -fx-pref-width: 20px; -fx-pref-height: 20px; -fx-padding: 0 6px 0 6px; -fx-background-radius: 4px;");
         }
     }
 
