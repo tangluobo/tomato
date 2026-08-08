@@ -62,6 +62,13 @@ public class TerminalView extends Canvas {
     private int selectionEndCol = -1;
     private int selectionEndRow = -1;
     private boolean isSelecting = false;
+    // 记录鼠标按下前是否已有选择，用于避免单击时不必要重绘
+    private boolean hadSelectionBeforePress = false;
+
+    // 鼠标拖拽渲染节流（避免每次mouse-dragged都全屏重绘）
+    private long lastDragRenderTime = 0;
+    private static final long DRAG_RENDER_INTERVAL = 16; // ~60fps
+    private boolean dragRenderPending = false;
 
     // 滚动条回调
     public interface ScrollbarHandler {
@@ -421,6 +428,9 @@ public class TerminalView extends Canvas {
 
         gc.setFont(javafx.scene.text.Font.font(fontFamily, 13));
 
+        // 复用StringBuilder，避免每个run都创建对象
+        StringBuilder segBuf = new StringBuilder(256);
+
         for (int y = 0; y < rows; y++) {
             double py = y0 + y * charHeight;
 
@@ -479,6 +489,9 @@ public class TerminalView extends Canvas {
                         gc.fillRect(x0 + runStart * charWidth, py, (x - runStart) * charWidth, charHeight);
 
                         gc.setFill(fg);
+                        // 批量绘制：将连续字符拼接为字符串一次绘制，宽字符占位符处分段
+                        int segStart = runStart;
+                        segBuf.setLength(0);
                         for (int i = runStart; i < x; i++) {
                             char c;
                             if (lineChars != null) {
@@ -486,8 +499,22 @@ public class TerminalView extends Canvas {
                             } else {
                                 c = emulator.getChar(i, bufY);
                             }
-                            if (c == '\0') continue;
-                            gc.fillText(String.valueOf(c), x0 + i * charWidth, py + fontAscent);
+                            if (c == '\0') {
+                                // 宽字符占位符：先输出已累积的字符串
+                                if (segBuf.length() > 0) {
+                                    gc.fillText(segBuf.toString(), x0 + segStart * charWidth, py + fontAscent);
+                                    segBuf.setLength(0);
+                                }
+                                segStart = i + 1;
+                                continue;
+                            }
+                            if (segBuf.length() == 0) {
+                                segStart = i;
+                            }
+                            segBuf.append(c);
+                        }
+                        if (segBuf.length() > 0) {
+                            gc.fillText(segBuf.toString(), x0 + segStart * charWidth, py + fontAscent);
                         }
                     }
                     runStart = x;
@@ -661,11 +688,14 @@ public class TerminalView extends Canvas {
             // 双击/三击时不在此处重置选择，由handleMouseClicked处理
             if (e.getClickCount() > 1) return;
             isSelecting = true;
+            // 记录按下前是否有选择，用于决定是否需要重绘清除旧高亮
+            hadSelectionBeforePress = hasSelection();
             selectionStartCol = mouseToCol(e.getX());
             selectionStartRow = mouseToRow(e.getY());
             selectionEndCol = selectionStartCol;
             selectionEndRow = selectionStartRow;
-            render();
+            // 仅当之前有选择高亮时才需要重绘清除；无选择时单击不触发渲染
+            if (hadSelectionBeforePress) render();
         }
     }
 
@@ -673,7 +703,30 @@ public class TerminalView extends Canvas {
         if (isSelecting && e.getButton() == MouseButton.PRIMARY) {
             selectionEndCol = mouseToCol(e.getX());
             selectionEndRow = mouseToRow(e.getY());
+            // 节流渲染：限制重绘频率为~60fps，避免鼠标高频移动导致卡顿
+            scheduleDragRender();
+        }
+    }
+
+    /**
+     * 鼠标拖拽时节流渲染：合并高频mouse-dragged事件的渲染请求
+     */
+    private void scheduleDragRender() {
+        long now = System.currentTimeMillis();
+        if (now - lastDragRenderTime >= DRAG_RENDER_INTERVAL) {
+            lastDragRenderTime = now;
             render();
+            dragRenderPending = false;
+        } else if (!dragRenderPending) {
+            dragRenderPending = true;
+            javafx.animation.PauseTransition delay = new javafx.animation.PauseTransition(
+                    javafx.util.Duration.millis(DRAG_RENDER_INTERVAL - (now - lastDragRenderTime)));
+            delay.setOnFinished(ev -> {
+                lastDragRenderTime = System.currentTimeMillis();
+                render();
+                dragRenderPending = false;
+            });
+            delay.play();
         }
     }
 
@@ -684,8 +737,15 @@ public class TerminalView extends Canvas {
             isSelecting = false;
             // 如果起点和终点相同，视为单击，清除选择
             if (selectionStartCol == selectionEndCol && selectionStartRow == selectionEndRow) {
-                clearSelection();
+                // 单击：若之前无选择则mousePressed未渲染，此处也无需渲染；
+                // 若之前有选择则mousePressed已渲染清除旧高亮，此处只需重置坐标
+                selectionStartCol = -1;
+                selectionStartRow = -1;
+                selectionEndCol = -1;
+                selectionEndRow = -1;
             } else {
+                // 拖拽选择完成，确保最终渲染（取消任何pending的节流渲染）
+                dragRenderPending = false;
                 render();
             }
         }

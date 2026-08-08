@@ -694,9 +694,12 @@ public class SqlEditorView extends BorderPane {
     private Node createTableView(TableRowData result, String sourceTableName) {
         TableView<ObservableList<String>> tableView = new TableView<>();
         GlobalConfig globalConfig = GlobalConfig.getInstance();
+        // 固定行高（读取全局配置 tableFontSize 派生）：避免内容多的行把整行撑得过高
+        int rowHeight = globalConfig.getTableFontSize() + 18;
+        tableView.setFixedCellSize(rowHeight);
         String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
                 globalConfig.getTableFontName(), globalConfig.getTableFontSize());
-        tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0;");
+        tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0; -fx-table-header-height: " + rowHeight + ";");
         tableView.setPlaceholder(new Label("无数据"));
         tableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         tableView.getSelectionModel().setCellSelectionEnabled(true);

@@ -492,9 +492,12 @@ public class TableDataView extends BorderPane {
         // 禁用默认排序，排序由右键菜单控制
         tableView.setSortPolicy(param -> false);
         GlobalConfig globalConfig = GlobalConfig.getInstance();
+        // 固定行高（读取全局配置 tableFontSize 派生）：避免内容多的行把整行撑得过高
+        int rowHeight = globalConfig.getTableFontSize() + 18;
+        tableView.setFixedCellSize(rowHeight);
         String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
                 globalConfig.getTableFontName(), globalConfig.getTableFontSize());
-        tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0;");
+        tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0; -fx-table-header-height: " + rowHeight + ";");
         tableView.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         tableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         tableView.getSelectionModel().setCellSelectionEnabled(true);
@@ -1212,9 +1215,11 @@ public class TableDataView extends BorderPane {
     }
 
     public void applyTableConfig(GlobalConfig config) {
+        int rowHeight = config.getTableFontSize() + 18;
+        tableView.setFixedCellSize(rowHeight);
         String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
                 config.getTableFontName(), config.getTableFontSize());
-        tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0;");
+        tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0; -fx-table-header-height: " + rowHeight + ";");
     }
 
     public void refreshData() {
