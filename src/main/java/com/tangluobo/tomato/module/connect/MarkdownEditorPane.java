@@ -8,6 +8,7 @@ import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
+import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
@@ -20,8 +21,17 @@ import javafx.print.PageOrientation;
 import javafx.print.Paper;
 import javafx.print.PrinterJob;
 import javafx.stage.FileChooser;
+import javafx.stage.Modality;
+import javafx.stage.Stage;
 
+import javafx.animation.KeyFrame;
+import javafx.animation.KeyValue;
+import javafx.animation.Timeline;
+import javafx.scene.effect.DropShadow;
+import javafx.scene.shape.Circle;
 import javafx.util.Duration;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.commonmark.node.BlockQuote;
 import org.commonmark.node.BulletList;
 import org.commonmark.node.Code;
@@ -98,6 +108,21 @@ public class MarkdownEditorPane extends BorderPane {
 
     private enum Mode { EDIT, EDIT_PREVIEW, PREVIEW }
     private Mode currentMode = Mode.EDIT_PREVIEW;
+
+    // 查找 / 替换对话框状态
+    private Stage findReplaceStage;
+    private TabPane findReplaceTabs;
+    private TextField findFieldFind;      // 查找标签内的查找框
+    private TextField findFieldReplace;   // 替换标签内的查找框
+    private TextField replaceField;
+    private Switch findRegexSwitch;       // 查找标签的正则开关
+    private Switch replaceRegexSwitch;    // 替换标签的正则开关
+    private Label findStatusLabel;
+    private Label replaceStatusLabel;
+    private boolean regexMode = false;
+    private boolean syncingFind = false; // 防止两个查找框双向同步时递归
+    private final java.util.List<int[]> findMatches = new java.util.ArrayList<>();
+    private int findIndex = -1;
 
     // 编辑器语法高亮样式
     private static final String STYLE_HEADING = "-fx-fill: #1163a6; -fx-font-weight: bold;";
@@ -214,6 +239,8 @@ public class MarkdownEditorPane extends BorderPane {
                 boolean shift = e.isShiftDown();
                 switch (e.getCode()) {
                     case S:             e.consume(); save();                          return;
+                    case F:             e.consume(); showFindReplace(false);         return;
+                    case R:             e.consume(); showFindReplace(true);          return;
                     case B:             e.consume(); toggleWrap("**", "**");          return;
                     case I:             e.consume(); toggleWrap("*", "*");            return;
                     case T:             e.consume(); toggleWrap("~~", "~~");          return;
@@ -1602,6 +1629,269 @@ public class MarkdownEditorPane extends BorderPane {
         a.showAndWait();
     }
 
+    // ==================== 查找 / 替换 ====================
+    // Ctrl+F 弹出查找标签，Ctrl+R 弹出替换标签；查找内容输入框与正则开关在标签上方共享；
+    // 正则开关为 iOS 风格自定义控件（参考 HostsFilePane.Switch）。查找通过选中当前匹配 + 状态计数呈现。
+
+    /** 显示查找/替换对话框，replace=true 进入“替换”标签 */
+    private void showFindReplace(boolean replace) {
+        if (findReplaceStage == null) {
+            buildFindReplaceDialog();
+        }
+        findReplaceTabs.getSelectionModel().select(replace ? 1 : 0);
+        if (!findReplaceStage.isShowing()) {
+            findReplaceStage.show();
+        } else {
+            findReplaceStage.toFront();
+        }
+        getActiveFindField().requestFocus();
+        updateMatches();
+    }
+
+    /** 构建查找/替换对话框（仅一次）。每个标签各自拥有查找框与正则开关，二者状态双向同步。 */
+    private void buildFindReplaceDialog() {
+        findReplaceStage = new Stage();
+        findReplaceStage.initOwner(getScene().getWindow());
+        findReplaceStage.initModality(Modality.NONE);
+        findReplaceStage.setTitle("查找与替换");
+        findReplaceStage.setResizable(false);
+
+        // 两个标签各自的查找框
+        findFieldFind = new TextField();
+        findFieldFind.setPrefWidth(320);
+        findFieldFind.setPromptText("输入查找内容（回车=下一个，Shift+回车=上一个）");
+        findFieldReplace = new TextField();
+        findFieldReplace.setPrefWidth(320);
+        findFieldReplace.setPromptText("输入查找内容（回车=下一个，Shift+回车=上一个）");
+        replaceField = new TextField();
+        replaceField.setPrefWidth(320);
+        replaceField.setPromptText("替换为（正则模式下支持 $1 等回引用）");
+
+        // 两个正则开关：状态同步到 regexMode
+        findRegexSwitch = new Switch();
+        findRegexSwitch.setOnToggle(() -> {
+            regexMode = findRegexSwitch.isSelected();
+            replaceRegexSwitch.syncSelected(regexMode);
+            updateMatches();
+        });
+        replaceRegexSwitch = new Switch();
+        replaceRegexSwitch.setOnToggle(() -> {
+            regexMode = replaceRegexSwitch.isSelected();
+            findRegexSwitch.syncSelected(regexMode);
+            updateMatches();
+        });
+
+        findStatusLabel = new Label();
+        findStatusLabel.setStyle("-fx-text-fill: #666; -fx-font-size: 12px;");
+        replaceStatusLabel = new Label();
+        replaceStatusLabel.setStyle("-fx-text-fill: #666; -fx-font-size: 12px;");
+
+        // 两个查找框的回车/Shift+回车 导航
+        for (TextField f : new TextField[]{findFieldFind, findFieldReplace}) {
+            f.setOnAction(e -> goToMatch(true));
+            f.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
+                if (e.getCode() == KeyCode.ENTER && e.isShiftDown()) {
+                    goToMatch(false);
+                    e.consume();
+                }
+            });
+        }
+
+        // 查找标签内容：查找框 + 正则开关 + 按钮 + 状态
+        Button findPrev = new Button("上一个");
+        Button findNext = new Button("下一个");
+        findPrev.setOnAction(e -> goToMatch(false));
+        findNext.setOnAction(e -> goToMatch(true));
+        HBox findSearchRow = new HBox(8, new Label("查找:"), findFieldFind);
+        HBox.setHgrow(findFieldFind, Priority.ALWAYS);
+        HBox findOptRow = new HBox(10, findRegexSwitch, new Label("正则表达式"));
+        findOptRow.setAlignment(Pos.CENTER_LEFT);
+        HBox findBtns = new HBox(8, findPrev, findNext);
+        VBox findContent = new VBox(8, findSearchRow, findOptRow, findBtns, findStatusLabel);
+
+        // 替换标签内容：查找框 + 正则开关 + 替换为 + 按钮 + 状态
+        Button repPrev = new Button("上一个");
+        Button repNext = new Button("下一个");
+        Button repOne = new Button("替换");
+        Button repAll = new Button("全部替换");
+        repPrev.setOnAction(e -> goToMatch(false));
+        repNext.setOnAction(e -> goToMatch(true));
+        repOne.setOnAction(e -> replaceCurrent());
+        repAll.setOnAction(e -> replaceAll());
+        HBox repSearchRow = new HBox(8, new Label("查找:"), findFieldReplace);
+        HBox.setHgrow(findFieldReplace, Priority.ALWAYS);
+        HBox repOptRow = new HBox(10, replaceRegexSwitch, new Label("正则表达式"));
+        repOptRow.setAlignment(Pos.CENTER_LEFT);
+        HBox replaceRow = new HBox(8, new Label("替换为:"), replaceField);
+        HBox.setHgrow(replaceField, Priority.ALWAYS);
+        HBox repBtns = new HBox(8, repPrev, repNext, repOne, repAll);
+        VBox replaceContent = new VBox(8, repSearchRow, repOptRow, replaceRow, repBtns, replaceStatusLabel);
+
+        Tab tabFind = new Tab("查找", findContent);
+        Tab tabReplace = new Tab("替换", replaceContent);
+        tabFind.setClosable(false);
+        tabReplace.setClosable(false);
+        findReplaceTabs = new TabPane(tabFind, tabReplace);
+
+        VBox root = new VBox(8);
+        root.setPadding(new Insets(12));
+        root.setStyle("-fx-background-color: white;");
+        root.getChildren().add(findReplaceTabs);
+
+        Scene scene = new Scene(root);
+        // 标签样式参考设计表（connect-tree.css 的 Firefox 风格标签）
+        scene.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+        // Esc 关闭
+        root.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
+            if (e.getCode() == KeyCode.ESCAPE) {
+                findReplaceStage.hide();
+                e.consume();
+            }
+        });
+        findReplaceStage.setScene(scene);
+        findReplaceStage.setOnHidden(e -> {
+            findMatches.clear();
+            findIndex = -1;
+        });
+
+        // 两个查找框文本双向同步，任一变化 → 重新计算匹配
+        findFieldFind.textProperty().addListener((o, a, b) -> {
+            if (syncingFind) return;
+            syncingFind = true;
+            findFieldReplace.setText(b);
+            syncingFind = false;
+            updateMatches();
+        });
+        findFieldReplace.textProperty().addListener((o, a, b) -> {
+            if (syncingFind) return;
+            syncingFind = true;
+            findFieldFind.setText(b);
+            syncingFind = false;
+            updateMatches();
+        });
+        // 编辑器文本变化时（如手动编辑/替换后）刷新匹配
+        editor.textProperty().addListener((o, a, b) -> {
+            if (findReplaceStage.isShowing()) updateMatches();
+        });
+    }
+
+    /** 当前选中标签对应的查找框 */
+    private TextField getActiveFindField() {
+        if (findReplaceTabs == null) return findFieldFind;
+        return findReplaceTabs.getSelectionModel().getSelectedIndex() == 0 ? findFieldFind : findFieldReplace;
+    }
+
+    /** 重新计算全部匹配，并定位到光标之后的第一处 */
+    private void updateMatches() {
+        findMatches.clear();
+        findIndex = -1;
+        String needle = getActiveFindField().getText();
+        String hay = editor.getText();
+        if (needle.isEmpty()) {
+            setStatus("");
+            return;
+        }
+        try {
+            if (regexMode) {
+                Matcher m = Pattern.compile(needle).matcher(hay);
+                while (m.find()) findMatches.add(new int[]{m.start(), m.end()});
+            } else {
+                int from = 0;
+                while (true) {
+                    int idx = hay.indexOf(needle, from);
+                    if (idx < 0) break;
+                    findMatches.add(new int[]{idx, idx + needle.length()});
+                    from = idx + needle.length();
+                }
+            }
+        } catch (Exception ex) {
+            setStatus("正则错误: " + ex.getMessage());
+            return;
+        }
+        if (findMatches.isEmpty()) {
+            setStatus("无匹配");
+            return;
+        }
+        // 定位到 caret 之后（含）的第一处
+        int caret = editor.getCaretPosition();
+        findIndex = 0;
+        for (int i = 0; i < findMatches.size(); i++) {
+            if (findMatches.get(i)[0] >= caret) { findIndex = i; break; }
+            findIndex = i;
+        }
+        showCurrentMatch();
+    }
+
+    /** 跳转到上一处/下一处匹配 */
+    private void goToMatch(boolean forward) {
+        if (findMatches.isEmpty()) { updateMatches(); return; }
+        if (forward) findIndex = (findIndex + 1) % findMatches.size();
+        else findIndex = (findIndex - 1 + findMatches.size()) % findMatches.size();
+        showCurrentMatch();
+    }
+
+    /** 选中并滚动到当前匹配 */
+    private void showCurrentMatch() {
+        if (findIndex < 0 || findIndex >= findMatches.size()) return;
+        int[] r = findMatches.get(findIndex);
+        editor.selectRange(r[0], r[1]);
+        editor.requestFollowCaret();
+        setStatus((findIndex + 1) + " / " + findMatches.size());
+    }
+
+    /** 替换当前匹配（正则模式下支持 $1 等回引用） */
+    private void replaceCurrent() {
+        if (findIndex < 0 || findIndex >= findMatches.size()) return;
+        int[] r = findMatches.get(findIndex);
+        String rep = replaceField.getText();
+        String replacement;
+        if (regexMode) {
+            try {
+                Matcher m = Pattern.compile(getActiveFindField().getText()).matcher(editor.getText());
+                if (m.find(r[0])) {
+                    StringBuffer sbuf = new StringBuffer();
+                    m.appendReplacement(sbuf, rep);
+                    replacement = sbuf.substring(r[0]);
+                } else {
+                    replacement = rep;
+                }
+            } catch (Exception ex) {
+                setStatus("替换错误: " + ex.getMessage());
+                return;
+            }
+        } else {
+            replacement = rep;
+        }
+        editor.replaceText(r[0], r[1], replacement);
+        // replaceText 触发 editor 文本变化监听 → updateMatches 会自动刷新
+        goToMatch(true);
+    }
+
+    /** 全部替换 */
+    private void replaceAll() {
+        String needle = getActiveFindField().getText();
+        String rep = replaceField.getText();
+        String text = editor.getText();
+        String result;
+        try {
+            if (regexMode) {
+                result = Pattern.compile(needle).matcher(text).replaceAll(rep);
+            } else {
+                result = text.replace(needle, rep);
+            }
+        } catch (Exception ex) {
+            setStatus("替换错误: " + ex.getMessage());
+            return;
+        }
+        editor.replaceText(result);
+        setStatus("已替换");
+    }
+
+    private void setStatus(String s) {
+        if (findStatusLabel != null) findStatusLabel.setText(s);
+        if (replaceStatusLabel != null) replaceStatusLabel.setText(s);
+    }
+
     /** 文件名安全化：去除 Windows 非法字符 */
     private static String safeFileName(String name) {
         if (name == null || name.isBlank()) return "导出";
@@ -1613,5 +1903,70 @@ public class MarkdownEditorPane extends BorderPane {
         }
         String r = sb.toString();
         return r.isBlank() ? "导出" : r;
+    }
+
+    /**
+     * iOS 风格的开关控件（参考 HostsFilePane.Switch：StackPane + Region 轨道 + Circle 滑块）。
+     * 用于查找/替换对话框的“正则表达式”开关。
+     */
+    private static class Switch extends StackPane {
+        private static final double W = 38, H = 20, THUMB = 16;
+        private final Region track = new Region();
+        private final Circle thumb = new Circle(THUMB / 2.0);
+        private boolean selected = false;
+        private Runnable onToggle;
+
+        Switch() {
+            setPrefSize(W, H);
+            setMinSize(W, H);
+            setMaxSize(W, H);
+
+            track.setPrefSize(W, H);
+            track.setStyle("-fx-background-radius: 10;");
+
+            thumb.setFill(Color.WHITE);
+            thumb.setEffect(new DropShadow(4, 0, 1, Color.rgb(0, 0, 0, 0.25)));
+            thumb.setTranslateX(-9);
+
+            getChildren().addAll(track, thumb);
+            updateVisual(false);
+
+            disabledProperty().addListener((o, a, d) -> updateVisual(false));
+
+            setOnMouseClicked(e -> {
+                if (isDisabled()) return;
+                e.consume();
+                toggle();
+            });
+        }
+
+        private void toggle() {
+            selected = !selected;
+            updateVisual(true);
+            if (onToggle != null) onToggle.run();
+        }
+
+        void syncSelected(boolean s) {
+            this.selected = s;
+            updateVisual(false);
+        }
+
+        boolean isSelected() { return selected; }
+
+        void setOnToggle(Runnable r) { this.onToggle = r; }
+
+        private void updateVisual(boolean animate) {
+            String bg = selected ? "#4CAF50" : "#bdbdbd";
+            if (isDisabled()) bg = "#e0e0e0";
+            track.setStyle("-fx-background-color: " + bg + "; -fx-background-radius: 10;");
+            double tx = selected ? 9 : -9;
+            if (animate) {
+                Timeline tl = new Timeline(new KeyFrame(Duration.millis(150),
+                        new KeyValue(thumb.translateXProperty(), tx)));
+                tl.play();
+            } else {
+                thumb.setTranslateX(tx);
+            }
+        }
     }
 }
