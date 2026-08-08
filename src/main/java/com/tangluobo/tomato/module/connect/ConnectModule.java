@@ -255,18 +255,32 @@ public class ConnectModule implements Module {
         root.getChildren().clear();
         itemConfigMap.clear();
         dbNodeDataMap.clear();
+        buildConnectionTree();
+    }
+
+    /**
+     * 根据 connections 列表构建连接树。
+     * 先创建所有节点并建立 id→item 映射，再按 parentId 连接父子关系，
+     * 避免列表中子连接排在父连接之前时（如拖动移动后）找不到父节点而丢失。
+     */
+    private void buildConnectionTree() {
+        Map<String, TreeItem<String>> idToItem = new HashMap<>();
         for (ConnectionConfig config : connections) {
-            if (config.getParentId() == null || config.getParentId().isEmpty()) {
-                TreeItem<String> item = createTreeItem(config);
-                root.getChildren().add(item);
-            }
+            TreeItem<String> item = createTreeItem(config);
+            idToItem.put(config.getId(), item);
         }
         for (ConnectionConfig config : connections) {
-            if (config.getParentId() != null && !config.getParentId().isEmpty()) {
-                TreeItem<String> parent = findItemById(root, config.getParentId());
+            TreeItem<String> item = idToItem.get(config.getId());
+            String pid = config.getParentId();
+            if (pid == null || pid.isEmpty()) {
+                root.getChildren().add(item);
+            } else {
+                TreeItem<String> parent = idToItem.get(pid);
                 if (parent != null) {
-                    TreeItem<String> item = createTreeItem(config);
                     parent.getChildren().add(item);
+                } else {
+                    // 父节点不存在，作为根节点的子节点兜底，避免连接丢失
+                    root.getChildren().add(item);
                 }
             }
         }
@@ -281,22 +295,7 @@ public class ConnectModule implements Module {
 
         root.getChildren().clear();
         itemConfigMap.clear();
-
-        for (ConnectionConfig config : connections) {
-            if (config.getParentId() == null || config.getParentId().isEmpty()) {
-                TreeItem<String> item = createTreeItem(config);
-                root.getChildren().add(item);
-            }
-        }
-        for (ConnectionConfig config : connections) {
-            if (config.getParentId() != null && !config.getParentId().isEmpty()) {
-                TreeItem<String> parent = findItemById(root, config.getParentId());
-                if (parent != null) {
-                    TreeItem<String> item = createTreeItem(config);
-                    parent.getChildren().add(item);
-                }
-            }
-        }
+        buildConnectionTree();
 
         filterTreeItem(root, kw);
         expandAll(root);
