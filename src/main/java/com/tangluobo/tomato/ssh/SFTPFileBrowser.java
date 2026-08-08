@@ -21,12 +21,15 @@ import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 
 import javax.swing.filechooser.FileSystemView;
+import java.awt.Desktop;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * SFTP文件浏览器组件
@@ -52,6 +55,10 @@ public class SFTPFileBrowser extends BorderPane {
     private final Image defaultFileIcon;
     private final java.util.Map<String, Image> systemIconCache = new java.util.HashMap<>();
     private final File iconTempDir;
+
+    // 本地编辑缓存：远程路径 -> 本地文件 / 已知最后修改时间
+    private final Map<String, File> editCache = new ConcurrentHashMap<>();
+    private final Map<String, Long> editLastModified = new ConcurrentHashMap<>();
 
     public SFTPFileBrowser(SSHSession sshSession, SFTPClient sftpClient) {
         this.sshSession = sshSession;
@@ -274,7 +281,7 @@ public class SFTPFileBrowser extends BorderPane {
         fileTable.getColumns().addAll(nameCol, sizeCol);
         fileTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
 
-        // 双击进入目录或下载文件
+        // 双击进入目录或用本地应用打开文件
         fileTable.setRowFactory(tv -> {
             TableRow<FileItem> row = new TableRow<>();
             row.setOnMouseClicked(e -> {
@@ -283,7 +290,7 @@ public class SFTPFileBrowser extends BorderPane {
                     if (item.isDirectory()) {
                         navigateTo(item.getPath());
                     } else {
-                        downloadFile(item);
+                        openWithLocalApp(item);
                     }
                 }
             });
@@ -379,6 +386,14 @@ public class SFTPFileBrowser extends BorderPane {
             }
         });
 
+        MenuItem openLocalItem = new MenuItem("用本地应用打开");
+        openLocalItem.setOnAction(e -> {
+            FileItem selected = fileTable.getSelectionModel().getSelectedItem();
+            if (selected != null && !selected.isDirectory()) {
+                openWithLocalApp(selected);
+            }
+        });
+
         MenuItem deleteItem = new MenuItem("删除");
         deleteItem.setOnAction(e -> {
             FileItem selected = fileTable.getSelectionModel().getSelectedItem();
@@ -393,7 +408,7 @@ public class SFTPFileBrowser extends BorderPane {
         MenuItem refreshItem = new MenuItem("刷新");
         refreshItem.setOnAction(e -> refresh());
 
-        menu.getItems().addAll(uploadItem, downloadItem, new SeparatorMenuItem(), mkdirItem, deleteItem, new SeparatorMenuItem(), refreshItem);
+        menu.getItems().addAll(uploadItem, downloadItem, openLocalItem, new SeparatorMenuItem(), mkdirItem, deleteItem, new SeparatorMenuItem(), refreshItem);
         return menu;
     }
 
@@ -497,6 +512,123 @@ public class SFTPFileBrowser extends BorderPane {
         } catch (Exception e) {
             Platform.runLater(() -> statusLabel.setText("拖拽下载失败: " + e.getMessage()));
             return null;
+        }
+    }
+
+    /**
+     * 用本地应用打开文件：下载到临时目录后调用系统默认应用打开。
+     * 文件修改后会自动上传到远程（直接保存或关闭时保存均生效）。
+     */
+    private void openWithLocalApp(FileItem item) {
+        String remotePath = item.getPath();
+        File cachedFile = editCache.get(remotePath);
+
+        if (cachedFile != null && cachedFile.exists()) {
+            // 已缓存，直接重新打开
+            File localFile = cachedFile;
+            new Thread(() -> {
+                openLocalFile(localFile);
+                Platform.runLater(() -> statusLabel.setText("已用本地应用打开: " + item.getName()));
+            }, "SFTP-Open").start();
+            return;
+        }
+
+        statusLabel.setText("下载中: " + item.getName());
+        new Thread(() -> {
+            try {
+                File editRoot = new File(System.getProperty("java.io.tmpdir"), "tomato-edit");
+                File editDir = new File(editRoot, Integer.toHexString(remotePath.hashCode() & 0x7FFFFFFF));
+                if (!editDir.exists()) editDir.mkdirs();
+                File localFile = new File(editDir, item.getName());
+                sftpClient.download(remotePath, localFile.getAbsolutePath());
+                long initialModified = localFile.lastModified();
+                editCache.put(remotePath, localFile);
+                editLastModified.put(remotePath, initialModified);
+
+                openLocalFile(localFile);
+                Platform.runLater(() -> statusLabel.setText("已用本地应用打开: " + item.getName()));
+
+                startEditMonitor(item, localFile);
+            } catch (Exception e) {
+                Platform.runLater(() -> statusLabel.setText("打开失败: " + e.getMessage()));
+            }
+        }, "SFTP-Edit").start();
+    }
+
+    /**
+     * 调用系统默认应用打开本地文件
+     */
+    private void openLocalFile(File localFile) {
+        try {
+            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
+                Desktop.getDesktop().open(localFile);
+            } else {
+                String os = System.getProperty("os.name").toLowerCase();
+                if (os.contains("win")) {
+                    Runtime.getRuntime().exec(new String[]{"cmd", "/c", "start", "", localFile.getAbsolutePath()});
+                } else if (os.contains("mac")) {
+                    Runtime.getRuntime().exec(new String[]{"open", localFile.getAbsolutePath()});
+                } else {
+                    Runtime.getRuntime().exec(new String[]{"xdg-open", localFile.getAbsolutePath()});
+                }
+            }
+        } catch (Exception e) {
+            Platform.runLater(() -> statusLabel.setText("无法打开本地应用: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 监控本地文件修改，修改后自动上传到远程。
+     * 每次在本地应用中保存（Ctrl+S 或关闭时保存）都会触发上传。
+     */
+    private void startEditMonitor(FileItem item, File localFile) {
+        String remotePath = item.getPath();
+        Thread monitor = new Thread(() -> {
+            long lastKnown = editLastModified.getOrDefault(remotePath, 0L);
+            long lastActivity = System.currentTimeMillis();
+            long pollInterval = 2000;
+            long maxIdleTime = 30 * 60 * 1000; // 30分钟无修改则停止监控
+
+            while (true) {
+                try {
+                    Thread.sleep(pollInterval);
+                } catch (InterruptedException e) {
+                    break;
+                }
+                if (!localFile.exists()) {
+                    break;
+                }
+                long current = localFile.lastModified();
+                if (current != lastKnown) {
+                    lastKnown = current;
+                    editLastModified.put(remotePath, lastKnown);
+                    lastActivity = System.currentTimeMillis();
+                    uploadEditToRemote(item, localFile);
+                }
+                if (System.currentTimeMillis() - lastActivity > maxIdleTime) {
+                    break;
+                }
+            }
+            editCache.remove(remotePath);
+            editLastModified.remove(remotePath);
+        }, "SFTP-Monitor-" + item.getName());
+        monitor.setDaemon(true);
+        monitor.start();
+    }
+
+    /**
+     * 上传本地修改后的文件到远程
+     */
+    private void uploadEditToRemote(FileItem item, File localFile) {
+        try {
+            if (!sftpClient.isConnected()) {
+                Platform.runLater(() -> statusLabel.setText("SFTP未连接，无法保存远程: " + item.getName()));
+                return;
+            }
+            sftpClient.upload(localFile.getAbsolutePath(), item.getPath());
+            Platform.runLater(() -> statusLabel.setText("已保存到远程: " + item.getName()));
+        } catch (Exception e) {
+            Platform.runLater(() -> statusLabel.setText("保存远程失败: " + e.getMessage()));
         }
     }
 
