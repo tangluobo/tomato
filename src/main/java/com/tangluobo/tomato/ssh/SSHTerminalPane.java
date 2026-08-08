@@ -14,6 +14,7 @@ import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.ScrollBar;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.Clipboard;
@@ -25,6 +26,7 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
+import javafx.scene.SnapshotParameters;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
@@ -74,6 +76,7 @@ public class SSHTerminalPane extends BorderPane {
     private final Label connLabel;
     private final Label encodingLabel;
     private final Circle statusDot;
+    private final Button portBtn;
     private final Button folderBtn;
     private final Button monitorBtn;
 
@@ -91,6 +94,10 @@ public class SSHTerminalPane extends BorderPane {
     // 监控视图
     private boolean monitorVisible = false;
     private MonitorPanel monitorPanel;
+
+    // 端口视图
+    private boolean portVisible = false;
+    private PortPanel portPanel;
 
     // 防止scrollbar↔render循环
     private boolean updatingScrollbar = false;
@@ -137,15 +144,24 @@ public class SSHTerminalPane extends BorderPane {
         folderBtn = new Button();
         folderBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
         folderBtn.setGraphic(createIcon("/images/connect/folder.png", false));
+        folderBtn.setTooltip(new Tooltip("文件"));
         folderBtn.setOnAction(e -> toggleFileBrowser());
 
         // 监控视图开关按钮
         monitorBtn = new Button();
         monitorBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
         monitorBtn.setGraphic(createIcon("/images/connect/monitor.png", false));
+        monitorBtn.setTooltip(new Tooltip("监控"));
         monitorBtn.setOnAction(e -> toggleMonitor());
 
-        statusBar.getChildren().addAll(statusDot, stateLabel, connLabel, encodingLabel, spacer, folderBtn, monitorBtn);
+        // 端口视图开关按钮
+        portBtn = new Button();
+        portBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
+        portBtn.setGraphic(createPortIcon(false));
+        portBtn.setTooltip(new Tooltip("端口"));
+        portBtn.setOnAction(e -> togglePort());
+
+        statusBar.getChildren().addAll(statusDot, stateLabel, connLabel, encodingLabel, spacer, portBtn, folderBtn, monitorBtn);
 
         // 终端区域 + 右侧滚动条
         scrollBar = new ScrollBar();
@@ -402,16 +418,47 @@ public class SSHTerminalPane extends BorderPane {
     }
 
     /**
+     * 切换端口视图显示
+     */
+    private void togglePort() {
+        if (portVisible) {
+            // 关闭端口视图
+            if (portPanel != null) {
+                portPanel.stopMonitoring();
+                if (rightPanel.getChildren().contains(portPanel)) {
+                    rightPanel.getChildren().remove(portPanel);
+                }
+            }
+            portVisible = false;
+            portBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
+            portBtn.setGraphic(createPortIcon(false));
+            updateRightPanelVisibility();
+        } else {
+            // 打开端口视图
+            if (sshSession == null || !sshSession.isConnected()) return;
+            if (portPanel == null) {
+                portPanel = new PortPanel(sshSession);
+            }
+            javafx.scene.layout.VBox.setVgrow(portPanel, javafx.scene.layout.Priority.ALWAYS);
+            ensureRightPanelVisible();
+            if (!rightPanel.getChildren().contains(portPanel)) {
+                rightPanel.getChildren().add(portPanel);
+            }
+            portPanel.startMonitoring();
+            portVisible = true;
+            portBtn.setStyle("-fx-background-color: #e0e0e0; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand; -fx-border-radius: 3;");
+            portBtn.setGraphic(createPortIcon(true));
+        }
+    }
+
+    /**
      * 确保右侧面板在SplitPane中可见
      */
     private void ensureRightPanelVisible() {
         if (!splitPane.getItems().contains(rightPanel)) {
             splitPane.getItems().add(rightPanel);
-            if (fileBrowserVisible && monitorVisible) {
-                splitPane.setDividerPositions(0.7);
-            } else {
-                splitPane.setDividerPositions(0.8);
-            }
+            int visibleCount = countVisiblePanels();
+            splitPane.setDividerPositions(visibleCount >= 2 ? 0.4 : 0.6);
         }
     }
 
@@ -419,14 +466,25 @@ public class SSHTerminalPane extends BorderPane {
      * 更新右侧面板的可见性
      */
     private void updateRightPanelVisibility() {
-        if (!fileBrowserVisible && !monitorVisible) {
+        if (!fileBrowserVisible && !monitorVisible && !portVisible) {
             if (splitPane.getItems().contains(rightPanel)) {
                 splitPane.getItems().remove(rightPanel);
             }
         } else if (!splitPane.getItems().contains(rightPanel)) {
             splitPane.getItems().add(rightPanel);
-            splitPane.setDividerPositions(fileBrowserVisible && monitorVisible ? 0.7 : 0.8);
+            splitPane.setDividerPositions(countVisiblePanels() >= 2 ? 0.4 : 0.6);
         }
+    }
+
+    /**
+     * 统计当前可见的右侧面板数量
+     */
+    private int countVisiblePanels() {
+        int count = 0;
+        if (fileBrowserVisible) count++;
+        if (monitorVisible) count++;
+        if (portVisible) count++;
+        return count;
     }
 
     /**
@@ -520,6 +578,43 @@ public class SSHTerminalPane extends BorderPane {
     }
 
     /**
+     * 创建端口图标（程序化绘制：网络插口样式）
+     * @param active 是否激活状态
+     */
+    private ImageView createPortIcon(boolean active) {
+        Canvas canvas = new Canvas(16, 16);
+        GraphicsContext gc = canvas.getGraphicsContext2D();
+        gc.clearRect(0, 0, 16, 16);
+
+        // 外框：网络端口插口
+        gc.setStroke(Color.valueOf("#4a90d9"));
+        gc.setLineWidth(1.2);
+        gc.strokeRoundRect(2, 3, 12, 10, 2, 2);
+
+        // 顶部接口线
+        gc.strokeLine(5, 3, 5, 1);
+        gc.strokeLine(8, 3, 8, 1);
+        gc.strokeLine(11, 3, 11, 1);
+
+        // 内部触点
+        gc.setFill(Color.valueOf("#4a90d9"));
+        gc.fillRoundRect(4, 6, 8, 4, 1, 1);
+
+        // 底部标识点
+        gc.setFill(Color.valueOf("#2d7d46"));
+        gc.fillOval(7, 11, 2, 2);
+
+        SnapshotParameters params = new SnapshotParameters();
+        params.setFill(Color.TRANSPARENT);
+        Image image = canvas.snapshot(params, null);
+        ImageView iv = new ImageView(image);
+        iv.setFitWidth(16);
+        iv.setFitHeight(16);
+        iv.setOpacity(active ? 1.0 : 0.6);
+        return iv;
+    }
+
+    /**
      * 粘贴剪贴板内容到终端
      */
     private void doPaste() {
@@ -587,6 +682,16 @@ public class SSHTerminalPane extends BorderPane {
         monitorVisible = false;
         monitorPanel = null;
 
+        // 关闭端口视图
+        if (portPanel != null) {
+            portPanel.stopMonitoring();
+            if (rightPanel.getChildren().contains(portPanel)) {
+                rightPanel.getChildren().remove(portPanel);
+            }
+        }
+        portVisible = false;
+        portPanel = null;
+
         updateStatusBar("已断开");
     }
 
@@ -632,6 +737,20 @@ public class SSHTerminalPane extends BorderPane {
                             splitPane.setDividerPositions(0.7);
                         }
                         fileBrowser.initConnection();
+                    });
+                }
+
+                // 如果端口视图打开，重新绑定新会话
+                if (portVisible && portPanel != null) {
+                    portPanel.stopMonitoring();
+                    PortPanel oldPanel = portPanel;
+                    portPanel = new PortPanel(sshSession);
+                    Platform.runLater(() -> {
+                        if (rightPanel.getChildren().contains(oldPanel)) {
+                            int idx = rightPanel.getChildren().indexOf(oldPanel);
+                            rightPanel.getChildren().set(idx, portPanel);
+                        }
+                        portPanel.startMonitoring();
                     });
                 }
 
