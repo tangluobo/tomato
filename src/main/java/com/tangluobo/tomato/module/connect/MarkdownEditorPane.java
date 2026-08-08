@@ -1656,15 +1656,22 @@ public class MarkdownEditorPane extends BorderPane {
         findReplaceStage.setTitle("查找与替换");
         findReplaceStage.setResizable(false);
 
+        // 文本框统一样式：1px 蓝边、白底、无聚焦毛玻璃效果
+        String fieldStyle = "-fx-border-color:#1a73e8; -fx-border-width:1px; -fx-background-color:white; " +
+                "-fx-background-insets:0; -fx-background-radius:0; -fx-focus-color:transparent; -fx-faint-focus-color:transparent;";
+
         // 两个标签各自的查找框
         findFieldFind = new TextField();
         findFieldFind.setPrefWidth(320);
+        findFieldFind.setStyle(fieldStyle);
         findFieldFind.setPromptText("输入查找内容（回车=下一个，Shift+回车=上一个）");
         findFieldReplace = new TextField();
         findFieldReplace.setPrefWidth(320);
+        findFieldReplace.setStyle(fieldStyle);
         findFieldReplace.setPromptText("输入查找内容（回车=下一个，Shift+回车=上一个）");
         replaceField = new TextField();
         replaceField.setPrefWidth(320);
+        replaceField.setStyle(fieldStyle);
         replaceField.setPromptText("替换为（正则模式下支持 $1 等回引用）");
 
         // 两个正则开关：状态同步到 regexMode
@@ -1702,12 +1709,15 @@ public class MarkdownEditorPane extends BorderPane {
         Button findNext = new Button("下一个");
         findPrev.setOnAction(e -> goToMatch(false));
         findNext.setOnAction(e -> goToMatch(true));
-        HBox findSearchRow = new HBox(8, new Label("查找:"), findFieldFind);
+        HBox findSearchRow = new HBox(8, fieldLabel("查找:", 80), findFieldFind);
+        findSearchRow.setAlignment(Pos.CENTER_LEFT);
         HBox.setHgrow(findFieldFind, Priority.ALWAYS);
-        HBox findOptRow = new HBox(10, findRegexSwitch, new Label("正则表达式"));
+        HBox findOptRow = new HBox(8, fieldLabel("正则表达式", 80), findRegexSwitch);
         findOptRow.setAlignment(Pos.CENTER_LEFT);
         HBox findBtns = new HBox(8, findPrev, findNext);
         VBox findContent = new VBox(8, findSearchRow, findOptRow, findBtns, findStatusLabel);
+        findContent.setPadding(new Insets(5));
+        findContent.setStyle("-fx-background-color: white;");
 
         // 替换标签内容：查找框 + 正则开关 + 替换为 + 按钮 + 状态
         Button repPrev = new Button("上一个");
@@ -1718,14 +1728,18 @@ public class MarkdownEditorPane extends BorderPane {
         repNext.setOnAction(e -> goToMatch(true));
         repOne.setOnAction(e -> replaceCurrent());
         repAll.setOnAction(e -> replaceAll());
-        HBox repSearchRow = new HBox(8, new Label("查找:"), findFieldReplace);
+        HBox repSearchRow = new HBox(8, fieldLabel("查找:", 80), findFieldReplace);
+        repSearchRow.setAlignment(Pos.CENTER_LEFT);
         HBox.setHgrow(findFieldReplace, Priority.ALWAYS);
-        HBox repOptRow = new HBox(10, replaceRegexSwitch, new Label("正则表达式"));
+        HBox repOptRow = new HBox(8, fieldLabel("正则表达式", 80), replaceRegexSwitch);
         repOptRow.setAlignment(Pos.CENTER_LEFT);
-        HBox replaceRow = new HBox(8, new Label("替换为:"), replaceField);
+        HBox replaceRow = new HBox(8, fieldLabel("替换为:", 80), replaceField);
+        replaceRow.setAlignment(Pos.CENTER_LEFT);
         HBox.setHgrow(replaceField, Priority.ALWAYS);
         HBox repBtns = new HBox(8, repPrev, repNext, repOne, repAll);
-        VBox replaceContent = new VBox(8, repSearchRow, repOptRow, replaceRow, repBtns, replaceStatusLabel);
+        VBox replaceContent = new VBox(8, repSearchRow, replaceRow, repOptRow, repBtns, replaceStatusLabel);
+        replaceContent.setPadding(new Insets(5));
+        replaceContent.setStyle("-fx-background-color: white;");
 
         Tab tabFind = new Tab("查找", findContent);
         Tab tabReplace = new Tab("替换", replaceContent);
@@ -1734,7 +1748,7 @@ public class MarkdownEditorPane extends BorderPane {
         findReplaceTabs = new TabPane(tabFind, tabReplace);
 
         VBox root = new VBox(8);
-        root.setPadding(new Insets(12));
+        root.setPadding(new Insets(0));
         root.setStyle("-fx-background-color: white;");
         root.getChildren().add(findReplaceTabs);
 
@@ -1890,6 +1904,16 @@ public class MarkdownEditorPane extends BorderPane {
     private void setStatus(String s) {
         if (findStatusLabel != null) findStatusLabel.setText(s);
         if (replaceStatusLabel != null) replaceStatusLabel.setText(s);
+    }
+
+    /** 固定宽度、右对齐的标签：使多行 "xx:" 的冒号垂直对齐，后续输入框起点一致 */
+    private static Label fieldLabel(String text, double width) {
+        Label l = new Label(text);
+        l.setPrefWidth(width);
+        l.setMinWidth(width);
+        l.setMaxWidth(width);
+        l.setAlignment(Pos.CENTER_RIGHT);
+        return l;
     }
 
     /** 文件名安全化：去除 Windows 非法字符 */
