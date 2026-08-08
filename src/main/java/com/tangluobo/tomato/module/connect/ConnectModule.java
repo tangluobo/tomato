@@ -3,6 +3,7 @@ package com.tangluobo.tomato.module.connect;
 import com.tangluobo.tomato.module.Module;
 import com.tangluobo.tomato.module.connect.dialog.BackupDialog;
 import com.tangluobo.tomato.module.connect.dialog.ConnectionConfigDialog;
+import com.tangluobo.tomato.module.connect.dialog.ExportConnectionDialog;
 import com.tangluobo.tomato.module.connect.dialog.FolderDialog;
 import com.tangluobo.tomato.module.connect.dialog.RestoreDialog;
 import com.tangluobo.tomato.module.connect.handler.*;
@@ -28,8 +29,14 @@ import javafx.scene.paint.Color;
 import javafx.scene.shape.*;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javafx.beans.value.ChangeListener;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -437,7 +444,11 @@ public class ConnectModule implements Module {
                 addFolder.setOnAction(e -> handleAddFolder(root));
                 MenuItem addConnection = new MenuItem("新建连接");
                 addConnection.setOnAction(e -> handleAddConnection(root));
-                contextMenu.getItems().addAll(addFolder, addConnection);
+                MenuItem importItem = new MenuItem("导入连接");
+                importItem.setOnAction(e -> handleImportConnections());
+                MenuItem exportItem = new MenuItem("导出连接");
+                exportItem.setOnAction(e -> handleExportConnections());
+                contextMenu.getItems().addAll(addFolder, addConnection, new SeparatorMenuItem(), importItem, exportItem);
             } else {
                 DatabaseNodeData dbData = dbNodeDataMap.get(targetItem);
                 if (dbData != null) {
@@ -1677,6 +1688,179 @@ public class ConnectModule implements Module {
     public boolean ensureTabPaneInstalled() {
         // 现在 terminalTabPane 始终在 contentArea 中，直接返回 true
         return terminalTabPane != null;
+    }
+
+    private void handleExportConnections() {
+        if (connections.isEmpty()) {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION);
+            alert.setTitle("提示");
+            alert.setHeaderText(null);
+            alert.setContentText("没有可导出的连接");
+            alert.showAndWait();
+            return;
+        }
+
+        Stage stage = getStage();
+        if (stage == null) return;
+
+        ExportConnectionDialog dialog = new ExportConnectionDialog(stage, connections);
+        if (!dialog.showAndWait()) return;
+
+        List<ConnectionConfig> selected = dialog.getSelectedConfigs();
+        boolean includePasswords = dialog.includePasswords();
+
+        // 深拷贝选中的配置，避免修改内存中的原始对象
+        Gson gson = new GsonBuilder().setPrettyPrinting().create();
+        List<ConnectionConfig> exportConfigs = new ArrayList<>();
+        for (ConnectionConfig config : selected) {
+            ConnectionConfig copy = gson.fromJson(gson.toJson(config), ConnectionConfig.class);
+            if (!includePasswords) {
+                copy.setPassword(null);
+                copy.setSshTunnelPassword(null);
+            }
+            exportConfigs.add(copy);
+        }
+
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("导出连接");
+        fileChooser.getExtensionFilters().add(
+                new FileChooser.ExtensionFilter("JSON 文件", "*.json")
+        );
+        fileChooser.setInitialFileName("connections_export.json");
+
+        java.io.File file = fileChooser.showSaveDialog(stage);
+        if (file == null) return;
+
+        try {
+            JsonObject exportObj = new JsonObject();
+            exportObj.addProperty("format", "tomato-connections-export");
+            exportObj.addProperty("version", 1);
+            exportObj.add("connections", gson.toJsonTree(exportConfigs));
+
+            Files.writeString(file.toPath(), gson.toJson(exportObj), StandardCharsets.UTF_8);
+
+            Alert alert = new Alert(Alert.AlertType.INFORMATION);
+            alert.setTitle("导出成功");
+            alert.setHeaderText(null);
+            alert.setContentText("已导出 " + exportConfigs.size() + " 个连接到:\n" + file.getAbsolutePath());
+            alert.showAndWait();
+        } catch (Exception e) {
+            e.printStackTrace();
+            Alert alert = new Alert(Alert.AlertType.ERROR);
+            alert.setTitle("导出失败");
+            alert.setHeaderText(null);
+            alert.setContentText("导出失败: " + e.getMessage());
+            alert.showAndWait();
+        }
+    }
+
+    private void handleImportConnections() {
+        Stage stage = getStage();
+        if (stage == null) return;
+
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("导入连接");
+        fileChooser.getExtensionFilters().add(
+                new FileChooser.ExtensionFilter("JSON 文件", "*.json")
+        );
+
+        java.io.File file = fileChooser.showOpenDialog(stage);
+        if (file == null) return;
+
+        try {
+            String content = Files.readString(file.toPath(), StandardCharsets.UTF_8);
+            com.google.gson.JsonElement jsonElement = JsonParser.parseString(content);
+
+            List<ConnectionConfig> importConfigs;
+            if (jsonElement.isJsonObject()) {
+                JsonObject importObj = jsonElement.getAsJsonObject();
+                String format = importObj.has("format") ? importObj.get("format").getAsString() : null;
+                if ("tomato-connections-export".equals(format)) {
+                    ConnectionConfig[] configs = new Gson().fromJson(importObj.getAsJsonArray("connections"), ConnectionConfig[].class);
+                    importConfigs = configs != null ? new ArrayList<>(List.of(configs)) : new ArrayList<>();
+                } else {
+                    // 尝试从对象中直接读取 connections 数组
+                    if (importObj.has("connections")) {
+                        ConnectionConfig[] configs = new Gson().fromJson(importObj.getAsJsonArray("connections"), ConnectionConfig[].class);
+                        importConfigs = configs != null ? new ArrayList<>(List.of(configs)) : new ArrayList<>();
+                    } else {
+                        importConfigs = new ArrayList<>();
+                    }
+                }
+            } else if (jsonElement.isJsonArray()) {
+                // 兼容纯数组格式
+                ConnectionConfig[] configs = new Gson().fromJson(jsonElement.getAsJsonArray(), ConnectionConfig[].class);
+                importConfigs = configs != null ? new ArrayList<>(List.of(configs)) : new ArrayList<>();
+            } else {
+                importConfigs = new ArrayList<>();
+            }
+
+            if (importConfigs.isEmpty()) {
+                Alert alert = new Alert(Alert.AlertType.WARNING);
+                alert.setTitle("导入");
+                alert.setHeaderText(null);
+                alert.setContentText("文件中没有可导入的连接");
+                alert.showAndWait();
+                return;
+            }
+
+            // 生成新 ID 并重映射 parentId，保留目录结构
+            Map<String, String> idMapping = new HashMap<>();
+            for (ConnectionConfig config : importConfigs) {
+                String oldId = config.getId();
+                String newId = ConfigManager.generateId();
+                config.setId(newId);
+                if (oldId != null) {
+                    idMapping.put(oldId, newId);
+                }
+            }
+            for (ConnectionConfig config : importConfigs) {
+                String oldParentId = config.getParentId();
+                if (oldParentId != null && !oldParentId.isEmpty()) {
+                    String newParentId = idMapping.get(oldParentId);
+                    if (newParentId != null) {
+                        config.setParentId(newParentId);
+                    } else {
+                        // 父节点不在导入范围内，设为根级
+                        config.setParentId(null);
+                    }
+                }
+            }
+
+            // 检查名称冲突，重名时添加后缀
+            Set<String> existingNames = new HashSet<>();
+            for (ConnectionConfig c : connections) {
+                existingNames.add(c.getName());
+            }
+            for (ConnectionConfig config : importConfigs) {
+                String baseName = config.getName();
+                String name = baseName;
+                int suffix = 1;
+                while (existingNames.contains(name)) {
+                    name = baseName + " (" + suffix + ")";
+                    suffix++;
+                }
+                config.setName(name);
+                existingNames.add(name);
+            }
+
+            connections.addAll(importConfigs);
+            ConfigManager.saveConnections(connections);
+            loadTree();
+
+            Alert alert = new Alert(Alert.AlertType.INFORMATION);
+            alert.setTitle("导入成功");
+            alert.setHeaderText(null);
+            alert.setContentText("已成功导入 " + importConfigs.size() + " 个连接");
+            alert.showAndWait();
+        } catch (Exception e) {
+            e.printStackTrace();
+            Alert alert = new Alert(Alert.AlertType.ERROR);
+            alert.setTitle("导入失败");
+            alert.setHeaderText(null);
+            alert.setContentText("导入失败: " + e.getMessage());
+            alert.showAndWait();
+        }
     }
 
     @Override

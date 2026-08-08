@@ -62,10 +62,10 @@
             <Region HBox.hgrow="ALWAYS"/>
             <HBox fx:id="windowButtons" alignment="TOP_RIGHT" spacing="2" style="-fx-padding: 0 0 0 0;">
               <children>
-                <ToggleButton fx:id="sidebarToggleBtn" selected="false" style="-fx-background-color: transparent; -fx-pref-width: 20px; -fx-pref-height: 20px; -fx-padding: 0 6px 0 6px; -fx-background-radius: 4px;"
+                <ToggleButton fx:id="sidebarToggleBtn" selected="false" style="-fx-background-color: transparent; -fx-pref-width: 16px; -fx-pref-height: 16px; -fx-padding: 0 6px 0 6px; -fx-background-radius: 4px;"
                         onAction="#onSidebarToggle">
                   <graphic>
-                    <ImageView fx:id="sidebarToggleIcon" fitWidth="14" fitHeight="14" preserveRatio="true"/>
+                    <ImageView fx:id="sidebarToggleIcon" fitWidth="11" fitHeight="11" preserveRatio="true"/>
                   </graphic>
                 </ToggleButton>
                 <Button fx:id="minimizeBtn" style="-fx-background-color: transparent; -fx-pref-width: 20px; -fx-pref-height: 20px; -fx-padding: 0 8px 0 8px;"
