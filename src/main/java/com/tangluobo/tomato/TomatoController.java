@@ -9,6 +9,7 @@ import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.ToggleButton;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseEvent;
@@ -55,6 +56,10 @@ public class TomatoController {
     private Button closeBtn;
     @FXML
     private ImageView logoView;
+    @FXML
+    private ToggleButton sidebarToggleBtn;
+    @FXML
+    private ImageView sidebarToggleIcon;
 
     private double xOffset = 0;
     private double yOffset = 0;
@@ -197,6 +202,18 @@ public class TomatoController {
     }
 
     @FXML
+    protected void onSidebarToggle() {
+        boolean show = sidebarToggleBtn.isSelected();
+        navPane.setVisible(show);
+        navPane.setManaged(show);
+        if (show) {
+            sidebarToggleBtn.setStyle("-fx-background-color: #e0e0e0; -fx-pref-width: 24px; -fx-pref-height: 24px; -fx-background-radius: 4px;");
+        } else {
+            sidebarToggleBtn.setStyle("-fx-background-color: transparent; -fx-pref-width: 24px; -fx-pref-height: 24px; -fx-background-radius: 4px;");
+        }
+    }
+
+    @FXML
     protected void onMaximize() {
         Stage stage = (Stage) rootPane.getScene().getWindow();
 
@@ -246,6 +263,15 @@ public class TomatoController {
         if (logoImage != null) {
             logoView.setImage(logoImage);
         }
+
+        Image sideBarImage = new Image(getClass().getResourceAsStream("/images/side_bar.png"));
+        if (sideBarImage != null) {
+            sidebarToggleIcon.setImage(sideBarImage);
+        }
+
+        // 侧边栏开关默认关闭，隐藏最左侧导航栏
+        navPane.setVisible(false);
+        navPane.setManaged(false);
 
         divider2.setViewOrder(-1);
         divider2.setMouseTransparent(false);
