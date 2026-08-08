@@ -15,6 +15,7 @@ import com.tangluobo.tomato.module.connect.view.RocketmqDataView;
 import com.tangluobo.tomato.module.connect.view.SqlEditorView;
 import com.tangluobo.tomato.ssh.LocalTerminalPane;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
+import com.tangluobo.tomato.utils.SecurityUtils;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.application.Platform;
@@ -1737,7 +1738,9 @@ public class ConnectModule implements Module {
             exportObj.addProperty("version", 1);
             exportObj.add("connections", gson.toJsonTree(exportConfigs));
 
-            Files.writeString(file.toPath(), gson.toJson(exportObj), StandardCharsets.UTF_8);
+            String json = gson.toJson(exportObj);
+            String encryptedContent = "TOMATO_ENCRYPTED" + SecurityUtils.encrypt(json);
+            Files.writeString(file.toPath(), encryptedContent, StandardCharsets.UTF_8);
 
             Alert alert = new Alert(Alert.AlertType.INFORMATION);
             alert.setTitle("导出成功");
@@ -1769,6 +1772,10 @@ public class ConnectModule implements Module {
 
         try {
             String content = Files.readString(file.toPath(), StandardCharsets.UTF_8);
+            // 解密：如果文件以加密标记开头，先解密
+            if (content.startsWith("TOMATO_ENCRYPTED")) {
+                content = SecurityUtils.decrypt(content.substring("TOMATO_ENCRYPTED".length()));
+            }
             com.google.gson.JsonElement jsonElement = JsonParser.parseString(content);
 
             List<ConnectionConfig> importConfigs;
