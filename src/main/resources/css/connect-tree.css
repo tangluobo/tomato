@@ -39,15 +39,26 @@
 .tab-pane {
     -fx-tab-min-height: 26px;
     -fx-tab-max-height: 26px;
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-border-insets: 0;
 }
 
 .tab-pane .tab-header-area {
     -fx-padding: 0;
     -fx-background-color: #ececea;
+    -fx-background-insets: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-border-insets: 0;
 }
 
 .tab-pane .tab-header-background {
     -fx-background-color: #ececea;
+    -fx-background-insets: 0;
 }
 
 .tab-pane .tab {
@@ -56,11 +67,12 @@
     -fx-background-radius: 0;
     -fx-padding: 5 12;
     -fx-border-color: transparent;
+    -fx-border-width: 0;
 }
 
 .tab-pane .tab:selected {
-    -fx-background-color: #DEFFFF, #FCFFFF;
-    -fx-background-insets: 0, 0 0 2 0;
+    -fx-background-color: #FCFFFF;
+    -fx-background-insets: 0;
     -fx-border-color: transparent transparent #000000 transparent;
     -fx-border-width: 0 0 1 0;
     -fx-border-radius: 0;
@@ -97,8 +109,8 @@
 .tab-pane .tab:selected:focused {
     -fx-focus-color: transparent;
     -fx-faint-focus-color: transparent;
-    -fx-background-color: #DEFFFF, #FCFFFF;
-    -fx-background-insets: 0, 0 0 2 0;
+    -fx-background-color: #FCFFFF;
+    -fx-background-insets: 0;
     -fx-border-color: transparent transparent #000000 transparent;
     -fx-border-width: 0 0 1 0;
     -fx-border-radius: 0;
@@ -120,9 +132,28 @@
 }
 
 .tab-pane .tab-content-area {
-    -fx-background-color: #f7f7f7;
+    -fx-background-color: transparent;
     -fx-border-color: transparent;
     -fx-padding: 0;
+}
+
+/* SplitPane: 去除默认立体背景和边框 */
+.split-pane {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-border-insets: 0;
+}
+
+/* SplitPane 分隔条: 去除立体效果 */
+.split-pane > .split-pane-divider {
+    -fx-background-color: #3c3c3c;
+    -fx-background-insets: 0;
+    -fx-padding: 0 1 0 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
 }
 
 .combo-box, .combo-box-base {

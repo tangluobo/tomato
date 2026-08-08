@@ -182,7 +182,7 @@ public class SSHTerminalPane extends BorderPane {
             }
         };
         terminalPane.getChildren().addAll(terminalView, scrollBar);
-        terminalPane.setStyle("-fx-background-color: #1e1e1e;");
+        terminalPane.setStyle("-fx-background-color: #1e1e1e; -fx-background-insets: 0; -fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0; -fx-border-insets: 0;");
         terminalPane.setMaxWidth(Double.MAX_VALUE);
         terminalPane.setMaxHeight(Double.MAX_VALUE);
         terminalPane.setPrefWidth(800);
@@ -219,11 +219,11 @@ public class SSHTerminalPane extends BorderPane {
         splitPane = new SplitPane();
         splitPane.getItems().add(terminalPane);
         splitPane.setDividerPositions(1.0);
-//        splitPane.setStyle("-fx-background-color: #1e1e1e;");
+        splitPane.setStyle("-fx-background-color: #1e1e1e; -fx-background-insets: 0; -fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0; -fx-border-insets: 0;");
 
         setCenter(splitPane);
         setBottom(statusBar);
-        setStyle("-fx-background-color: #1e1e1e;");
+        setStyle("-fx-background-color: #1e1e1e; -fx-background-insets: 0; -fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0; -fx-border-insets: 0;");
 
         // 关键：默认maxWidth/maxHeight=USE_COMPUTED_SIZE=prefSize=0
         // 必须设为MAX_VALUE，否则任何布局容器都不会给它分配空间

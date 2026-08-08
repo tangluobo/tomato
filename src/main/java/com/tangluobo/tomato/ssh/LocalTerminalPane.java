@@ -130,7 +130,7 @@ public class LocalTerminalPane extends BorderPane {
             }
         };
         terminalPane.getChildren().addAll(terminalView, scrollBar);
-        terminalPane.setStyle("-fx-background-color: #1e1e1e;");
+        terminalPane.setStyle("-fx-background-color: #1e1e1e; -fx-background-insets: 0; -fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0; -fx-border-insets: 0;");
         terminalPane.setMaxWidth(Double.MAX_VALUE);
         terminalPane.setMaxHeight(Double.MAX_VALUE);
         terminalPane.setPrefWidth(800);
@@ -188,7 +188,7 @@ public class LocalTerminalPane extends BorderPane {
 
         setCenter(terminalPane);
         setBottom(statusBar);
-        setStyle("-fx-background-color: #1e1e1e;");
+        setStyle("-fx-background-color: #1e1e1e; -fx-background-insets: 0; -fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0; -fx-border-insets: 0;");
         setMaxWidth(Double.MAX_VALUE);
         setMaxHeight(Double.MAX_VALUE);
         setPrefWidth(800);
