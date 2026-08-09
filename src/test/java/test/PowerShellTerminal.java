@@ -1,22 +1,15 @@
-package com.tangluobo.tomato.ssh;
+package test;
 
+import javafx.application.Application;
 import javafx.application.Platform;
-import javafx.scene.control.ContextMenu;
-import javafx.scene.control.Label;
-import javafx.scene.control.MenuItem;
-import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.Scene;
 import javafx.scene.control.TextArea;
-import javafx.scene.input.Clipboard;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
-import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.Priority;
-import javafx.scene.layout.Region;
-import javafx.scene.paint.Color;
-import javafx.scene.shape.Circle;
+import javafx.event.Event;
 import javafx.scene.text.Font;
+import javafx.stage.Stage;
 
 import java.io.*;
 import java.util.ArrayList;
@@ -24,15 +17,9 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 本地终端组件（PowerShell）。
- *
- * 参照 com.tangluobo.tomato.test.PowerShellTerminal 的实现：
- * 直接在 TextArea 中输入命令，通过 PowerShell 进程执行，
- * 支持 Tab 补全、上下箭头历史导航、Ctrl+C 中断等交互。
- *
- * 不再使用 ConPTY / TerminalEmulator / TerminalView，纯 TextArea 实现。
+ * 直接在终端区域输入命令的 PowerShell 模拟器，类似真实打开的 PowerShell 窗口。
  */
-public class LocalTerminalPane extends BorderPane {
+public class PowerShellTerminal extends Application {
 
     private TextArea terminalArea;
     private Process powerShellProcess;
@@ -50,37 +37,14 @@ public class LocalTerminalPane extends BorderPane {
     private List<String> tabCandidates = new ArrayList<>();
     private int tabIndex = -1;
     private String tabPrefix = null;
+
     /** 提示符固定前缀，用户无法编辑该区域之前的内容 */
     private int promptStart = 0;
-    private volatile boolean running = false;
 
-    // 状态栏
-    private final Label stateLabel;
-    private final Label shellLabel;
-    private final Circle statusDot;
-
-    /** 由连接处理器设置的最大回滚行数（TextArea 自带无限回滚，此处仅记录不强制截断） */
-    private int scrollbackLines = 5000;
-
-    public LocalTerminalPane() {
-        // 状态栏
-        HBox statusBar = new HBox();
-        statusBar.setStyle("-fx-background-color: #FFFFFB; -fx-padding: 2 10; -fx-alignment: center-left; -fx-border-color: #e0e0e0; -fx-border-width: 1 0 0 0;");
-
-        statusDot = new Circle(4, Color.RED);
-        HBox.setMargin(statusDot, new javafx.geometry.Insets(0, 4, 0, 0));
-
-        stateLabel = new Label("未连接");
-        stateLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
-        HBox.setMargin(stateLabel, new javafx.geometry.Insets(0, 8, 0, 0));
-
-        shellLabel = new Label("PowerShell");
-        shellLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
-
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-
-        statusBar.getChildren().addAll(statusDot, stateLabel, shellLabel, spacer);
+    @Override
+    public void start(Stage primaryStage) {
+        BorderPane root = new BorderPane();
+        root.setStyle("-fx-background-color: #1e1e1e;");
 
         terminalArea = new TextArea();
         terminalArea.setFont(Font.font("Consolas", 14));
@@ -91,51 +55,36 @@ public class LocalTerminalPane extends BorderPane {
             "-fx-border-color: transparent; " +
             "-fx-background-color: #1e1e1e;"
         );
-        terminalArea.setContextMenu(new ContextMenu()); // 禁用默认右键菜单，使用自定义
 
-        setCenter(terminalArea);
-        setBottom(statusBar);
-        setStyle("-fx-background-color: #1e1e1e; -fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0;");
-        setMaxWidth(Double.MAX_VALUE);
-        setMaxHeight(Double.MAX_VALUE);
-        setPrefWidth(800);
-        setPrefHeight(600);
+        root.setCenter(terminalArea);
 
-        setupEventHandlers();
-        setupContextMenu();
-    }
+        Scene scene = new Scene(root, 900, 600);
+        primaryStage.setTitle("PowerShell");
+        primaryStage.setScene(scene);
+        primaryStage.show();
 
-    /**
-     * 请求终端输入焦点（切换标签时调用）
-     */
-    public void requestTerminalFocus() {
-        Platform.runLater(() -> terminalArea.requestFocus());
-    }
-
-    /**
-     * 设置回滚行数（TextArea 自带无限回滚，此处仅记录配置，不强制截断）
-     */
-    public void setScrollbackLines(int lines) {
-        this.scrollbackLines = lines;
-    }
-
-    /**
-     * 连接本地 PowerShell 终端。
-     * @param terminalType 兼容旧接口；新实现固定使用 PowerShell，参数仅作记录
-     */
-    public void connect(String terminalType) {
         initializeTerminal();
-        Platform.runLater(() -> terminalArea.requestFocus());
+        setupEventHandlers();
+
+        // 确保 TextArea 获得焦点，否则键盘事件不会到达
+        terminalArea.requestFocus();
+
+        primaryStage.setOnCloseRequest(e -> {
+            if (powerShellProcess != null) {
+                powerShellProcess.destroyForcibly();
+            }
+            Platform.exit();
+        });
     }
 
-    /** 初始化 PowerShell 进程，欢迎信息和提示符由 PowerShell 自身输出（交互模式） */
     private void initializeTerminal() {
         try {
-            // 交互模式启动：不加 -Command -，让 PowerShell 输出欢迎信息和提示符
-            // -NoProfile 避免 PSReadLine 干扰 stdin 输入处理
             ProcessBuilder processBuilder = new ProcessBuilder(
                 "powershell.exe",
-                "-NoProfile"
+                "-NoLogo",
+                "-NoProfile",
+                "-Command",
+                "-"
             );
             processBuilder.redirectErrorStream(true);
             processBuilder.directory(new File(currentWorkingDir));
@@ -147,17 +96,21 @@ public class LocalTerminalPane extends BorderPane {
             processReader = new BufferedReader(
                 new InputStreamReader(powerShellProcess.getInputStream())
             );
-            running = true;
 
             Thread readerThread = new Thread(this::readProcessOutput);
             readerThread.setDaemon(true);
             readerThread.start();
 
-            updateStatusBar("已连接");
+            // 显示欢迎信息
+            terminalArea.appendText("Windows PowerShell\n");
+            terminalArea.appendText("版权所有 (C) Microsoft Corporation。保留所有权利。\n");
+            terminalArea.appendText("安装最新的 PowerShell，了解新功能和改进！https://aka.ms/PSWindows\n");
+            terminalArea.appendText("\n");
+            showPrompt();
+
         } catch (IOException e) {
             terminalArea.appendText("无法启动 PowerShell: " + e.getMessage() + "\n");
             terminalArea.appendText("请确保 PowerShell 已安装并在系统路径中。\n");
-            updateStatusBar("启动失败");
         }
     }
 
@@ -168,25 +121,24 @@ public class LocalTerminalPane extends BorderPane {
         terminalArea.positionCaret(promptStart);
     }
 
-    /** 读取 PowerShell 输出并追加到终端，交互模式下 PowerShell 自带提示符 */
+    /** 读取 PowerShell 输出并追加到终端 */
     private void readProcessOutput() {
         try {
             char[] buf = new char[1024];
             int n;
-            while (running && (n = processReader.read(buf)) != -1) {
+            while ((n = processReader.read(buf)) != -1) {
                 final String output = new String(buf, 0, n);
                 Platform.runLater(() -> {
                     terminalArea.appendText(output);
-                    // 跟踪 PowerShell 输出末尾作为输入起始位置（PowerShell 自己输出提示符）
+                    // 命令执行完毕后重新显示提示符
                     promptStart = terminalArea.getText().length();
                     terminalArea.positionCaret(promptStart);
+                    // PowerShell 输出结束，标记命令运行结束
                     commandRunning = false;
                 });
             }
         } catch (IOException e) {
-            if (running) {
-                Platform.runLater(() -> terminalArea.appendText("\n[PowerShell 进程已终止: " + e.getMessage() + "]\n"));
-            }
+            Platform.runLater(() -> terminalArea.appendText("\n[PowerShell 进程已终止: " + e.getMessage() + "]\n"));
         }
     }
 
@@ -209,9 +161,6 @@ public class LocalTerminalPane extends BorderPane {
             } else if (code == KeyCode.C && event.isControlDown()) {
                 event.consume();
                 handleCtrlC();
-            } else if (code == KeyCode.V && event.isControlDown() && event.isShiftDown()) {
-                event.consume();
-                doPaste();
             } else if (code == KeyCode.BACK_SPACE) {
                 if (terminalArea.getCaretPosition() <= promptStart) {
                     event.consume();
@@ -233,39 +182,6 @@ public class LocalTerminalPane extends BorderPane {
         terminalArea.setOnKeyTyped(this::handleKeyTyped);
     }
 
-    /** 自定义右键菜单：复制 / 粘贴 / 清屏 */
-    private void setupContextMenu() {
-        ContextMenu contextMenu = new ContextMenu();
-        MenuItem copyItem = new MenuItem("复制");
-        copyItem.setOnAction(e -> terminalArea.copy());
-        MenuItem pasteItem = new MenuItem("粘贴");
-        pasteItem.setOnAction(e -> doPaste());
-        MenuItem clearItem = new MenuItem("清屏");
-        clearItem.setOnAction(e -> {
-            terminalArea.clear();
-            showPrompt();
-        });
-        contextMenu.getItems().addAll(copyItem, pasteItem, new SeparatorMenuItem(), clearItem);
-
-        setOnContextMenuRequested(e -> {
-            copyItem.setDisable(terminalArea.getSelection().getLength() == 0);
-            contextMenu.show(this, e.getScreenX(), e.getScreenY());
-            e.consume();
-        });
-
-        setOnMousePressed(e -> {
-            if (contextMenu.isShowing()) {
-                contextMenu.hide();
-            }
-        });
-
-        terminalArea.addEventHandler(MouseEvent.MOUSE_PRESSED, e -> {
-            if (contextMenu.isShowing()) {
-                contextMenu.hide();
-            }
-        });
-    }
-
     /** 回车处理：提取命令并执行 */
     private void handleEnter() {
         String text = terminalArea.getText();
@@ -274,8 +190,7 @@ public class LocalTerminalPane extends BorderPane {
         if (!command.isEmpty()) {
             executeCommand(command);
         } else {
-            // 空命令：发送空行给 PowerShell，让它自己输出新提示符（格式一致）
-            sendToPowerShell("");
+            showPrompt();
         }
     }
 
@@ -306,14 +221,13 @@ public class LocalTerminalPane extends BorderPane {
             // 重新初始化 PowerShell 进程
             initializeTerminal();
         } else {
-            // 无命令运行：清除当前输入行，发送空行让 PowerShell 输出新提示符
-            replaceCurrentInput("");
+            // 无命令运行：清除当前输入行，重新显示提示符
             terminalArea.appendText("^C\n");
             // 清空当前 Tab 补全会话
             tabCandidates.clear();
             tabIndex = -1;
             tabPrefix = null;
-            sendToPowerShell("");
+            showPrompt();
         }
     }
 
@@ -325,15 +239,16 @@ public class LocalTerminalPane extends BorderPane {
         // 处理内部命令
         if (command.equalsIgnoreCase("exit") || command.equalsIgnoreCase("quit")) {
             terminalArea.appendText("正在退出...\n");
-            disconnect();
+            if (powerShellProcess != null) {
+                powerShellProcess.destroyForcibly();
+            }
+            Platform.exit();
             return;
         }
 
         if (command.equalsIgnoreCase("clear") || command.equalsIgnoreCase("cls")) {
             terminalArea.clear();
-            terminalArea.appendText("PS " + currentWorkingDir + "> ");
-            promptStart = terminalArea.getText().length();
-            terminalArea.positionCaret(promptStart);
+            showPrompt();
             return;
         }
 
@@ -360,27 +275,20 @@ public class LocalTerminalPane extends BorderPane {
         }
 
         // 发送命令到 PowerShell
-        if (sendToPowerShell(command)) {
-            commandRunning = true;
-            // 追加到 PSReadLine 历史文件，与真实 PowerShell 控制台共享历史
-            appendToHistoryFile(command);
-        }
-        // 提示符由 PowerShell 在命令完成后自行输出
-    }
-
-    /** 发送一行命令到 PowerShell 进程，返回是否成功 */
-    private boolean sendToPowerShell(String command) {
         try {
             if (processWriter != null) {
                 processWriter.write(command);
                 processWriter.newLine();
                 processWriter.flush();
-                return true;
+                commandRunning = true;
+                // 追加到 PSReadLine 历史文件，与真实 PowerShell 共享历史
+                appendToHistoryFile(command);
             }
         } catch (IOException e) {
             terminalArea.appendText("执行命令时出错: " + e.getMessage() + "\n");
+            showPrompt();
         }
-        return false;
+        // 提示符由输出读取线程在命令完成后显示
     }
 
     /** 把命令追加到 PSReadLine 历史文件，与真实 PowerShell 控制台共享历史 */
@@ -396,8 +304,8 @@ public class LocalTerminalPane extends BorderPane {
                 histDir.mkdirs();
             }
             File histFile = new File(histDir, "ConsoleHost_history.txt");
-            try (Writer w = new OutputStreamWriter(
-                    new FileOutputStream(histFile, true), "UTF-8")) {
+            try (java.io.Writer w = new java.io.OutputStreamWriter(
+                    new java.io.FileOutputStream(histFile, true), "UTF-8")) {
                 w.write(command);
                 w.write("\r\n");
             }
@@ -480,8 +388,8 @@ public class LocalTerminalPane extends BorderPane {
 
             // 写入临时脚本文件，UTF-8 无 BOM
             scriptFile = File.createTempFile("tomato_tab_", ".ps1");
-            try (Writer w = new OutputStreamWriter(
-                    new FileOutputStream(scriptFile), "UTF-8")) {
+            try (java.io.Writer w = new java.io.OutputStreamWriter(
+                    new java.io.FileOutputStream(scriptFile), "UTF-8")) {
                 w.write(script);
             }
 
@@ -590,7 +498,7 @@ public class LocalTerminalPane extends BorderPane {
                 return history;
             }
             try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(new FileInputStream(histFile), "UTF-8"))) {
+                    new InputStreamReader(new java.io.FileInputStream(histFile), "UTF-8"))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     if (!line.isEmpty()) {
@@ -612,43 +520,7 @@ public class LocalTerminalPane extends BorderPane {
         terminalArea.positionCaret(terminalArea.getText().length());
     }
 
-    /** 粘贴剪贴板内容到当前输入 */
-    private void doPaste() {
-        Clipboard clipboard = Clipboard.getSystemClipboard();
-        if (clipboard.hasString()) {
-            String text = clipboard.getString();
-            if (text != null && !text.isEmpty()) {
-                // TextArea 粘贴时换行符保持原样，命令行内换行会被回车处理逻辑忽略
-                text = text.replace("\r\n", "").replace("\n", "");
-                int caret = terminalArea.getCaretPosition();
-                if (caret < promptStart) {
-                    caret = promptStart;
-                    terminalArea.positionCaret(promptStart);
-                }
-                terminalArea.insertText(caret, text);
-                terminalArea.positionCaret(caret + text.length());
-            }
-        }
-    }
-
-    private void updateStatusBar(String state) {
-        Platform.runLater(() -> {
-            boolean connected = "已连接".equals(state);
-            statusDot.setFill(connected ? Color.valueOf("#4CAF50") : Color.RED);
-            stateLabel.setText(state);
-        });
-    }
-
-    /** 断开连接：终止 PowerShell 进程 */
-    public void disconnect() {
-        running = false;
-        commandRunning = false;
-        if (powerShellProcess != null && powerShellProcess.isAlive()) {
-            powerShellProcess.destroyForcibly();
-        }
-        powerShellProcess = null;
-        processWriter = null;
-        processReader = null;
-        updateStatusBar("已断开");
+    public static void main(String[] args) {
+        launch(args);
     }
 }
