@@ -7,6 +7,7 @@ import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.TextArea;
 import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseEvent;
@@ -54,6 +55,13 @@ public class LocalTerminalPane extends BorderPane {
     private int promptStart = 0;
     private volatile boolean running = false;
 
+    /** Ctrl+R 反向搜索状态 */
+    private boolean searchMode = false;
+    private int searchLineStart = 0;       // 搜索行在文本中的起始位置
+    private String searchQuery = "";        // 当前搜索词
+    private int searchMatchIndex = 0;       // 当前匹配在 commandHistory 中的索引，-1 表示无匹配
+    private String searchMatchedCommand = "";
+
     // 状态栏
     private final Label stateLabel;
     private final Label shellLabel;
@@ -91,8 +99,6 @@ public class LocalTerminalPane extends BorderPane {
             "-fx-border-color: transparent; " +
             "-fx-background-color: #1e1e1e;"
         );
-        terminalArea.setContextMenu(new ContextMenu()); // 禁用默认右键菜单，使用自定义
-
         setCenter(terminalArea);
         setBottom(statusBar);
         setStyle("-fx-background-color: #1e1e1e; -fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0;");
@@ -141,11 +147,13 @@ public class LocalTerminalPane extends BorderPane {
             processBuilder.directory(new File(currentWorkingDir));
 
             powerShellProcess = processBuilder.start();
+            // Windows 中文系统 PowerShell 默认输出 GBK，需用系统编码收发
+            String jnuEncoding = System.getProperty("sun.jnu.encoding", "GBK");
             processWriter = new BufferedWriter(
-                new OutputStreamWriter(powerShellProcess.getOutputStream())
+                new OutputStreamWriter(powerShellProcess.getOutputStream(), jnuEncoding)
             );
             processReader = new BufferedReader(
-                new InputStreamReader(powerShellProcess.getInputStream())
+                new InputStreamReader(powerShellProcess.getInputStream(), jnuEncoding)
             );
             running = true;
 
@@ -174,7 +182,8 @@ public class LocalTerminalPane extends BorderPane {
             char[] buf = new char[1024];
             int n;
             while (running && (n = processReader.read(buf)) != -1) {
-                final String output = new String(buf, 0, n);
+                // 规范化换行符：PowerShell 输出 \r\n，TextArea 只需 \n，避免空行
+                String output = new String(buf, 0, n).replace("\r\n", "\n").replace("\r", "\n");
                 Platform.runLater(() -> {
                     terminalArea.appendText(output);
                     // 跟踪 PowerShell 输出末尾作为输入起始位置（PowerShell 自己输出提示符）
@@ -194,6 +203,44 @@ public class LocalTerminalPane extends BorderPane {
         // 用事件过滤器在捕获阶段拦截所有特殊键，避免 TextArea 执行默认行为
         terminalArea.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             KeyCode code = event.getCode();
+
+            // Ctrl+R 反向搜索模式：优先处理，拦截其他键
+            if (searchMode) {
+                if (code == KeyCode.ENTER) {
+                    event.consume();
+                    executeSearchMatch();
+                } else if (code == KeyCode.ESCAPE) {
+                    event.consume();
+                    exitSearchKeepCommand();
+                } else if (code == KeyCode.C && event.isControlDown()) {
+                    event.consume();
+                    exitSearchCancel();
+                } else if (code == KeyCode.R && event.isControlDown()) {
+                    event.consume();
+                    nextReverseSearch();
+                } else if (code == KeyCode.BACK_SPACE || (code == KeyCode.H && event.isControlDown())) {
+                    event.consume();
+                    backspaceSearchQuery();
+                } else if (code == KeyCode.LEFT || code == KeyCode.RIGHT) {
+                    // 左右方向键：退出搜索，保留匹配命令作为输入，光标定位到对应端
+                    event.consume();
+                    exitSearchKeepCommand(code == KeyCode.LEFT);
+                } else if (code == KeyCode.UP || code == KeyCode.DOWN
+                        || code == KeyCode.HOME || code == KeyCode.END
+                        || code == KeyCode.TAB) {
+                    // 搜索模式下禁用历史导航和其他键
+                    event.consume();
+                }
+                return;
+            }
+
+            // Ctrl+R 进入反向搜索模式
+            if (code == KeyCode.R && event.isControlDown()) {
+                event.consume();
+                startReverseSearch();
+                return;
+            }
+
             if (code == KeyCode.TAB) {
                 event.consume();
                 requestTabCompletion();
@@ -206,12 +253,26 @@ public class LocalTerminalPane extends BorderPane {
             } else if (code == KeyCode.ENTER) {
                 event.consume();
                 handleEnter();
-            } else if (code == KeyCode.C && event.isControlDown()) {
+            } else if (code == KeyCode.C && event.isControlDown() && !event.isShiftDown()) {
+                // Ctrl+C：中断命令
                 event.consume();
                 handleCtrlC();
+            } else if (code == KeyCode.C && event.isControlDown() && event.isShiftDown()) {
+                // Ctrl+Shift+C：复制选中文本
+                event.consume();
+                doCopy();
             } else if (code == KeyCode.V && event.isControlDown() && event.isShiftDown()) {
+                // Ctrl+Shift+V：粘贴
                 event.consume();
                 doPaste();
+            } else if (code == KeyCode.A && event.isControlDown()) {
+                // Ctrl+A：光标移到输入行最前面（不跨越提示符）
+                event.consume();
+                terminalArea.positionCaret(promptStart);
+            } else if (code == KeyCode.E && event.isControlDown()) {
+                // Ctrl+E：光标移到输入行最后
+                event.consume();
+                terminalArea.positionCaret(terminalArea.getText().length());
             } else if (code == KeyCode.BACK_SPACE) {
                 if (terminalArea.getCaretPosition() <= promptStart) {
                     event.consume();
@@ -233,11 +294,11 @@ public class LocalTerminalPane extends BorderPane {
         terminalArea.setOnKeyTyped(this::handleKeyTyped);
     }
 
-    /** 自定义右键菜单：复制 / 粘贴 / 清屏 */
+    /** 自定义右键菜单：复制 / 粘贴 / 清屏（直接绑定到 terminalArea） */
     private void setupContextMenu() {
         ContextMenu contextMenu = new ContextMenu();
         MenuItem copyItem = new MenuItem("复制");
-        copyItem.setOnAction(e -> terminalArea.copy());
+        copyItem.setOnAction(e -> doCopy());
         MenuItem pasteItem = new MenuItem("粘贴");
         pasteItem.setOnAction(e -> doPaste());
         MenuItem clearItem = new MenuItem("清屏");
@@ -245,24 +306,23 @@ public class LocalTerminalPane extends BorderPane {
             terminalArea.clear();
             showPrompt();
         });
-        contextMenu.getItems().addAll(copyItem, pasteItem, new SeparatorMenuItem(), clearItem);
-
-        setOnContextMenuRequested(e -> {
-            copyItem.setDisable(terminalArea.getSelection().getLength() == 0);
-            contextMenu.show(this, e.getScreenX(), e.getScreenY());
-            e.consume();
+        MenuItem copyPasteItem = new MenuItem("复制并粘贴");
+        copyPasteItem.setOnAction(e -> {
+            doCopy();
+            doPaste();
         });
+        contextMenu.getItems().addAll(copyItem, pasteItem, copyPasteItem, new SeparatorMenuItem(), clearItem);
 
-        setOnMousePressed(e -> {
-            if (contextMenu.isShowing()) {
-                contextMenu.hide();
-            }
-        });
-
-        terminalArea.addEventHandler(MouseEvent.MOUSE_PRESSED, e -> {
-            if (contextMenu.isShowing()) {
-                contextMenu.hide();
-            }
+        // 直接绑定到 terminalArea，右键时动态更新按钮启用状态
+        terminalArea.setContextMenu(contextMenu);
+        contextMenu.setOnShowing(e -> {
+            boolean hasSelection = terminalArea.getSelection().getLength() > 0;
+            Clipboard clipboard = Clipboard.getSystemClipboard();
+            boolean hasClipboard = clipboard.hasString();
+            copyItem.setDisable(!hasSelection);
+            pasteItem.setDisable(!hasClipboard);
+            // 复制并粘贴：需要有选中文本
+            copyPasteItem.setDisable(!hasSelection);
         });
     }
 
@@ -270,7 +330,8 @@ public class LocalTerminalPane extends BorderPane {
     private void handleEnter() {
         String text = terminalArea.getText();
         String command = text.substring(promptStart).replace("\n", "").trim();
-        terminalArea.appendText("\n");
+        // 清除用户输入的命令文本：交互模式下 PowerShell 会自行回显，避免重复
+        replaceCurrentInput("");
         if (!command.isEmpty()) {
             executeCommand(command);
         } else {
@@ -283,6 +344,15 @@ public class LocalTerminalPane extends BorderPane {
     private void handleKeyTyped(KeyEvent event) {
         // 拦截 Tab 字符，避免插入缩进
         if ("\t".equals(event.getCharacter())) {
+            event.consume();
+            return;
+        }
+        // 搜索模式：字符追加到搜索词
+        if (searchMode) {
+            String ch = event.getCharacter();
+            if (ch.length() == 1 && ch.charAt(0) >= 32 && ch.charAt(0) != 127) {
+                updateSearchQuery(ch.charAt(0));
+            }
             event.consume();
             return;
         }
@@ -631,12 +701,174 @@ public class LocalTerminalPane extends BorderPane {
         }
     }
 
+    /** 复制选中文本到剪贴板（保留换行） */
+    private void doCopy() {
+        String selected = terminalArea.getSelectedText();
+        if (selected != null && !selected.isEmpty()) {
+            ClipboardContent content = new ClipboardContent();
+            content.putString(selected);
+            Clipboard.getSystemClipboard().setContent(content);
+        }
+    }
+
     private void updateStatusBar(String state) {
         Platform.runLater(() -> {
             boolean connected = "已连接".equals(state);
             statusDot.setFill(connected ? Color.valueOf("#4CAF50") : Color.RED);
             stateLabel.setText(state);
         });
+    }
+
+    // ===================== Ctrl+R 反向搜索历史命令 =====================
+
+    /** 进入反向搜索模式：先确保历史已加载，再显示搜索 UI */
+    private void startReverseSearch() {
+        if (commandHistory.isEmpty()) {
+            // 异步从 PSReadLine 历史文件加载
+            historyPending = true;
+            Thread t = new Thread(() -> {
+                List<String> realHistory = fetchPowerShellHistory();
+                Platform.runLater(() -> {
+                    historyPending = false;
+                    if (realHistory != null && !realHistory.isEmpty()) {
+                        commandHistory.clear();
+                        commandHistory.addAll(realHistory);
+                    }
+                    enterSearchMode();
+                });
+            });
+            t.setDaemon(true);
+            t.start();
+        } else {
+            enterSearchMode();
+        }
+    }
+
+    /** 实际进入搜索模式：清除当前输入，显示搜索提示行 */
+    private void enterSearchMode() {
+        searchMode = true;
+        searchQuery = "";
+        searchMatchIndex = commandHistory.size(); // 从最新开始向上搜索
+        searchMatchedCommand = "";
+        // 清除当前输入行内容（保留提示符之前的内容）
+        String fullText = terminalArea.getText();
+        terminalArea.setText(fullText.substring(0, promptStart));
+        // 追加搜索提示行
+        terminalArea.appendText("(reverse-i-search)`': ");
+        searchLineStart = promptStart;
+        terminalArea.positionCaret(terminalArea.getText().length());
+    }
+
+    /** 重绘搜索行：query 和匹配命令 */
+    private void renderSearchLine() {
+        String fullText = terminalArea.getText();
+        String before = fullText.substring(0, searchLineStart);
+        String line = "(reverse-i-search)`" + searchQuery + "': " + searchMatchedCommand;
+        terminalArea.setText(before + line);
+        // 光标定位到 query 末尾
+        int caretPos = searchLineStart + "(reverse-i-search)`".length() + searchQuery.length();
+        terminalArea.positionCaret(caretPos);
+    }
+
+    /** 输入字符时更新搜索词并重新搜索 */
+    private void updateSearchQuery(char c) {
+        searchQuery += c;
+        searchMatchIndex = commandHistory.size();
+        findNextMatch();
+        renderSearchLine();
+    }
+
+    /** Backspace 删除搜索词最后一个字符 */
+    private void backspaceSearchQuery() {
+        if (searchQuery.isEmpty()) return;
+        searchQuery = searchQuery.substring(0, searchQuery.length() - 1);
+        searchMatchIndex = commandHistory.size();
+        findNextMatch();
+        renderSearchLine();
+    }
+
+    /** 从 searchMatchIndex-1 向旧搜索包含 searchQuery 的命令 */
+    private void findNextMatch() {
+        if (searchQuery.isEmpty()) {
+            searchMatchedCommand = "";
+            return;
+        }
+        for (int i = searchMatchIndex - 1; i >= 0; i--) {
+            if (commandHistory.get(i).contains(searchQuery)) {
+                searchMatchIndex = i;
+                searchMatchedCommand = commandHistory.get(i);
+                return;
+            }
+        }
+        searchMatchedCommand = "";
+    }
+
+    /** Ctrl+R 再次按下：继续向上搜索下一个匹配 */
+    private void nextReverseSearch() {
+        if (searchQuery.isEmpty()) return;
+        findNextMatch();
+        renderSearchLine();
+    }
+
+    /** Esc：退出搜索模式，保留匹配命令作为当前输入，用户可继续编辑 */
+    private void exitSearchKeepCommand() {
+        exitSearchKeepCommand(false);
+    }
+
+    /**
+     * 退出搜索模式，保留匹配命令作为当前输入。
+     * @param caretToStart true=光标定位到命令最前；false=光标定位到命令最后
+     */
+    private void exitSearchKeepCommand(boolean caretToStart) {
+        String cmd = searchMatchedCommand;
+        resetSearchState();
+        // 清除搜索行
+        String fullText = terminalArea.getText();
+        terminalArea.setText(fullText.substring(0, searchLineStart));
+        // 显示新提示符并填入匹配命令
+        terminalArea.appendText("PS " + currentWorkingDir + "> ");
+        promptStart = terminalArea.getText().length();
+        if (!cmd.isEmpty()) {
+            terminalArea.appendText(cmd);
+        }
+        // 光标定位：左键→命令最前；右键或 Esc→命令最后
+        if (caretToStart) {
+            terminalArea.positionCaret(promptStart);
+        } else {
+            terminalArea.positionCaret(terminalArea.getText().length());
+        }
+    }
+
+    /** Ctrl+C：退出搜索模式，清空输入 */
+    private void exitSearchCancel() {
+        resetSearchState();
+        String fullText = terminalArea.getText();
+        terminalArea.setText(fullText.substring(0, searchLineStart));
+        terminalArea.appendText("^C\n");
+        sendToPowerShell("");
+    }
+
+    /** Enter：执行匹配的命令 */
+    private void executeSearchMatch() {
+        String cmd = searchMatchedCommand;
+        resetSearchState();
+        String fullText = terminalArea.getText();
+        terminalArea.setText(fullText.substring(0, searchLineStart));
+        if (cmd.isEmpty()) {
+            // 无匹配：发送空行
+            sendToPowerShell("");
+        } else {
+            // 执行匹配命令（PowerShell 会自行回显）
+            executeCommand(cmd);
+        }
+    }
+
+    /** 重置搜索状态 */
+    private void resetSearchState() {
+        searchMode = false;
+        searchQuery = "";
+        searchMatchIndex = 0;
+        searchMatchedCommand = "";
     }
 
     /** 断开连接：终止 PowerShell 进程 */
