@@ -4,76 +4,65 @@ import javafx.application.Platform;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
-import javafx.scene.control.ScrollBar;
 import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.TextArea;
 import javafx.scene.input.Clipboard;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
-import javafx.scene.layout.Pane;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
+import javafx.scene.text.Font;
 
 import java.io.*;
-import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 /**
- * 本地终端组件，使用VT100终端模拟器，连接本地Shell进程
- * Windows: 支持 cmd 和 powershell
- * Linux/macOS: 使用系统默认Shell (bash/zsh)
+ * 本地终端组件（PowerShell）。
+ *
+ * 参照 com.tangluobo.tomato.test.PowerShellTerminal 的实现：
+ * 直接在 TextArea 中输入命令，通过 PowerShell 进程执行，
+ * 支持 Tab 补全、上下箭头历史导航、Ctrl+C 中断等交互。
+ *
+ * 不再使用 ConPTY / TerminalEmulator / TerminalView，纯 TextArea 实现。
  */
 public class LocalTerminalPane extends BorderPane {
 
-    private final TerminalEmulator emulator;
-    private final TerminalView terminalView;
-    private Process shellProcess;
-    private Thread readThread;
-    private final AtomicBoolean running = new AtomicBoolean(false);
+    private TextArea terminalArea;
+    private Process powerShellProcess;
+    private BufferedWriter processWriter;
+    private BufferedReader processReader;
+    private final List<String> commandHistory = new ArrayList<>();
+    private int historyIndex = 0;
+    private volatile boolean historyPending = false;
+    private String currentWorkingDir = System.getProperty("user.home");
+    /** Tab 补全进行中标志，避免并发请求 */
+    private volatile boolean completionPending = false;
+    /** 命令是否正在运行（用于 Ctrl+C 判断是否需要终止进程） */
+    private volatile boolean commandRunning = false;
+    /** 当前 Tab 补全会话：记录候选列表、索引、触发时的输入前缀，用于循环切换 */
+    private List<String> tabCandidates = new ArrayList<>();
+    private int tabIndex = -1;
+    private String tabPrefix = null;
+    /** 提示符固定前缀，用户无法编辑该区域之前的内容 */
+    private int promptStart = 0;
+    private volatile boolean running = false;
 
     // 状态栏
     private final Label stateLabel;
     private final Label shellLabel;
     private final Circle statusDot;
 
-    // 终端容器
-    private final Pane terminalPane;
-    private final ScrollBar scrollBar;
-
-    // 右键菜单
-    private final ContextMenu contextMenu;
-
-    // 编码标签
-    private final Label encodingLabel;
-
-    // 渲染节流
-    private long lastRenderTime = 0;
-    private static final long RENDER_INTERVAL = 33;
-    private boolean renderPending = false;
-
-    // 防止scrollbar循环
-    private boolean updatingScrollbar = false;
-
-    // 交替缓冲区状态跟踪
-    private boolean lastAltBufferState = false;
-
-    // Shell类型
-    private String shellType;
-    private OutputStream processOutput;
-
-    // Windows ConPTY 伪控制台（支持Tab补全等控制台功能）
-    private WindowsConPTY conPTY;
-
-    // 本地进程输出编码（Windows中文系统为GBK，Linux/macOS为UTF-8）
-    private Charset processCharset;
+    /** 由连接处理器设置的最大回滚行数（TextArea 自带无限回滚，此处仅记录不强制截断） */
+    private int scrollbackLines = 5000;
 
     public LocalTerminalPane() {
-        emulator = new TerminalEmulator();
-        terminalView = new TerminalView(emulator);
-
         // 状态栏
         HBox statusBar = new HBox();
         statusBar.setStyle("-fx-background-color: #FFFFFB; -fx-padding: 2 10; -fx-alignment: center-left; -fx-border-color: #e0e0e0; -fx-border-width: 1 0 0 0;");
@@ -85,186 +74,190 @@ public class LocalTerminalPane extends BorderPane {
         stateLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
         HBox.setMargin(stateLabel, new javafx.geometry.Insets(0, 8, 0, 0));
 
-        shellLabel = new Label("");
+        shellLabel = new Label("PowerShell");
         shellLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        encodingLabel = new Label("");
-        encodingLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
+        statusBar.getChildren().addAll(statusDot, stateLabel, shellLabel, spacer);
 
-        statusBar.getChildren().addAll(statusDot, stateLabel, shellLabel, encodingLabel, spacer);
+        terminalArea = new TextArea();
+        terminalArea.setFont(Font.font("Consolas", 14));
+        terminalArea.setWrapText(true);
+        terminalArea.setStyle(
+            "-fx-control-inner-background: #1e1e1e; " +
+            "-fx-text-fill: #d4d4d4; " +
+            "-fx-border-color: transparent; " +
+            "-fx-background-color: #1e1e1e;"
+        );
+        terminalArea.setContextMenu(new ContextMenu()); // 禁用默认右键菜单，使用自定义
 
-        // 终端区域 + 右侧滚动条
-        scrollBar = new ScrollBar();
-        scrollBar.setOrientation(javafx.geometry.Orientation.VERTICAL);
-        scrollBar.setStyle("-fx-background-color: #2d2d2d;");
-        scrollBar.setPrefWidth(12);
-        scrollBar.setMin(0);
-        scrollBar.setMax(0);
-        scrollBar.setValue(0);
-        scrollBar.setVisible(false);
-        scrollBar.valueProperty().addListener((obs, oldVal, newVal) -> {
-            if (updatingScrollbar) return;
-            if (emulator.isUsingAltBuffer()) return;
-            double visibleAmt = scrollBar.getVisibleAmount();
-            int scrollbackSize = emulator.getScrollbackSize();
-            double val = newVal.doubleValue();
-            int offset = (int) Math.round(scrollbackSize - val + visibleAmt - 1);
-            terminalView.setScrollOffset(Math.max(0, Math.min(offset, scrollbackSize)));
-        });
-
-        terminalPane = new Pane() {
-            @Override
-            protected void layoutChildren() {
-                super.layoutChildren();
-                double w = getWidth();
-                double h = getHeight();
-                if (w > 0 && h > 0) {
-                    double sbWidth = scrollBar.isVisible() ? scrollBar.getWidth() : 0;
-                    terminalView.relocate(0, 0);
-                    terminalView.resize(w - sbWidth, h);
-                    scrollBar.resizeRelocate(w - scrollBar.getPrefWidth(), 0, scrollBar.getPrefWidth(), h);
-                }
-            }
-        };
-        terminalPane.getChildren().addAll(terminalView, scrollBar);
-        terminalPane.setStyle("-fx-background-color: #1e1e1e; -fx-background-insets: 0; -fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0; -fx-border-insets: 0;");
-        terminalPane.setMaxWidth(Double.MAX_VALUE);
-        terminalPane.setMaxHeight(Double.MAX_VALUE);
-        terminalPane.setPrefWidth(800);
-        terminalPane.setPrefHeight(600);
-
-        // 滚动条回调
-        terminalView.setScrollbarHandler((scrollbackSize, scrollOffset, visibleRows) -> {
-            Platform.runLater(() -> {
-                updatingScrollbar = true;
-                try {
-                    int currentSbSize = emulator.getScrollbackSize();
-                    int currentOffset = emulator.getScrollOffset();
-                    if (currentSbSize > 0) {
-                        scrollBar.setVisible(true);
-                        int totalContent = currentSbSize + visibleRows;
-                        scrollBar.setMin(0);
-                        scrollBar.setMax(totalContent - 1);
-                        scrollBar.setVisibleAmount(visibleRows);
-                        scrollBar.setValue(currentSbSize - currentOffset + visibleRows - 1);
-                    } else {
-                        scrollBar.setVisible(false);
-                    }
-                } finally {
-                    updatingScrollbar = false;
-                }
-            });
-        });
-
-        // 终端大小变化时通知Shell进程
-        // Windows: ConPTY支持ResizePseudoConsole
-        // Linux/macOS: 向script进程发送SIGWINCH信号
-        terminalView.setResizeHandler((cols, rows, width, height) -> {
-            if (!running.get()) return;
-            String os = System.getProperty("os.name", "").toLowerCase();
-            if (os.contains("win")) {
-                // Windows: ConPTY 支持窗口大小调整
-                if (conPTY != null) {
-                    conPTY.resize(cols, rows);
-                }
-            } else {
-                // Linux/macOS: 向script进程及其子进程发送SIGWINCH信号
-                // 信号28 = SIGWINCH，通知进程终端窗口大小已改变
-                if (shellProcess != null) {
-                    try {
-                        long pid = shellProcess.pid();
-                        ProcessHandle.of(pid).ifPresent(ph -> {
-                            sendSignalToProcessTree(ph, 28);
-                        });
-                    } catch (Exception e) {
-                        // 非关键功能，忽略错误
-                    }
-                }
-            }
-        });
-
-        setCenter(terminalPane);
+        setCenter(terminalArea);
         setBottom(statusBar);
-        setStyle("-fx-background-color: #1e1e1e; -fx-background-insets: 0; -fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0; -fx-border-insets: 0;");
+        setStyle("-fx-background-color: #1e1e1e; -fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0;");
         setMaxWidth(Double.MAX_VALUE);
         setMaxHeight(Double.MAX_VALUE);
         setPrefWidth(800);
         setPrefHeight(600);
 
-        // 设置终端响应回调
-        emulator.setResponseHandler(data -> {
-            try {
-                if (conPTY != null) {
-                    conPTY.write(data);
-                } else if (processOutput != null) {
-                    processOutput.write(data);
-                    processOutput.flush();
+        setupEventHandlers();
+        setupContextMenu();
+    }
+
+    /**
+     * 请求终端输入焦点（切换标签时调用）
+     */
+    public void requestTerminalFocus() {
+        Platform.runLater(() -> terminalArea.requestFocus());
+    }
+
+    /**
+     * 设置回滚行数（TextArea 自带无限回滚，此处仅记录配置，不强制截断）
+     */
+    public void setScrollbackLines(int lines) {
+        this.scrollbackLines = lines;
+    }
+
+    /**
+     * 连接本地 PowerShell 终端。
+     * @param terminalType 兼容旧接口；新实现固定使用 PowerShell，参数仅作记录
+     */
+    public void connect(String terminalType) {
+        initializeTerminal();
+        Platform.runLater(() -> terminalArea.requestFocus());
+    }
+
+    /** 初始化 PowerShell 进程并显示欢迎信息 */
+    private void initializeTerminal() {
+        try {
+            ProcessBuilder processBuilder = new ProcessBuilder(
+                "powershell.exe",
+                "-NoLogo",
+                "-NoProfile",
+                "-Command",
+                "-"
+            );
+            processBuilder.redirectErrorStream(true);
+            processBuilder.directory(new File(currentWorkingDir));
+
+            powerShellProcess = processBuilder.start();
+            processWriter = new BufferedWriter(
+                new OutputStreamWriter(powerShellProcess.getOutputStream())
+            );
+            processReader = new BufferedReader(
+                new InputStreamReader(powerShellProcess.getInputStream())
+            );
+            running = true;
+
+            Thread readerThread = new Thread(this::readProcessOutput);
+            readerThread.setDaemon(true);
+            readerThread.start();
+
+            // 显示欢迎信息
+            terminalArea.appendText("Windows PowerShell\n");
+            terminalArea.appendText("版权所有 (C) Microsoft Corporation。保留所有权利。\n");
+            terminalArea.appendText("安装最新的 PowerShell，了解新功能和改进！https://aka.ms/PSWindows\n");
+            terminalArea.appendText("\n");
+            showPrompt();
+
+            updateStatusBar("已连接");
+        } catch (IOException e) {
+            terminalArea.appendText("无法启动 PowerShell: " + e.getMessage() + "\n");
+            terminalArea.appendText("请确保 PowerShell 已安装并在系统路径中。\n");
+            updateStatusBar("启动失败");
+        }
+    }
+
+    /** 显示新的命令提示符，并锁定光标位置 */
+    private void showPrompt() {
+        terminalArea.appendText("\nPS " + currentWorkingDir + "> ");
+        promptStart = terminalArea.getText().length();
+        terminalArea.positionCaret(promptStart);
+    }
+
+    /** 读取 PowerShell 输出并追加到终端 */
+    private void readProcessOutput() {
+        try {
+            char[] buf = new char[1024];
+            int n;
+            while (running && (n = processReader.read(buf)) != -1) {
+                final String output = new String(buf, 0, n);
+                Platform.runLater(() -> {
+                    terminalArea.appendText(output);
+                    // 命令执行完毕后重新显示提示符
+                    promptStart = terminalArea.getText().length();
+                    terminalArea.positionCaret(promptStart);
+                    // PowerShell 输出结束，标记命令运行结束
+                    commandRunning = false;
+                });
+            }
+        } catch (IOException e) {
+            if (running) {
+                Platform.runLater(() -> terminalArea.appendText("\n[PowerShell 进程已终止: " + e.getMessage() + "]\n"));
+            }
+        }
+    }
+
+    private void setupEventHandlers() {
+        // 用事件过滤器在捕获阶段拦截所有特殊键，避免 TextArea 执行默认行为
+        terminalArea.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            KeyCode code = event.getCode();
+            if (code == KeyCode.TAB) {
+                event.consume();
+                requestTabCompletion();
+            } else if (code == KeyCode.UP) {
+                event.consume();
+                navigateHistory(-1);
+            } else if (code == KeyCode.DOWN) {
+                event.consume();
+                navigateHistory(1);
+            } else if (code == KeyCode.ENTER) {
+                event.consume();
+                handleEnter();
+            } else if (code == KeyCode.C && event.isControlDown()) {
+                event.consume();
+                handleCtrlC();
+            } else if (code == KeyCode.V && event.isControlDown() && event.isShiftDown()) {
+                event.consume();
+                doPaste();
+            } else if (code == KeyCode.BACK_SPACE) {
+                if (terminalArea.getCaretPosition() <= promptStart) {
+                    event.consume();
                 }
-            } catch (IOException e) {
-                e.printStackTrace();
+            } else if (code == KeyCode.DELETE) {
+                if (terminalArea.getCaretPosition() < promptStart) {
+                    event.consume();
+                }
+            } else if (code == KeyCode.LEFT || code == KeyCode.HOME) {
+                if (terminalArea.getCaretPosition() <= promptStart) {
+                    event.consume();
+                    terminalArea.positionCaret(promptStart);
+                }
+            } else if (terminalArea.getCaretPosition() < promptStart && !event.isControlDown()) {
+                event.consume();
+                terminalArea.positionCaret(promptStart);
             }
         });
+        terminalArea.setOnKeyTyped(this::handleKeyTyped);
+    }
 
-        // 设置粘贴回调（Ctrl+Shift+V触发）
-        terminalView.setPasteHandler(() -> doPaste());
-
-        // 设置键盘输入回调
-        terminalView.setKeyInputHandler(data -> {
-            if (!running.get()) return;
-            try {
-                if (conPTY != null) {
-                    // ConPTY: 直接写入UTF-8数据，ConPTY像真实终端一样处理换行符
-                    conPTY.write(data);
-                } else if (processOutput != null) {
-                    // 管道方式: 需要编码转换和\r→\r\n转换
-                    // TerminalView.handleKeyTyped中ch.getBytes()使用Java默认编码(UTF-8)
-                    // 需要将UTF-8字节解码为字符串，再用进程编码重新编码后写入
-                    String input = new String(data, java.nio.charset.StandardCharsets.UTF_8);
-
-                    // Windows下本地Shell（CMD/PowerShell）没有PTY，stdin是原始管道
-                    // 终端模拟器中Enter发送\r，但Windows Shell需要\r\n才能识别为换行
-                    // Linux/macOS通过PTY（script命令）会自动将\r转为\n，无需此转换
-                    String os = System.getProperty("os.name", "").toLowerCase();
-                    if (os.contains("win")) {
-                        if (input.equals("\r")) {
-                            input = "\r\n";
-                        }
-                    }
-
-                    // 使用进程编码发送文本，让进程能正确接收中文
-                    Charset sendCharset = processCharset != null ? processCharset : java.nio.charset.StandardCharsets.UTF_8;
-                    processOutput.write(input.getBytes(sendCharset));
-                    processOutput.flush();
-                }
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        });
-
-        // 右键菜单
-        contextMenu = new ContextMenu();
+    /** 自定义右键菜单：复制 / 粘贴 / 清屏 */
+    private void setupContextMenu() {
+        ContextMenu contextMenu = new ContextMenu();
         MenuItem copyItem = new MenuItem("复制");
-        copyItem.setOnAction(e -> terminalView.copySelection());
+        copyItem.setOnAction(e -> terminalArea.copy());
         MenuItem pasteItem = new MenuItem("粘贴");
         pasteItem.setOnAction(e -> doPaste());
-        MenuItem copyPasteItem = new MenuItem("复制并粘贴");
-        copyPasteItem.setOnAction(e -> {
-            terminalView.copySelection();
-            doPaste();
+        MenuItem clearItem = new MenuItem("清屏");
+        clearItem.setOnAction(e -> {
+            terminalArea.clear();
+            showPrompt();
         });
-        MenuItem selectAllItem = new MenuItem("全选");
-        selectAllItem.setOnAction(e -> terminalView.selectAll());
-        MenuItem clearItem = new MenuItem("清除选择");
-        clearItem.setOnAction(e -> terminalView.clearSelection());
-        contextMenu.getItems().addAll(copyItem, pasteItem, copyPasteItem, new SeparatorMenuItem(), selectAllItem, clearItem);
+        contextMenu.getItems().addAll(copyItem, pasteItem, new SeparatorMenuItem(), clearItem);
 
         setOnContextMenuRequested(e -> {
-            copyItem.setDisable(!terminalView.hasSelection());
-            copyPasteItem.setDisable(!terminalView.hasSelection());
-            clearItem.setDisable(!terminalView.hasSelection());
+            copyItem.setDisable(terminalArea.getSelection().getLength() == 0);
             contextMenu.show(this, e.getScreenX(), e.getScreenY());
             e.consume();
         });
@@ -275,326 +268,385 @@ public class LocalTerminalPane extends BorderPane {
             }
         });
 
-        terminalView.addEventHandler(MouseEvent.MOUSE_PRESSED, e -> {
+        terminalArea.addEventHandler(MouseEvent.MOUSE_PRESSED, e -> {
             if (contextMenu.isShowing()) {
                 contextMenu.hide();
             }
         });
     }
 
-    /**
-     * 请求终端输入焦点（切换标签时调用）
-     */
-    public void requestTerminalFocus() {
-        Platform.runLater(() -> terminalView.requestFocus());
-    }
-
-    /**
-     * 连接本地终端
-     * @param terminalType Windows: "cmd" 或 "powershell"; Linux/macOS: 忽略，使用系统默认Shell
-     */
-    public void connect(String terminalType) {
-        this.shellType = terminalType;
-        String os = System.getProperty("os.name", "").toLowerCase();
-
-        try {
-            // Windows: 优先使用 ConPTY 伪控制台（支持 Tab 补全、ANSI 转义序列等控制台功能）
-            if (os.contains("win") && WindowsConPTY.isAvailable()) {
-                conPTY = new WindowsConPTY();
-                String command = "powershell".equalsIgnoreCase(terminalType) ? "powershell.exe" : "cmd.exe";
-                this.shellType = "powershell".equalsIgnoreCase(terminalType) ? "PowerShell" : "CMD";
-                // ConPTY 管道通信使用 UTF-8 编码
-                processCharset = StandardCharsets.UTF_8;
-                conPTY.start(command, emulator.getCols(), emulator.getRows());
-                running.set(true);
-                updateStatusBar("已连接");
-                startReadThread();
-                Platform.runLater(() -> terminalView.requestFocus());
-                return;
-            }
-
-            ProcessBuilder pb;
-            if (os.contains("win")) {
-                // Windows: cmd.exe 和 powershell.exe 自带控制台，可直接使用
-                if ("powershell".equalsIgnoreCase(terminalType)) {
-                    pb = new ProcessBuilder("powershell.exe");
-                    this.shellType = "PowerShell";
-                } else {
-                    pb = new ProcessBuilder("cmd.exe");
-                    this.shellType = "CMD";
-                }
-                pb.redirectErrorStream(true);
-                // Java 18+ Charset.defaultCharset() 固定返回 UTF-8 (JEP 400)
-                // 需要使用 sun.jnu.encoding 获取 Windows 系统真实编码（中文系统为 GBK）
-                String jnuEncoding = System.getProperty("sun.jnu.encoding");
-                if (jnuEncoding != null) {
-                    processCharset = Charset.forName(jnuEncoding);
-                } else {
-                    processCharset = Charset.forName("GBK");
-                }
-            } else {
-                // Linux/macOS: 需要通过 script 命令分配 PTY，否则 bash/zsh 不会输出提示符
-                // Linux/macOS终端默认使用UTF-8，无需转码
-                processCharset = StandardCharsets.UTF_8;
-                String shell;
-                if (os.contains("mac")) {
-                    shell = new File("/bin/zsh").exists() ? "/bin/zsh" : "/bin/bash";
-                } else {
-                    shell = new File("/bin/bash").exists() ? "/bin/bash" : "/bin/sh";
-                }
-                this.shellType = shell;
-
-                // 使用 script 命令分配 PTY
-                // Linux (GNU): script -qec "shell -il" /dev/null
-                // macOS (BSD): script -q /dev/null shell -il
-                String scriptPath = null;
-                for (String candidate : new String[]{"/usr/bin/script", "/usr/local/bin/script", "/bin/script"}) {
-                    if (new File(candidate).exists()) {
-                        scriptPath = candidate;
-                        break;
-                    }
-                }
-
-                if (scriptPath != null) {
-                    if (os.contains("mac")) {
-                        // macOS BSD script: script -q /dev/null shell -il
-                        pb = new ProcessBuilder(scriptPath, "-q", "/dev/null", shell, "-il");
-                    } else {
-                        // Linux GNU script: script -qec "shell -il" /dev/null
-                        pb = new ProcessBuilder(scriptPath, "-qec", shell + " -il", "/dev/null");
-                    }
-                } else {
-                    // 没有 script 命令，回退到直接启动 shell（可能没有提示符）
-                    pb = new ProcessBuilder(shell, "-il");
-                }
-
-                // 设置TERM环境变量，使top/vim等程序能正确识别终端类型并使用交替屏幕缓冲区
-                // 与SSH终端保持一致，使用xterm-256color
-                pb.environment().put("TERM", "xterm-256color");
-
-                // Linux/macOS通过script分配PTY，stderr已通过PTY合并，无需redirectErrorStream
-            }
-
-            shellProcess = pb.start();
-            processOutput = shellProcess.getOutputStream();
-            running.set(true);
-
-            updateStatusBar("已连接");
-
-            // 启动读取线程
-            startReadThread();
-
-            Platform.runLater(() -> terminalView.requestFocus());
-
-        } catch (IOException e) {
-            Platform.runLater(() -> {
-                emulator.process(("\r\n[启动本地终端失败: " + e.getMessage() + "]\r\n").getBytes());
-                scheduleRender();
-                updateStatusBar("启动失败");
-            });
-            e.printStackTrace();
+    /** 回车处理：提取命令并执行 */
+    private void handleEnter() {
+        String text = terminalArea.getText();
+        String command = text.substring(promptStart).replace("\n", "").trim();
+        terminalArea.appendText("\n");
+        if (!command.isEmpty()) {
+            executeCommand(command);
+        } else {
+            showPrompt();
         }
     }
 
-    /**
-     * 设置回滚行数
-     */
-    public void setScrollbackLines(int lines) {
-        emulator.setMaxScrollback(lines);
+    /** 拦截普通字符输入，禁止编辑提示符之前的内容 */
+    private void handleKeyTyped(KeyEvent event) {
+        // 拦截 Tab 字符，避免插入缩进
+        if ("\t".equals(event.getCharacter())) {
+            event.consume();
+            return;
+        }
+        int caret = terminalArea.getCaretPosition();
+        if (caret < promptStart) {
+            // 不允许在提示符之前输入
+            event.consume();
+            terminalArea.positionCaret(promptStart);
+        }
     }
 
-    private void updateStatusBar(String state) {
-        Platform.runLater(() -> {
-            boolean connected = state.equals("已连接");
-            statusDot.setFill(connected ? Color.valueOf("#4CAF50") : Color.RED);
-            stateLabel.setText(state);
-            if (shellType != null) {
-                shellLabel.setText(shellType);
+    /** Ctrl+C 处理：取消正在运行的命令，或清除当前输入行 */
+    private void handleCtrlC() {
+        if (commandRunning) {
+            // 有命令在运行：杀掉 PowerShell 进程并重新启动
+            if (powerShellProcess != null && powerShellProcess.isAlive()) {
+                powerShellProcess.destroyForcibly();
             }
-            if (processCharset != null) {
-                encodingLabel.setText(processCharset.name());
+            commandRunning = false;
+            terminalArea.appendText("^C\n");
+            // 重新初始化 PowerShell 进程
+            initializeTerminal();
+        } else {
+            // 无命令运行：清除当前输入行，重新显示提示符
+            terminalArea.appendText("^C\n");
+            // 清空当前 Tab 补全会话
+            tabCandidates.clear();
+            tabIndex = -1;
+            tabPrefix = null;
+            showPrompt();
+        }
+    }
+
+    private void executeCommand(String command) {
+        // 保存到历史
+        commandHistory.add(command);
+        historyIndex = commandHistory.size();
+
+        // 处理内部命令
+        if (command.equalsIgnoreCase("exit") || command.equalsIgnoreCase("quit")) {
+            terminalArea.appendText("正在退出...\n");
+            disconnect();
+            return;
+        }
+
+        if (command.equalsIgnoreCase("clear") || command.equalsIgnoreCase("cls")) {
+            terminalArea.clear();
+            showPrompt();
+            return;
+        }
+
+        if (command.toLowerCase().startsWith("cd ")) {
+            String path = command.substring(3).trim();
+            if (path.startsWith("\"") && path.endsWith("\"")) {
+                path = path.substring(1, path.length() - 1);
+            }
+            File newDir = new File(path);
+            if (!newDir.isAbsolute()) {
+                newDir = new File(currentWorkingDir, path);
+            }
+            if (newDir.exists() && newDir.isDirectory()) {
+                currentWorkingDir = newDir.getAbsolutePath();
+                if (powerShellProcess != null) {
+                    powerShellProcess.destroyForcibly();
+                    initializeTerminal();
+                }
             } else {
-                encodingLabel.setText("");
+                terminalArea.appendText("找不到路径 '" + path + "'，请确认路径是否正确。\n");
+                showPrompt();
             }
-        });
+            return;
+        }
+
+        // 发送命令到 PowerShell
+        try {
+            if (processWriter != null) {
+                processWriter.write(command);
+                processWriter.newLine();
+                processWriter.flush();
+                commandRunning = true;
+                // 追加到 PSReadLine 历史文件，与真实 PowerShell 共享历史
+                appendToHistoryFile(command);
+            }
+        } catch (IOException e) {
+            terminalArea.appendText("执行命令时出错: " + e.getMessage() + "\n");
+            showPrompt();
+        }
+        // 提示符由输出读取线程在命令完成后显示
     }
 
+    /** 把命令追加到 PSReadLine 历史文件，与真实 PowerShell 控制台共享历史 */
+    private void appendToHistoryFile(String command) {
+        try {
+            String appData = System.getenv("APPDATA");
+            if (appData == null) {
+                return;
+            }
+            File histDir = new File(appData,
+                "Microsoft\\Windows\\PowerShell\\PSReadLine");
+            if (!histDir.exists()) {
+                histDir.mkdirs();
+            }
+            File histFile = new File(histDir, "ConsoleHost_history.txt");
+            try (Writer w = new OutputStreamWriter(
+                    new FileOutputStream(histFile, true), "UTF-8")) {
+                w.write(command);
+                w.write("\r\n");
+            }
+        } catch (Exception e) {
+            // 忽略
+        }
+    }
+
+    /** Tab 补全：若当前输入命中已有候选会话则循环切换，否则发起新请求 */
+    private void requestTabCompletion() {
+        if (completionPending) {
+            return; // 已有补全在进行中
+        }
+        String currentInput = terminalArea.getText().substring(promptStart);
+        if (currentInput.isEmpty()) {
+            return;
+        }
+        // 若当前输入正好是上次候选之一，说明是循环切换
+        if (tabCandidates != null && !tabCandidates.isEmpty()
+                && tabCandidates.contains(currentInput)) {
+            int idx = tabCandidates.indexOf(currentInput);
+            int next = (idx + 1) % tabCandidates.size();
+            replaceCurrentInput(tabCandidates.get(next));
+            tabIndex = next;
+            return;
+        }
+        // 否则发起新的补全请求
+        tabCandidates.clear();
+        tabIndex = -1;
+        tabPrefix = null;
+
+        int caretInInput = terminalArea.getCaretPosition() - promptStart;
+        if (caretInInput < 0) caretInInput = 0;
+        if (caretInInput > currentInput.length()) caretInInput = currentInput.length();
+
+        completionPending = true;
+        final String inputSnapshot = currentInput;
+        final int cursorSnapshot = caretInInput;
+
+        Thread t = new Thread(() -> {
+            List<String> completions = fetchCompletions(inputSnapshot, cursorSnapshot);
+            Platform.runLater(() -> {
+                completionPending = false;
+                startTabSession(completions, inputSnapshot);
+            });
+        });
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** 开始新的 Tab 补全会话：单候选直接替换；多候选切到第一个并记录会话 */
+    private void startTabSession(List<String> completions, String originalInput) {
+        if (completions.isEmpty()) {
+            return;
+        }
+        // 读取当前输入，若用户在等待期间改动了输入导致不再以原输入开头，则放弃
+        String currentInput = terminalArea.getText().substring(promptStart);
+        if (!currentInput.startsWith(originalInput)) {
+            return;
+        }
+        tabCandidates = new ArrayList<>(completions);
+        tabPrefix = originalInput;
+        tabIndex = 0;
+        replaceCurrentInput(completions.get(0));
+    }
+
+    /** 启动独立 PowerShell 进程获取补全候选列表（用临时脚本文件避免命令行转义问题） */
+    private List<String> fetchCompletions(String input, int cursorPos) {
+        List<String> completions = new ArrayList<>();
+        File scriptFile = null;
+        try {
+            // 单引号转义：PowerShell 单引号字符串中 ' 写成 ''
+            String escapedInput = input.replace("'", "''");
+            String script =
+                "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\r\n" +
+                "$r = TabExpansion2 -inputScript '" + escapedInput + "' -cursorColumn " + cursorPos + "\r\n" +
+                "\"__TAB_START__\"\r\n" +
+                "if ($r) { $r.CompletionMatches | ForEach-Object { $_.CompletionText } }\r\n" +
+                "\"__TAB_END__\"\r\n";
+
+            // 写入临时脚本文件，UTF-8 无 BOM
+            scriptFile = File.createTempFile("tomato_tab_", ".ps1");
+            try (Writer w = new OutputStreamWriter(
+                    new FileOutputStream(scriptFile), "UTF-8")) {
+                w.write(script);
+            }
+
+            ProcessBuilder pb = new ProcessBuilder(
+                "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+                "-ExecutionPolicy", "Bypass",
+                "-File", scriptFile.getAbsolutePath()
+            );
+            pb.directory(new File(currentWorkingDir));
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            // 用 UTF-8 读取，与脚本中设置的输出编码一致
+            BufferedReader reader = new BufferedReader(
+                new InputStreamReader(p.getInputStream(), "UTF-8")
+            );
+
+            boolean inBlock = false;
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.equals("__TAB_START__")) {
+                    inBlock = true;
+                    continue;
+                }
+                if (line.equals("__TAB_END__")) {
+                    break;
+                }
+                if (inBlock && !line.isEmpty()) {
+                    completions.add(line);
+                }
+            }
+            p.waitFor(5, TimeUnit.SECONDS);
+            p.destroyForcibly();
+        } catch (Exception e) {
+            // 补全失败时静默忽略
+        } finally {
+            if (scriptFile != null) {
+                scriptFile.delete();
+            }
+        }
+        return completions;
+    }
+
+    /** 上下箭头切换历史：读取 PowerShell 的 PSReadLine 历史文件（真实 PowerShell 控制台使用的历史） */
+    private void navigateHistory(int direction) {
+        if (historyPending) {
+            return;
+        }
+        // 在历史中间导航时，使用缓存快速切换
+        if (!commandHistory.isEmpty() && historyIndex < commandHistory.size()) {
+            int newIndex = historyIndex + direction;
+            if (newIndex >= 0 && newIndex < commandHistory.size()) {
+                historyIndex = newIndex;
+                replaceCurrentInput(commandHistory.get(historyIndex));
+                return;
+            } else if (direction > 0 && newIndex >= commandHistory.size()) {
+                // 回到底部：清空输入
+                historyIndex = commandHistory.size();
+                replaceCurrentInput("");
+                return;
+            } else if (direction < 0 && newIndex < 0) {
+                // 已经到顶部
+                return;
+            }
+        }
+        // 处于历史底部（historyIndex >= size）或缓存为空时：
+        // 按上箭头则从文件刷新历史再切换；按下箭头到底部则清空
+        if (direction > 0) {
+            // 已经在底部，继续按向下没意义
+            replaceCurrentInput("");
+            return;
+        }
+        // 按上箭头：异步从 PSReadLine 历史文件刷新
+        historyPending = true;
+        Thread t = new Thread(() -> {
+            List<String> realHistory = fetchPowerShellHistory();
+            Platform.runLater(() -> {
+                historyPending = false;
+                if (realHistory != null && !realHistory.isEmpty()) {
+                    commandHistory.clear();
+                    commandHistory.addAll(realHistory);
+                    historyIndex = commandHistory.size();
+                    // 切换到最后一条（上箭头 = 上一条命令）
+                    int newIndex = historyIndex + direction;
+                    if (newIndex >= 0 && newIndex < commandHistory.size()) {
+                        historyIndex = newIndex;
+                        replaceCurrentInput(commandHistory.get(historyIndex));
+                    }
+                }
+            });
+        });
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** 读取 PowerShell 的 PSReadLine 历史文件（真实 PowerShell 控制台上下箭头使用的历史） */
+    private List<String> fetchPowerShellHistory() {
+        List<String> history = new ArrayList<>();
+        try {
+            String appData = System.getenv("APPDATA");
+            if (appData == null) {
+                return history;
+            }
+            File histFile = new File(appData,
+                "Microsoft\\Windows\\PowerShell\\PSReadLine\\ConsoleHost_history.txt");
+            if (!histFile.exists()) {
+                return history;
+            }
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(new FileInputStream(histFile), "UTF-8"))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (!line.isEmpty()) {
+                        history.add(line);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // 忽略
+        }
+        return history;
+    }
+
+    /** 替换当前提示符后的输入内容 */
+    private void replaceCurrentInput(String text) {
+        String fullText = terminalArea.getText();
+        String beforePrompt = fullText.substring(0, promptStart);
+        terminalArea.setText(beforePrompt + text);
+        terminalArea.positionCaret(terminalArea.getText().length());
+    }
+
+    /** 粘贴剪贴板内容到当前输入 */
     private void doPaste() {
-        if (!running.get()) return;
-        if (conPTY == null && processOutput == null) return;
         Clipboard clipboard = Clipboard.getSystemClipboard();
         if (clipboard.hasString()) {
             String text = clipboard.getString();
             if (text != null && !text.isEmpty()) {
-                text = text.replace("\r\n", "\r").replace("\n", "\r");
-                // 括号粘贴模式：用\033[200~...\033[201~包裹内容，
-                // 让应用程序（如Claude CLI、bash）识别为粘贴而非逐字符输入
-                if (terminalView.getEmulator().isBracketedPasteMode()) {
-                    text = "\033[200~" + text + "\033[201~";
+                // TextArea 粘贴时换行符保持原样，命令行内换行会被回车处理逻辑忽略
+                text = text.replace("\r\n", "").replace("\n", "");
+                int caret = terminalArea.getCaretPosition();
+                if (caret < promptStart) {
+                    caret = promptStart;
+                    terminalArea.positionCaret(promptStart);
                 }
-                try {
-                    if (conPTY != null) {
-                        // ConPTY: 直接发送UTF-8，ConPTY像真实终端一样处理换行符
-                        conPTY.write(text.getBytes(StandardCharsets.UTF_8));
-                    } else {
-                        // 管道方式: Windows需要\r\n作为换行符
-                        String os = System.getProperty("os.name", "").toLowerCase();
-                        if (os.contains("win")) {
-                            text = text.replace("\r", "\r\n");
-                        }
-                        Charset sendCharset = processCharset != null ? processCharset : StandardCharsets.UTF_8;
-                        processOutput.write(text.getBytes(sendCharset));
-                        processOutput.flush();
-                    }
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-                terminalView.clearSelection();
+                terminalArea.insertText(caret, text);
+                terminalArea.positionCaret(caret + text.length());
             }
         }
     }
 
+    private void updateStatusBar(String state) {
+        Platform.runLater(() -> {
+            boolean connected = "已连接".equals(state);
+            statusDot.setFill(connected ? Color.valueOf("#4CAF50") : Color.RED);
+            stateLabel.setText(state);
+        });
+    }
+
+    /** 断开连接：终止 PowerShell 进程 */
     public void disconnect() {
-        running.set(false);
-        terminalView.stopBlink();
-
-        if (conPTY != null) {
-            conPTY.close();
-            conPTY = null;
+        running = false;
+        commandRunning = false;
+        if (powerShellProcess != null && powerShellProcess.isAlive()) {
+            powerShellProcess.destroyForcibly();
         }
-
-        if (shellProcess != null) {
-            // 先尝试正常终止，再强制杀掉
-            shellProcess.destroy();
-            try {
-                if (!shellProcess.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)) {
-                    shellProcess.destroyForcibly();
-                }
-            } catch (InterruptedException ignored) {}
-            shellProcess = null;
-        }
-        processOutput = null;
-
+        powerShellProcess = null;
+        processWriter = null;
+        processReader = null;
         updateStatusBar("已断开");
-    }
-
-    private void startReadThread() {
-        readThread = new Thread(() -> {
-            byte[] buffer = new byte[4096];
-            Charset readCharset = processCharset != null ? processCharset : StandardCharsets.UTF_8;
-            final boolean useConPTY = conPTY != null;
-
-            while (running.get()) {
-                if (useConPTY) {
-                    if (!conPTY.isAlive()) break;
-                } else {
-                    if (shellProcess == null || !shellProcess.isAlive()) break;
-                }
-
-                try {
-                    int len;
-                    byte[] utf8Data;
-
-                    if (useConPTY) {
-                        // ConPTY 输出已是 UTF-8 VT 序列
-                        len = conPTY.read(buffer);
-                        if (len == -1) break;
-                        utf8Data = new byte[len];
-                        System.arraycopy(buffer, 0, utf8Data, 0, len);
-                    } else {
-                        InputStream is = shellProcess.getInputStream();
-                        len = is.read(buffer);
-                        if (len == -1) break;
-                        // 将进程输出的字节按进程编码解码，再转为UTF-8传给TerminalEmulator
-                        if (readCharset.equals(StandardCharsets.UTF_8)) {
-                            utf8Data = new byte[len];
-                            System.arraycopy(buffer, 0, utf8Data, 0, len);
-                        } else {
-                            String text = new String(buffer, 0, len, readCharset);
-                            utf8Data = text.getBytes(StandardCharsets.UTF_8);
-                        }
-                    }
-
-                    final byte[] finalData = utf8Data;
-                    Platform.runLater(() -> {
-                        emulator.process(finalData);
-                        scheduleRender();
-                    });
-
-                } catch (IOException e) {
-                    if (running.get()) {
-                        e.printStackTrace();
-                    }
-                    break;
-                }
-            }
-            running.set(false);
-            Platform.runLater(() -> {
-                emulator.process(("\r\n[本地终端已退出]\r\n").getBytes(StandardCharsets.UTF_8));
-                scheduleRender();
-                updateStatusBar("已退出");
-            });
-        }, "LocalTerminal-Read-Thread");
-        readThread.setDaemon(true);
-        readThread.start();
-    }
-
-    private void scheduleRender() {
-        long now = System.currentTimeMillis();
-        if (now - lastRenderTime >= RENDER_INTERVAL) {
-            lastRenderTime = now;
-            terminalView.render();
-            renderPending = false;
-            checkAltBufferState();
-        } else if (!renderPending) {
-            renderPending = true;
-            javafx.animation.PauseTransition delay = new javafx.animation.PauseTransition(
-                    javafx.util.Duration.millis(RENDER_INTERVAL - (now - lastRenderTime)));
-            delay.setOnFinished(e -> {
-                lastRenderTime = System.currentTimeMillis();
-                terminalView.render();
-                renderPending = false;
-                checkAltBufferState();
-            });
-            delay.play();
-        }
-    }
-
-    private void checkAltBufferState() {
-        boolean altBuffer = emulator.isUsingAltBuffer();
-        if (altBuffer != lastAltBufferState) {
-            lastAltBufferState = altBuffer;
-            if (altBuffer) {
-                stateLabel.setText("已连接 [ALT]");
-            } else {
-                stateLabel.setText("已连接");
-            }
-        }
-    }
-
-    /**
-     * 向进程及其子进程树发送信号（Linux/macOS）
-     * 使用kill命令发送信号，因为Java Process API不支持发送自定义信号
-     * @param ph 进程句柄
-     * @param signal 信号编号（28=SIGWINCH）
-     */
-    private void sendSignalToProcessTree(ProcessHandle ph, int signal) {
-        try {
-            long pid = ph.pid();
-            // 使用kill命令发送信号
-            new ProcessBuilder("kill", "-" + signal, String.valueOf(pid)).start();
-            // 递归发送给子进程
-            ph.children().forEach(child -> sendSignalToProcessTree(child, signal));
-        } catch (Exception e) {
-            // 非关键功能，忽略错误
-        }
-    }
-
-    public TerminalEmulator getEmulator() {
-        return emulator;
-    }
-
-    public TerminalView getTerminalView() {
-        return terminalView;
     }
 }
