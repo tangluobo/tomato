@@ -27,6 +27,7 @@ import javafx.util.Duration;
 import java.io.File;
 import java.nio.file.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 /**
@@ -85,9 +86,11 @@ public class TraeSessionPane extends VBox {
     private HBox currentSelectedRow = null;
 
     // 历史任务 UI
-    private VBox taskListContainer;
-    private ScrollPane taskScrollPane;
+    private ListView<TaskItem> taskListView;
     private Label taskCountLabel;
+
+    // 加载取消机制：每次加载递增，后台线程完成后检查是否过期
+    private final AtomicInteger taskLoadId = new AtomicInteger(0);
 
     // 状态标签
     private Label statusLabel;
@@ -260,17 +263,12 @@ public class TraeSessionPane extends VBox {
         taskCountLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #999;");
         taskHeader.getChildren().addAll(taskTitle, taskCountLabel);
 
-        taskListContainer = new VBox(6);
-        taskListContainer.setPadding(new Insets(0));
+        taskListView = new ListView<>();
+        taskListView.setCellFactory(lv -> new TaskListCell());
+        taskListView.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
+        taskListView.setPlaceholder(new Label("请选择会话以查看历史任务"));
 
-        taskScrollPane = new ScrollPane(taskListContainer);
-        taskScrollPane.setFitToWidth(true);
-        taskScrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
-        taskScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        taskScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
-
-        Region spacer = new Region();
-        VBox.setVgrow(taskScrollPane, Priority.ALWAYS);
+        VBox.setVgrow(taskListView, Priority.ALWAYS);
 
         detailPanel.getChildren().addAll(
                 detailTitleLabel,
@@ -281,7 +279,7 @@ public class TraeSessionPane extends VBox {
                 detailDirExistsLabel,
                 taskSeparator,
                 taskHeader,
-                taskScrollPane,
+                taskListView,
                 actionBox
         );
 
@@ -429,7 +427,8 @@ public class TraeSessionPane extends VBox {
             detailDirExistsLabel.setText("");
             switchBtn.setDisable(true);
             openExplorerBtn.setDisable(true);
-            taskListContainer.getChildren().clear();
+            taskListView.getItems().clear();
+            taskListView.setPlaceholder(new Label("请选择会话以查看历史任务"));
             taskCountLabel.setText("");
             return;
         }
@@ -885,12 +884,12 @@ public class TraeSessionPane extends VBox {
      * 3. 打开 workspaceStorage/{key}/state.vscdb (SQLite)，查询 icube-ai-agent-storage-input-history 获取用户历史输入。
      */
     private void loadHistoricalTasks(TraeSession session) {
-        taskListContainer.getChildren().clear();
-        taskCountLabel.setText("");
+        // 取消之前的加载请求
+        int currentId = taskLoadId.incrementAndGet();
 
-        Label loadingLabel = new Label("加载中...");
-        loadingLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #999; -fx-padding: 10 0 0 0;");
-        taskListContainer.getChildren().add(loadingLabel);
+        taskListView.getItems().clear();
+        taskCountLabel.setText("");
+        taskListView.setPlaceholder(new Label("加载中..."));
 
         Thread thread = new Thread(() -> {
             List<TaskItem> tasks = new ArrayList<>();
@@ -899,11 +898,10 @@ public class TraeSessionPane extends VBox {
             try {
                 Path sessionDir = getSessionDirectory(session);
                 if (!Files.exists(sessionDir)) {
+                    if (currentId != taskLoadId.get()) return;
                     Platform.runLater(() -> {
-                        taskListContainer.getChildren().clear();
-                        Label label = new Label("会话目录不存在");
-                        label.setStyle("-fx-font-size: 12px; -fx-text-fill: #999; -fx-padding: 10 0 0 0;");
-                        taskListContainer.getChildren().add(label);
+                        if (currentId != taskLoadId.get()) return;
+                        taskListView.setPlaceholder(new Label("会话目录不存在"));
                         taskCountLabel.setText("");
                     });
                     return;
@@ -911,11 +909,10 @@ public class TraeSessionPane extends VBox {
 
                 Path workspaceStorageDir = sessionDir.resolve("workspaceStorage");
                 if (!Files.exists(workspaceStorageDir)) {
+                    if (currentId != taskLoadId.get()) return;
                     Platform.runLater(() -> {
-                        taskListContainer.getChildren().clear();
-                        Label label = new Label("未找到 workspaceStorage 目录");
-                        label.setStyle("-fx-font-size: 12px; -fx-text-fill: #999; -fx-padding: 10 0 0 0;");
-                        taskListContainer.getChildren().add(label);
+                        if (currentId != taskLoadId.get()) return;
+                        taskListView.setPlaceholder(new Label("未找到 workspaceStorage 目录"));
                         taskCountLabel.setText("");
                     });
                     return;
@@ -951,6 +948,7 @@ public class TraeSessionPane extends VBox {
 
                 // 从每个 workspace 的 state.vscdb 读取历史任务
                 for (String key : workspaceKeys) {
+                    if (currentId != taskLoadId.get()) return; // 已被新请求取消
                     Path dbPath = workspaceStorageDir.resolve(key).resolve("state.vscdb");
                     if (!Files.exists(dbPath)) continue;
 
@@ -976,12 +974,17 @@ public class TraeSessionPane extends VBox {
                 e.printStackTrace();
             }
 
+            if (currentId != taskLoadId.get()) return; // 已被新请求取消
+
             final List<TaskItem> finalTasks = tasks;
             final String finalWorkspaceFolder = workspaceFolder;
-            Platform.runLater(() -> displayTasks(finalTasks, finalWorkspaceFolder));
+            Platform.runLater(() -> {
+                if (currentId != taskLoadId.get()) return; // 已被新请求取消
+                displayTasks(finalTasks, finalWorkspaceFolder);
+            });
         });
         thread.setDaemon(true);
-        thread.setName("TraeTaskLoader");
+        thread.setName("TraeTaskLoader-" + currentId);
         thread.start();
     }
 
@@ -993,8 +996,16 @@ public class TraeSessionPane extends VBox {
         List<TaskItem> tasks = new ArrayList<>();
 
         try (SqliteReader reader = new SqliteReader(dbPath)) {
+            // 一次读取所有条目，避免多次全表扫描
+            Map<String, String> map = new HashMap<>();
+            for (String[] entry : reader.getAllItemTableEntries()) {
+                if (entry.length >= 2) {
+                    map.put(entry[0], entry[1]);
+                }
+            }
+
             // 读取用户输入历史
-            String inputHistory = reader.getItemTableValue("icube-ai-agent-storage-input-history");
+            String inputHistory = map.get("icube-ai-agent-storage-input-history");
             if (inputHistory != null && !inputHistory.trim().isEmpty()) {
                 JsonArray arr = JsonParser.parseString(inputHistory).getAsJsonArray();
                 for (JsonElement elem : arr) {
@@ -1010,7 +1021,7 @@ public class TraeSessionPane extends VBox {
 
             // 如果输入历史为空，尝试从 memento/icube-ai-agent-storage 读取会话列表
             if (tasks.isEmpty()) {
-                String agentStorage = reader.getItemTableValue("memento/icube-ai-agent-storage");
+                String agentStorage = map.get("memento/icube-ai-agent-storage");
                 if (agentStorage != null && !agentStorage.trim().isEmpty()) {
                     JsonObject storage = JsonParser.parseString(agentStorage).getAsJsonObject();
                     if (storage.has("list") && storage.get("list").isJsonArray()) {
@@ -1041,23 +1052,15 @@ public class TraeSessionPane extends VBox {
      * 在右侧面板显示历史任务列表。
      */
     private void displayTasks(List<TaskItem> tasks, String workspaceFolder) {
-        taskListContainer.getChildren().clear();
-
         if (tasks.isEmpty()) {
-            Label empty = new Label("暂无历史任务");
-            empty.setStyle("-fx-font-size: 12px; -fx-text-fill: #999; -fx-padding: 10 0 0 0;");
-            taskListContainer.getChildren().add(empty);
+            taskListView.getItems().clear();
+            taskListView.setPlaceholder(new Label("暂无历史任务"));
             taskCountLabel.setText("");
             return;
         }
 
         taskCountLabel.setText("(共 " + tasks.size() + " 条)");
-
-        for (int i = 0; i < tasks.size(); i++) {
-            TaskItem task = tasks.get(i);
-            VBox item = createTaskItemBox(task, i + 1);
-            taskListContainer.getChildren().add(item);
-        }
+        taskListView.getItems().setAll(tasks);
     }
 
     private VBox createTaskItemBox(TaskItem task, int index) {
@@ -1101,6 +1104,25 @@ public class TraeSessionPane extends VBox {
     private static class TaskItem {
         final String text;
         TaskItem(String text) { this.text = text; }
+    }
+
+    /**
+     * ListView 的单元格，虚拟化渲染历史任务项。
+     * 只有可见的单元格才会创建 UI 节点，避免大量数据时卡顿。
+     */
+    private class TaskListCell extends ListCell<TaskItem> {
+        @Override
+        protected void updateItem(TaskItem task, boolean empty) {
+            super.updateItem(task, empty);
+            if (empty || task == null) {
+                setGraphic(null);
+                setText(null);
+                setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
+            } else {
+                setGraphic(createTaskItemBox(task, getIndex() + 1));
+                setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-padding: 1 0 1 0;");
+            }
+        }
     }
 
     // ==================== 辅助方法 ====================
