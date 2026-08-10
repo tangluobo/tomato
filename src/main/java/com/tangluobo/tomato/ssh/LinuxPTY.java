@@ -9,30 +9,25 @@ import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
 import java.nio.charset.StandardCharsets;
+import java.util.Optional;
 
 /**
  * Linux/macOS POSIX PTY 实现，使用 Foreign Function & Memory API。
  *
- * 通过 posix_openpt + grantpt + unlockpt + ptsname + fork + execv 创建伪终端。
+ * 通过 forkpty() 在 C 中完成 PTY 创建 + fork + 子进程设置（setsid/dup2/close），
+ * 子进程只需调用 execvp，避免 fork 后做不安全的 Java/FFM 操作。
  * 支持 bash/zsh 等交互式 shell，以及 vim/ssh/top 等控制台程序。
  *
- * 适用于 Linux（libc.so.6）和 macOS（libSystem.B.dylib）。
+ * 适用于 Linux（libc.so.6 / libutil.so.1）和 macOS（libSystem.B.dylib）。
  */
 public class LinuxPTY implements PseudoTerminal {
 
     private static final Linker LINKER = Linker.nativeLinker();
     private static final SymbolLookup LIBC;
 
-    // 文件描述符标志
-    private static final int O_RDWR = 0x0002;
-    private static final int O_NOCTTY = 0x0100;  // Linux
-    private static final int O_NOCTTY_MAC = 0x0200; // macOS
-
     // ioctl 请求
     private static final int TIOCSWINSZ = 0x5414;  // Linux
     private static final int TIOCSWINSZ_MAC = 0x80087467;  // macOS
-    private static final int TIOCSCTTY = 0x540E;   // Linux
-    private static final int TIOCSCTTY_MAC = 0x20007461;  // macOS
 
     // waitpid 选项
     private static final int WNOHANG = 1;
@@ -40,18 +35,14 @@ public class LinuxPTY implements PseudoTerminal {
     // 信号
     private static final int SIGKILL = 9;
 
+    // errno 值
+    private static final int EINTR = 4;
+
     private static final boolean IS_MAC;
 
     // libc 函数句柄
-    private static final MethodHandle posix_openpt;
-    private static final MethodHandle grantpt;
-    private static final MethodHandle unlockpt;
-    private static final MethodHandle ptsname;
-    private static final MethodHandle fork;
-    private static final MethodHandle setsid;
-    private static final MethodHandle open;
+    private static final MethodHandle forkpty;
     private static final MethodHandle close;
-    private static final MethodHandle dup2;
     private static final MethodHandle ioctl;
     private static final MethodHandle execvp;
     private static final MethodHandle _exit;
@@ -59,8 +50,9 @@ public class LinuxPTY implements PseudoTerminal {
     private static final MethodHandle write;
     private static final MethodHandle waitpid;
     private static final MethodHandle kill;
-    private static final MethodHandle getenv;
     private static final MethodHandle strerror;
+    private static final MethodHandle errnoLocation;
+    private static final MethodHandle setenv;
 
     static {
         boolean isMac = System.getProperty("os.name", "").toLowerCase().contains("mac");
@@ -71,12 +63,10 @@ public class LinuxPTY implements PseudoTerminal {
             if (isMac) {
                 libc = SymbolLookup.libraryLookup("libSystem.B.dylib", Arena.global());
             } else {
-                // 尝试标准 glibc
                 libc = SymbolLookup.libraryLookup("libc.so.6", Arena.global());
             }
         } catch (Exception e) {
             try {
-                // 回退：尝试通用 libc
                 libc = SymbolLookup.libraryLookup("libc.so", Arena.global());
             } catch (Exception e2) {
                 libc = null;
@@ -86,24 +76,8 @@ public class LinuxPTY implements PseudoTerminal {
 
         if (libc != null) {
             try {
-                posix_openpt = lookup("posix_openpt",
-                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_INT));
-                grantpt = lookup("grantpt",
-                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_INT));
-                unlockpt = lookup("unlockpt",
-                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_INT));
-                ptsname = lookup("ptsname",
-                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
-                fork = lookup("fork",
-                    FunctionDescriptor.of(ValueLayout.JAVA_INT));
-                setsid = lookup("setsid",
-                    FunctionDescriptor.of(ValueLayout.JAVA_INT));
-                open = lookup("open",
-                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
                 close = lookup("close",
                     FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_INT));
-                dup2 = lookup("dup2",
-                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_INT, ValueLayout.JAVA_INT));
                 ioctl = lookup("ioctl",
                     FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_INT, ValueLayout.JAVA_LONG, ValueLayout.ADDRESS));
                 execvp = lookup("execvp",
@@ -118,23 +92,32 @@ public class LinuxPTY implements PseudoTerminal {
                     FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
                 kill = lookup("kill",
                     FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_INT, ValueLayout.JAVA_INT));
-                getenv = lookup("getenv",
-                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
                 strerror = lookup("strerror",
                     FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
+                errnoLocation = lookup(IS_MAC ? "__error" : "__errno_location",
+                    FunctionDescriptor.of(ValueLayout.ADDRESS));
+                setenv = lookup("setenv",
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
+
+                // forkpty: glibc 2.34+ 在 libc，旧版在 libutil；macOS 在 libSystem
+                FunctionDescriptor forkptyDesc = FunctionDescriptor.of(
+                    ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS);
+                Optional<MemorySegment> forkptyAddr = LIBC.find("forkpty");
+                if (forkptyAddr.isEmpty() && !IS_MAC) {
+                    try {
+                        SymbolLookup libutil = SymbolLookup.libraryLookup("libutil.so.1", Arena.global());
+                        forkptyAddr = libutil.find("forkpty");
+                    } catch (Exception ignored) {}
+                }
+                forkpty = forkptyAddr.isPresent()
+                    ? LINKER.downcallHandle(forkptyAddr.get(), forkptyDesc)
+                    : null;
             } catch (Throwable t) {
                 throw new ExceptionInInitializerError("Failed to load libc functions: " + t.getMessage());
             }
         } else {
-            posix_openpt = null;
-            grantpt = null;
-            unlockpt = null;
-            ptsname = null;
-            fork = null;
-            setsid = null;
-            open = null;
+            forkpty = null;
             close = null;
-            dup2 = null;
             ioctl = null;
             execvp = null;
             _exit = null;
@@ -142,8 +125,9 @@ public class LinuxPTY implements PseudoTerminal {
             write = null;
             waitpid = null;
             kill = null;
-            getenv = null;
             strerror = null;
+            errnoLocation = null;
+            setenv = null;
         }
     }
 
@@ -162,7 +146,8 @@ public class LinuxPTY implements PseudoTerminal {
     @Override
     public boolean isAvailable() {
         String os = System.getProperty("os.name", "").toLowerCase();
-        return (os.contains("linux") || os.contains("mac") || os.contains("nix")) && LIBC != null;
+        return (os.contains("linux") || os.contains("mac") || os.contains("nix"))
+            && LIBC != null && forkpty != null;
     }
 
     @Override
@@ -170,47 +155,24 @@ public class LinuxPTY implements PseudoTerminal {
         arena = Arena.ofShared();
 
         try {
-            // 1. 打开主设备 /dev/ptmx
-            int flags = O_RDWR | (IS_MAC ? O_NOCTTY_MAC : O_NOCTTY);
-            masterFd = (int) posix_openpt.invoke(flags);
-            if (masterFd < 0) {
-                throw new IOException("posix_openpt failed: " + getError());
+            // 0. 设置 TERM 环境变量（top/vim 等全屏程序依赖此变量）
+            //    setenv 修改 C 库的 environ，子进程通过 fork 继承
+            if (setenv != null) {
+                MemorySegment termName = allocateCString("TERM");
+                MemorySegment termValue = allocateCString("xterm-256color");
+                setenv.invoke(termName, termValue, 1);
             }
 
-            // 2. 授权和解锁从设备
-            int rc = (int) grantpt.invoke(masterFd);
-            if (rc != 0) {
-                throw new IOException("grantpt failed: " + getError());
-            }
-            rc = (int) unlockpt.invoke(masterFd);
-            if (rc != 0) {
-                throw new IOException("unlockpt failed: " + getError());
-            }
-
-            // 3. 获取从设备路径
-            MemorySegment slaveNameSeg = (MemorySegment) ptsname.invoke(masterFd);
-            if (slaveNameSeg.address() == 0) {
-                throw new IOException("ptsname failed: " + getError());
-            }
-            // 将 C 字符串拷贝到 Java（fork 前完成）
-            String slavePath = slaveNameSeg.getString(0);
-
-            // 4. 设置终端窗口大小（struct winsize: 4 shorts = 8 字节）
+            // 1. 准备窗口大小（struct winsize: 4 shorts = 8 字节）
             MemorySegment winsize = arena.allocate(ValueLayout.JAVA_SHORT, 4);
             winsize.set(ValueLayout.JAVA_SHORT, 0, (short) rows);    // ws_row
             winsize.set(ValueLayout.JAVA_SHORT, 2, (short) cols);    // ws_col
             winsize.set(ValueLayout.JAVA_SHORT, 4, (short) 0);       // ws_xpixel
             winsize.set(ValueLayout.JAVA_SHORT, 6, (short) 0);       // ws_ypixel
-            long winsizeReq = IS_MAC ? TIOCSWINSZ_MAC : TIOCSWINSZ;
-            rc = (int) ioctl.invoke(masterFd, winsizeReq, winsize);
-            // 忽略 ioctl 失败（不致命）
 
-            // 5. 准备命令行参数（execvp 需要 argv 数组）
-            // 解析命令行为参数数组
+            // 2. 准备命令行参数（execvp 需要 argv 数组）
             String[] parts = command.trim().split("\\s+");
             MemorySegment cmdSeg = allocateCString(parts[0]);
-
-            // argv 数组：指针数组，以 NULL 结尾
             long ptrSize = ValueLayout.ADDRESS.byteSize();
             MemorySegment argv = arena.allocate(ValueLayout.ADDRESS, (long) (parts.length + 1));
             for (int i = 0; i < parts.length; i++) {
@@ -219,61 +181,29 @@ public class LinuxPTY implements PseudoTerminal {
             }
             argv.set(ValueLayout.ADDRESS, parts.length * ptrSize, MemorySegment.NULL);
 
-            // 6. fork 子进程
-            int pid = (int) fork.invoke();
+            // 3. forkpty：在 C 中完成 PTY 创建 + fork + 子进程设置
+            //    （posix_openpt + grantpt + unlockpt + fork + setsid
+            //     + open(slave) + ioctl(TIOCSCTTY) + dup2(0/1/2) + close(master)）
+            //    子进程只需调用 execvp，避免 fork 后做不安全的 Java/FFM 操作
+            MemorySegment masterFdPtr = arena.allocate(ValueLayout.JAVA_INT);
+            int pid = (int) forkpty.invoke(masterFdPtr, MemorySegment.NULL, MemorySegment.NULL, winsize);
             if (pid < 0) {
-                throw new IOException("fork failed: " + getError());
+                throw new IOException("forkpty failed: " + getError());
             }
+            masterFd = masterFdPtr.get(ValueLayout.JAVA_INT, 0);
 
             if (pid == 0) {
                 // ===== 子进程 =====
-                // 注意：fork 后只能调用 async-signal-safe 的函数
-                // 不创建 Java 对象，只调用 native 函数
-
-                // 创建新会话，脱离控制终端
-                setsid.invoke();
-
-                // 打开从设备作为控制终端
-                try (Arena childArena = Arena.ofConfined()) {
-                    byte[] slaveBytes = slavePath.getBytes(StandardCharsets.UTF_8);
-                    MemorySegment slaveSeg = childArena.allocate(ValueLayout.JAVA_BYTE, slaveBytes.length + 1);
-                    MemorySegment.copy(slaveBytes, 0, slaveSeg, ValueLayout.JAVA_BYTE, 0L, slaveBytes.length);
-                    int slaveFd = (int) open.invoke(slaveSeg, O_RDWR);
-                    if (slaveFd < 0) {
-                        _exit.invoke(1);
-                    }
-
-                    // 设置控制终端
-                    int cttyReq = IS_MAC ? TIOCSCTTY_MAC : TIOCSCTTY;
-                    ioctl.invoke(slaveFd, cttyReq, 0L);
-
-                    // 重定向 stdin/stdout/stderr
-                    dup2.invoke(slaveFd, 0);
-                    dup2.invoke(slaveFd, 1);
-                    dup2.invoke(slaveFd, 2);
-                    if (slaveFd > 2) {
-                        close.invoke(slaveFd);
-                    }
-                }
-
-                // 关闭主设备
-                close.invoke(masterFd);
-
-                // 执行 shell
+                // forkpty 已完成所有 PTY 设置，只需 execvp（async-signal-safe）
                 execvp.invoke(cmdSeg, argv);
-
-                // execvp 失败则退出
                 _exit.invoke(127);
-                // 不会到达这里
             }
 
             // ===== 父进程 =====
             childPid = pid;
 
-            // 等待一小段时间确认子进程启动
             Thread.sleep(50);
 
-            // 检查子进程是否仍在运行
             if (!isAlive()) {
                 throw new IOException("Child process exited immediately (command: " + command + ")");
             }
@@ -291,7 +221,11 @@ public class LinuxPTY implements PseudoTerminal {
         try {
             try (Arena localArena = Arena.ofConfined()) {
                 MemorySegment buf = localArena.allocate(buffer.length);
-                long n = (long) read.invoke(masterFd, buf, (long) buffer.length);
+                // EINTR 时重试（信号可能中断阻塞式 read）
+                long n;
+                do {
+                    n = (long) read.invoke(masterFd, buf, (long) buffer.length);
+                } while (n < 0 && getErrno() == EINTR);
                 if (n <= 0) {
                     return -1;
                 }
@@ -311,7 +245,10 @@ public class LinuxPTY implements PseudoTerminal {
             try (Arena localArena = Arena.ofConfined()) {
                 MemorySegment buf = localArena.allocate(data.length);
                 MemorySegment.copy(data, 0, buf, ValueLayout.JAVA_BYTE, 0L, data.length);
-                long n = (long) write.invoke(masterFd, buf, (long) data.length);
+                long n;
+                do {
+                    n = (long) write.invoke(masterFd, buf, (long) data.length);
+                } while (n < 0 && getErrno() == EINTR);
                 if (n < 0) {
                     throw new IOException("write failed: " + getError());
                 }
@@ -396,15 +333,32 @@ public class LinuxPTY implements PseudoTerminal {
         }
     }
 
+    /** 获取当前 errno 值 */
+    private int getErrno() {
+        try {
+            if (errnoLocation == null) return 0;
+            MemorySegment errnoPtr = (MemorySegment) errnoLocation.invoke();
+            return errnoPtr.reinterpret(4).get(ValueLayout.JAVA_INT, 0);
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+
     /** 获取 errno 对应的错误消息 */
     private String getError() {
+        int err = getErrno();
+        if (err == 0) return "errno=0";
         try {
-            // errno 通过 __errno_location 或 __error 获取
-            // 简化处理：直接返回通用消息
-            return "errno";
-        } catch (Exception e) {
-            return "unknown error";
+            if (strerror != null) {
+                MemorySegment msgSeg = (MemorySegment) strerror.invoke(err);
+                if (msgSeg.address() != 0) {
+                    return "errno=" + err + ": " + msgSeg.reinterpret(256).getString(0);
+                }
+            }
+        } catch (Throwable t) {
+            // 忽略
         }
+        return "errno=" + err;
     }
 
     /** 分配以 null 结尾的 UTF-8 C 字符串 */

@@ -23,10 +23,10 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
 /**
- * 本地终端组件（PowerShell），使用 Windows ConPTY + TerminalEmulator + TerminalView。
+ * 本地终端组件，使用 PseudoTerminal + TerminalEmulator + TerminalView。
  *
  * 架构与 SSHTerminalPane 一致：
- * - ConPTY 提供伪控制台，PowerShell 在其中以真正的交互模式运行
+ * - PseudoTerminal 提供伪终端（Windows ConPTY / Linux-macOS forkpty），shell 在其中以真正的交互模式运行
  * - TerminalEmulator 解析 ANSI 转义序列并维护字符缓冲区
  * - TerminalView 渲染终端画面（Canvas）
  *
@@ -63,7 +63,7 @@ public class LocalTerminalPane extends BorderPane {
         terminalView = new TerminalView(emulator);
 
         // 调试：输出 emulator 接收的原始数据
-        emulator.setDebugWriter(line -> System.err.print("[EMU-RECV] " + line));
+        // emulator.setDebugWriter(line -> System.err.print("[EMU-RECV] " + line));
 
         // 状态栏
         HBox statusBar = new HBox();
@@ -76,7 +76,7 @@ public class LocalTerminalPane extends BorderPane {
         stateLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
         HBox.setMargin(stateLabel, new javafx.geometry.Insets(0, 8, 0, 0));
 
-        connLabel = new Label("PowerShell");
+        connLabel = new Label(getShellDisplayName());
         connLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
 
         Region spacer = new Region();
@@ -236,7 +236,23 @@ public class LocalTerminalPane extends BorderPane {
         emulator.setMaxScrollback(lines);
     }
 
-    /** 连接本地 PowerShell 终端 */
+    /** 根据平台获取终端显示名称 */
+    private String getShellDisplayName() {
+        String shell = PseudoTerminal.getDefaultShell();
+        if (shell == null || shell.isEmpty()) return "Terminal";
+        // "powershell.exe -NoProfile" → "PowerShell"
+        if (shell.toLowerCase().contains("powershell")) return "PowerShell";
+        if (shell.toLowerCase().contains("cmd.exe")) return "CMD";
+        // "/bin/bash" → "bash", "/usr/bin/zsh" → "zsh"
+        String name = shell.trim();
+        int spaceIdx = name.indexOf(' ');
+        if (spaceIdx > 0) name = name.substring(0, spaceIdx);
+        int slashIdx = name.lastIndexOf('/');
+        if (slashIdx >= 0) name = name.substring(slashIdx + 1);
+        return name.isEmpty() ? "Terminal" : name;
+    }
+
+    /** 连接本地终端 */
     public void connect(String terminalType) {
         // 延迟到下一帧，确保 UI 已布局（Canvas 有正确宽高）
         Platform.runLater(() -> doConnect(terminalType));
@@ -254,11 +270,11 @@ public class LocalTerminalPane extends BorderPane {
         }
         try {
             String shell = PseudoTerminal.getDefaultShell();
-            emulator.process(("[调试] 正在启动终端: " + shell + "\r\n").getBytes(StandardCharsets.UTF_8));
-            scheduleRender();
+            // emulator.process(("[调试] 正在启动终端: " + shell + "\r\n").getBytes(StandardCharsets.UTF_8));
+            // scheduleRender();
             pty.start(shell, emulator.getCols(), emulator.getRows());
-            emulator.process("[调试] 终端启动成功，开始读取\r\n".getBytes(StandardCharsets.UTF_8));
-            scheduleRender();
+            // emulator.process("[调试] 终端启动成功，开始读取\r\n".getBytes(StandardCharsets.UTF_8));
+            // scheduleRender();
             running = true;
             startReadThread();
             updateStatusBar("已连接");
@@ -305,17 +321,28 @@ public class LocalTerminalPane extends BorderPane {
                     boolean alive = pty.isAlive();
                     int pid = pty.getPid();
                     if (fileLog != null) { fileLog.println("[READ-THREAD] 进程 pid=" + pid + " alive=" + alive); fileLog.flush(); }
-                    Platform.runLater(() -> {
-                        emulator.process(("[调试] 进程 pid=" + pid + " alive=" + alive + "\r\n").getBytes(StandardCharsets.UTF_8));
-                        scheduleRender();
-                    });
+                    // Platform.runLater(() -> {
+                    //     emulator.process(("[调试] 进程 pid=" + pid + " alive=" + alive + "\r\n").getBytes(StandardCharsets.UTF_8));
+                    //     scheduleRender();
+                    // });
                 }
 
                 int readCount = 0;
                 if (fileLog != null) { fileLog.println("[READ-THREAD] 进入读取循环"); fileLog.flush(); }
                 while (running && pty != null) {
                     int len = pty.read(buffer);
-                    if (fileLog != null && len > 0) { fileLog.println("[READ-THREAD] read#" + (readCount+1) + " len=" + len); fileLog.flush(); }
+                    if (fileLog != null && len > 0) {
+                        if (readCount < 10) {
+                            StringBuilder hex = new StringBuilder();
+                            for (int i = 0; i < len && i < 64; i++) {
+                                hex.append(String.format("%02x ", buffer[i]));
+                            }
+                            fileLog.println("[READ-THREAD] read#" + (readCount+1) + " len=" + len + " hex=" + hex);
+                        } else {
+                            fileLog.println("[READ-THREAD] read#" + (readCount+1) + " len=" + len);
+                        }
+                        fileLog.flush();
+                    }
                     if (len == -1) break;
                     if (len <= 0) continue;
                     readCount++;
@@ -329,10 +356,10 @@ public class LocalTerminalPane extends BorderPane {
                 }
                 if (fileLog != null) { fileLog.println("[READ-THREAD] 退出读取循环, readCount=" + readCount); fileLog.flush(); }
                 final int totalReads = readCount;
-                Platform.runLater(() -> {
-                    emulator.process(("[调试] 读取线程结束, 共读取" + totalReads + "次\r\n").getBytes(StandardCharsets.UTF_8));
-                    scheduleRender();
-                });
+                // Platform.runLater(() -> {
+                //     emulator.process(("[调试] 读取线程结束, 共读取" + totalReads + "次\r\n").getBytes(StandardCharsets.UTF_8));
+                //     scheduleRender();
+                // });
             } catch (IOException e) {
                 if (fileLog != null) { fileLog.println("[READ-THREAD] IOException: " + e.getMessage()); fileLog.flush(); }
                 Platform.runLater(() -> {
@@ -364,30 +391,29 @@ public class LocalTerminalPane extends BorderPane {
     private void scheduleRender() {
         terminalView.render();
         // 调试：前10次打印 Canvas 尺寸、emulator 状态和 buffer 第一行内容
-        if (renderDebugCount < 10) {
-            renderDebugCount++;
-            double cw = terminalView.getWidth();
-            double ch = terminalView.getHeight();
-            int ecols = emulator.getCols();
-            int erows = emulator.getRows();
-            int cx = emulator.getCursorX();
-            int cy = emulator.getCursorY();
-            boolean alt = emulator.isUsingAltBuffer();
-            int sb = emulator.getScrollbackSize();
-            // 打印 buffer 前3行的实际内容
-            StringBuilder bufStr = new StringBuilder();
-            for (int y = 0; y < Math.min(3, erows); y++) {
-                StringBuilder line = new StringBuilder();
-                for (int x = 0; x < Math.min(60, ecols); x++) {
-                    char c = emulator.getChar(x, y);
-                    line.append(c == '\0' ? '·' : (c == ' ' ? ' ' : c));
-                }
-                bufStr.append("  [").append(y).append("] ").append(line).append("\n");
-            }
-            System.err.println("[RENDER#" + renderDebugCount + "] canvas=" + (int)cw + "x" + (int)ch +
-                " emulator=" + ecols + "x" + erows + " cursor=(" + cx + "," + cy + ")" +
-                " altBuf=" + alt + " scrollback=" + sb + "\n" + bufStr);
-        }
+        // if (renderDebugCount < 10) {
+        //     renderDebugCount++;
+        //     double cw = terminalView.getWidth();
+        //     double ch = terminalView.getHeight();
+        //     int ecols = emulator.getCols();
+        //     int erows = emulator.getRows();
+        //     int cx = emulator.getCursorX();
+        //     int cy = emulator.getCursorY();
+        //     boolean alt = emulator.isUsingAltBuffer();
+        //     int sb = emulator.getScrollbackSize();
+        //     StringBuilder bufStr = new StringBuilder();
+        //     for (int y = 0; y < Math.min(3, erows); y++) {
+        //         StringBuilder line = new StringBuilder();
+        //         for (int x = 0; x < Math.min(60, ecols); x++) {
+        //             char c = emulator.getChar(x, y);
+        //             line.append(c == '\0' ? '·' : (c == ' ' ? ' ' : c));
+        //         }
+        //         bufStr.append("  [").append(y).append("] ").append(line).append("\n");
+        //     }
+        //     System.err.println("[RENDER#" + renderDebugCount + "] canvas=" + (int)cw + "x" + (int)ch +
+        //         " emulator=" + ecols + "x" + erows + " cursor=(" + cx + "," + cy + ")" +
+        //         " altBuf=" + alt + " scrollback=" + sb + "\n" + bufStr);
+        // }
     }
 
     /** 粘贴剪贴板内容到 ConPTY */
