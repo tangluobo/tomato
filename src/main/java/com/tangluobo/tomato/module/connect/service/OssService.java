@@ -64,7 +64,9 @@ public class OssService {
             List<OssObjectInfo> objects = new ArrayList<>();
 
             // 添加子目录（CommonPrefixes）
-            for (String commonPrefix : listing.getCommonPrefixes()) {
+            // 记录已通过 CommonPrefix 显示的目录，避免与 ObjectSummaries 中的目录标记对象重复
+            java.util.Set<String> commonPrefixSet = new java.util.HashSet<>(listing.getCommonPrefixes());
+            for (String commonPrefix : commonPrefixSet) {
                 OssObjectInfo dirInfo = new OssObjectInfo();
                 dirInfo.setKey(commonPrefix);
                 dirInfo.setDirectory(true);
@@ -74,12 +76,24 @@ public class OssService {
 
             // 添加文件对象
             for (OSSObjectSummary summary : listing.getObjectSummaries()) {
-                // 跳过目录标记对象
-                if (summary.getKey().endsWith("/") && summary.getSize() == 0) {
+                // 跳过与prefix相同自身的目录标记（即当前所在目录本身）
+                if (prefix != null && !prefix.isEmpty() && summary.getKey().equals(prefix)) {
                     continue;
                 }
-                // 跳过与prefix相同自身的目录标记
-                if (prefix != null && !prefix.isEmpty() && summary.getKey().equals(prefix)) {
+
+                // 以 / 结尾的对象是目录占位对象
+                if (summary.getKey().endsWith("/")) {
+                    // 如果已通过 CommonPrefix 显示，跳过避免重复
+                    if (commonPrefixSet.contains(summary.getKey())) {
+                        continue;
+                    }
+                    // 空目录的情况：CommonPrefix 不会返回，但 ObjectSummaries 会包含这个 0 字节占位对象
+                    OssObjectInfo dirInfo = new OssObjectInfo();
+                    dirInfo.setKey(summary.getKey());
+                    dirInfo.setDirectory(true);
+                    dirInfo.setSize(0);
+                    dirInfo.setLastModified(summary.getLastModified());
+                    objects.add(dirInfo);
                     continue;
                 }
 
@@ -120,6 +134,52 @@ public class OssService {
             metadata.setContentType("text/markdown; charset=utf-8");
             java.io.ByteArrayInputStream bis = new java.io.ByteArrayInputStream(bytes);
             client.putObject(bucketName, key, bis, metadata);
+        } finally {
+            client.shutdown();
+        }
+    }
+
+    /**
+     * 上传文件流到指定对象（覆盖已存在对象）
+     * @param stream 输入流
+     * @param size 文件大小（字节），未知可传 -1（OSS 需要在 metadata 中设置 ContentLength，未知时使用 chunked 上传）
+     * @param contentType MIME 类型，为空则使用 application/octet-stream
+     */
+    public static void uploadFile(ConnectionConfig config, String bucketName, String key,
+                                  java.io.InputStream stream, long size, String contentType) throws Exception {
+        OSS client = createClient(config);
+        try {
+            if (contentType == null || contentType.isEmpty()) {
+                contentType = "application/octet-stream";
+            }
+            com.aliyun.oss.model.ObjectMetadata metadata = new com.aliyun.oss.model.ObjectMetadata();
+            if (size > 0) {
+                metadata.setContentLength(size);
+            }
+            // 未指定 ContentLength 时，OSS Java SDK 会自动使用 chunked 传输编码
+            metadata.setContentType(contentType);
+            client.putObject(bucketName, key, stream, metadata);
+        } finally {
+            client.shutdown();
+        }
+    }
+
+    /**
+     * 创建目录（OSS 中通过创建以 / 结尾的空对象实现）
+     * @param prefix 目录前缀，无需以 / 结尾（方法内部会补全）
+     */
+    public static void createDirectory(ConnectionConfig config, String bucketName, String prefix) throws Exception {
+        OSS client = createClient(config);
+        try {
+            if (prefix == null) prefix = "";
+            if (!prefix.endsWith("/")) {
+                prefix = prefix + "/";
+            }
+            com.aliyun.oss.model.ObjectMetadata metadata = new com.aliyun.oss.model.ObjectMetadata();
+            metadata.setContentLength(0);
+            metadata.setContentType("application/x-directory");
+            java.io.ByteArrayInputStream empty = new java.io.ByteArrayInputStream(new byte[0]);
+            client.putObject(bucketName, prefix, empty, metadata);
         } finally {
             client.shutdown();
         }

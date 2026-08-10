@@ -3,6 +3,7 @@ package com.tangluobo.tomato.module.connect.handler;
 import com.tangluobo.tomato.module.connect.*;
 import com.tangluobo.tomato.module.connect.dialog.CreateDatabaseDialog;
 import com.tangluobo.tomato.module.connect.dialog.EditDatabaseDialog;
+import com.tangluobo.tomato.module.connect.dialog.PasswordPromptDialog;
 import com.tangluobo.tomato.module.connect.dialog.GlobalConfigDialog;
 import com.tangluobo.tomato.module.connect.dialog.RestoreDialog;
 import com.tangluobo.tomato.module.connect.service.BackupService;
@@ -15,10 +16,7 @@ import javafx.collections.ObservableList;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ContextMenu;
-import javafx.scene.control.Dialog;
-import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
-import javafx.scene.control.PasswordField;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.Tab;
@@ -26,8 +24,6 @@ import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.TreeItem;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
-import javafx.scene.layout.GridPane;
-import javafx.geometry.Insets;
 import javafx.stage.Stage;
 
 import java.nio.charset.StandardCharsets;
@@ -124,24 +120,16 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         }
 
         if (config.getPassword() == null) {
-            Dialog<String> pwdDialog = new Dialog<>();
-            pwdDialog.setTitle("输入密码");
-            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
-            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-            GridPane grid = new GridPane();
-            grid.setHgap(10);
-            grid.setVgap(10);
-            grid.setPadding(new Insets(20, 10, 10, 10));
-            PasswordField pf = new PasswordField();
-            pf.setPrefWidth(250);
-            grid.add(new Label("密码："), 0, 0);
-            grid.add(pf, 1, 0);
-            pwdDialog.getDialogPane().setContent(grid);
-            pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
-            final String[] passwordHolder = new String[1];
-            pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
-            if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
-            config.setPassword(passwordHolder[0]);
+            PasswordPromptDialog.Result pwdResult = PasswordPromptDialog.show(
+                    "输入密码",
+                    config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")",
+                    "密码：", null, "保存密码");
+            if (pwdResult == null || pwdResult.getPassword() == null || pwdResult.getPassword().isEmpty()) return;
+            config.setPassword(pwdResult.getPassword());
+            if (pwdResult.isSavePassword()) {
+                config.setSavePassword(true);
+                module.saveConnections();
+            }
         }
 
         module.getConnectingHosts().add(hostItem);
@@ -237,24 +225,16 @@ public abstract class AbstractDbHandler implements ConnectHandler {
     /** 新建数据库 */
     public void handleCreateDatabase(TreeItem<String> hostItem, ConnectionConfig config) {
         if (config.getPassword() == null) {
-            Dialog<String> pwdDialog = new Dialog<>();
-            pwdDialog.setTitle("输入密码");
-            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
-            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-            GridPane grid = new GridPane();
-            grid.setHgap(10);
-            grid.setVgap(10);
-            grid.setPadding(new Insets(20, 10, 10, 10));
-            PasswordField pf = new PasswordField();
-            pf.setPrefWidth(250);
-            grid.add(new Label("密码："), 0, 0);
-            grid.add(pf, 1, 0);
-            pwdDialog.getDialogPane().setContent(grid);
-            pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
-            final String[] passwordHolder = new String[1];
-            pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
-            if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
-            config.setPassword(passwordHolder[0]);
+            PasswordPromptDialog.Result pwdResult = PasswordPromptDialog.show(
+                    "输入密码",
+                    config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")",
+                    "密码：", null, "保存密码");
+            if (pwdResult == null || pwdResult.getPassword() == null || pwdResult.getPassword().isEmpty()) return;
+            config.setPassword(pwdResult.getPassword());
+            if (pwdResult.isSavePassword()) {
+                config.setSavePassword(true);
+                module.saveConnections();
+            }
         }
 
         Stage stage = module.getStage();
@@ -294,24 +274,16 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         ConnectionConfig config = data.getConnectionConfig();
 
         if (config.getPassword() == null) {
-            Dialog<String> pwdDialog = new Dialog<>();
-            pwdDialog.setTitle("输入密码");
-            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
-            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-            GridPane grid = new GridPane();
-            grid.setHgap(10);
-            grid.setVgap(10);
-            grid.setPadding(new Insets(20, 10, 10, 10));
-            PasswordField pf = new PasswordField();
-            pf.setPrefWidth(250);
-            grid.add(new Label("密码："), 0, 0);
-            grid.add(pf, 1, 0);
-            pwdDialog.getDialogPane().setContent(grid);
-            pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
-            final String[] passwordHolder = new String[1];
-            pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
-            if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
-            config.setPassword(passwordHolder[0]);
+            PasswordPromptDialog.Result pwdResult = PasswordPromptDialog.show(
+                    "输入密码",
+                    config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")",
+                    "密码：", null, "保存密码");
+            if (pwdResult == null || pwdResult.getPassword() == null || pwdResult.getPassword().isEmpty()) return;
+            config.setPassword(pwdResult.getPassword());
+            if (pwdResult.isSavePassword()) {
+                config.setSavePassword(true);
+                module.saveConnections();
+            }
         }
 
         Stage stage = module.getStage();
@@ -377,24 +349,16 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             if (response != ButtonType.YES) return;
 
             if (config.getPassword() == null) {
-                Dialog<String> pwdDialog = new Dialog<>();
-                pwdDialog.setTitle("输入密码");
-                pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
-                pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-                GridPane grid = new GridPane();
-                grid.setHgap(10);
-                grid.setVgap(10);
-                grid.setPadding(new Insets(20, 10, 10, 10));
-                PasswordField pf = new PasswordField();
-                pf.setPrefWidth(250);
-                grid.add(new Label("密码："), 0, 0);
-                grid.add(pf, 1, 0);
-                pwdDialog.getDialogPane().setContent(grid);
-                pwdDialog.setResultConverter(dialogButton -> dialogButton == ButtonType.OK ? pf.getText() : null);
-                final String[] passwordHolder = new String[1];
-                pwdDialog.showAndWait().ifPresentOrElse(pwd -> passwordHolder[0] = pwd, () -> {});
-                if (passwordHolder[0] == null || passwordHolder[0].isEmpty()) return;
-                config.setPassword(passwordHolder[0]);
+                PasswordPromptDialog.Result pwdResult = PasswordPromptDialog.show(
+                        "输入密码",
+                        config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")",
+                        "密码：", null, "保存密码");
+                if (pwdResult == null || pwdResult.getPassword() == null || pwdResult.getPassword().isEmpty()) return;
+                config.setPassword(pwdResult.getPassword());
+                if (pwdResult.isSavePassword()) {
+                    config.setSavePassword(true);
+                    module.saveConnections();
+                }
             }
 
             new Thread(() -> {

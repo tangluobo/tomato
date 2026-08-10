@@ -12,17 +12,26 @@ import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.SnapshotParameters;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.Dragboard;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.ScrollEvent;
+import javafx.scene.input.TransferMode;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
 import javafx.scene.Scene;
+import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -375,9 +384,62 @@ public class S3FileBrowserPane extends BorderPane {
                     handleDoubleClick(item);
                 } else if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 1) {
                     selectedItem = row.getItem();
+                } else if (event.getButton() == MouseButton.SECONDARY && !row.isEmpty()) {
+                    fileTable.getSelectionModel().select(row.getItem());
+                    selectedItem = row.getItem();
                 }
             });
+            // 拖拽下载：从列表行拖出 -> 下载到临时目录后放入剪贴板
+            row.setOnDragDetected(event -> {
+                if (row.isEmpty()) return;
+                FileItem item = row.getItem();
+                if (!item.isDirectory()) {
+                    File tempFile = downloadToTemp(item);
+                    if (tempFile != null) {
+                        Dragboard db = row.startDragAndDrop(TransferMode.COPY);
+                        ClipboardContent content = new ClipboardContent();
+                        content.putFiles(Collections.singletonList(tempFile));
+                        db.setContent(content);
+                    }
+                }
+                event.consume();
+            });
+            // 拖拽上传：拖到行上 -> 接受文件
+            row.setOnDragOver(event -> {
+                if (currentBucket != null && event.getDragboard().hasFiles()) {
+                    event.acceptTransferModes(TransferMode.COPY);
+                }
+                event.consume();
+            });
+            row.setOnDragDropped(event -> {
+                Dragboard db = event.getDragboard();
+                boolean success = false;
+                if (currentBucket != null && db.hasFiles()) {
+                    uploadLocalFiles(db.getFiles());
+                    success = true;
+                }
+                event.setDropCompleted(success);
+                event.consume();
+            });
             return row;
+        });
+
+        // 整个表格也支持拖拽上传
+        fileTable.setOnDragOver(event -> {
+            if (currentBucket != null && event.getDragboard().hasFiles()) {
+                event.acceptTransferModes(TransferMode.COPY);
+            }
+            event.consume();
+        });
+        fileTable.setOnDragDropped(event -> {
+            Dragboard db = event.getDragboard();
+            boolean success = false;
+            if (currentBucket != null && db.hasFiles()) {
+                uploadLocalFiles(db.getFiles());
+                success = true;
+            }
+            event.setDropCompleted(success);
+            event.consume();
         });
 
         // 名称列
@@ -440,6 +502,32 @@ public class S3FileBrowserPane extends BorderPane {
                 clearIconSelection();
                 selectedItem = null;
             }
+        });
+
+        // 拖拽上传：拖到图标视图（FlowPane 和 ScrollPane 均支持）
+        setupDragUpload(iconFlowPane);
+        setupDragUpload(iconScrollPane);
+    }
+
+    /**
+     * 为节点绑定拖拽上传：从本地文件系统拖入文件即上传到当前 bucket/prefix
+     */
+    private void setupDragUpload(javafx.scene.Node node) {
+        node.setOnDragOver(event -> {
+            if (currentBucket != null && event.getDragboard().hasFiles()) {
+                event.acceptTransferModes(TransferMode.COPY);
+            }
+            event.consume();
+        });
+        node.setOnDragDropped(event -> {
+            Dragboard db = event.getDragboard();
+            boolean success = false;
+            if (currentBucket != null && db.hasFiles()) {
+                uploadLocalFiles(db.getFiles());
+                success = true;
+            }
+            event.setDropCompleted(success);
+            event.consume();
         });
     }
 
@@ -505,7 +593,25 @@ public class S3FileBrowserPane extends BorderPane {
                 if (e.getClickCount() == 2) {
                     handleDoubleClick(item);
                 }
+            } else if (e.getButton() == MouseButton.SECONDARY) {
+                clearIconSelection();
+                selectIconBox(box, item);
+                selectedItem = item;
             }
+        });
+
+        // 拖拽下载：从图标拖出 -> 下载到临时目录后放入剪贴板
+        box.setOnDragDetected(e -> {
+            if (!item.isDirectory()) {
+                File tempFile = downloadToTemp(item);
+                if (tempFile != null) {
+                    Dragboard db = box.startDragAndDrop(TransferMode.COPY);
+                    ClipboardContent content = new ClipboardContent();
+                    content.putFiles(Collections.singletonList(tempFile));
+                    db.setContent(content);
+                }
+            }
+            e.consume();
         });
 
         box.setOnMouseEntered(e -> {
@@ -556,6 +662,28 @@ public class S3FileBrowserPane extends BorderPane {
             if (selected != null) openMarkdownEditor(selected);
         });
 
+        // 下载菜单项（仅文件可用）
+        MenuItem downloadItem = new MenuItem("下载...");
+        downloadItem.setOnAction(e -> {
+            FileItem selected = getSelectedItem();
+            if (selected != null && !selected.isDirectory()) handleDownload(selected);
+        });
+
+        // 复制访问地址（仅文件可用，需配置访问URL）
+        MenuItem copyUrlItem = new MenuItem("复制访问地址");
+        copyUrlItem.setOnAction(e -> {
+            FileItem selected = getSelectedItem();
+            if (selected != null && !selected.isDirectory()) handleCopyAccessUrl(selected);
+        });
+
+        // 创建目录（仅 Bucket 内可用）
+        MenuItem mkdirItem = new MenuItem("新建目录");
+        mkdirItem.setOnAction(e -> handleCreateDirectory());
+
+        // 上传文件（仅 Bucket 内可用）
+        MenuItem uploadItem = new MenuItem("上传文件...");
+        uploadItem.setOnAction(e -> handleUploadFiles());
+
         // 创建文件（仅 Bucket 内可用）
         MenuItem createFileItem = new MenuItem("创建文件");
         createFileItem.setOnAction(e -> handleCreateFile());
@@ -573,14 +701,18 @@ public class S3FileBrowserPane extends BorderPane {
         listViewItem.setOnAction(e -> switchViewMode(ViewMode.LIST));
         viewMenu.getItems().addAll(iconViewItem, listViewItem);
 
-        menu.getItems().addAll(openItem, previewItem, editMdItem, new SeparatorMenuItem(),
-                createFileItem, deleteItem, new SeparatorMenuItem(), viewMenu, new SeparatorMenuItem(), refreshItem);
+        menu.getItems().addAll(openItem, previewItem, editMdItem, downloadItem, copyUrlItem, new SeparatorMenuItem(),
+                mkdirItem, uploadItem, createFileItem, deleteItem, new SeparatorMenuItem(), viewMenu, new SeparatorMenuItem(), refreshItem);
 
         // 右键菜单显示时动态控制各项可见性
         menu.setOnShowing(e -> {
             FileItem selected = getSelectedItem();
             previewItem.setVisible(selected != null && !selected.isDirectory() && isImageFile(selected.getDisplayName()));
             editMdItem.setVisible(selected != null && !selected.isDirectory() && isMarkdownFile(selected.getDisplayName()));
+            downloadItem.setVisible(selected != null && !selected.isDirectory());
+            copyUrlItem.setVisible(selected != null && !selected.isDirectory());
+            mkdirItem.setVisible(currentBucket != null);
+            uploadItem.setVisible(currentBucket != null);
             createFileItem.setVisible(currentBucket != null);
         });
 
@@ -847,6 +979,216 @@ public class S3FileBrowserPane extends BorderPane {
                 }
             }, "MD-CreateFile").start();
         });
+    }
+
+    /**
+     * 右键新建目录：在当前 bucket/prefix 下创建子目录（S3/OSS 中为以 / 结尾的空对象）
+     */
+    private void handleCreateDirectory() {
+        if (currentBucket == null) {
+            Alert alert = new Alert(Alert.AlertType.WARNING);
+            alert.setTitle("提示");
+            alert.setHeaderText(null);
+            alert.setContentText("请先进入一个 Bucket 再创建目录");
+            alert.showAndWait();
+            return;
+        }
+        TextInputDialog dialog = new TextInputDialog();
+        dialog.setTitle("新建目录");
+        dialog.setHeaderText(null);
+        dialog.setContentText("目录名称：");
+        dialog.showAndWait().ifPresent(name -> {
+            String dirName = name.trim();
+            if (dirName.isEmpty()) return;
+            // 禁止包含路径分隔符，避免产生意外路径
+            if (dirName.contains("/")) {
+                Alert alert = new Alert(Alert.AlertType.WARNING);
+                alert.setTitle("提示");
+                alert.setHeaderText(null);
+                alert.setContentText("目录名称不能包含 / 字符");
+                alert.showAndWait();
+                return;
+            }
+            // 拼接完整 prefix
+            String dirKey = (currentPrefix != null ? currentPrefix : "") + dirName + "/";
+            new Thread(() -> {
+                try {
+                    if (isAliyunOSS) {
+                        OssService.createDirectory(config, currentBucket, dirKey);
+                    } else {
+                        S3Service.createDirectory(config, currentBucket, dirKey);
+                    }
+                    Platform.runLater(this::refresh);
+                } catch (Exception e) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("创建失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("创建目录失败: " + e.getMessage());
+                        alert.showAndWait();
+                    });
+                }
+            }, "S3-Mkdir").start();
+        });
+    }
+
+    /**
+     * 右键上传文件：弹窗选择本地文件，逐个上传到当前 bucket/prefix
+     */
+    private void handleUploadFiles() {
+        if (currentBucket == null) {
+            Alert alert = new Alert(Alert.AlertType.WARNING);
+            alert.setTitle("提示");
+            alert.setHeaderText(null);
+            alert.setContentText("请先进入一个 Bucket 再上传文件");
+            alert.showAndWait();
+            return;
+        }
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("选择要上传的文件");
+        List<File> files = chooser.showOpenMultipleDialog(getScene().getWindow());
+        if (files == null || files.isEmpty()) return;
+        uploadLocalFiles(files);
+    }
+
+    /**
+     * 上传本地文件列表到当前 bucket/prefix
+     */
+    private void uploadLocalFiles(List<File> files) {
+        if (currentBucket == null || files == null || files.isEmpty()) return;
+        stateLabel.setText("上传中... (0/" + files.size() + ")");
+        new Thread(() -> {
+            int success = 0;
+            int failed = 0;
+            String lastError = null;
+            for (File file : files) {
+                String key = (currentPrefix != null ? currentPrefix : "") + file.getName();
+                try (java.io.FileInputStream fis = new java.io.FileInputStream(file)) {
+                    long size = file.length();
+                    String contentType = java.net.URLConnection.guessContentTypeFromName(file.getName());
+                    if (contentType == null) contentType = "application/octet-stream";
+                    if (isAliyunOSS) {
+                        OssService.uploadFile(config, currentBucket, key, fis, size, contentType);
+                    } else {
+                        S3Service.uploadFile(config, currentBucket, key, fis, size, contentType);
+                    }
+                    success++;
+                } catch (Exception e) {
+                    failed++;
+                    lastError = e.getMessage();
+                    e.printStackTrace();
+                }
+                final int done = success + failed;
+                Platform.runLater(() -> stateLabel.setText("上传中... (" + done + "/" + files.size() + ")"));
+            }
+            final int okCount = success;
+            final int failCount = failed;
+            final String err = lastError;
+            Platform.runLater(() -> {
+                if (failCount == 0) {
+                    stateLabel.setText("上传完成: 成功 " + okCount + " 个");
+                } else {
+                    stateLabel.setText("上传结束: 成功 " + okCount + " 个, 失败 " + failCount + " 个");
+                    Alert alert = new Alert(Alert.AlertType.WARNING);
+                    alert.setTitle("部分上传失败");
+                    alert.setHeaderText("成功 " + okCount + " 个, 失败 " + failCount + " 个");
+                    alert.setContentText(err != null ? err : "");
+                    alert.showAndWait();
+                }
+                refresh();
+            });
+        }, "S3-Upload").start();
+    }
+
+    /**
+     * 右键下载文件：选择保存位置，下载指定文件
+     */
+    private void handleDownload(FileItem item) {
+        if (currentBucket == null || item == null || item.isDirectory()) return;
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("保存文件");
+        fileChooser.setInitialFileName(item.getDisplayName());
+        File saveFile = fileChooser.showSaveDialog(getScene().getWindow());
+        if (saveFile == null) return;
+
+        stateLabel.setText("下载中: " + item.getDisplayName());
+        new Thread(() -> {
+            try (InputStream is = isAliyunOSS
+                    ? OssService.getObjectStream(config, currentBucket, item.getKey())
+                    : S3Service.getObjectStream(config, currentBucket, item.getKey())) {
+                Files.copy(is, saveFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                Platform.runLater(() -> {
+                    stateLabel.setText("下载完成: " + item.getDisplayName());
+                    Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                    alert.setTitle("下载完成");
+                    alert.setHeaderText(null);
+                    alert.setContentText("文件已保存到: " + saveFile.getAbsolutePath());
+                    alert.showAndWait();
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    stateLabel.setText("下载失败");
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("下载失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText(e.getMessage());
+                    alert.showAndWait();
+                });
+            }
+        }, "S3-Download").start();
+    }
+
+    /**
+     * 拼接文件的公共访问URL并复制到剪贴板。
+     * 规则：访问URL前缀（去除末尾 /）+ "/" + 桶名 + "/" + 文件 key
+     * 若未配置访问URL，提示用户先配置。
+     */
+    private void handleCopyAccessUrl(FileItem item) {
+        String baseUrl = config.getPublicAccessUrl();
+        if (baseUrl == null || baseUrl.trim().isEmpty()) {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION);
+            alert.setTitle("提示");
+            alert.setHeaderText(null);
+            alert.setContentText("尚未配置访问URL，请在连接配置中设置访问URL字段");
+            alert.showAndWait();
+            return;
+        }
+        String trimmedBase = baseUrl.trim();
+        while (trimmedBase.endsWith("/")) {
+            trimmedBase = trimmedBase.substring(0, trimmedBase.length() - 1);
+        }
+        String key = item.getKey();
+        while (key.startsWith("/")) {
+            key = key.substring(1);
+        }
+        String fullUrl = trimmedBase + "/" + currentBucket + "/" + key;
+
+        ClipboardContent content = new ClipboardContent();
+        content.putString(fullUrl);
+        Clipboard.getSystemClipboard().setContent(content);
+
+        stateLabel.setText("已复制访问地址: " + fullUrl);
+    }
+
+    /**
+     * 下载文件到临时目录（用于拖拽下载）
+     */
+    private File downloadToTemp(FileItem item) {
+        if (currentBucket == null || item == null || item.isDirectory()) return null;
+        try {
+            File tempDir = new File(System.getProperty("java.io.tmpdir"), "tomato-s3");
+            if (!tempDir.exists()) tempDir.mkdirs();
+            File tempFile = new File(tempDir, item.getDisplayName());
+            try (InputStream is = isAliyunOSS
+                    ? OssService.getObjectStream(config, currentBucket, item.getKey())
+                    : S3Service.getObjectStream(config, currentBucket, item.getKey())) {
+                Files.copy(is, tempFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            }
+            return tempFile;
+        } catch (Exception e) {
+            Platform.runLater(() -> stateLabel.setText("拖拽下载失败: " + e.getMessage()));
+            return null;
+        }
     }
 
     /**

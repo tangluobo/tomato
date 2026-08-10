@@ -5,12 +5,11 @@ import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import com.tangluobo.tomato.module.connect.GlobalConfig;
 import com.tangluobo.tomato.module.connect.dialog.GlobalConfigDialog;
+import com.tangluobo.tomato.module.connect.dialog.PasswordPromptDialog;
 import com.tangluobo.tomato.module.connect.dialog.SessionConfigDialog;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
 import javafx.application.Platform;
-import javafx.geometry.Insets;
 import javafx.scene.control.*;
-import javafx.scene.layout.GridPane;
 import javafx.stage.Stage;
 
 import java.util.List;
@@ -91,32 +90,17 @@ public class SshTerminalConnectHandler implements ConnectHandler {
      */
     private void doConnect(ConnectModule module, SSHTerminalPane terminalPane, ConnectionConfig config) {
         if (config.isUsePassword() && config.getPassword() == null) {
-            Dialog<String> pwdDialog = new Dialog<>();
-            pwdDialog.setTitle("输入密码");
-            pwdDialog.setHeaderText(config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")");
-            pwdDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-
-            GridPane grid = new GridPane();
-            grid.setHgap(10);
-            grid.setVgap(10);
-            grid.setPadding(new Insets(20, 10, 10, 10));
-            PasswordField pf = new PasswordField();
-            pf.setPrefWidth(250);
-            grid.add(new Label("密码："), 0, 0);
-            grid.add(pf, 1, 0);
-            pwdDialog.getDialogPane().setContent(grid);
-
-            pwdDialog.setResultConverter(dialogButton -> {
-                if (dialogButton == ButtonType.OK) {
-                    return pf.getText();
-                }
-                return null;
-            });
-
-            pwdDialog.showAndWait().ifPresentOrElse(pwd -> {
-                if (pwd.isEmpty()) return;
-                connectWithAuth(terminalPane, config, pwd);
-            }, () -> {});
+            PasswordPromptDialog.Result pwdResult = PasswordPromptDialog.show(
+                    "输入密码",
+                    config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")",
+                    "密码：", null, "保存密码");
+            if (pwdResult == null || pwdResult.getPassword() == null || pwdResult.getPassword().isEmpty()) return;
+            config.setPassword(pwdResult.getPassword());
+            if (pwdResult.isSavePassword()) {
+                config.setSavePassword(true);
+                module.saveConnections();
+            }
+            connectWithAuth(terminalPane, config, pwdResult.getPassword());
         } else {
             connectWithAuth(terminalPane, config, config.getPassword());
         }

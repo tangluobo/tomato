@@ -92,8 +92,11 @@ public class S3Service {
                     Item item = result.get();
                     S3ObjectInfo objInfo = new S3ObjectInfo();
                     objInfo.setKey(item.objectName());
-                    objInfo.setDirectory(item.isDir());
-                    objInfo.setSize(item.isDir() ? 0 : item.size());
+                    // S3 没有"真正的目录"，目录是通过 key 中的 / 隐含的
+                    // 以 / 结尾的对象（目录占位对象）也视为目录，否则空目录会被显示为文件
+                    boolean isDir = item.isDir() || item.objectName().endsWith("/");
+                    objInfo.setDirectory(isDir);
+                    objInfo.setSize(isDir ? 0 : item.size());
                     if (item.lastModified() != null) {
                         objInfo.setLastModified(item.lastModified().toInstant());
                     }
@@ -134,6 +137,46 @@ public class S3Service {
                 .object(key)
                 .stream(bis, bytes.length+0L, -1L)
                 .contentType("text/markdown; charset=utf-8")
+                .build());
+    }
+
+    /**
+     * 上传文件流到指定对象（覆盖已存在对象）
+     * @param stream 输入流
+     * @param size 文件大小（字节），未知可传 -1
+     * @param contentType MIME 类型，为空则使用 application/octet-stream
+     */
+    public static void uploadFile(ConnectionConfig config, String bucketName, String key,
+                                  InputStream stream, long size, String contentType) throws Exception {
+        MinioClient client = createClient(config);
+        if (contentType == null || contentType.isEmpty()) {
+            contentType = "application/octet-stream";
+        }
+        long partSize = size > 0 ? size : -1L;
+        client.putObject(PutObjectArgs.builder()
+                .bucket(bucketName)
+                .object(key)
+                .stream(stream, partSize, -1L)
+                .contentType(contentType)
+                .build());
+    }
+
+    /**
+     * 创建目录（S3 中通过创建以 / 结尾的空对象实现）
+     * @param prefix 目录前缀，无需以 / 结尾（方法内部会补全）
+     */
+    public static void createDirectory(ConnectionConfig config, String bucketName, String prefix) throws Exception {
+        MinioClient client = createClient(config);
+        if (prefix == null) prefix = "";
+        if (!prefix.endsWith("/")) {
+            prefix = prefix + "/";
+        }
+        ByteArrayInputStream empty = new ByteArrayInputStream(new byte[0]);
+        client.putObject(PutObjectArgs.builder()
+                .bucket(bucketName)
+                .object(prefix)
+                .stream(empty, 0L, -1L)
+                .contentType("application/x-directory")
                 .build());
     }
 
