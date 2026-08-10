@@ -39,26 +39,53 @@
 .tab-pane {
     -fx-tab-min-height: 26px;
     -fx-tab-max-height: 26px;
-    -fx-background-color: transparent;
-    -fx-background-insets: 0;
-    -fx-padding: 0;
-    -fx-border-color: transparent;
-    -fx-border-width: 0;
-    -fx-border-insets: 0;
+    -fx-background-color: transparent !important;
+    -fx-background-insets: 0 !important;
+    -fx-padding: 0 !important;
+    -fx-border-color: transparent !important;
+    -fx-border-width: 0 !important;
+    -fx-border-insets: 0 !important;
 }
 
-.tab-pane .tab-header-area {
-    -fx-padding: 0;
-    -fx-background-color: #ececea;
-    -fx-background-insets: 0;
-    -fx-border-color: transparent;
-    -fx-border-width: 0;
-    -fx-border-insets: 0;
+.tab-pane > .tab-header-area {
+    -fx-padding: 0 !important;
+    -fx-background-color: #ececea !important;
+    -fx-background-insets: 0 !important;
+    -fx-border-color: transparent !important;
+    -fx-border-width: 0 !important;
+    -fx-border-insets: 0 !important;
 }
 
-.tab-pane .tab-header-background {
-    -fx-background-color: #ececea;
-    -fx-background-insets: 0;
+.tab-pane > .tab-header-area > .headers-region {
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+    -fx-border-color: transparent !important;
+    -fx-border-width: 0 !important;
+}
+
+.tab-pane > .tab-header-area > .headers-region > .tab {
+    -fx-padding: 5 12 !important;
+}
+
+.tab-pane > .tab-header-area > .tab-area {
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+}
+
+.tab-pane > .tab-header-background {
+    -fx-background-color: #ececea !important;
+    -fx-background-insets: 0 !important;
+    -fx-border-color: transparent !important;
+    -fx-border-width: 0 !important;
+}
+
+.tab-pane > .tab-content-area {
+    -fx-background-color: transparent !important;
+    -fx-border-color: transparent !important;
+    -fx-border-width: 0 !important;
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+    -fx-border-insets: 0 !important;
 }
 
 .tab-pane .tab {
@@ -116,6 +143,26 @@
     -fx-border-radius: 0;
 }
 
+.tab-pane .tab .tab-container .focus-indicator {
+    -fx-border-color: transparent;
+    -fx-border-insets: 0;
+}
+
+.tab-pane .tab-content-area > * {
+    -fx-padding: 0;
+    -fx-background-insets: 0;
+    -fx-border-insets: 0;
+}
+
+.tab-pane:top-tab .tab-content-area {
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+}
+
+.tab-pane .tab-content-area .tab {
+    -fx-padding: 0;
+}
+
 .tab-pane .tab .tab-container {
     -fx-focus-color: transparent;
     -fx-faint-focus-color: transparent;
@@ -126,15 +173,103 @@
     -fx-border-insets: 0;
 }
 
-.tab-pane .tab .tab-container .focus-indicator {
-    -fx-border-color: transparent;
-    -fx-border-insets: 0;
+.tab-pane .tab .tab-container {
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
 }
 
-.tab-pane .tab-content-area {
-    -fx-background-color: transparent;
-    -fx-border-color: transparent;
-    -fx-padding: 0;
+.tab-pane .tab .tab-container .focus-indicator {
+    -fx-border-color: transparent !important;
+    -fx-border-insets: 0 !important;
+}
+
+.tab-pane .tab .tab-container {
+    -fx-border-color: transparent !important;
+    -fx-border-width: 0 !important;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+}
+
+.tab-pane .tab:selected .tab-container .focus-indicator {
+    -fx-border-color: transparent !important;
+    -fx-border-insets: 0 !important;
+}
+
+.tab-pane:top-tab .tab-header-area .headers-region .tab .tab-container {
+    -fx-border-color: transparent !important;
+    -fx-border-width: 0 !important;
+}
+
+/* 强制清除tab-content-area的所有默认间距 */
+.tab-pane {
+    -fx-tab-content-padding: 0 !important;
+}
+
+.tab-pane > .tab-content-area {
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+    -fx-border-insets: 0 !important;
+}
+
+.tab-pane:top-tab > .tab-content-area {
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+}
+
+/* 清除tab-content-area内所有子节点的默认间距 */
+.tab-pane > .tab-content-area > * {
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+    -fx-border-insets: 0 !important;
+}
+
+/* 清除ScrollPane在tab-content内的默认间距 */
+.tab-pane .tab-content-area .scroll-pane {
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+    -fx-border-insets: 0 !important;
+}
+
+.tab-pane .tab-content-area .scroll-pane > .viewport {
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+    -fx-border-insets: 0 !important;
+}
+
+.tab-pane .tab-content-area .scroll-pane > .viewport > .content {
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+    -fx-border-insets: 0 !important;
+}
+
+/* 清除StackPane在tab-content内的默认间距 */
+.tab-pane .tab-content-area .stack-pane {
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+    -fx-border-insets: 0 !important;
+}
+
+/* 清除所有Region在tab-content内的默认间距 */
+.tab-pane .tab-content-area .region {
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+    -fx-border-insets: 0 !important;
+}
+
+/* 针对无间距标签页的特殊样式 */
+.no-gap-tab-pane > .tab-content-area {
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+    -fx-border-insets: 0 !important;
+}
+
+.no-gap-tab-pane:top-tab > .tab-content-area {
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+}
+
+.no-gap-tab-pane .tab-content-area {
+    -fx-padding: 0 !important;
 }
 
 /* SplitPane: 去除默认立体背景和边框 */
@@ -147,13 +282,25 @@
     -fx-border-insets: 0;
 }
 
-/* SplitPane 分隔条: 去除立体效果 */
+/* SplitPane 分隔条: 去除立体效果和缝隙 */
 .split-pane > .split-pane-divider {
-    -fx-background-color: #3c3c3c;
+    -fx-background-color: #E5E5E5;
     -fx-background-insets: 0;
-    -fx-padding: 0 1 0 0;
+    -fx-padding: 0;
     -fx-border-color: transparent;
     -fx-border-width: 0;
+}
+
+.split-pane:horizontal > .split-pane-divider {
+    -fx-background-color: #E5E5E5;
+    -fx-padding: 0;
+    -fx-border-color: transparent;
+}
+
+.split-pane:vertical > .split-pane-divider {
+    -fx-background-color: #E5E5E5;
+    -fx-padding: 0;
+    -fx-border-color: transparent;
 }
 
 .combo-box, .combo-box-base {

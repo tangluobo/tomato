@@ -92,6 +92,8 @@ public class DesktopShortcutPane extends VBox {
         TabPane tabPane = new TabPane();
         tabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         tabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+        tabPane.setStyle("-fx-background-color: transparent; -fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0; -fx-tab-content-padding: 0;");
+        tabPane.getStyleClass().add("no-gap-tab-pane");
 
         // 基础设置标签页
         Tab basicTab = new Tab("基础设置");
@@ -119,7 +121,7 @@ public class DesktopShortcutPane extends VBox {
     private ScrollPane createBasicTabContent() {
         ScrollPane scrollPane = new ScrollPane();
         scrollPane.setFitToWidth(true);
-        scrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
+        scrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
         scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
 
@@ -249,7 +251,7 @@ public class DesktopShortcutPane extends VBox {
     private ScrollPane createAdvancedTabContent() {
         ScrollPane scrollPane = new ScrollPane();
         scrollPane.setFitToWidth(true);
-        scrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
+        scrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
         scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
 

@@ -48,7 +48,7 @@
     
     <VBox fx:id="sidebarPane" prefWidth="240.0" style="-fx-background-color: #ffffff;" HBox.hgrow="NEVER"/>
     
-    <Region fx:id="divider2" style="-fx-background-color: linear-gradient(to right, transparent 3.5px, #D9D9D7 3.5px, #D9D9D7 4.5px, transparent 4.5px);" prefWidth="1.0"/>
+    <Region fx:id="divider2" style="-fx-background-color: #E5E5E5;" prefWidth="1.0"/>
     
     <VBox fx:id="contentPane" style="-fx-background-color: #f7f7f7;" HBox.hgrow="ALWAYS">
       <children>
