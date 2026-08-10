@@ -12,11 +12,8 @@ import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.SnapshotParameters;
-import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.Dragboard;
-import javafx.scene.input.KeyCode;
-import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.ScrollEvent;
 import javafx.scene.input.TransferMode;
@@ -372,22 +369,6 @@ public class S3FileBrowserPane extends BorderPane {
 
         initListView();
         initIconView();
-
-        // Ctrl+V 粘贴上传（图片或文件）
-        this.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
-            if (e.isControlDown() && e.getCode() == KeyCode.V) {
-                // 焦点在文本输入框中时不拦截（让用户正常粘贴文本）
-                if (getScene() != null && getScene().getFocusOwner() instanceof TextInputControl) {
-                    return;
-                }
-                // 仅在浏览 Tab 激活时处理
-                if (editorTabPane.getSelectionModel().getSelectedItem() != browseTab) {
-                    return;
-                }
-                handlePasteFromClipboard();
-                e.consume();
-            }
-        });
     }
 
     private void initListView() {
@@ -401,9 +382,6 @@ public class S3FileBrowserPane extends BorderPane {
                     FileItem item = row.getItem();
                     handleDoubleClick(item);
                 } else if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 1) {
-                    selectedItem = row.getItem();
-                } else if (event.getButton() == MouseButton.SECONDARY && !row.isEmpty()) {
-                    fileTable.getSelectionModel().select(row.getItem());
                     selectedItem = row.getItem();
                 }
             });
@@ -508,7 +486,6 @@ public class S3FileBrowserPane extends BorderPane {
         iconFlowPane.setVgap(8);
         iconFlowPane.setPadding(new Insets(12));
         iconFlowPane.setStyle("-fx-background-color: white;");
-        iconFlowPane.setFocusTraversable(true);
 
         iconScrollPane = new ScrollPane(iconFlowPane);
         iconScrollPane.setFitToWidth(true);
@@ -612,10 +589,6 @@ public class S3FileBrowserPane extends BorderPane {
                 if (e.getClickCount() == 2) {
                     handleDoubleClick(item);
                 }
-            } else if (e.getButton() == MouseButton.SECONDARY) {
-                clearIconSelection();
-                selectIconBox(box, item);
-                selectedItem = item;
             }
         });
 
@@ -688,13 +661,6 @@ public class S3FileBrowserPane extends BorderPane {
             if (selected != null && !selected.isDirectory()) handleDownload(selected);
         });
 
-        // 复制访问地址（仅文件可用，需配置访问URL）
-        MenuItem copyUrlItem = new MenuItem("复制访问地址");
-        copyUrlItem.setOnAction(e -> {
-            FileItem selected = getSelectedItem();
-            if (selected != null && !selected.isDirectory()) handleCopyAccessUrl(selected);
-        });
-
         // 创建目录（仅 Bucket 内可用）
         MenuItem mkdirItem = new MenuItem("新建目录");
         mkdirItem.setOnAction(e -> handleCreateDirectory());
@@ -703,17 +669,9 @@ public class S3FileBrowserPane extends BorderPane {
         MenuItem uploadItem = new MenuItem("上传文件...");
         uploadItem.setOnAction(e -> handleUploadFiles());
 
-        // 粘贴上传（仅 Bucket 内可用，支持粘贴剪贴板中的图片或文件）
-        MenuItem pasteUploadItem = new MenuItem("粘贴上传 (Ctrl+V)");
-        pasteUploadItem.setOnAction(e -> handlePasteFromClipboard());
-
         // 创建文件（仅 Bucket 内可用）
         MenuItem createFileItem = new MenuItem("创建文件");
         createFileItem.setOnAction(e -> handleCreateFile());
-
-        // 重命名菜单项（文件和目录可用，Bucket 不可用）
-        MenuItem renameItem = new MenuItem("重命名");
-        renameItem.setOnAction(e -> handleRename());
 
         MenuItem deleteItem = new MenuItem("删除");
         deleteItem.setOnAction(e -> handleDelete());
@@ -728,8 +686,8 @@ public class S3FileBrowserPane extends BorderPane {
         listViewItem.setOnAction(e -> switchViewMode(ViewMode.LIST));
         viewMenu.getItems().addAll(iconViewItem, listViewItem);
 
-        menu.getItems().addAll(openItem, previewItem, editMdItem, downloadItem, copyUrlItem, new SeparatorMenuItem(),
-                mkdirItem, uploadItem, pasteUploadItem, createFileItem, renameItem, deleteItem, new SeparatorMenuItem(), viewMenu, new SeparatorMenuItem(), refreshItem);
+        menu.getItems().addAll(openItem, previewItem, editMdItem, downloadItem, new SeparatorMenuItem(),
+                mkdirItem, uploadItem, createFileItem, deleteItem, new SeparatorMenuItem(), viewMenu, new SeparatorMenuItem(), refreshItem);
 
         // 右键菜单显示时动态控制各项可见性
         menu.setOnShowing(e -> {
@@ -737,13 +695,9 @@ public class S3FileBrowserPane extends BorderPane {
             previewItem.setVisible(selected != null && !selected.isDirectory() && isImageFile(selected.getDisplayName()));
             editMdItem.setVisible(selected != null && !selected.isDirectory() && isMarkdownFile(selected.getDisplayName()));
             downloadItem.setVisible(selected != null && !selected.isDirectory());
-            copyUrlItem.setVisible(selected != null && !selected.isDirectory());
             mkdirItem.setVisible(currentBucket != null);
             uploadItem.setVisible(currentBucket != null);
-            pasteUploadItem.setVisible(currentBucket != null);
             createFileItem.setVisible(currentBucket != null);
-            // 重命名：仅在 Bucket 内且选中了文件或目录（非 Bucket）时可用
-            renameItem.setVisible(selected != null && currentBucket != null && !selected.isBucket());
         });
 
         return menu;
@@ -1063,269 +1017,6 @@ public class S3FileBrowserPane extends BorderPane {
     }
 
     /**
-     * 将 JavaFX Image 转为 PNG 字节数组
-     * 使用 PixelReader 直接读取像素数据，避免 SwingFXUtils 的格式转换问题
-     */
-    private byte[] imageToPngBytes(Image image) {
-        int w = (int) image.getWidth();
-        int h = (int) image.getHeight();
-        if (w <= 0 || h <= 0) return null;
-
-        // 限制图片尺寸，防止 OOM
-        if ((long) w * h > 10_000_000) {
-            return null;
-        }
-
-        // 使用 PixelReader 直接读取像素数据
-        int[] pixels = new int[w * h];
-        image.getPixelReader().getPixels(0, 0, w, h, javafx.scene.image.PixelFormat.getIntArgbInstance(), pixels, 0, w);
-
-        // 构造 BufferedImage（TYPE_INT_ARGB 更通用，支持透明通道）
-        java.awt.image.BufferedImage bImage = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_ARGB);
-        bImage.setRGB(0, 0, w, h, pixels, 0, w);
-
-        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
-        try {
-            boolean written = javax.imageio.ImageIO.write(bImage, "png", baos);
-            if (!written) return null;
-            byte[] result = baos.toByteArray();
-            return result.length > 0 ? result : null;
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /**
-     * 粘贴上传：从系统剪贴板上传图片或文件
-     * 优先级：文件路径 > URL > 图片数据
-     * 微信/浏览器复制图片时，剪贴板通常同时包含文件引用、URL和图像数据
-     */
-    private void handlePasteFromClipboard() {
-        if (currentBucket == null) {
-            Alert alert = new Alert(Alert.AlertType.WARNING);
-            alert.setTitle("提示");
-            alert.setHeaderText(null);
-            alert.setContentText("请先进入一个 Bucket 再粘贴上传");
-            alert.showAndWait();
-            return;
-        }
-
-        Clipboard clipboard = Clipboard.getSystemClipboard();
-
-        // 1. 优先处理剪贴板中的文件引用（CF_HDROP，如从文件管理器复制的文件）
-        //    这保留原始文件格式，无需重新编码
-        if (clipboard.hasFiles()) {
-            uploadLocalFiles(clipboard.getFiles());
-            return;
-        }
-
-        // 2. 从剪贴板的 URL 或 HTML 中提取图片链接，下载原图
-        //    浏览器复制图片时通常会在剪贴板中放入源 URL
-        String imageUrl = extractImageUrlFromClipboard(clipboard);
-        if (imageUrl != null) {
-            downloadAndUploadUrl(imageUrl);
-            return;
-        }
-
-        // 3. 最后兜底：从剪贴板图像数据转换为 PNG 上传
-        if (clipboard.hasImage()) {
-            handlePasteImageData(clipboard);
-            return;
-        }
-
-        stateLabel.setText("剪贴板中没有图片或文件");
-    }
-
-    /**
-     * 从剪贴板提取图片 URL
-     * 检查 hasUrl() 和 hasHtml()（解析 HTML 中的 <img src>）
-     */
-    private String extractImageUrlFromClipboard(Clipboard clipboard) {
-        // 直接 URL
-        if (clipboard.hasUrl()) {
-            String url = clipboard.getUrl();
-            if (url != null && !url.trim().isEmpty() && isImageUrl(url)) {
-                return url.trim();
-            }
-        }
-        // HTML 中提取 <img src="...">
-        if (clipboard.hasHtml()) {
-            String html = clipboard.getHtml();
-            if (html != null && !html.isEmpty()) {
-                String src = extractImgSrc(html);
-                if (src != null && isImageUrl(src)) {
-                    return src;
-                }
-            }
-        }
-        return null;
-    }
-
-    /**
-     * 从 HTML 中提取第一个 <img src="..."> 的值
-     */
-    private String extractImgSrc(String html) {
-        int imgTag = html.toLowerCase().indexOf("<img");
-        if (imgTag < 0) return null;
-        String sub = html.substring(imgTag);
-        int srcIdx = sub.indexOf("src=");
-        if (srcIdx < 0) return null;
-        String afterSrc = sub.substring(srcIdx + 5);
-        char quote = afterSrc.charAt(0);
-        if (quote == '"' || quote == '\'') {
-            int end = afterSrc.indexOf(quote, 1);
-            if (end > 0) return afterSrc.substring(1, end);
-        } else {
-            // 无引号，取到空格或 >
-            int end = afterSrc.length();
-            for (int i = 0; i < end; i++) {
-                char c = afterSrc.charAt(i);
-                if (c == ' ' || c == '>' || c == '\t' || c == '\n') {
-                    end = i;
-                    break;
-                }
-            }
-            return afterSrc.substring(0, end);
-        }
-        return null;
-    }
-
-    /**
-     * 判断 URL 是否指向图片（通过扩展名）
-     */
-    private boolean isImageUrl(String url) {
-        if (url == null) return false;
-        String lower = url.toLowerCase();
-        // 去除查询参数
-        int queryIdx = lower.indexOf('?');
-        if (queryIdx > 0) lower = lower.substring(0, queryIdx);
-        return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png")
-                || lower.endsWith(".gif") || lower.endsWith(".bmp") || lower.endsWith(".webp")
-                || lower.endsWith(".svg") || lower.endsWith(".ico") || lower.endsWith(".tiff");
-    }
-
-    /**
-     * 从 URL 下载图片并上传到 S3/OSS
-     */
-    private void downloadAndUploadUrl(String url) {
-        String fileName = url.substring(url.lastIndexOf('/') + 1);
-        // 去除查询参数
-        int queryIdx = fileName.indexOf('?');
-        if (queryIdx > 0) fileName = fileName.substring(0, queryIdx);
-        if (fileName.isEmpty()) fileName = "paste_" + System.currentTimeMillis() + ".img";
-
-        String key = (currentPrefix != null ? currentPrefix : "") + fileName;
-        stateLabel.setText("下载中: " + fileName);
-
-        String finalFileName = fileName;
-        new Thread(() -> {
-            try {
-                java.net.URL urlObj = new java.net.URL(url);
-                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) urlObj.openConnection();
-                conn.setConnectTimeout(10000);
-                conn.setReadTimeout(30000);
-                conn.setRequestMethod("GET");
-                String contentType = conn.getContentType();
-                byte[] data;
-                try (java.io.InputStream is = conn.getInputStream();
-                     java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream()) {
-                    byte[] buf = new byte[8192];
-                    int len;
-                    while ((len = is.read(buf)) != -1) {
-                        baos.write(buf, 0, len);
-                    }
-                    data = baos.toByteArray();
-                }
-                conn.disconnect();
-
-                if (data.length == 0) {
-                    Platform.runLater(() -> {
-                        stateLabel.setText("下载失败：文件为空");
-                    });
-                    return;
-                }
-
-                final byte[] uploadData = data;
-                Platform.runLater(() -> stateLabel.setText("上传中: " + finalFileName));
-                if (isAliyunOSS) {
-                    OssService.uploadFile(config, currentBucket, key,
-                            new java.io.ByteArrayInputStream(uploadData),
-                            uploadData.length, contentType);
-                } else {
-                    S3Service.uploadFile(config, currentBucket, key,
-                            new java.io.ByteArrayInputStream(uploadData),
-                            uploadData.length, contentType);
-                }
-                Platform.runLater(() -> {
-                    stateLabel.setText("上传完成: " + finalFileName);
-                    refresh();
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    stateLabel.setText("下载失败");
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("下载失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText(e.getMessage());
-                    alert.showAndWait();
-                });
-            }
-        }, "S3-UrlDownload").start();
-    }
-
-    /**
-     * 从剪贴板图像数据转换为 PNG 上传（兜底方案）
-     */
-    private void handlePasteImageData(Clipboard clipboard) {
-        Image image = clipboard.getImage();
-        if (image == null || image.getWidth() <= 0 || image.getHeight() <= 0) {
-            stateLabel.setText("剪贴板中没有有效的图片");
-            return;
-        }
-
-        String fileName = "paste_" + java.time.LocalDateTime.now().format(
-                java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")) + ".png";
-        String key = (currentPrefix != null ? currentPrefix : "") + fileName;
-
-        byte[] imageBytes;
-        try {
-            imageBytes = imageToPngBytes(image);
-            if (imageBytes == null || imageBytes.length == 0) {
-                stateLabel.setText("图片转换失败");
-                return;
-            }
-        } catch (Exception e) {
-            stateLabel.setText("图片转换失败");
-            e.printStackTrace();
-            return;
-        }
-
-        stateLabel.setText("上传中: " + fileName);
-        new Thread(() -> {
-            try {
-                java.io.ByteArrayInputStream bis = new java.io.ByteArrayInputStream(imageBytes);
-                if (isAliyunOSS) {
-                    OssService.uploadFile(config, currentBucket, key, bis, imageBytes.length, "image/png");
-                } else {
-                    S3Service.uploadFile(config, currentBucket, key, bis, imageBytes.length, "image/png");
-                }
-                Platform.runLater(() -> {
-                    stateLabel.setText("上传完成: " + fileName);
-                    refresh();
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    stateLabel.setText("上传失败");
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("上传失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText(e.getMessage());
-                    alert.showAndWait();
-                });
-            }
-        }, "S3-PasteUpload").start();
-    }
-
     /**
      * 右键上传文件：弹窗选择本地文件，逐个上传到当前 bucket/prefix
      */
@@ -1430,38 +1121,6 @@ public class S3FileBrowserPane extends BorderPane {
                 });
             }
         }, "S3-Download").start();
-    }
-
-    /**
-     * 拼接文件的公共访问URL并复制到剪贴板。
-     * 规则：访问URL前缀（去除末尾 /）+ "/" + 桶名 + "/" + 文件 key
-     * 若未配置访问URL，提示用户先配置。
-     */
-    private void handleCopyAccessUrl(FileItem item) {
-        String baseUrl = config.getPublicAccessUrl();
-        if (baseUrl == null || baseUrl.trim().isEmpty()) {
-            Alert alert = new Alert(Alert.AlertType.INFORMATION);
-            alert.setTitle("提示");
-            alert.setHeaderText(null);
-            alert.setContentText("尚未配置访问URL，请在连接配置中设置访问URL字段");
-            alert.showAndWait();
-            return;
-        }
-        String trimmedBase = baseUrl.trim();
-        while (trimmedBase.endsWith("/")) {
-            trimmedBase = trimmedBase.substring(0, trimmedBase.length() - 1);
-        }
-        String key = item.getKey();
-        while (key.startsWith("/")) {
-            key = key.substring(1);
-        }
-        String fullUrl = trimmedBase + "/" + currentBucket + "/" + key;
-
-        ClipboardContent content = new ClipboardContent();
-        content.putString(fullUrl);
-        Clipboard.getSystemClipboard().setContent(content);
-
-        stateLabel.setText("已复制访问地址: " + fullUrl);
     }
 
     /**
@@ -2045,70 +1704,6 @@ public class S3FileBrowserPane extends BorderPane {
                         alert.setTitle("创建失败");
                         alert.setHeaderText(null);
                         alert.setContentText("创建Bucket失败: " + e.getMessage());
-                        alert.showAndWait();
-                    });
-                }
-            }, "S3-CreateBucket").start();
-        });
-    }
-
-    /**
-     * 右键重命名：弹窗输入新名称，文件/目录均可重命名（Bucket 不支持）
-     */
-    private void handleRename() {
-        FileItem selected = getSelectedItem();
-        if (selected == null || currentBucket == null || selected.isBucket()) return;
-
-        String oldName = selected.getDisplayName();
-        TextInputDialog dialog = new TextInputDialog(oldName);
-        dialog.setTitle("重命名");
-        dialog.setHeaderText(null);
-        dialog.setContentText("新名称：");
-        dialog.showAndWait().ifPresent(newName -> {
-            newName = newName.trim();
-            if (newName.isEmpty() || newName.equals(oldName)) return;
-            // 禁止包含路径分隔符
-            if (newName.contains("/")) {
-                Alert alert = new Alert(Alert.AlertType.WARNING);
-                alert.setTitle("提示");
-                alert.setHeaderText(null);
-                alert.setContentText("名称不能包含 / 字符");
-                alert.showAndWait();
-                return;
-            }
-
-            // 计算新旧 key
-            String oldKey = selected.getKey();
-            String newKey;
-            if (selected.isDirectory()) {
-                // 目录：oldKey 格式 prefix/oldname/，newKey 格式 prefix/newname/
-                String parentPrefix = oldKey.substring(0, oldKey.length() - oldName.length() - 1);
-                newKey = parentPrefix + newName + "/";
-            } else {
-                // 文件：oldKey 格式 prefix/oldname，newKey 格式 prefix/newname
-                String parentPrefix = oldKey.substring(0, oldKey.length() - oldName.length());
-                newKey = parentPrefix + newName;
-            }
-
-            stateLabel.setText("重命名中...");
-            new Thread(() -> {
-                try {
-                    if (isAliyunOSS) {
-                        OssService.renameObject(config, currentBucket, oldKey, newKey, selected.isDirectory());
-                    } else {
-                        S3Service.renameObject(config, currentBucket, oldKey, newKey, selected.isDirectory());
-                    }
-                    Platform.runLater(() -> {
-                        stateLabel.setText("重命名完成");
-                        refresh();
-                    });
-                } catch (Exception e) {
-                    Platform.runLater(() -> {
-                        stateLabel.setText("重命名失败");
-                        Alert alert = new Alert(Alert.AlertType.ERROR);
-                        alert.setTitle("重命名失败");
-                        alert.setHeaderText(null);
-                        alert.setContentText(e.getMessage());
                         alert.showAndWait();
                     });
                 }

@@ -61,8 +61,7 @@ public class PasswordPromptDialog {
         grid.add(pf, 1, 0);
 
         CheckBox savePwdCheck = new CheckBox(saveLabel);
-        savePwdCheck.setSelected(true);
-        savePwdCheck.setStyle("-fx-font-size: 12px; -fx-text-fill: #333;");
+        savePwdCheck.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
         grid.add(savePwdCheck, 1, 1);
 
         dialog.getDialogPane().setContent(grid);

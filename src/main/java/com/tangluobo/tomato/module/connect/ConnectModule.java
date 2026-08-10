@@ -254,29 +254,10 @@ public class ConnectModule implements Module {
     }
 
     private void loadTree() {
-        // 重建前按连接配置 id 记录各节点展开状态，以便重建后恢复
-        // （例如删除子节点后保持父级展开，避免整树被折叠）
-        Map<String, Boolean> expandedState = new HashMap<>();
-        for (Map.Entry<TreeItem<String>, ConnectionConfig> entry : itemConfigMap.entrySet()) {
-            ConnectionConfig cfg = entry.getValue();
-            if (cfg != null && cfg.getId() != null) {
-                expandedState.put(cfg.getId(), entry.getKey().isExpanded());
-            }
-        }
         root.getChildren().clear();
         itemConfigMap.clear();
         dbNodeDataMap.clear();
         buildConnectionTree();
-        // 恢复重建前的展开状态
-        for (Map.Entry<TreeItem<String>, ConnectionConfig> entry : itemConfigMap.entrySet()) {
-            ConnectionConfig cfg = entry.getValue();
-            if (cfg != null && cfg.getId() != null) {
-                Boolean expanded = expandedState.get(cfg.getId());
-                if (expanded != null) {
-                    entry.getKey().setExpanded(expanded);
-                }
-            }
-        }
     }
 
     /**

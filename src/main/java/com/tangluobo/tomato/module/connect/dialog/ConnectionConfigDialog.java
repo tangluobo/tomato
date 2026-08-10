@@ -111,7 +111,6 @@ public class ConnectionConfigDialog {
     private PasswordField s3SecretKeyField;
     private CheckBox s3SaveSecretKeyCheckBox;
     private CheckBox s3PathStyleAccessCheckBox;
-    private TextField s3PublicAccessUrlField;
     private TextField s3DescriptionField;
 
     // ===== Redis专属字段 =====
@@ -943,12 +942,6 @@ public class ConnectionConfigDialog {
         grid.add(new Label(""), 0, row);
         grid.add(s3PathStyleAccessCheckBox, 1, row++);
 
-        grid.add(new Label("访问URL："), 0, row);
-        s3PublicAccessUrlField = new TextField();
-        s3PublicAccessUrlField.setPromptText("公共访问URL前缀，如 https://cdn.example.com");
-        s3PublicAccessUrlField.setPrefWidth(280);
-        grid.add(s3PublicAccessUrlField, 1, row++);
-
         grid.add(new Label("备注："), 0, row);
         s3DescriptionField = new TextField();
         s3DescriptionField.setPromptText("备注信息");
@@ -1623,9 +1616,6 @@ public class ConnectionConfigDialog {
             }
             s3SaveSecretKeyCheckBox.setSelected(existingConfig.isSavePassword());
             s3PathStyleAccessCheckBox.setSelected(existingConfig.isPathStyleAccess());
-            if (existingConfig.getPublicAccessUrl() != null) {
-                s3PublicAccessUrlField.setText(existingConfig.getPublicAccessUrl());
-            }
             s3DescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
         } else if (isRedis) {
             redisNameField.setText(existingConfig.getName());
@@ -1837,8 +1827,6 @@ public class ConnectionConfigDialog {
             config.setUseKey(false);
             config.setSavePassword(s3SaveSecretKeyCheckBox.isSelected());
             config.setPathStyleAccess(s3PathStyleAccessCheckBox.isSelected());
-            String publicUrl = s3PublicAccessUrlField.getText().trim();
-            config.setPublicAccessUrl(publicUrl.isEmpty() ? null : publicUrl);
             if (s3SaveSecretKeyCheckBox.isSelected()) {
                 config.setPassword(s3SecretKeyField.getText());
             } else {
