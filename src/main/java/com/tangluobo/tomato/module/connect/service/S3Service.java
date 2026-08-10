@@ -235,6 +235,33 @@ public class S3Service {
     }
 
     /**
+     * 重命名对象（文件或目录）
+     * S3 不支持直接重命名，通过复制+删除实现
+     * @param oldKey 原始 key（文件完整 key 或目录 prefix，目录需以 / 结尾）
+     * @param newKey 新 key（文件完整 key 或目录 prefix，目录需以 / 结尾）
+     * @param isDirectory 是否为目录
+     */
+    public static void renameObject(ConnectionConfig config, String bucketName, String oldKey, String newKey, boolean isDirectory) throws Exception {
+        if (isDirectory) {
+            // 目录重命名：递归复制所有对象到新 prefix，然后删除旧对象
+            List<S3ObjectInfo> objects = listObjectsRecursive(config, bucketName, oldKey);
+            for (S3ObjectInfo obj : objects) {
+                String objKey = obj.getKey();
+                String newObjKey = newKey + objKey.substring(oldKey.length());
+                copyObject(config, bucketName, objKey, newObjKey);
+            }
+            // 删除旧目录下所有对象
+            for (S3ObjectInfo obj : objects) {
+                deleteObject(config, bucketName, obj.getKey());
+            }
+        } else {
+            // 文件重命名：复制后删除
+            copyObject(config, bucketName, oldKey, newKey);
+            deleteObject(config, bucketName, oldKey);
+        }
+    }
+
+    /**
      * 创建Bucket
      */
     public static void createBucket(ConnectionConfig config, String bucketName) throws Exception {

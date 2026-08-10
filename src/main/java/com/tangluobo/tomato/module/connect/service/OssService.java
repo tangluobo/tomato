@@ -198,6 +198,79 @@ public class OssService {
     }
 
     /**
+     * 服务端复制对象（用于 OSS 重命名/移动）。同 bucket 内复制。
+     */
+    public static void copyObject(ConnectionConfig config, String bucketName, String sourceKey, String destKey) throws Exception {
+        OSS client = createClient(config);
+        try {
+            client.copyObject(bucketName, sourceKey, bucketName, destKey);
+        } finally {
+            client.shutdown();
+        }
+    }
+
+    /**
+     * 递归列出 prefix 下所有对象（用于目录删除/重命名/移动）。
+     */
+    public static List<OssObjectInfo> listObjectsRecursive(ConnectionConfig config, String bucketName, String prefix) throws Exception {
+        OSS client = createClient(config);
+        try {
+            List<OssObjectInfo> objects = new ArrayList<>();
+            String nextMarker = null;
+            do {
+                com.aliyun.oss.model.ListObjectsRequest request = new com.aliyun.oss.model.ListObjectsRequest(bucketName);
+                if (prefix != null && !prefix.isEmpty()) {
+                    request.setPrefix(prefix);
+                }
+                request.setMaxKeys(1000);
+                if (nextMarker != null) {
+                    request.setMarker(nextMarker);
+                }
+                ObjectListing listing = client.listObjects(request);
+                for (OSSObjectSummary summary : listing.getObjectSummaries()) {
+                    OssObjectInfo objInfo = new OssObjectInfo();
+                    objInfo.setKey(summary.getKey());
+                    objInfo.setDirectory(summary.getKey().endsWith("/"));
+                    objInfo.setSize(summary.getSize());
+                    objInfo.setLastModified(summary.getLastModified());
+                    objects.add(objInfo);
+                }
+                nextMarker = listing.isTruncated() ? listing.getNextMarker() : null;
+            } while (nextMarker != null && !nextMarker.isEmpty());
+            return objects;
+        } finally {
+            client.shutdown();
+        }
+    }
+
+    /**
+     * 重命名对象（文件或目录）
+     * OSS 不支持直接重命名，通过复制+删除实现
+     * @param oldKey 原始 key（文件完整 key 或目录 prefix，目录需以 / 结尾）
+     * @param newKey 新 key（文件完整 key 或目录 prefix，目录需以 / 结尾）
+     * @param isDirectory 是否为目录
+     */
+    public static void renameObject(ConnectionConfig config, String bucketName, String oldKey, String newKey, boolean isDirectory) throws Exception {
+        if (isDirectory) {
+            // 目录重命名：递归复制所有对象到新 prefix，然后删除旧对象
+            List<OssObjectInfo> objects = listObjectsRecursive(config, bucketName, oldKey);
+            for (OssObjectInfo obj : objects) {
+                String objKey = obj.getKey();
+                String newObjKey = newKey + objKey.substring(oldKey.length());
+                copyObject(config, bucketName, objKey, newObjKey);
+            }
+            // 删除旧目录下所有对象
+            for (OssObjectInfo obj : objects) {
+                deleteObject(config, bucketName, obj.getKey());
+            }
+        } else {
+            // 文件重命名：复制后删除
+            copyObject(config, bucketName, oldKey, newKey);
+            deleteObject(config, bucketName, oldKey);
+        }
+    }
+
+    /**
      * 创建Bucket
      */
     public static void createBucket(ConnectionConfig config, String bucketName) throws Exception {
