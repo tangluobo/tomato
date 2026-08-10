@@ -130,7 +130,7 @@ public class HostsFilePane extends VBox {
         // 自定义标题栏
         HBox titleBar = new HBox(10);
         titleBar.setAlignment(Pos.CENTER_LEFT);
-        titleBar.setPadding(new Insets(14, 20, 14, 20));
+        titleBar.setPadding(new Insets(14, 10, 14, 10));
         titleBar.setStyle("-fx-background-color: #f7f8fa; -fx-border-color: #e8e8e8; -fx-border-width: 0 0 1 0;");
 
         SVGPath titleIcon = new SVGPath();
@@ -152,7 +152,7 @@ public class HostsFilePane extends VBox {
 
         // 主体内容 - 分割面板
         SplitPane splitPane = new SplitPane();
-        splitPane.setPadding(new Insets(10, 20, 10, 20));
+        splitPane.setPadding(new Insets(0));
         splitPane.setDividerPositions(0.25);
 
         // 左侧分组列表
@@ -164,7 +164,7 @@ public class HostsFilePane extends VBox {
 
         // 状态标签
         statusLabel = new Label("");
-        statusLabel.setPadding(new Insets(5, 20, 10, 20));
+        statusLabel.setPadding(new Insets(5, 10, 10, 10));
         statusLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: #666;");
 
         getChildren().addAll(titleBar, splitPane, statusLabel);
@@ -176,11 +176,11 @@ public class HostsFilePane extends VBox {
      */
     private VBox createLeftPanel() {
         VBox panel = new VBox(10);
-        panel.setStyle("-fx-background-color: #ffffff; -fx-border-color: #e8e8e8; -fx-border-width: 0 1 0 0;");
+        panel.setStyle("-fx-background-color: #ffffff; -fx-border-color: #e8e8e8; -fx-border-width: 0 1 0 0; -fx-padding: 0;");
 
         // 标题
         Label listTitle = new Label("环境列表");
-        listTitle.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #333; -fx-padding: 10 15 5 15;");
+        listTitle.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #333; -fx-padding: 10 10 5 10;");
 
         // 添加分组按钮
         Button addGroupBtn = new Button("+ 新建分组");
@@ -189,7 +189,7 @@ public class HostsFilePane extends VBox {
         addGroupBtn.setOnAction(e -> addNewGroup());
 
         HBox btnBox = new HBox();
-        btnBox.setPadding(new Insets(5, 15, 10, 15));
+        btnBox.setPadding(new Insets(5, 10, 10, 10));
         btnBox.getChildren().add(addGroupBtn);
 
         // 分组列表容器
@@ -199,7 +199,9 @@ public class HostsFilePane extends VBox {
 
         groupScrollPane = new ScrollPane(groupListContainer);
         groupScrollPane.setFitToWidth(true);
-        groupScrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
+        groupScrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
+        groupScrollPane.getStyleClass().add("session-scroll-pane");
+        groupScrollPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         groupScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         groupScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
 
@@ -214,7 +216,7 @@ public class HostsFilePane extends VBox {
      */
     private VBox createRightPanel() {
         VBox panel = new VBox(10);
-        panel.setStyle("-fx-background-color: #ffffff;");
+        panel.setStyle("-fx-background-color: #ffffff; -fx-padding: 0;");
 
         // 当前分组标题
         titleLabel = new Label("请选择或创建一个分组");
@@ -332,10 +334,13 @@ public class HostsFilePane extends VBox {
      */
     private VBox createSystemHostsItem() {
         VBox itemBox = new VBox(0);
+        itemBox.setMaxWidth(Double.MAX_VALUE);
+        itemBox.setFillWidth(true);
 
         HBox row = new HBox(10);
         row.setAlignment(Pos.CENTER_LEFT);
-        row.setPadding(new Insets(10, 12, 10, 12));
+        row.setPadding(new Insets(10, 10, 10, 10));
+        row.setMaxWidth(Double.MAX_VALUE);
         row.setStyle("-fx-background-color: transparent; -fx-cursor: hand;");
 
         // 图标
@@ -365,10 +370,13 @@ public class HostsFilePane extends VBox {
      */
     private VBox createGroupItemBox(HostsGroup group) {
         VBox itemBox = new VBox(0);
+        itemBox.setMaxWidth(Double.MAX_VALUE);
+        itemBox.setFillWidth(true);
 
         HBox row = new HBox(12);
         row.setAlignment(Pos.CENTER_LEFT);
-        row.setPadding(new Insets(12, 12, 12, 12));
+        row.setPadding(new Insets(8, 10, 8, 10));
+        row.setMaxWidth(Double.MAX_VALUE);
         row.setStyle("-fx-background-color: transparent; -fx-cursor: hand;");
 
         // 选中样式

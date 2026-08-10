@@ -127,7 +127,7 @@ public class TraeSessionPane extends VBox {
         // 自定义标题栏（样式与 HostsFilePane 保持一致，便于 ToolPane 移除）
         HBox titleBar = new HBox(10);
         titleBar.setAlignment(Pos.CENTER_LEFT);
-        titleBar.setPadding(new Insets(14, 20, 14, 20));
+        titleBar.setPadding(new Insets(14, 10, 14, 10));
         titleBar.setStyle("-fx-background-color: #f7f8fa; -fx-border-color: #e8e8e8; -fx-border-width: 0 0 1 0;");
 
         SVGPath titleIcon = new SVGPath();
@@ -149,7 +149,7 @@ public class TraeSessionPane extends VBox {
 
         // 主体内容 - 分割面板
         SplitPane splitPane = new SplitPane();
-        splitPane.setPadding(new Insets(10, 20, 10, 20));
+        splitPane.setPadding(new Insets(0));
         splitPane.setDividerPositions(0.42);
 
         VBox leftPanel = createLeftPanel();
@@ -159,7 +159,7 @@ public class TraeSessionPane extends VBox {
 
         // 状态标签
         statusLabel = new Label("");
-        statusLabel.setPadding(new Insets(5, 20, 10, 20));
+        statusLabel.setPadding(new Insets(5, 10, 10, 10));
         statusLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: #666;");
 
         getChildren().addAll(titleBar, splitPane, statusLabel);
@@ -171,11 +171,11 @@ public class TraeSessionPane extends VBox {
      */
     private VBox createLeftPanel() {
         VBox panel = new VBox(10);
-        panel.setStyle("-fx-background-color: #ffffff; -fx-border-color: #e8e8e8; -fx-border-width: 0 1 0 0;");
+        panel.setStyle("-fx-background-color: #ffffff; -fx-border-color: #e8e8e8; -fx-border-width: 0 1 0 0; -fx-padding: 0;");
 
         // 标题
         Label listTitle = new Label("会话列表");
-        listTitle.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #333; -fx-padding: 10 15 5 15;");
+        listTitle.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #333; -fx-padding: 10 10 5 10;");
 
         // 添加账号按钮：将当前 User 目录重命名为 User{手机号}，登记为非活动会话
         addOrSwitchBtn = new Button("+ 添加当前账号");
@@ -191,7 +191,7 @@ public class TraeSessionPane extends VBox {
         addHintLabel.setManaged(false);
 
         VBox btnBox = new VBox(4);
-        btnBox.setPadding(new Insets(5, 15, 10, 15));
+        btnBox.setPadding(new Insets(5, 10, 10, 10));
         btnBox.getChildren().addAll(addOrSwitchBtn, addHintLabel);
 
         // 会话列表容器
@@ -201,7 +201,9 @@ public class TraeSessionPane extends VBox {
 
         sessionScrollPane = new ScrollPane(sessionListContainer);
         sessionScrollPane.setFitToWidth(true);
-        sessionScrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
+        sessionScrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
+        sessionScrollPane.getStyleClass().add("session-scroll-pane");
+        sessionScrollPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         sessionScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         sessionScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
 
@@ -217,7 +219,7 @@ public class TraeSessionPane extends VBox {
     private VBox createRightPanel() {
         detailPanel = new VBox(12);
         detailPanel.setStyle("-fx-background-color: #ffffff;");
-        detailPanel.setPadding(new Insets(10, 15, 10, 15));
+        detailPanel.setPadding(new Insets(10, 10, 10, 10));
 
         detailTitleLabel = new Label("请选择一个会话");
         detailTitleLabel.setStyle("-fx-font-size: 16px; -fx-font-weight: bold; -fx-text-fill: #333;");
@@ -265,7 +267,7 @@ public class TraeSessionPane extends VBox {
 
         taskListView = new ListView<>();
         taskListView.setCellFactory(lv -> new TaskListCell());
-        taskListView.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
+        taskListView.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
         taskListView.setPlaceholder(new Label("请选择会话以查看历史任务"));
 
         VBox.setVgrow(taskListView, Priority.ALWAYS);
@@ -293,7 +295,7 @@ public class TraeSessionPane extends VBox {
 
         if (sessions.isEmpty()) {
             Label emptyLabel = new Label("暂无会话，点击\"添加当前用户\"开始");
-            emptyLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #999; -fx-padding: 20 15 20 15;");
+            emptyLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #999; -fx-padding: 20 10 20 10;");
             emptyLabel.setWrapText(true);
             sessionListContainer.getChildren().add(emptyLabel);
             currentSelectedRow = null;
@@ -308,10 +310,13 @@ public class TraeSessionPane extends VBox {
 
     private VBox createSessionItemBox(TraeSession session) {
         VBox itemBox = new VBox(0);
+        itemBox.setMaxWidth(Double.MAX_VALUE);
+        itemBox.setFillWidth(true);
 
         HBox row = new HBox(12);
         row.setAlignment(Pos.CENTER_LEFT);
-        row.setPadding(new Insets(12, 12, 12, 12));
+        row.setPadding(new Insets(8, 10, 8, 10));
+        row.setMaxWidth(Double.MAX_VALUE);
         row.setStyle("-fx-background-color: transparent; -fx-cursor: hand;");
 
         // 选中样式
@@ -1065,7 +1070,7 @@ public class TraeSessionPane extends VBox {
 
     private VBox createTaskItemBox(TaskItem task, int index) {
         VBox item = new VBox(3);
-        item.setPadding(new Insets(8, 10, 8, 10));
+        item.setPadding(new Insets(6, 8, 6, 8));
         item.setStyle("-fx-background-color: #f9f9f9; -fx-background-radius: 4;");
 
         HBox header = new HBox(6);
@@ -1117,10 +1122,10 @@ public class TraeSessionPane extends VBox {
             if (empty || task == null) {
                 setGraphic(null);
                 setText(null);
-                setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
+                setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
             } else {
                 setGraphic(createTaskItemBox(task, getIndex() + 1));
-                setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-padding: 1 0 1 0;");
+                setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
             }
         }
     }
