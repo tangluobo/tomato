@@ -4,7 +4,7 @@
 
 .tree-cell {
     -fx-cell-size: 35px;
-    -fx-padding: 0 8;
+    -fx-padding: 0 4 0 2;
     -fx-text-fill: black;
 }
 
@@ -33,6 +33,44 @@
     -fx-focus-color: transparent;
     -fx-faint-focus-color: transparent;
     -fx-text-fill: black;
+}
+
+/* TreeView 根节点样式 - 去除默认边框和内边距 */
+.tree-view {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-border-insets: 0;
+}
+
+.tree-view > .virtual-flow {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
+.tree-view > .virtual-flow > .clipped-container {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
+/* 树节点 disclosure 区域样式 */
+.tree-cell .tree-disclosure-node {
+    -fx-padding: 0;
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+}
+
+/* 树节点内容区域样式 */
+.tree-cell .graphic {
+    -fx-padding: 0 4 0 0;
+}
+
+.tree-cell .text {
+    -fx-padding: 0;
 }
 
 /* 终端标签页样式 - Firefox风格 */

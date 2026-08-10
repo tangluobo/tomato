@@ -104,6 +104,9 @@ public class ConnectModule implements Module {
         folderIcon = loadFolderIcon();
         loadDbIcons();
 
+        sidebarContainer.setStyle("-fx-background-color: #ffffff; -fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0;");
+        sidebarContainer.setSpacing(0);
+
         HBox headerBar = new HBox();
         headerBar.setStyle("-fx-background-color: #ffffff; -fx-border-color: #D9D9D7; -fx-border-width: 0 0 1 0;");
         headerBar.setPrefHeight(52);
