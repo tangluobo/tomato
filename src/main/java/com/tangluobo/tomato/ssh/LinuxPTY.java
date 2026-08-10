@@ -8,6 +8,7 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Linux/macOS POSIX PTY 实现，使用 Foreign Function & Memory API。
@@ -207,15 +208,16 @@ public class LinuxPTY implements PseudoTerminal {
             // 5. 准备命令行参数（execvp 需要 argv 数组）
             // 解析命令行为参数数组
             String[] parts = command.trim().split("\\s+");
-            MemorySegment cmdSeg = arena.allocateUtf8String(parts[0]);
+            MemorySegment cmdSeg = allocateCString(parts[0]);
 
             // argv 数组：指针数组，以 NULL 结尾
+            long ptrSize = ValueLayout.ADDRESS.byteSize();
             MemorySegment argv = arena.allocate(ValueLayout.ADDRESS, (long) (parts.length + 1));
             for (int i = 0; i < parts.length; i++) {
-                MemorySegment argSeg = arena.allocateUtf8String(parts[i]);
-                argv.set(ValueLayout.ADDRESS, (long) i * ValueLayout.ADDRESS.byteSize(), argSeg);
+                MemorySegment argSeg = allocateCString(parts[i]);
+                argv.set(ValueLayout.ADDRESS, i * ptrSize, argSeg);
             }
-            argv.set(ValueLayout.ADDRESS, (long) parts.length * ValueLayout.ADDRESS.byteSize(), MemorySegment.NULL);
+            argv.set(ValueLayout.ADDRESS, parts.length * ptrSize, MemorySegment.NULL);
 
             // 6. fork 子进程
             int pid = (int) fork.invoke();
@@ -233,7 +235,9 @@ public class LinuxPTY implements PseudoTerminal {
 
                 // 打开从设备作为控制终端
                 try (Arena childArena = Arena.ofConfined()) {
-                    MemorySegment slaveSeg = childArena.allocateUtf8String(slavePath);
+                    byte[] slaveBytes = slavePath.getBytes(StandardCharsets.UTF_8);
+                    MemorySegment slaveSeg = childArena.allocate(ValueLayout.JAVA_BYTE, slaveBytes.length + 1);
+                    MemorySegment.copy(slaveBytes, 0, slaveSeg, ValueLayout.JAVA_BYTE, 0L, slaveBytes.length);
                     int slaveFd = (int) open.invoke(slaveSeg, O_RDWR);
                     if (slaveFd < 0) {
                         _exit.invoke(1);
@@ -401,5 +405,13 @@ public class LinuxPTY implements PseudoTerminal {
         } catch (Exception e) {
             return "unknown error";
         }
+    }
+
+    /** 分配以 null 结尾的 UTF-8 C 字符串 */
+    private MemorySegment allocateCString(String str) {
+        byte[] bytes = str.getBytes(StandardCharsets.UTF_8);
+        MemorySegment seg = arena.allocate(ValueLayout.JAVA_BYTE, bytes.length + 1);
+        MemorySegment.copy(bytes, 0, seg, ValueLayout.JAVA_BYTE, 0L, bytes.length);
+        return seg;
     }
 }
