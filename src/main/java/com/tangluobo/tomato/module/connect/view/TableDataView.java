@@ -533,7 +533,7 @@ public class TableDataView extends BorderPane {
         // ScrollPane包裹TableView：提供全宽水平滚动条
         // TableView宽度填满视口（minWidth绑定视口宽度），垂直滚动条自然落在面板最右侧
         tableScrollPane = new ScrollPane(tableView);
-        tableScrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
+        tableScrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-background-insets: 0; -fx-padding: 0; -fx-border-insets: 0;");
         tableScrollPane.setFitToHeight(true);
         tableScrollPane.setFitToWidth(false);
         tableScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
@@ -543,6 +543,7 @@ public class TableDataView extends BorderPane {
 
         centerPane = new StackPane(tableScrollPane, loadingIndicator);
         centerPane.setPadding(Insets.EMPTY);
+        centerPane.setStyle("-fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
 
         // 分页状态栏
         HBox statusBar = new HBox(10);
@@ -597,6 +598,7 @@ public class TableDataView extends BorderPane {
         this.setCenter(centerPane);
         this.setBottom(statusBar);
         this.setPadding(Insets.EMPTY);
+        this.setStyle("-fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
     }
 
     /**

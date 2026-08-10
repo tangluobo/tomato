@@ -1931,12 +1931,17 @@ public class ConnectModule implements Module {
     public void loadContent(VBox contentArea) {
         this.contentArea = contentArea;
         contentArea.getChildren().clear();
+        contentArea.setSpacing(0);
+        contentArea.setPadding(Insets.EMPTY);
+        contentArea.setStyle("-fx-background-color: #ffffff; -fx-background-insets: 0; -fx-padding: 0; -fx-border-insets: 0;");
 
         // 直接创建并添加 TabPane
         terminalTabPane = new TabPane();
         terminalTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.ALL_TABS);
         terminalTabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         terminalTabPane.setFocusTraversable(false);
+        terminalTabPane.setPadding(Insets.EMPTY);
+        terminalTabPane.setStyle("-fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0; -fx-tab-content-padding: 0;");
         VBox.setVgrow(terminalTabPane, Priority.ALWAYS);
 
         contentArea.getChildren().add(terminalTabPane);

@@ -294,6 +294,45 @@
     -fx-border-insets: 0 !important;
 }
 
+/* 深度清除tab-content内所有层级容器的间距 */
+.tab-pane .tab-content-area .border-pane,
+.tab-pane .tab-content-area .anchor-pane,
+.tab-pane .tab-content-area .flow-pane,
+.tab-pane .tab-content-area .grid-pane,
+.tab-pane .tab-content-area .tile-pane,
+.tab-pane .tab-content-area .hbox,
+.tab-pane .tab-content-area .vbox {
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+    -fx-border-insets: 0 !important;
+}
+
+/* 深度清除table-view外层容器 */
+.tab-pane .tab-content-area .table-view {
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+    -fx-border-insets: 0 !important;
+}
+
+/* 深度清除table-view内部所有节点的边距 */
+.tab-pane .tab-content-area .table-view > * {
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+    -fx-border-insets: 0 !important;
+}
+
+.tab-pane .tab-content-area .table-view .column-header-background,
+.tab-pane .tab-content-area .table-view .nested-column-header,
+.tab-pane .tab-content-area .table-view .virtual-flow,
+.tab-pane .tab-content-area .table-view .clipped-container,
+.tab-pane .tab-content-area .table-view .sheet,
+.tab-pane .tab-content-area .table-view .placeholder,
+.tab-pane .tab-content-area .table-view .filler {
+    -fx-padding: 0 !important;
+    -fx-background-insets: 0 !important;
+    -fx-border-insets: 0 !important;
+}
+
 /* 针对无间距标签页的特殊样式 */
 .no-gap-tab-pane > .tab-content-area {
     -fx-padding: 0 !important;

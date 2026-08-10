@@ -165,7 +165,8 @@ public class TomatoController {
             moduleSidebarStyleCache.put(moduleId, sidebarPane.getStyle());
 
             moduleContent = new VBox();
-            moduleContent.setStyle("-fx-background-color: #ffffff;");
+            moduleContent.setSpacing(0);
+            moduleContent.setStyle("-fx-background-color: #ffffff; -fx-background-insets: 0; -fx-padding: 0; -fx-border-insets: 0;");
             moduleContent.setFillWidth(true);
             moduleContent.setMaxWidth(Double.MAX_VALUE);
             moduleContent.setMaxHeight(Double.MAX_VALUE);
