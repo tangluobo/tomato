@@ -63,7 +63,7 @@ public class LocalTerminalPane extends BorderPane {
         terminalView = new TerminalView(emulator);
 
         // 调试：输出 emulator 接收的原始数据
-        emulator.setDebugWriter(line -> System.err.print("[EMU-RECV] " + line));
+        // emulator.setDebugWriter(line -> System.err.print("[EMU-RECV] " + line));
 
         // 状态栏
         HBox statusBar = new HBox();
@@ -254,11 +254,11 @@ public class LocalTerminalPane extends BorderPane {
         }
         try {
             String shell = PseudoTerminal.getDefaultShell();
-            emulator.process(("[调试] 正在启动终端: " + shell + "\r\n").getBytes(StandardCharsets.UTF_8));
-            scheduleRender();
+            // emulator.process(("[调试] 正在启动终端: " + shell + "\r\n").getBytes(StandardCharsets.UTF_8));
+            // scheduleRender();
             pty.start(shell, emulator.getCols(), emulator.getRows());
-            emulator.process("[调试] 终端启动成功，开始读取\r\n".getBytes(StandardCharsets.UTF_8));
-            scheduleRender();
+            // emulator.process("[调试] 终端启动成功，开始读取\r\n".getBytes(StandardCharsets.UTF_8));
+            // scheduleRender();
             running = true;
             startReadThread();
             updateStatusBar("已连接");
@@ -305,10 +305,10 @@ public class LocalTerminalPane extends BorderPane {
                     boolean alive = pty.isAlive();
                     int pid = pty.getPid();
                     if (fileLog != null) { fileLog.println("[READ-THREAD] 进程 pid=" + pid + " alive=" + alive); fileLog.flush(); }
-                    Platform.runLater(() -> {
-                        emulator.process(("[调试] 进程 pid=" + pid + " alive=" + alive + "\r\n").getBytes(StandardCharsets.UTF_8));
-                        scheduleRender();
-                    });
+                    // Platform.runLater(() -> {
+                    //     emulator.process(("[调试] 进程 pid=" + pid + " alive=" + alive + "\r\n").getBytes(StandardCharsets.UTF_8));
+                    //     scheduleRender();
+                    // });
                 }
 
                 int readCount = 0;
@@ -329,10 +329,10 @@ public class LocalTerminalPane extends BorderPane {
                 }
                 if (fileLog != null) { fileLog.println("[READ-THREAD] 退出读取循环, readCount=" + readCount); fileLog.flush(); }
                 final int totalReads = readCount;
-                Platform.runLater(() -> {
-                    emulator.process(("[调试] 读取线程结束, 共读取" + totalReads + "次\r\n").getBytes(StandardCharsets.UTF_8));
-                    scheduleRender();
-                });
+                // Platform.runLater(() -> {
+                //     emulator.process(("[调试] 读取线程结束, 共读取" + totalReads + "次\r\n").getBytes(StandardCharsets.UTF_8));
+                //     scheduleRender();
+                // });
             } catch (IOException e) {
                 if (fileLog != null) { fileLog.println("[READ-THREAD] IOException: " + e.getMessage()); fileLog.flush(); }
                 Platform.runLater(() -> {
@@ -364,30 +364,29 @@ public class LocalTerminalPane extends BorderPane {
     private void scheduleRender() {
         terminalView.render();
         // 调试：前10次打印 Canvas 尺寸、emulator 状态和 buffer 第一行内容
-        if (renderDebugCount < 10) {
-            renderDebugCount++;
-            double cw = terminalView.getWidth();
-            double ch = terminalView.getHeight();
-            int ecols = emulator.getCols();
-            int erows = emulator.getRows();
-            int cx = emulator.getCursorX();
-            int cy = emulator.getCursorY();
-            boolean alt = emulator.isUsingAltBuffer();
-            int sb = emulator.getScrollbackSize();
-            // 打印 buffer 前3行的实际内容
-            StringBuilder bufStr = new StringBuilder();
-            for (int y = 0; y < Math.min(3, erows); y++) {
-                StringBuilder line = new StringBuilder();
-                for (int x = 0; x < Math.min(60, ecols); x++) {
-                    char c = emulator.getChar(x, y);
-                    line.append(c == '\0' ? '·' : (c == ' ' ? ' ' : c));
-                }
-                bufStr.append("  [").append(y).append("] ").append(line).append("\n");
-            }
-            System.err.println("[RENDER#" + renderDebugCount + "] canvas=" + (int)cw + "x" + (int)ch +
-                " emulator=" + ecols + "x" + erows + " cursor=(" + cx + "," + cy + ")" +
-                " altBuf=" + alt + " scrollback=" + sb + "\n" + bufStr);
-        }
+        // if (renderDebugCount < 10) {
+        //     renderDebugCount++;
+        //     double cw = terminalView.getWidth();
+        //     double ch = terminalView.getHeight();
+        //     int ecols = emulator.getCols();
+        //     int erows = emulator.getRows();
+        //     int cx = emulator.getCursorX();
+        //     int cy = emulator.getCursorY();
+        //     boolean alt = emulator.isUsingAltBuffer();
+        //     int sb = emulator.getScrollbackSize();
+        //     StringBuilder bufStr = new StringBuilder();
+        //     for (int y = 0; y < Math.min(3, erows); y++) {
+        //         StringBuilder line = new StringBuilder();
+        //         for (int x = 0; x < Math.min(60, ecols); x++) {
+        //             char c = emulator.getChar(x, y);
+        //             line.append(c == '\0' ? '·' : (c == ' ' ? ' ' : c));
+        //         }
+        //         bufStr.append("  [").append(y).append("] ").append(line).append("\n");
+        //     }
+        //     System.err.println("[RENDER#" + renderDebugCount + "] canvas=" + (int)cw + "x" + (int)ch +
+        //         " emulator=" + ecols + "x" + erows + " cursor=(" + cx + "," + cy + ")" +
+        //         " altBuf=" + alt + " scrollback=" + sb + "\n" + bufStr);
+        // }
     }
 
     /** 粘贴剪贴板内容到 ConPTY */

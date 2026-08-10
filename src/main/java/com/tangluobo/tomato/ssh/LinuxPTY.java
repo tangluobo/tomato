@@ -52,6 +52,7 @@ public class LinuxPTY implements PseudoTerminal {
     private static final MethodHandle kill;
     private static final MethodHandle strerror;
     private static final MethodHandle errnoLocation;
+    private static final MethodHandle setenv;
 
     static {
         boolean isMac = System.getProperty("os.name", "").toLowerCase().contains("mac");
@@ -95,6 +96,8 @@ public class LinuxPTY implements PseudoTerminal {
                     FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
                 errnoLocation = lookup(IS_MAC ? "__error" : "__errno_location",
                     FunctionDescriptor.of(ValueLayout.ADDRESS));
+                setenv = lookup("setenv",
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
 
                 // forkpty: glibc 2.34+ 在 libc，旧版在 libutil；macOS 在 libSystem
                 FunctionDescriptor forkptyDesc = FunctionDescriptor.of(
@@ -124,6 +127,7 @@ public class LinuxPTY implements PseudoTerminal {
             kill = null;
             strerror = null;
             errnoLocation = null;
+            setenv = null;
         }
     }
 
@@ -151,6 +155,14 @@ public class LinuxPTY implements PseudoTerminal {
         arena = Arena.ofShared();
 
         try {
+            // 0. 设置 TERM 环境变量（top/vim 等全屏程序依赖此变量）
+            //    setenv 修改 C 库的 environ，子进程通过 fork 继承
+            if (setenv != null) {
+                MemorySegment termName = allocateCString("TERM");
+                MemorySegment termValue = allocateCString("xterm-256color");
+                setenv.invoke(termName, termValue, 1);
+            }
+
             // 1. 准备窗口大小（struct winsize: 4 shorts = 8 字节）
             MemorySegment winsize = arena.allocate(ValueLayout.JAVA_SHORT, 4);
             winsize.set(ValueLayout.JAVA_SHORT, 0, (short) rows);    // ws_row
