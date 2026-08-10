@@ -298,12 +298,6 @@ public class WindowsConPTY implements PseudoTerminal {
             threadHandle = processInfo.get(HANDLE_LAYOUT, OFFSET_PI_HTHREAD).address();
             processPid = processInfo.get(ValueLayout.JAVA_INT, OFFSET_PI_PID);
 
-            System.err.println("[ConPTY-START] hPC=0x" + Long.toHexString(hPC) +
-                " inputWriteHandle=0x" + Long.toHexString(inputWriteHandle) +
-                " outputReadHandle=0x" + Long.toHexString(outputReadHandle) +
-                " processHandle=0x" + Long.toHexString(processHandle) +
-                " pid=" + processPid);
-
             // 关闭主线程句柄（不需要）
             CloseHandle(MemorySegment.ofAddress(threadHandle));
 
@@ -357,7 +351,7 @@ public class WindowsConPTY implements PseudoTerminal {
      */
     @Override
     public int read(byte[] buffer) throws IOException {
-        if (closed) return -1;
+        if (closed || outputReadHandle == 0) return -1;
         try {
             int toRead = Math.min(buffer.length, IO_BUFFER_SIZE);
             int result = (int) ReadFile.invoke(
@@ -367,7 +361,7 @@ public class WindowsConPTY implements PseudoTerminal {
                 bytesRead,
                 MemorySegment.NULL);
             if (result == 0) {
-                // ReadFile失败，通常是管道已关闭
+                // ReadFile失败，通常是管道已关闭（进程退出）
                 return -1;
             }
             int count = bytesRead.get(ValueLayout.JAVA_INT, 0);
@@ -387,7 +381,7 @@ public class WindowsConPTY implements PseudoTerminal {
      */
     @Override
     public void write(byte[] data) throws IOException {
-        if (closed) return;
+        if (closed || inputWriteHandle == 0) return;
         try {
             int result;
             if (data.length <= IO_BUFFER_SIZE) {
@@ -413,7 +407,6 @@ public class WindowsConPTY implements PseudoTerminal {
                 }
             }
             int written = bytesWritten.get(ValueLayout.JAVA_INT, 0);
-            System.err.println("[ConPTY-WRITE] WriteFile result=" + result + " written=" + written + "/" + data.length);
             if (result == 0) {
                 throw new IOException("WriteFile failed");
             }
