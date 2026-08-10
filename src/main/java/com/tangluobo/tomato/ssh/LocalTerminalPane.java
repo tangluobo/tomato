@@ -23,10 +23,10 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
 /**
- * 本地终端组件（PowerShell），使用 Windows ConPTY + TerminalEmulator + TerminalView。
+ * 本地终端组件，使用 PseudoTerminal + TerminalEmulator + TerminalView。
  *
  * 架构与 SSHTerminalPane 一致：
- * - ConPTY 提供伪控制台，PowerShell 在其中以真正的交互模式运行
+ * - PseudoTerminal 提供伪终端（Windows ConPTY / Linux-macOS forkpty），shell 在其中以真正的交互模式运行
  * - TerminalEmulator 解析 ANSI 转义序列并维护字符缓冲区
  * - TerminalView 渲染终端画面（Canvas）
  *
@@ -76,7 +76,7 @@ public class LocalTerminalPane extends BorderPane {
         stateLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
         HBox.setMargin(stateLabel, new javafx.geometry.Insets(0, 8, 0, 0));
 
-        connLabel = new Label("PowerShell");
+        connLabel = new Label(getShellDisplayName());
         connLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
 
         Region spacer = new Region();
@@ -236,7 +236,23 @@ public class LocalTerminalPane extends BorderPane {
         emulator.setMaxScrollback(lines);
     }
 
-    /** 连接本地 PowerShell 终端 */
+    /** 根据平台获取终端显示名称 */
+    private String getShellDisplayName() {
+        String shell = PseudoTerminal.getDefaultShell();
+        if (shell == null || shell.isEmpty()) return "Terminal";
+        // "powershell.exe -NoProfile" → "PowerShell"
+        if (shell.toLowerCase().contains("powershell")) return "PowerShell";
+        if (shell.toLowerCase().contains("cmd.exe")) return "CMD";
+        // "/bin/bash" → "bash", "/usr/bin/zsh" → "zsh"
+        String name = shell.trim();
+        int spaceIdx = name.indexOf(' ');
+        if (spaceIdx > 0) name = name.substring(0, spaceIdx);
+        int slashIdx = name.lastIndexOf('/');
+        if (slashIdx >= 0) name = name.substring(slashIdx + 1);
+        return name.isEmpty() ? "Terminal" : name;
+    }
+
+    /** 连接本地终端 */
     public void connect(String terminalType) {
         // 延迟到下一帧，确保 UI 已布局（Canvas 有正确宽高）
         Platform.runLater(() -> doConnect(terminalType));
@@ -315,7 +331,18 @@ public class LocalTerminalPane extends BorderPane {
                 if (fileLog != null) { fileLog.println("[READ-THREAD] 进入读取循环"); fileLog.flush(); }
                 while (running && pty != null) {
                     int len = pty.read(buffer);
-                    if (fileLog != null && len > 0) { fileLog.println("[READ-THREAD] read#" + (readCount+1) + " len=" + len); fileLog.flush(); }
+                    if (fileLog != null && len > 0) {
+                        if (readCount < 10) {
+                            StringBuilder hex = new StringBuilder();
+                            for (int i = 0; i < len && i < 64; i++) {
+                                hex.append(String.format("%02x ", buffer[i]));
+                            }
+                            fileLog.println("[READ-THREAD] read#" + (readCount+1) + " len=" + len + " hex=" + hex);
+                        } else {
+                            fileLog.println("[READ-THREAD] read#" + (readCount+1) + " len=" + len);
+                        }
+                        fileLog.flush();
+                    }
                     if (len == -1) break;
                     if (len <= 0) continue;
                     readCount++;
