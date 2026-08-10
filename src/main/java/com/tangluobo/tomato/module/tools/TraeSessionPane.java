@@ -13,6 +13,7 @@ import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Cursor;
 import javafx.scene.control.*;
 import javafx.scene.effect.DropShadow;
 import javafx.scene.input.Clipboard;
@@ -95,6 +96,10 @@ public class TraeSessionPane extends VBox {
     // 状态标签
     private Label statusLabel;
 
+    // 分隔条拖拽
+    private double dividerStartX;
+    private double dividerStartWidth;
+
     // 持久化
     private static final String CONFIG_DIR = System.getProperty("user.home") + File.separator + ".tomata";
     private static final String CONFIG_FILE = CONFIG_DIR + File.separator + "trae_sessions.json";
@@ -147,23 +152,30 @@ public class TraeSessionPane extends VBox {
 
         titleBar.getChildren().addAll(titleIcon, titleText, titleSpacer, subtitleLabel);
 
-        // 主体内容 - 分割面板
-        SplitPane splitPane = new SplitPane();
-        splitPane.setPadding(new Insets(0));
-        splitPane.setDividerPositions(0.42);
-
+        // 主体内容 - HBox + Region 分隔条（与连接树/内容页样式一致）
         VBox leftPanel = createLeftPanel();
         VBox rightPanel = createRightPanel();
 
-        splitPane.getItems().addAll(leftPanel, rightPanel);
+        Region divider = new Region();
+        divider.setStyle("-fx-background-color: #E5E5E5;");
+        divider.setPrefWidth(1);
+        divider.setMinWidth(1);
+        divider.setMaxWidth(1);
+        divider.setCursor(Cursor.H_RESIZE);
+        setupDivider(divider, leftPanel);
+
+        HBox contentBox = new HBox();
+        contentBox.setStyle("-fx-padding: 0; -fx-background-insets: 0; -fx-border-color: transparent; -fx-border-width: 0;");
+        contentBox.getChildren().addAll(leftPanel, divider, rightPanel);
+        HBox.setHgrow(rightPanel, Priority.ALWAYS);
 
         // 状态标签
         statusLabel = new Label("");
         statusLabel.setPadding(new Insets(5, 10, 10, 10));
         statusLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: #666;");
 
-        getChildren().addAll(titleBar, splitPane, statusLabel);
-        VBox.setVgrow(splitPane, Priority.ALWAYS);
+        getChildren().addAll(titleBar, contentBox, statusLabel);
+        VBox.setVgrow(contentBox, Priority.ALWAYS);
     }
 
     /**
@@ -171,7 +183,9 @@ public class TraeSessionPane extends VBox {
      */
     private VBox createLeftPanel() {
         VBox panel = new VBox(10);
-        panel.setStyle("-fx-background-color: #ffffff; -fx-border-color: #e8e8e8; -fx-border-width: 0 1 0 0; -fx-padding: 0;");
+        panel.setPrefWidth(280);
+        panel.setMinWidth(150);
+        panel.setStyle("-fx-background-color: #ffffff; -fx-padding: 0;");
 
         // 标题
         Label listTitle = new Label("会话列表");
@@ -286,6 +300,23 @@ public class TraeSessionPane extends VBox {
         );
 
         return detailPanel;
+    }
+
+    /**
+     * 设置分隔条拖拽调整左侧面板宽度
+     */
+    private void setupDivider(Region divider, VBox leftPanel) {
+        divider.setOnMousePressed(e -> {
+            dividerStartX = e.getScreenX();
+            dividerStartWidth = leftPanel.getWidth();
+        });
+        divider.setOnMouseDragged(e -> {
+            double delta = e.getScreenX() - dividerStartX;
+            double newWidth = dividerStartWidth + delta;
+            if (newWidth < 150) newWidth = 150;
+            if (newWidth > 500) newWidth = 500;
+            leftPanel.setPrefWidth(newWidth);
+        });
     }
 
     // ==================== 会话列表渲染 ====================
