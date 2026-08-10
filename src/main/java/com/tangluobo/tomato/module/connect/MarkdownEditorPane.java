@@ -189,13 +189,13 @@ public class MarkdownEditorPane extends BorderPane {
         this.editor = new InlineCssTextArea();
         this.editor.setStyle(
                 "-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 13px; " +
-                "-fx-background-color: white; -fx-padding: 8; -fx-text-fill: #333;"
+                "-fx-background-color: white; -fx-padding: 0; -fx-text-fill: #333;"
         );
         this.editorScroll = new VirtualizedScrollPane<>(editor);
 
         // 预览区：VBox + ScrollPane，子节点为 InlineCssTextArea（文本，可选中）与 GridPane（表格）混合
         this.previewBox = new VBox(6);
-        this.previewBox.setPadding(new Insets(12, 16, 12, 16));
+        this.previewBox.setPadding(new Insets(0));
         this.previewBox.setStyle("-fx-background-color: white;");
         this.previewScroll = new ScrollPane(previewBox);
         this.previewScroll.setFitToWidth(true);
@@ -684,7 +684,7 @@ public class MarkdownEditorPane extends BorderPane {
         area.setEditable(false);
         area.setWrapText(true);
         area.setStyle(
-                "-fx-background-color: white; -fx-padding: 2 0 6 0; " +
+                "-fx-background-color: white; -fx-padding: 0; " +
                 "-fx-font-family: 'Segoe UI','Microsoft YaHei',sans-serif; " +
                 "-fx-font-size: 14px; -fx-text-fill: #333;"
         );

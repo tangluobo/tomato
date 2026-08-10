@@ -324,20 +324,20 @@
 .split-pane > .split-pane-divider {
     -fx-background-color: #E5E5E5;
     -fx-background-insets: 0;
-    -fx-padding: 0;
+    -fx-padding: 0 1 0 0;
     -fx-border-color: transparent;
     -fx-border-width: 0;
 }
 
 .split-pane:horizontal > .split-pane-divider {
     -fx-background-color: #E5E5E5;
-    -fx-padding: 0;
+    -fx-padding: 0 1 0 0;
     -fx-border-color: transparent;
 }
 
 .split-pane:vertical > .split-pane-divider {
     -fx-background-color: #E5E5E5;
-    -fx-padding: 0;
+    -fx-padding: 0 0 0 1;
     -fx-border-color: transparent;
 }
 
