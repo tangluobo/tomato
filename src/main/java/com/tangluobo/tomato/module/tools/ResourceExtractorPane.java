@@ -147,6 +147,7 @@ public class ResourceExtractorPane extends VBox {
 
     private VBox createModeSection() {
         VBox box = new VBox(8);
+        box.setPadding(new Insets(0));
         box.setFillWidth(true);
         box.setMaxWidth(Double.MAX_VALUE);
         Label label = new Label("运行模式");

@@ -91,7 +91,10 @@ public class ToolsModule implements Module {
         ScrollPane scrollPane = new ScrollPane(toolList);
         scrollPane.setFitToWidth(true);
         scrollPane.setFitToHeight(true);
-        scrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
+        scrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
+        // 应用 session-scroll-pane 样式类：清除 .viewport 默认 background-insets，消除列表项两侧空白
+        scrollPane.getStyleClass().add("session-scroll-pane");
+        scrollPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
 
