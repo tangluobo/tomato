@@ -353,6 +353,10 @@ public class SFTPFileBrowserPane extends BorderPane {
                     handleDoubleClick(item);
                 } else if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 1) {
                     selectedItem = row.getItem();
+                } else if (event.getButton() == MouseButton.SECONDARY && !row.isEmpty()) {
+                    // 右键先选中行，再弹出右键菜单
+                    fileTable.getSelectionModel().select(row.getIndex());
+                    selectedItem = row.getItem();
                 }
             });
             // 拖拽下载
@@ -526,6 +530,7 @@ public class SFTPFileBrowserPane extends BorderPane {
         box.setPrefWidth(90);
         box.setPadding(new Insets(6, 4, 6, 4));
         box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand;");
+        box.setPickOnBounds(true);
 
         ImageView iconView = new ImageView();
         iconView.setImage(getIconForItem(item, true));
@@ -533,13 +538,16 @@ public class SFTPFileBrowserPane extends BorderPane {
         iconView.setFitHeight(48);
         iconView.setPreserveRatio(true);
         iconView.setSmooth(true);
+        iconView.setMouseTransparent(true);
         box.getChildren().add(iconView);
 
         Label nameLabel = new Label(item.getDisplayName());
         nameLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #333; -fx-alignment: CENTER;");
-        nameLabel.setWrapText(true);
+        nameLabel.setWrapText(false);
+        nameLabel.setTextOverrun(OverrunStyle.ELLIPSIS);
         nameLabel.setMaxWidth(82);
         nameLabel.setAlignment(Pos.CENTER);
+        nameLabel.setMouseTransparent(true);
         box.getChildren().add(nameLabel);
 
         box.setOnMouseClicked(e -> {
@@ -551,6 +559,11 @@ public class SFTPFileBrowserPane extends BorderPane {
                 if (e.getClickCount() == 2) {
                     handleDoubleClick(item);
                 }
+            } else if (e.getButton() == MouseButton.SECONDARY) {
+                // 右键先选中，再弹出右键菜单
+                clearIconSelection();
+                selectIconBox(box, item);
+                selectedItem = item;
             }
         });
 
@@ -715,12 +728,12 @@ public class SFTPFileBrowserPane extends BorderPane {
      * 导航到指定路径
      */
     private void navigateTo(String path) {
-        if (!sftpClient.isConnected()) {
-            stateLabel.setText("SFTP未连接");
-            return;
-        }
         new Thread(() -> {
             try {
+                // 通道未连接时尝试重连
+                if (!sftpClient.isConnected()) {
+                    sftpClient.reconnect();
+                }
                 sftpClient.cd(path);
                 String realPath = sftpClient.pwd();
                 List<SFTPClient.FileEntry> entries = sftpClient.listFiles(realPath);
@@ -1394,26 +1407,34 @@ public class SFTPFileBrowserPane extends BorderPane {
      * 异步加载图标视图中所有图片文件的缩略图
      */
     private void loadThumbnailsForIconView() {
+        // 收集所有需要加载缩略图的图片文件
+        List<FileItem> imageItems = new ArrayList<>();
         for (FileItem item : fileData) {
             if (!item.isDirectory() && isImageFile(item.getDisplayName())) {
-                new Thread(() -> {
-                    try {
-                        File tempFile = File.createTempFile("tomato-sftp-thumb-", ".img");
-                        sftpClient.download(item.getPath(), tempFile.getAbsolutePath());
-                        byte[] imageBytes = Files.readAllBytes(tempFile.toPath());
-                        if (!tempFile.delete()) tempFile.deleteOnExit();
-
-                        Platform.runLater(() -> {
-                            try {
-                                Image image = new Image(new java.io.ByteArrayInputStream(imageBytes));
-                                if (image.isError() || image.getWidth() <= 0 || image.getHeight() <= 0) return;
-                                updateIconBoxWithThumbnail(item, image);
-                            } catch (Exception ignored) {}
-                        });
-                    } catch (Exception ignored) {}
-                }, "SFTP-Thumb-" + item.getName()).start();
+                imageItems.add(item);
             }
         }
+        if (imageItems.isEmpty()) return;
+
+        // 单线程顺序下载，避免并发访问SFTP通道
+        new Thread(() -> {
+            for (FileItem item : imageItems) {
+                try {
+                    File tempFile = File.createTempFile("tomato-sftp-thumb-", ".img");
+                    sftpClient.download(item.getPath(), tempFile.getAbsolutePath());
+                    byte[] imageBytes = Files.readAllBytes(tempFile.toPath());
+                    if (!tempFile.delete()) tempFile.deleteOnExit();
+
+                    Platform.runLater(() -> {
+                        try {
+                            Image image = new Image(new java.io.ByteArrayInputStream(imageBytes));
+                            if (image.isError() || image.getWidth() <= 0 || image.getHeight() <= 0) return;
+                            updateIconBoxWithThumbnail(item, image);
+                        } catch (Exception ignored) {}
+                    });
+                } catch (Exception ignored) {}
+            }
+        }, "SFTP-Thumbnails").start();
     }
 
     /**
@@ -1546,7 +1567,7 @@ public class SFTPFileBrowserPane extends BorderPane {
         public long getLastModified() { return lastModified; }
         public void setLastModified(long lastModified) { this.lastModified = lastModified; }
 
-        public String getDisplayName() { return isDirectory ? name + "/" : name; }
+        public String getDisplayName() { return name; }
 
         public String getFormattedSize() {
             if (isDirectory) return "";
