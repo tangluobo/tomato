@@ -18,6 +18,9 @@ import javafx.scene.control.*;
 import javafx.scene.effect.DropShadow;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.DragEvent;
+import javafx.scene.input.Dragboard;
+import javafx.scene.input.TransferMode;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
@@ -99,6 +102,9 @@ public class TraeSessionPane extends VBox {
     // 分隔条拖拽
     private double dividerStartX;
     private double dividerStartWidth;
+
+    // 列表项拖拽排序状态
+    private TraeSession draggedSession = null;
 
     // 持久化
     private static final String CONFIG_DIR = System.getProperty("user.home") + File.separator + ".tomata";
@@ -237,6 +243,32 @@ public class TraeSessionPane extends VBox {
         sessionListContainer = new VBox(0);
         sessionListContainer.setPadding(new Insets(0));
         sessionListContainer.setStyle("-fx-background-color: #ffffff;");
+
+        // 支持拖拽到列表空白区域（移动到末尾）
+        sessionListContainer.setOnDragOver(e -> {
+            if (draggedSession == null) {
+                e.consume();
+                return;
+            }
+            e.acceptTransferModes(TransferMode.MOVE);
+            e.consume();
+        });
+        sessionListContainer.setOnDragDropped(e -> {
+            if (draggedSession == null) {
+                e.consume();
+                return;
+            }
+            int fromIndex = sessions.indexOf(draggedSession);
+            if (fromIndex != -1 && fromIndex < sessions.size() - 1) {
+                sessions.remove(fromIndex);
+                sessions.add(draggedSession);
+                saveSessions();
+                refreshSessionList();
+            }
+            e.setDropCompleted(true);
+            draggedSession = null;
+            e.consume();
+        });
 
         sessionScrollPane = new ScrollPane(sessionListContainer);
         sessionScrollPane.setFitToWidth(true);
@@ -496,6 +528,71 @@ public class TraeSessionPane extends VBox {
             if (selectedSession != session) {
                 row.setStyle("-fx-background-color: transparent; -fx-cursor: hand;");
             }
+        });
+
+        // ===== 拖拽排序支持 =====
+        // 在 row 上启动拖拽（Switch 控件会消费鼠标事件，不会误触发）
+        row.setOnDragDetected(e -> {
+            Dragboard db = row.startDragAndDrop(TransferMode.MOVE);
+            ClipboardContent content = new ClipboardContent();
+            content.putString(session.getPhone());
+            db.setContent(content);
+            draggedSession = session;
+            row.setOpacity(0.4);
+            e.consume();
+        });
+
+        row.setOnDragDone(e -> {
+            row.setOpacity(1.0);
+            draggedSession = null;
+            e.consume();
+        });
+
+        // 在 itemBox 上接收拖拽（覆盖 row + separator 整个区域）
+        itemBox.setOnDragOver(e -> {
+            if (draggedSession == null || draggedSession == session) {
+                e.consume();
+                return;
+            }
+            e.acceptTransferModes(TransferMode.MOVE);
+            row.setStyle("-fx-background-color: #d6eaff; -fx-cursor: move;");
+            e.consume();
+        });
+
+        itemBox.setOnDragExited(e -> {
+            if (selectedSession == session) {
+                row.setStyle("-fx-background-color: #e8f4ff; -fx-cursor: hand;");
+            } else {
+                row.setStyle("-fx-background-color: transparent; -fx-cursor: hand;");
+            }
+            e.consume();
+        });
+
+        itemBox.setOnDragDropped(e -> {
+            if (draggedSession == null || draggedSession == session) {
+                e.consume();
+                return;
+            }
+            int fromIndex = sessions.indexOf(draggedSession);
+            int toIndex = sessions.indexOf(session);
+            if (fromIndex != -1 && toIndex != -1 && fromIndex != toIndex) {
+                // 根据鼠标在目标项的位置决定插入点：上半部分插入前，下半部分插入后
+                double itemHeight = itemBox.getHeight();
+                boolean insertAfter = itemHeight > 0 && e.getY() > itemHeight / 2;
+
+                sessions.remove(fromIndex);
+                // 移除后重新查找目标索引
+                toIndex = sessions.indexOf(session);
+                if (insertAfter) {
+                    toIndex++;
+                }
+                sessions.add(toIndex, draggedSession);
+                saveSessions();
+                refreshSessionList();
+            }
+            e.setDropCompleted(true);
+            draggedSession = null;
+            e.consume();
         });
 
         return itemBox;
