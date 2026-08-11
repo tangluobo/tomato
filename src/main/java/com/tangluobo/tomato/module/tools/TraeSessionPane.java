@@ -166,13 +166,38 @@ public class TraeSessionPane extends VBox {
 
         HBox contentBox = new HBox();
         contentBox.setStyle("-fx-padding: 0; -fx-background-insets: 0; -fx-border-color: transparent; -fx-border-width: 0;");
+        contentBox.setFillHeight(true);
+        contentBox.setMaxHeight(Double.MAX_VALUE);
+        contentBox.setMaxWidth(Double.MAX_VALUE);
+        contentBox.setMinHeight(0);
+        contentBox.setMinWidth(0);
+        contentBox.setPadding(Insets.EMPTY);
+        contentBox.setSpacing(0);
         contentBox.getChildren().addAll(leftPanel, divider, rightPanel);
         HBox.setHgrow(rightPanel, Priority.ALWAYS);
+        HBox.setHgrow(leftPanel, Priority.NEVER);
+        // 确保两个面板都无限制地填充高度
+        leftPanel.setMaxHeight(Double.MAX_VALUE);
+        leftPanel.setMinHeight(0);
+        rightPanel.setMaxHeight(Double.MAX_VALUE);
+        rightPanel.setMinHeight(0);
 
-        // 状态标签
+        // 状态标签：空内容时不占据空间
         statusLabel = new Label("");
         statusLabel.setPadding(new Insets(5, 10, 10, 10));
         statusLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: #666;");
+        statusLabel.setVisible(false);
+        statusLabel.setManaged(false);
+        // 监听文本变化：有内容时显示，无内容时隐藏
+        statusLabel.textProperty().addListener((obs, oldVal, newVal) -> {
+            boolean hasText = newVal != null && !newVal.trim().isEmpty();
+            statusLabel.setVisible(hasText);
+            statusLabel.setManaged(hasText);
+        });
+
+        // 最外层容器：避免自身有任何内边距
+        setPadding(Insets.EMPTY);
+        setSpacing(0);
 
         getChildren().addAll(titleBar, contentBox, statusLabel);
         VBox.setVgrow(contentBox, Priority.ALWAYS);
@@ -231,9 +256,15 @@ public class TraeSessionPane extends VBox {
      * 创建右侧详情面板
      */
     private VBox createRightPanel() {
-        detailPanel = new VBox(12);
+        detailPanel = new VBox(10);
         detailPanel.setStyle("-fx-background-color: #ffffff;");
-        detailPanel.setPadding(new Insets(10, 10, 10, 10));
+        detailPanel.setPadding(new Insets(10, 10, 0, 10));
+        detailPanel.setMaxHeight(Double.MAX_VALUE);
+        detailPanel.setMaxWidth(Double.MAX_VALUE);
+        detailPanel.setMinHeight(0);
+        detailPanel.setMinWidth(0);
+        detailPanel.setFillWidth(true);
+        VBox.setVgrow(detailPanel, Priority.ALWAYS);
 
         detailTitleLabel = new Label("请选择一个会话");
         detailTitleLabel.setStyle("-fx-font-size: 16px; -fx-font-weight: bold; -fx-text-fill: #333;");
@@ -281,22 +312,46 @@ public class TraeSessionPane extends VBox {
 
         taskListView = new ListView<>();
         taskListView.setCellFactory(lv -> new TaskListCell());
-        taskListView.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
+        taskListView.getStyleClass().add("trae-session-task-list");
+        taskListView.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         taskListView.setPlaceholder(new Label("请选择会话以查看历史任务"));
+        taskListView.setMaxHeight(Double.MAX_VALUE);
+        taskListView.setMaxWidth(Double.MAX_VALUE);
+        taskListView.setMinHeight(0);
+        taskListView.setMinWidth(0);
+        taskListView.setPadding(Insets.EMPTY);
 
-        VBox.setVgrow(taskListView, Priority.ALWAYS);
+        // 用 AnchorPane 包装 ListView，强制四边对齐，不留任何缝隙
+        AnchorPane listWrapper = new AnchorPane(taskListView);
+        listWrapper.setPadding(Insets.EMPTY);
+        listWrapper.setStyle("-fx-background-color: transparent; -fx-background-insets: 0; -fx-border-insets: 0;");
+        AnchorPane.setTopAnchor(taskListView, 0.0);
+        AnchorPane.setBottomAnchor(taskListView, 0.0);
+        AnchorPane.setLeftAnchor(taskListView, 0.0);
+        AnchorPane.setRightAnchor(taskListView, 0.0);
+
+        // 对非增长元素显式设置 NEVER，避免任何意外的空间分配
+        VBox.setVgrow(detailTitleLabel, Priority.NEVER);
+        VBox.setVgrow(detailPhoneLabel, Priority.NEVER);
+        VBox.setVgrow(detailStatusLabel, Priority.NEVER);
+        VBox.setVgrow(actionBox, Priority.NEVER);
+        VBox.setVgrow(detailDirLabel, Priority.NEVER);
+        VBox.setVgrow(detailDirExistsLabel, Priority.NEVER);
+        VBox.setVgrow(taskSeparator, Priority.NEVER);
+        VBox.setVgrow(taskHeader, Priority.NEVER);
+        VBox.setVgrow(listWrapper, Priority.ALWAYS);
 
         detailPanel.getChildren().addAll(
                 detailTitleLabel,
                 detailPhoneLabel,
                 detailStatusLabel,
+                actionBox,
                 new Separator(),
                 detailDirLabel,
                 detailDirExistsLabel,
                 taskSeparator,
                 taskHeader,
-                taskListView,
-                actionBox
+                listWrapper
         );
 
         return detailPanel;

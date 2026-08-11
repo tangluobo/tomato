@@ -181,10 +181,17 @@ public class HostsFilePane extends VBox {
         contentBox.getChildren().addAll(leftPanel, divider, rightPanel);
         HBox.setHgrow(rightPanel, Priority.ALWAYS);
 
-        // 状态标签
+        // 状态标签（无内容时不占用布局空间，避免底部出现空白行）
         statusLabel = new Label("");
-        statusLabel.setPadding(new Insets(5, 10, 10, 10));
+        statusLabel.setPadding(new Insets(5, 10, 5, 10));
         statusLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: #666;");
+        statusLabel.setManaged(false);
+        statusLabel.setVisible(false);
+        statusLabel.textProperty().addListener((obs, oldVal, newVal) -> {
+            boolean empty = newVal == null || newVal.isEmpty();
+            statusLabel.setManaged(!empty);
+            statusLabel.setVisible(!empty);
+        });
 
         getChildren().addAll(titleBar, contentBox, statusLabel);
         VBox.setVgrow(contentBox, Priority.ALWAYS);

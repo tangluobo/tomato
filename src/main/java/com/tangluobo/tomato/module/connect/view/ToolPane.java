@@ -7,6 +7,7 @@ import com.tangluobo.tomato.module.tools.HostsFilePane;
 import com.tangluobo.tomato.module.tools.ImageFormatConverterPane;
 import com.tangluobo.tomato.module.tools.JsonToolPane;
 import com.tangluobo.tomato.module.tools.TraeSessionPane;
+import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.Label;
 import javafx.scene.layout.BorderPane;
@@ -27,6 +28,8 @@ public class ToolPane extends BorderPane {
 
     public ToolPane(ToolType toolType) {
         this.toolType = toolType;
+        setPadding(Insets.EMPTY);
+        setStyle("-fx-background-color: #ffffff; -fx-background-insets: 0; -fx-border-insets: 0;");
         if (toolType == null) {
             setCenter(buildPlaceholder());
             return;

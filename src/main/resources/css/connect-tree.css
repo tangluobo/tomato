@@ -837,3 +837,55 @@
     -fx-border-width: 0;
     -fx-border-insets: 0;
 }
+
+/* Trae会话管理 ListView：深度清除默认间距，让内容紧贴容器边缘 */
+.trae-session-task-list {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-border-insets: 0;
+    -fx-cell-size: -1;
+}
+
+.trae-session-task-list > .virtual-flow {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+    -fx-border-color: transparent;
+    -fx-border-insets: 0;
+}
+
+.trae-session-task-list > .virtual-flow > .clipped-container {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+    -fx-border-color: transparent;
+    -fx-border-insets: 0;
+}
+
+.trae-session-task-list > .virtual-flow > .clipped-container > .sheet {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+    -fx-border-color: transparent;
+    -fx-border-insets: 0;
+}
+
+.trae-session-task-list .list-cell {
+    -fx-padding: 0;
+    -fx-background-insets: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-border-insets: 0;
+    -fx-cell-size: -1;
+}
+
+.trae-session-task-list .placeholder {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+    -fx-border-color: transparent;
+    -fx-border-insets: 0;
+}
