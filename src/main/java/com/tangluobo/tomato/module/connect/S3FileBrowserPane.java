@@ -553,7 +553,7 @@ public class S3FileBrowserPane extends BorderPane {
 
         columnScrollPane = new ScrollPane(columnContainer);
         columnScrollPane.setFitToHeight(true);
-        columnScrollPane.setFitToWidth(true);
+        columnScrollPane.setFitToWidth(false);
         columnScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
         columnScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         columnScrollPane.setStyle("-fx-background-color: white;");
@@ -588,10 +588,14 @@ public class S3FileBrowserPane extends BorderPane {
         ListView<FileItem> lv = new ListView<>(columnItems.get(colIndex));
         lv.setPrefWidth(220);
         lv.setMinWidth(180);
-        lv.setMaxWidth(260);
-        lv.setStyle("-fx-background-color: white; -fx-background-insets: 0; -fx-padding: 0; -fx-border-color: transparent #e5e5e5 transparent transparent; -fx-border-width: 0 1 0 0;");
+        lv.setMaxWidth(220);
+        lv.setStyle("-fx-background-color: white; -fx-background-insets: 0; -fx-padding: 0; -fx-border-color: transparent #e5e5e5 transparent transparent; -fx-border-width: 0 1 0 0; -fx-hbar-policy: NEVER;");
 
         lv.setCellFactory(list -> new ListCell<FileItem>() {
+            {
+                setStyle("-fx-padding: 4 8;");
+            }
+
             @Override
             protected void updateItem(FileItem item, boolean empty) {
                 super.updateItem(item, empty);
@@ -601,22 +605,24 @@ public class S3FileBrowserPane extends BorderPane {
                 } else {
                     HBox row = new HBox(6);
                     row.setAlignment(Pos.CENTER_LEFT);
+                    row.setMaxWidth(Double.MAX_VALUE);
                     ImageView iv = new ImageView(getIconForItem(item, false));
                     iv.setFitWidth(16);
                     iv.setFitHeight(16);
                     Label name = new Label(item.getDisplayName());
                     name.setStyle("-fx-font-size: 12px; -fx-text-fill: #333;");
+                    name.setMaxWidth(Double.MAX_VALUE);
+                    name.setWrapText(false);
+                    name.setTextOverrun(OverrunStyle.ELLIPSIS);
+                    HBox.setHgrow(name, Priority.ALWAYS);
                     row.getChildren().addAll(iv, name);
                     if (item.isDirectory()) {
-                        Region spacer = new Region();
-                        HBox.setHgrow(spacer, Priority.ALWAYS);
                         Label arrow = new Label("›");
                         arrow.setStyle("-fx-text-fill: #999; -fx-font-size: 16px;");
-                        row.getChildren().addAll(spacer, arrow);
+                        row.getChildren().add(arrow);
                     }
                     setGraphic(row);
                     setText(null);
-                    setStyle("-fx-padding: 4 8;");
                 }
             }
         });
@@ -796,7 +802,17 @@ public class S3FileBrowserPane extends BorderPane {
         columnListViews.add(lv);
         columnContainer.getChildren().add(lv);
         updatePathFromColumns();
-        Platform.runLater(() -> columnScrollPane.setHvalue(1.0));
+
+        // 监听容器宽度变化，布局完成后自动滚到最右
+        columnContainer.widthProperty().addListener(new javafx.beans.value.ChangeListener<Number>() {
+            @Override
+            public void changed(javafx.beans.value.ObservableValue<? extends Number> obs, Number oldW, Number newW) {
+                if (newW.doubleValue() > oldW.doubleValue()) {
+                    columnScrollPane.setHvalue(1.0);
+                    obs.removeListener(this);
+                }
+            }
+        });
     }
 
     private void switchViewMode(ViewMode mode) {
