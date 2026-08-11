@@ -148,7 +148,8 @@ public class JsonToolPane extends VBox {
 
         // 外部分割：历史 | (输入+输出) —— 使用 Region 分隔条，与连接树/内容页分隔样式一致
         HBox contentBox = new HBox();
-        contentBox.setPadding(new Insets(10, 20, 10, 20));
+        contentBox.setPadding(new Insets(0));
+        contentBox.setStyle("-fx-background-insets: 0; -fx-padding: 0;");
 
         // 分隔条：1px 宽，#E5E5E5，可拖拽
         Region historyDivider = new Region();

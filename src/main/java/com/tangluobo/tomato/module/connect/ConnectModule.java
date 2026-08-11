@@ -1403,6 +1403,7 @@ public class ConnectModule implements Module {
         if (type == ConnectType.S3 || type == ConnectType.ALIYUN_OSS) return new S3ConnectHandler();
         if (type == ConnectType.RDP) return new RdpConnectHandler();
         if (type == ConnectType.SSH) return new SshTerminalConnectHandler();
+        if (type == ConnectType.SFTP) return new SFTPConnectHandler();
         return null;
     }
 
