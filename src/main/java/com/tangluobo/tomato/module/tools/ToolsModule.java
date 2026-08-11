@@ -159,6 +159,10 @@ public class ToolsModule implements Module {
         // Trae 会话管理工具
         Node traeSessionIcon = createTraeSessionIcon();
         toolItems.add(new ToolItem("trae_session", "Trae会话管理", "管理 Trae CN 多账号会话切换", traeSessionIcon));
+
+        // 资源图标提取工具
+        Node extractIcon = createExtractIcon();
+        toolItems.add(new ToolItem("resource_extractor", "资源图标提取", "从EXE/DLL中提取嵌入资源", extractIcon));
     }
 
     private Node createImageConvertIcon() {
@@ -215,6 +219,16 @@ public class ToolsModule implements Module {
         // Material Icons: people (多账号会话管理)
         SVGPath path = new SVGPath();
         path.setContent("M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z");
+        path.setFill(Color.web("#1976D2"));
+        path.setScaleX(0.9);
+        path.setScaleY(0.9);
+        return path;
+    }
+
+    private Node createExtractIcon() {
+        // Material Icons: extraction (资源提取图标)
+        SVGPath path = new SVGPath();
+        path.setContent("M21 9v10c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V9c0-1.1.9-2 2-2h3.17L8 4.17 9.41 5.58 11.83 3.17 13.24 4.58 14.66 3.17 16 4.58 15.83 7H19c1.1 0 2 .9 2 2zm-1 0H4v10h16V9z");
         path.setFill(Color.web("#1976D2"));
         path.setScaleX(0.9);
         path.setScaleY(0.9);
@@ -339,6 +353,11 @@ public class ToolsModule implements Module {
                 TraeSessionPane traeSessionPane = new TraeSessionPane();
                 contentArea.getChildren().add(traeSessionPane);
                 VBox.setVgrow(traeSessionPane, Priority.ALWAYS);
+                break;
+            case "resource_extractor":
+                ResourceExtractorPane extractorPane = new ResourceExtractorPane();
+                contentArea.getChildren().add(extractorPane);
+                VBox.setVgrow(extractorPane, Priority.ALWAYS);
                 break;
             default:
                 VBox placeholderBox = new VBox();
