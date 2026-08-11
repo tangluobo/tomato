@@ -22,6 +22,7 @@ import javafx.scene.input.TransferMode;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
+import javafx.scene.shape.Rectangle;
 import javafx.scene.Scene;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
@@ -98,6 +99,7 @@ public class SFTPFileBrowserPane extends BorderPane {
 
     // 选中状态
     private FileItem selectedItem = null;
+    private final Set<FileItem> selectedItems = new HashSet<>();
 
     // 编辑器 Tab 页（中心区域：文件浏览 + 多个 markdown 编辑器）
     private TabPane editorTabPane;
@@ -110,6 +112,10 @@ public class SFTPFileBrowserPane extends BorderPane {
     private Image fileLargeIcon;
     private Image imageFileIcon;
     private Image imageFileLargeIcon;
+
+    // 框选
+    private Rectangle selectionRect;
+    private double rubberBandStartX, rubberBandStartY;
 
     public SFTPFileBrowserPane(ConnectionConfig config) {
         this.config = config;
@@ -461,16 +467,60 @@ public class SFTPFileBrowserPane extends BorderPane {
         iconFlowPane.setPadding(new Insets(12));
         iconFlowPane.setStyle("-fx-background-color: white;");
 
+        // 框选矩形
+        selectionRect = new Rectangle();
+        selectionRect.setFill(Color.rgb(51, 153, 255, 0.15));
+        selectionRect.setStroke(Color.rgb(51, 153, 255, 0.8));
+        selectionRect.setStrokeWidth(1);
+        selectionRect.setManaged(false);
+        selectionRect.setMouseTransparent(true);
+        selectionRect.setVisible(false);
+        iconFlowPane.getChildren().add(selectionRect);
+
         iconScrollPane = new ScrollPane(iconFlowPane);
         iconScrollPane.setFitToWidth(true);
         iconScrollPane.setFitToHeight(true);
         iconScrollPane.setStyle("-fx-background-color: white;");
         iconScrollPane.setContextMenu(createContextMenu());
 
-        iconFlowPane.setOnMouseClicked(e -> {
-            if (e.getTarget() == iconFlowPane) {
+        // 框选：空白区域按住左键拖动
+        iconFlowPane.setOnMousePressed(e -> {
+            if (e.getButton() == MouseButton.PRIMARY && e.getTarget() == iconFlowPane) {
+                // 开始框选
                 clearIconSelection();
                 selectedItem = null;
+
+                rubberBandStartX = e.getX();
+                rubberBandStartY = e.getY();
+                selectionRect.setX(e.getX());
+                selectionRect.setY(e.getY());
+                selectionRect.setWidth(0);
+                selectionRect.setHeight(0);
+                selectionRect.setVisible(true);
+                e.consume();
+            }
+        });
+
+        iconFlowPane.setOnMouseDragged(e -> {
+            if (!selectionRect.isVisible()) return;
+            double x = Math.min(rubberBandStartX, e.getX());
+            double y = Math.min(rubberBandStartY, e.getY());
+            double w = Math.abs(e.getX() - rubberBandStartX);
+            double h = Math.abs(e.getY() - rubberBandStartY);
+            selectionRect.setX(x);
+            selectionRect.setY(y);
+            selectionRect.setWidth(w);
+            selectionRect.setHeight(h);
+            updateRubberBandSelection(x, y, w, h);
+            e.consume();
+        });
+
+        iconFlowPane.setOnMouseReleased(e -> {
+            if (selectionRect.isVisible()) {
+                selectionRect.setVisible(false);
+                selectionRect.setWidth(0);
+                selectionRect.setHeight(0);
+                e.consume();
             }
         });
 
@@ -522,6 +572,12 @@ public class SFTPFileBrowserPane extends BorderPane {
             VBox iconBox = createIconBox(item);
             iconFlowPane.getChildren().add(iconBox);
         }
+
+        // 重新添加框选矩形（保持在最上层）
+        if (selectionRect != null) {
+            iconFlowPane.getChildren().add(selectionRect);
+        }
+        selectedItems.clear();
     }
 
     private VBox createIconBox(FileItem item) {
@@ -531,6 +587,7 @@ public class SFTPFileBrowserPane extends BorderPane {
         box.setPadding(new Insets(6, 4, 6, 4));
         box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand;");
         box.setPickOnBounds(true);
+        box.getProperties().put("fileItem", item);
 
         ImageView iconView = new ImageView();
         iconView.setImage(getIconForItem(item, true));
@@ -555,15 +612,21 @@ public class SFTPFileBrowserPane extends BorderPane {
                 clearIconSelection();
                 selectIconBox(box, item);
                 selectedItem = item;
+                selectedItems.clear();
+                selectedItems.add(item);
 
                 if (e.getClickCount() == 2) {
                     handleDoubleClick(item);
                 }
             } else if (e.getButton() == MouseButton.SECONDARY) {
                 // 右键先选中，再弹出右键菜单
-                clearIconSelection();
-                selectIconBox(box, item);
-                selectedItem = item;
+                if (!selectedItems.contains(item)) {
+                    clearIconSelection();
+                    selectIconBox(box, item);
+                    selectedItem = item;
+                    selectedItems.clear();
+                    selectedItems.add(item);
+                }
             }
         });
 
@@ -602,6 +665,37 @@ public class SFTPFileBrowserPane extends BorderPane {
     private void clearIconSelection() {
         for (var node : iconFlowPane.getChildren()) {
             if (node instanceof VBox box) {
+                box.setUserData(null);
+                box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand;");
+            }
+        }
+        selectedItems.clear();
+    }
+
+    /**
+     * 框选过程中更新选中项：框选矩形与图标相交则选中，不相交则取消
+     */
+    private void updateRubberBandSelection(double rx, double ry, double rw, double rh) {
+        selectedItems.clear();
+        for (var node : iconFlowPane.getChildren()) {
+            if (!(node instanceof VBox box)) continue;
+            if (node == selectionRect) continue;
+
+            double bx = box.getLayoutX();
+            double by = box.getLayoutY();
+            double bw = box.getWidth();
+            double bh = box.getHeight();
+
+            // 矩形相交判断
+            boolean intersects = rx < bx + bw && rx + rw > bx && ry < by + bh && ry + rh > by;
+            if (intersects) {
+                selectIconBox(box, null);
+                FileItem item = (FileItem) box.getProperties().get("fileItem");
+                if (item != null) {
+                    selectedItems.add(item);
+                    selectedItem = item;
+                }
+            } else {
                 box.setUserData(null);
                 box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand;");
             }
@@ -1501,34 +1595,56 @@ public class SFTPFileBrowserPane extends BorderPane {
     }
 
     private void handleDelete() {
-        FileItem selected = getSelectedItem();
-        if (selected == null) return;
+        // 优先使用框选的多选结果，否则使用单选
+        List<FileItem> toDelete = new ArrayList<>();
+        if (!selectedItems.isEmpty()) {
+            toDelete.addAll(selectedItems);
+        } else {
+            FileItem selected = getSelectedItem();
+            if (selected != null) toDelete.add(selected);
+        }
+        if (toDelete.isEmpty()) return;
+
+        String msg = toDelete.size() == 1
+                ? "确定要删除 \"" + toDelete.get(0).getName() + "\" 吗？"
+                : "确定要删除选中的 " + toDelete.size() + " 个文件/目录吗？";
 
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         confirm.setTitle("删除确认");
         confirm.setHeaderText(null);
-        confirm.setContentText("确定要删除 \"" + selected.getName() + "\" 吗？");
+        confirm.setContentText(msg);
 
         confirm.showAndWait().ifPresent(response -> {
             if (response != ButtonType.OK) return;
 
             new Thread(() -> {
-                try {
-                    if (selected.isDirectory()) {
-                        sftpClient.rmdir(selected.getPath());
-                    } else {
-                        sftpClient.rm(selected.getPath());
+                int success = 0;
+                String lastError = null;
+                for (FileItem item : toDelete) {
+                    try {
+                        if (item.isDirectory()) {
+                            sftpClient.rmdir(item.getPath());
+                        } else {
+                            sftpClient.rm(item.getPath());
+                        }
+                        success++;
+                    } catch (Exception e) {
+                        lastError = e.getMessage();
                     }
-                    Platform.runLater(() -> refresh());
-                } catch (Exception e) {
-                    Platform.runLater(() -> {
-                        Alert alert = new Alert(Alert.AlertType.ERROR);
-                        alert.setTitle("删除失败");
-                        alert.setHeaderText(null);
-                        alert.setContentText(e.getMessage());
-                        alert.showAndWait();
-                    });
                 }
+                final int okCount = success;
+                final int failCount = toDelete.size() - success;
+                final String err = lastError;
+                Platform.runLater(() -> {
+                    if (failCount > 0) {
+                        Alert alert = new Alert(Alert.AlertType.WARNING);
+                        alert.setTitle("部分删除失败");
+                        alert.setHeaderText("成功 " + okCount + " 个, 失败 " + failCount + " 个");
+                        alert.setContentText(err != null ? err : "");
+                        alert.showAndWait();
+                    }
+                    refresh();
+                });
             }, "SFTP-Delete").start();
         });
     }
