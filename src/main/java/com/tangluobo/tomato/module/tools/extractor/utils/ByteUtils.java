@@ -1,4 +1,4 @@
-package com.tangluobo.tomato.module.tools.extractor.util;
+package com.tangluobo.tomato.module.tools.extractor.utils;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;

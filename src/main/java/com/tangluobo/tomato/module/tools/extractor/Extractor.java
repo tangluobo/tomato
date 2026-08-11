@@ -1,13 +1,12 @@
 package com.tangluobo.tomato.module.tools.extractor;
 
-import com.tangluobo.tomato.module.tools.extractor.core.Extractor;
 import com.tangluobo.tomato.module.tools.extractor.core.FileScanner;
 import com.tangluobo.tomato.module.tools.extractor.core.ScanResult;
 import com.tangluobo.tomato.module.tools.extractor.format.FormatCategory;
 import com.tangluobo.tomato.module.tools.extractor.format.FormatRegistry;
 import com.tangluobo.tomato.module.tools.extractor.pe.PEFile;
 import com.tangluobo.tomato.module.tools.extractor.pe.PEResourceExtractor;
-import com.tangluobo.tomato.module.tools.extractor.util.FileUtils;
+import com.tangluobo.tomato.module.tools.extractor.utils.FileUtils;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -21,11 +20,11 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * MultiExtractor CLI 入口.
+ * MultiExtractor 命令行逻辑封装.
  *
  * <p>用法:
  * <pre>
- *   java -jar multiextractor.jar [mode] [options] &lt;file or dir&gt;
+ *   Main.run(new String[]{...});
  *
  *   模式:
  *     scan    - 仅扫描并列出发现的资源 (默认)
@@ -48,11 +47,11 @@ import java.util.Set;
  *     -h, --help            显示帮助
  * </pre>
  */
-public class Main {
+public class Extractor {
 
     enum Mode { SCAN, EXTRACT, PE, LIST }
 
-    public static void main(String[] args) {
+    public void run(String[] args) {
         if (args.length == 0) {
             printHelp();
             return;
@@ -212,7 +211,7 @@ public class Main {
             }
             System.out.println();
             System.out.println("Output directory: " + outDir);
-            Extractor extractor = new Extractor(outDir, overwrite, verbose, dedup);
+            com.tangluobo.tomato.module.tools.extractor.core.Extractor extractor = new com.tangluobo.tomato.module.tools.extractor.core.Extractor(outDir, overwrite, verbose, dedup);
             extractor.extractAll(results);
         }
 
@@ -227,7 +226,7 @@ public class Main {
         System.out.printf("Total resources found: %d%n", results.size());
     }
 
-    private static void printResults(List<ScanResult> results) {
+    private void printResults(List<ScanResult> results) {
         if (results.isEmpty()) {
             System.out.println("No resources found.");
             return;
@@ -250,8 +249,8 @@ public class Main {
         }
     }
 
-    private static void runPeExtract(Path source, Path outDir, boolean recursive,
-                                     boolean overwrite, boolean verbose) {
+    private void runPeExtract(Path source, Path outDir, boolean recursive,
+                              boolean overwrite, boolean verbose) {
         List<Path> peFiles = new ArrayList<>();
         if (Files.isDirectory(source)) {
             try {
@@ -331,7 +330,7 @@ public class Main {
         System.out.printf("PE resources extracted: %d%n", total);
     }
 
-    private static void listFormats(FormatRegistry registry) {
+    private void listFormats(FormatRegistry registry) {
         System.out.println("Supported formats:");
         for (FormatCategory cat : FormatCategory.values()) {
             System.out.println();
@@ -344,12 +343,12 @@ public class Main {
         }
     }
 
-    private static String stripExt(String name) {
+    private String stripExt(String name) {
         int i = name.lastIndexOf('.');
         return i > 0 ? name.substring(0, i) : name;
     }
 
-    private static void printHelp() {
+    private void printHelp() {
         System.out.println("MultiExtractor - Java implementation");
         System.out.println("Extracts embedded resources from binary files based on file signatures");
         System.out.println();

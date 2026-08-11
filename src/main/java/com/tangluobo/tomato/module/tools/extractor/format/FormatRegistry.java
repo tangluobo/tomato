@@ -1,6 +1,6 @@
 package com.tangluobo.tomato.module.tools.extractor.format;
 
-import com.tangluobo.tomato.module.tools.extractor.util.ByteUtils;
+import com.tangluobo.tomato.module.tools.extractor.utils.ByteUtils;
 
 import java.util.ArrayList;
 import java.util.Collections;

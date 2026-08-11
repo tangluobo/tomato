@@ -8,10 +8,9 @@ import com.tangluobo.tomato.module.tools.extractor.format.FormatRegistry;
 import com.tangluobo.tomato.module.tools.extractor.format.FileFormatInfo;
 import com.tangluobo.tomato.module.tools.extractor.pe.PEFile;
 import com.tangluobo.tomato.module.tools.extractor.pe.PEResourceExtractor;
-import com.tangluobo.tomato.module.tools.extractor.util.FileUtils;
+import com.tangluobo.tomato.module.tools.extractor.utils.FileUtils;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
-import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
@@ -27,7 +26,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.*;
-import java.util.stream.Collectors;
 
 public class ResourceExtractorPane extends VBox {
 

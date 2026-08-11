@@ -1,6 +1,6 @@
 package com.tangluobo.tomato.module.tools.extractor.core;
 
-import com.tangluobo.tomato.module.tools.extractor.util.FileUtils;
+import com.tangluobo.tomato.module.tools.extractor.utils.FileUtils;
 
 import java.io.IOException;
 import java.io.InputStream;

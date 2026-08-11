@@ -3,7 +3,7 @@ package com.tangluobo.tomato.module.tools.extractor.core;
 import com.tangluobo.tomato.module.tools.extractor.format.FormatRegistry;
 import com.tangluobo.tomato.module.tools.extractor.format.FormatSignature;
 import com.tangluobo.tomato.module.tools.extractor.pe.PEFile;
-import com.tangluobo.tomato.module.tools.extractor.util.ByteUtils;
+import com.tangluobo.tomato.module.tools.extractor.utils.ByteUtils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
