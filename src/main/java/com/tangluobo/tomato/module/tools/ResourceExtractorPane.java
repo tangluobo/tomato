@@ -59,7 +59,7 @@ public class ResourceExtractorPane extends VBox {
     }
 
     private void initializeUI() {
-        setStyle("-fx-background-color: #ffffff;");
+        setStyle("-fx-background-color: #ffffff; -fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
         setFillWidth(true);
         setMaxWidth(Double.MAX_VALUE);
         setMaxHeight(Double.MAX_VALUE);

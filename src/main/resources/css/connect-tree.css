@@ -77,6 +77,7 @@
 .tab-pane {
     -fx-tab-min-height: 26px;
     -fx-tab-max-height: 26px;
+    -fx-tab-content-padding: 0;
     -fx-background-color: transparent !important;
     -fx-background-insets: 0 !important;
     -fx-padding: 0 !important;

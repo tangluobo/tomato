@@ -6,6 +6,7 @@ import com.tangluobo.tomato.module.tools.DesktopShortcutPane;
 import com.tangluobo.tomato.module.tools.HostsFilePane;
 import com.tangluobo.tomato.module.tools.ImageFormatConverterPane;
 import com.tangluobo.tomato.module.tools.JsonToolPane;
+import com.tangluobo.tomato.module.tools.ResourceExtractorPane;
 import com.tangluobo.tomato.module.tools.TraeSessionPane;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
@@ -34,7 +35,13 @@ public class ToolPane extends BorderPane {
             setCenter(buildPlaceholder());
             return;
         }
-        setCenter(createToolContent(toolType));
+        Node content = createToolContent(toolType);
+        if (content instanceof VBox vbox) {
+            vbox.setFillWidth(true);
+            vbox.setMaxWidth(Double.MAX_VALUE);
+            vbox.setStyle("-fx-background-color: #ffffff; -fx-background-insets: 0; -fx-padding: 0;");
+        }
+        setCenter(content);
     }
 
     /** 根据工具类型创建对应的内容（与 ToolsModule 中的界面一致） */
@@ -47,6 +54,7 @@ public class ToolPane extends BorderPane {
             case DESKTOP_SHORTCUT -> pane = new DesktopShortcutPane();
             case HOSTS_FILE -> pane = new HostsFilePane();
             case TRAE_SESSION -> pane = new TraeSessionPane();
+            case RESOURCE_EXTRACTOR -> pane = new ResourceExtractorPane();
             default -> {
                 return buildPlaceholder();
             }
