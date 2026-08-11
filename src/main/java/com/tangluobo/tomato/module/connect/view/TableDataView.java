@@ -606,7 +606,7 @@ public class TableDataView extends BorderPane {
      */
     private HBox createToolBar() {
         HBox toolBar = new HBox(2);
-        toolBar.setPadding(new Insets(4, 8, 4, 8));
+        toolBar.setPadding(new Insets(0, 8, 4, 8));
         toolBar.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #ddd; -fx-border-width: 0 0 1 0;");
         toolBar.setAlignment(Pos.CENTER_LEFT);
 
