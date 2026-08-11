@@ -1006,58 +1006,223 @@ public class MarkdownEditorPane extends BorderPane {
     private static final String HL_BASE = "-fx-fill: #24292e;";     // 默认文本
     private static final String HL_FUNC = "-fx-fill: #6f42c1;";     // 函数名 紫
 
-    /** 通用关键字集合（覆盖 Java/JS/TS/Python/SQL/Go/C/C++/PHP/Shell 等常见词）。
-     *  用 HashSet 容纳，各语言区段可能有重复词，去重后存入。 */
-    private static final java.util.Set<String> KEYWORDS = new java.util.HashSet<>(java.util.Arrays.asList(
-            // 通用
+    /** 各语言关键字集合（按规范语言名分组，每组包含该语言全部关键字）。 */
+    private static final java.util.Map<String, java.util.Set<String>> LANG_KEYWORDS = new java.util.HashMap<>();
+    static {
+        // Java
+        LANG_KEYWORDS.put("java", new java.util.HashSet<>(java.util.Arrays.asList(
+                "abstract","assert","boolean","break","byte","case","catch","char","class","const",
+                "continue","default","do","double","else","enum","extends","final","finally","float",
+                "for","goto","if","implements","import","instanceof","int","interface","long","native",
+                "new","package","private","protected","public","return","short","static","strictfp",
+                "super","switch","synchronized","this","throw","throws","transient","try","void",
+                "volatile","while","true","false","null","var","yield","record","sealed","permits"
+        )));
+        // Kotlin
+        LANG_KEYWORDS.put("kotlin", new java.util.HashSet<>(java.util.Arrays.asList(
+                "as","break","class","continue","do","else","false","for","fun","if","in","interface",
+                "is","null","object","package","return","super","this","throw","true","try","typealias",
+                "val","var","when","while","by","catch","finally","get","import","init","out","override",
+                "private","protected","public","internal","sealed","data","lateinit","open","abstract",
+                "companion","inline","operator","infix","crossinline","suspend","tailrec","vararg","reified"
+        )));
+        // Scala
+        LANG_KEYWORDS.put("scala", new java.util.HashSet<>(java.util.Arrays.asList(
+                "abstract","case","catch","class","def","do","else","extends","false","final","finally",
+                "for","if","implicit","import","lazy","match","new","null","object","override","package",
+                "private","protected","return","sealed","super","this","throw","trait","try","true","type",
+                "val","var","while","with","yield","given","using","enum","export","then"
+        )));
+        // JavaScript / TypeScript
+        java.util.Set<String> jsKeywords = new java.util.HashSet<>(java.util.Arrays.asList(
+                "break","case","catch","class","const","continue","debugger","default","delete","do",
+                "else","export","extends","finally","for","function","if","import","in","instanceof",
+                "new","return","super","switch","this","throw","try","typeof","var","void","while","with",
+                "yield","let","static","true","false","null","undefined","async","await","of","as"
+        ));
+        LANG_KEYWORDS.put("javascript", jsKeywords);
+        LANG_KEYWORDS.put("js", jsKeywords);
+        java.util.Set<String> tsKeywords = new java.util.HashSet<>(jsKeywords);
+        tsKeywords.addAll(java.util.Arrays.asList(
+                "interface","type","enum","implements","private","protected","public","readonly","abstract",
+                "is","keyof","infer","namespace","declare","module","symbol","bigint","never","unknown","any"
+        ));
+        LANG_KEYWORDS.put("typescript", tsKeywords);
+        LANG_KEYWORDS.put("ts", tsKeywords);
+        // Python
+        java.util.Set<String> pyKeywords = new java.util.HashSet<>(java.util.Arrays.asList(
+                "False","None","True","and","as","assert","async","await","break","class","continue",
+                "def","del","elif","else","except","finally","for","from","global","if","import","in",
+                "is","lambda","nonlocal","not","or","pass","raise","return","try","while","with","yield",
+                "print","match","case","self","cls"
+        ));
+        LANG_KEYWORDS.put("python", pyKeywords);
+        LANG_KEYWORDS.put("py", pyKeywords);
+        // SQL
+        LANG_KEYWORDS.put("sql", new java.util.HashSet<>(java.util.Arrays.asList(
+                "select","where","insert","update","delete","create","table","drop","alter","into","values",
+                "set","join","left","right","inner","outer","group","by","order","having","limit","distinct",
+                "primary","key","foreign","references","index","unique","between","like","exists","union",
+                "all","and","or","not","in","is","as","from","on","using","with","case","when","then","else",
+                "end","if","begin","commit","rollback","grant","revoke","database","schema","view","trigger",
+                "procedure","function","null","true","false","asc","desc","count","sum","avg","min","max"
+        )));
+        // Go
+        java.util.Set<String> goKeywords = new java.util.HashSet<>(java.util.Arrays.asList(
+                "break","case","chan","const","continue","default","defer","else","fallthrough","for",
+                "func","go","goto","if","import","interface","map","package","range","return","select",
+                "struct","switch","type","var","true","false","nil","iota","make","len","cap","new","append",
+                "panic","recover","print","println"
+        ));
+        LANG_KEYWORDS.put("go", goKeywords);
+        LANG_KEYWORDS.put("golang", goKeywords);
+        // Rust
+        java.util.Set<String> rsKeywords = new java.util.HashSet<>(java.util.Arrays.asList(
+                "as","break","const","continue","crate","else","enum","extern","false","fn","for","if",
+                "impl","in","let","loop","match","mod","move","mut","pub","ref","return","self","Self",
+                "static","struct","super","trait","true","type","unsafe","use","where","while","async",
+                "await","dyn","union","box","macro","yield"
+        ));
+        LANG_KEYWORDS.put("rust", rsKeywords);
+        LANG_KEYWORDS.put("rs", rsKeywords);
+        // C / C++
+        java.util.Set<String> cppKeywords = new java.util.HashSet<>(java.util.Arrays.asList(
+                "alignas","alignof","and","auto","bool","break","case","catch","char","class","const",
+                "constexpr","continue","decltype","default","delete","do","double","else","enum","explicit",
+                "export","extern","false","float","for","friend","goto","if","inline","int","long","mutable",
+                "namespace","new","noexcept","nullptr","operator","or","private","protected","public",
+                "register","reinterpret_cast","return","short","signed","sizeof","static","static_cast",
+                "struct","switch","template","this","throw","true","try","typedef","typename","union",
+                "unsigned","using","virtual","void","volatile","while","std","size_t"
+        ));
+        LANG_KEYWORDS.put("cpp", cppKeywords);
+        LANG_KEYWORDS.put("c++", cppKeywords);
+        LANG_KEYWORDS.put("c", new java.util.HashSet<>(java.util.Arrays.asList(
+                "auto","break","case","char","const","continue","default","do","double","else","enum",
+                "extern","float","for","goto","if","inline","int","long","register","restrict","return",
+                "short","signed","sizeof","static","struct","switch","typedef","union","unsigned","void",
+                "volatile","while","NULL","size_t","malloc","free","printf","scanf"
+        )));
+        // PHP
+        LANG_KEYWORDS.put("php", new java.util.HashSet<>(java.util.Arrays.asList(
+                "abstract","and","array","as","break","callable","case","catch","class","clone","const",
+                "continue","declare","default","die","do","echo","else","elseif","empty","enddeclare",
+                "endfor","endforeach","endif","endswitch","endwhile","eval","exit","extends","final","finally",
+                "fn","for","foreach","function","global","goto","if","implements","include","include_once",
+                "instanceof","insteadof","interface","isset","list","match","namespace","new","or","print",
+                "private","protected","public","require","require_once","return","static","switch","throw",
+                "trait","try","unset","use","var","while","xor","yield","true","false","null"
+        )));
+        // Shell
+        java.util.Set<String> shKeywords = new java.util.HashSet<>(java.util.Arrays.asList(
+                "if","then","else","elif","fi","for","do","done","while","until","case","esac","in","function",
+                "return","break","continue","exit","echo","printf","read","local","declare","export","unset",
+                "source","alias","shift","test","true","false","cd","pwd","ls","grep","sed","awk","cat",
+                "mkdir","rm","cp","mv","chmod","chown","find","xargs","which","env","set","trap"
+        ));
+        LANG_KEYWORDS.put("shell", shKeywords);
+        LANG_KEYWORDS.put("sh", shKeywords);
+        LANG_KEYWORDS.put("bash", shKeywords);
+        LANG_KEYWORDS.put("zsh", shKeywords);
+        // Ruby
+        java.util.Set<String> rbKeywords = new java.util.HashSet<>(java.util.Arrays.asList(
+                "BEGIN","END","alias","and","begin","break","case","class","def","defined?","do","else","elsif",
+                "end","ensure","false","for","if","in","module","next","nil","not","or","redo","rescue","retry",
+                "return","self","super","then","true","undef","unless","until","when","while","yield","require",
+                "require_relative","include","extend","attr_accessor","attr_reader","attr_writer","puts","print"
+        ));
+        LANG_KEYWORDS.put("ruby", rbKeywords);
+        LANG_KEYWORDS.put("rb", rbKeywords);
+        // C#
+        java.util.Set<String> csKeywords = new java.util.HashSet<>(java.util.Arrays.asList(
+                "abstract","as","base","bool","break","byte","case","catch","char","checked","class","const",
+                "continue","decimal","default","delegate","do","double","else","enum","event","explicit",
+                "extern","false","finally","fixed","float","for","foreach","goto","if","implicit","in","int",
+                "interface","internal","is","lock","long","namespace","new","null","object","operator","out",
+                "override","params","private","protected","public","readonly","ref","return","sbyte","sealed",
+                "short","sizeof","stackalloc","static","string","struct","switch","this","throw","true","try",
+                "typeof","uint","ulong","unchecked","unsafe","ushort","using","virtual","void","volatile","while",
+                "var","async","await","yield","get","set"
+        ));
+        LANG_KEYWORDS.put("csharp", csKeywords);
+        LANG_KEYWORDS.put("cs", csKeywords);
+        // Swift
+        LANG_KEYWORDS.put("swift", new java.util.HashSet<>(java.util.Arrays.asList(
+                "associatedtype","class","deinit","enum","extension","fileprivate","func","import","init",
+                "inout","internal","let","open","operator","private","protocol","public","static","struct",
+                "subscript","typealias","var","break","case","continue","default","defer","do","else","fallthrough",
+                "for","guard","if","in","repeat","return","switch","where","while","as","Any","catch","false","is",
+                "nil","rethrows","super","self","Self","throw","throws","true","try","async","await","actor","some"
+        )));
+    }
+
+    /** 通用关键字集合：未识别语言时回退使用。 */
+    private static final java.util.Set<String> COMMON_KEYWORDS = new java.util.HashSet<>(java.util.Arrays.asList(
             "if","else","for","while","do","return","break","continue","switch","case","default",
-            "true","false","null","none","nil","undefined","and","or","not","in","is","as","lambda",
-            "import","from","package","include","require","export","class","struct","enum","interface",
-            "extends","implements","public","private","protected","static","final","const","let","var",
-            "def","func","fun","function","fn","void","new","this","super","self","try","catch","finally",
-            "throw","throws","raise","yield","async","await","with","using","namespace","typedef",
-            // Java
-            "abstract","boolean","byte","char","double","float","int","long","short","instanceof","synchronized","volatile","transient","native",
-            // SQL
-            "select","where","insert","update","delete","create","table","drop","alter","into","values","set","join","left","right","inner","outer","group","by","order","having","limit","distinct","primary","key","foreign","references","index","unique","between","like","exists","union","all",
-            // Python
-            "elif","endif","endfor","print","assert","global","nonlocal","del","pass",
-            // Go/Rust/C/C++
-            "go","defer","chan","range","map","make","len","ptr","ref","mut","pub","crate","mod","impl","trait","unsafe","move","sizeof",
-            // Shell
-            "echo","exit","then","fi","done","esac","local","declare"
+            "true","false","null","class","def","func","function","fn","fun","import","package","new",
+            "this","super","self","try","catch","finally","throw","throws","public","private","protected",
+            "static","const","let","var","val","void","int","string","bool","boolean","float","double"
     ));
+
+    /** 按语言获取关键字集合；未识别时返回通用集合。 */
+    private static java.util.Set<String> keywordsFor(String lang) {
+        java.util.Set<String> kws = LANG_KEYWORDS.get(lang);
+        return kws != null ? kws : COMMON_KEYWORDS;
+    }
 
     /** 行注释前缀（按语言）：`//` 用于 C 系，`#` 用于脚本/配置类，`--` 用于 SQL */
     private static String lineCommentPrefix(String lang) {
         return switch (lang) {
-            case "", "python", "py", "ruby", "rb", "perl", "pl", "shell", "sh", "bash", "zsh",
+            case "sql" -> "--";
+            case "python", "py", "ruby", "rb", "perl", "pl", "shell", "sh", "bash", "zsh",
                  "yaml", "yml", "toml", "ini", "properties", "conf", "dockerfile", "makefile",
                  "ps1", "powershell", "r", "plaintext" -> "#";
-            case "sql" -> "--";
             default -> "//"; // java, js, ts, go, rust, c, cpp, php, css, json, kotlin, scala, swift...
         };
     }
 
-    /** 轻量正则语法高亮：按 token 切分并着色，结果追加到 out。非线程安全（仅 JavaFX 线程调用）。 */
+    /** 是否支持块注释 `/* *\/`：C 系语言及 SQL 支持，脚本类（Python/Shell/Ruby 等）不支持。 */
+    private static boolean hasBlockComment(String lang) {
+        return switch (lang) {
+            case "python", "py", "ruby", "rb", "perl", "pl", "shell", "sh", "bash", "zsh",
+                 "yaml", "yml", "toml", "ini", "properties", "conf", "dockerfile", "makefile",
+                 "ps1", "powershell", "r" -> false;
+            default -> true; // java, js, ts, go, rust, c, cpp, php, css, json, kotlin, scala, swift, sql...
+        };
+    }
+
+    /** 轻量正则语法高亮：按语言做差异化关键字/注释/字符串着色，结果追加到 out。非线程安全（仅 JavaFX 线程调用）。 */
     private void highlightCode(String code, String lang, List<Text> out) {
         if (code == null || code.isEmpty()) return;
         String linePrefix = lineCommentPrefix(lang);
-        // token 顺序：块注释 → 字符串(含模板/原始) → 行注释 → 数字 → 注解 → 标识符(关键字/函数)
+        java.util.Set<String> keywords = keywordsFor(lang);
+        boolean blockCommentEnabled = hasBlockComment(lang);
+        // Python 三引号字符串（多行，含文档字符串）
+        boolean pythonStrings = "python".equals(lang) || "py".equals(lang);
+
+        // token 顺序：块注释 → 三引号字符串(Python) → 字符串(含模板/原始) → 行注释 → 数字 → 注解 → 标识符(关键字/函数)
         String blockComment = "/\\*[\\s\\S]*?\\*/";
+        String tripleString = pythonStrings ? "(\"\"\"[\\s\\S]*?\"\"\"|'''[\\s\\S]*?''')" : null;
         String stringPat = "\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|`(?:\\\\.|[^`\\\\])*`";
         String lineComment = java.util.regex.Pattern.quote(linePrefix) + "[^\\n]*";
         String number = "\\b\\d[\\d_]*\\.?\\d*([eE][+-]?\\d+)?[fFdDuUlL]?\\b|0[xX][0-9a-fA-F_]+|0[bB][01_]+";
         String annotation = "@[A-Za-z_][A-Za-z0-9_]*";
         String ident = "[A-Za-z_$][A-Za-z0-9_$]*";
-        java.util.regex.Pattern p = java.util.regex.Pattern.compile(
-                "(?<BLOCK>" + blockComment + ")" +
-                "|(?<STRING>" + stringPat + ")" +
-                "|(?<LINE>" + lineComment + ")" +
-                "|(?<NUMBER>" + number + ")" +
-                "|(?<ANNOT>" + annotation + ")" +
-                "|(?<IDENT>" + ident + ")"
-        );
+
+        StringBuilder pat = new StringBuilder();
+        if (blockCommentEnabled) {
+            pat.append("(?<BLOCK>").append(blockComment).append(")|");
+        }
+        if (tripleString != null) {
+            pat.append("(?<TRIPLE>").append(tripleString).append(")|");
+        }
+        pat.append("(?<STRING>").append(stringPat).append(")");
+        pat.append("|(?<LINE>").append(lineComment).append(")");
+        pat.append("|(?<NUMBER>").append(number).append(")");
+        pat.append("|(?<ANNOT>").append(annotation).append(")");
+        pat.append("|(?<IDENT>").append(ident).append(")");
+
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile(pat.toString());
         java.util.regex.Matcher m = p.matcher(code);
         int last = 0;
         while (m.find()) {
@@ -1065,7 +1230,11 @@ public class MarkdownEditorPane extends BorderPane {
                 out.add(codeText(code.substring(last, m.start()), HL_BASE));
             }
             String style;
-            if (m.group("BLOCK") != null || m.group("LINE") != null) {
+            if (blockCommentEnabled && m.group("BLOCK") != null) {
+                style = HL_COMMENT;
+            } else if (tripleString != null && m.group("TRIPLE") != null) {
+                style = HL_STRING;
+            } else if (m.group("LINE") != null) {
                 style = HL_COMMENT;
             } else if (m.group("STRING") != null) {
                 style = HL_STRING;
@@ -1075,7 +1244,7 @@ public class MarkdownEditorPane extends BorderPane {
                 style = HL_ANNOT;
             } else {
                 String word = m.group("IDENT");
-                if (KEYWORDS.contains(word)) {
+                if (keywords.contains(word)) {
                     style = HL_KEYWORD;
                 } else {
                     // 函数调用：标识符后跟空白*(
@@ -1532,33 +1701,53 @@ public class MarkdownEditorPane extends BorderPane {
         if (code == null || code.isEmpty()) return "";
         String l = lang == null ? "" : lang.trim().toLowerCase();
         String linePrefix = lineCommentPrefix(l);
+        java.util.Set<String> keywords = keywordsFor(l);
+        boolean blockCommentEnabled = hasBlockComment(l);
+        boolean pythonStrings = "python".equals(l) || "py".equals(l);
+
         String blockComment = "/\\*[\\s\\S]*?\\*/";
+        String tripleString = pythonStrings ? "(\"\"\"[\\s\\S]*?\"\"\"|'''[\\s\\S]*?''')" : null;
         String stringPat = "\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|`(?:\\\\.|[^`\\\\])*`";
         String lineComment = java.util.regex.Pattern.quote(linePrefix) + "[^\\n]*";
         String number = "\\b\\d[\\d_]*\\.?\\d*([eE][+-]?\\d+)?[fFdDuUlL]?\\b|0[xX][0-9a-fA-F_]+|0[bB][01_]+";
         String annotation = "@[A-Za-z_][A-Za-z0-9_]*";
         String ident = "[A-Za-z_$][A-Za-z0-9_$]*";
-        java.util.regex.Pattern p = java.util.regex.Pattern.compile(
-                "(?<BLOCK>" + blockComment + ")" +
-                "|(?<STRING>" + stringPat + ")" +
-                "|(?<LINE>" + lineComment + ")" +
-                "|(?<NUMBER>" + number + ")" +
-                "|(?<ANNOT>" + annotation + ")" +
-                "|(?<IDENT>" + ident + ")"
-        );
+
+        StringBuilder pat = new StringBuilder();
+        if (blockCommentEnabled) {
+            pat.append("(?<BLOCK>").append(blockComment).append(")|");
+        }
+        if (tripleString != null) {
+            pat.append("(?<TRIPLE>").append(tripleString).append(")|");
+        }
+        pat.append("(?<STRING>").append(stringPat).append(")");
+        pat.append("|(?<LINE>").append(lineComment).append(")");
+        pat.append("|(?<NUMBER>").append(number).append(")");
+        pat.append("|(?<ANNOT>").append(annotation).append(")");
+        pat.append("|(?<IDENT>").append(ident).append(")");
+
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile(pat.toString());
         java.util.regex.Matcher m = p.matcher(code);
         StringBuilder sb = new StringBuilder();
         int last = 0;
         while (m.find()) {
             if (m.start() > last) sb.append(escapeHtml(code.substring(last, m.start())));
             String color;
-            if (m.group("BLOCK") != null || m.group("LINE") != null) color = "#6a737d";
-            else if (m.group("STRING") != null) color = "#032f62";
-            else if (m.group("NUMBER") != null) color = "#005cc5";
-            else if (m.group("ANNOT") != null) color = "#6f42c1";
-            else {
+            if (blockCommentEnabled && m.group("BLOCK") != null) {
+                color = "#6a737d";
+            } else if (tripleString != null && m.group("TRIPLE") != null) {
+                color = "#032f62";
+            } else if (m.group("LINE") != null) {
+                color = "#6a737d";
+            } else if (m.group("STRING") != null) {
+                color = "#032f62";
+            } else if (m.group("NUMBER") != null) {
+                color = "#005cc5";
+            } else if (m.group("ANNOT") != null) {
+                color = "#6f42c1";
+            } else {
                 String word = m.group("IDENT");
-                if (KEYWORDS.contains(word)) {
+                if (keywords.contains(word)) {
                     color = "#d73a49";
                 } else {
                     int end = m.end();
