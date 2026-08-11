@@ -67,7 +67,7 @@ public class S3FileBrowserPane extends BorderPane {
     }
 
     // 视图模式
-    private enum ViewMode { ICON, LIST }
+    private enum ViewMode { ICON, LIST, COLUMN }
     private ViewMode currentViewMode = ViewMode.ICON;
 
     // 状态栏组件
@@ -83,6 +83,7 @@ public class S3FileBrowserPane extends BorderPane {
     private Button createBucketBtn;
     private ToggleButton iconViewBtn;
     private ToggleButton listViewBtn;
+    private ToggleButton columnViewBtn;
 
     // 列表视图
     private TableView<FileItem> fileTable;
@@ -90,6 +91,15 @@ public class S3FileBrowserPane extends BorderPane {
     // 图标视图
     private ScrollPane iconScrollPane;
     private FlowPane iconFlowPane;
+
+    // 列视图（macOS Column View）
+    private ScrollPane columnScrollPane;
+    private HBox columnContainer;
+    private final List<ListView<FileItem>> columnListViews = new ArrayList<>();
+    private final List<ObservableList<FileItem>> columnItems = new ArrayList<>();
+    // 每列的 bucket（null 表示 Bucket 列表层）和 prefix
+    private final List<String> columnBuckets = new ArrayList<>();
+    private final List<String> columnPrefixes = new ArrayList<>();
 
     // 数据
     private ObservableList<FileItem> fileData = FXCollections.observableArrayList();
@@ -309,10 +319,17 @@ public class S3FileBrowserPane extends BorderPane {
         listViewBtn.setTooltip(new Tooltip("列表视图"));
         listViewBtn.setToggleGroup(viewToggleGroup);
         listViewBtn.setSelected(false);
-        listViewBtn.setStyle("-fx-font-size: 14px; -fx-padding: 2 6; -fx-background-radius: 0 4 4 0; -fx-border-radius: 0 4 4 0;");
+        listViewBtn.setStyle("-fx-font-size: 14px; -fx-padding: 2 6; -fx-background-radius: 0; -fx-border-radius: 0;");
         listViewBtn.setOnAction(e -> switchViewMode(ViewMode.LIST));
 
-        pathBar.getChildren().addAll(iconViewBtn, listViewBtn);
+        columnViewBtn = new ToggleButton("⫶");
+        columnViewBtn.setTooltip(new Tooltip("列视图（多级目录）"));
+        columnViewBtn.setToggleGroup(viewToggleGroup);
+        columnViewBtn.setSelected(false);
+        columnViewBtn.setStyle("-fx-font-size: 14px; -fx-padding: 2 6; -fx-background-radius: 0 4 4 0; -fx-border-radius: 0 4 4 0;");
+        columnViewBtn.setOnAction(e -> switchViewMode(ViewMode.COLUMN));
+
+        pathBar.getChildren().addAll(iconViewBtn, listViewBtn, columnViewBtn);
 
         Label sep2 = new Label("|");
         sep2.setStyle("-fx-text-fill: #cccccc; -fx-font-size: 11px;");
@@ -369,6 +386,7 @@ public class S3FileBrowserPane extends BorderPane {
 
         initListView();
         initIconView();
+        initColumnView();
     }
 
     private void initListView() {
@@ -527,6 +545,260 @@ public class S3FileBrowserPane extends BorderPane {
         });
     }
 
+    // ==================== 列视图（macOS Column View）====================
+
+    private void initColumnView() {
+        columnContainer = new HBox();
+        columnContainer.setStyle("-fx-background-color: white;");
+
+        columnScrollPane = new ScrollPane(columnContainer);
+        columnScrollPane.setFitToHeight(true);
+        columnScrollPane.setFitToWidth(true);
+        columnScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        columnScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        columnScrollPane.setStyle("-fx-background-color: white;");
+        columnScrollPane.setContextMenu(createContextMenu());
+        setupDragUpload(columnContainer);
+        setupDragUpload(columnScrollPane);
+    }
+
+    /**
+     * 根据当前 currentBucket/currentPrefix 和 fileData 重建列视图（单列起始）
+     */
+    private void rebuildColumnView() {
+        columnContainer.getChildren().clear();
+        columnListViews.clear();
+        columnItems.clear();
+        columnBuckets.clear();
+        columnPrefixes.clear();
+
+        ObservableList<FileItem> colData = FXCollections.observableArrayList(fileData);
+        columnBuckets.add(currentBucket);
+        columnPrefixes.add(currentPrefix != null ? currentPrefix : "");
+        columnItems.add(colData);
+        ListView<FileItem> lv = createColumnListView(0);
+        columnListViews.add(lv);
+        columnContainer.getChildren().add(lv);
+    }
+
+    /**
+     * 创建一列 ListView
+     */
+    private ListView<FileItem> createColumnListView(int colIndex) {
+        ListView<FileItem> lv = new ListView<>(columnItems.get(colIndex));
+        lv.setPrefWidth(220);
+        lv.setMinWidth(180);
+        lv.setMaxWidth(260);
+        lv.setStyle("-fx-background-color: white; -fx-background-insets: 0; -fx-padding: 0; -fx-border-color: transparent #e5e5e5 transparent transparent; -fx-border-width: 0 1 0 0;");
+
+        lv.setCellFactory(list -> new ListCell<FileItem>() {
+            @Override
+            protected void updateItem(FileItem item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setGraphic(null);
+                } else {
+                    HBox row = new HBox(6);
+                    row.setAlignment(Pos.CENTER_LEFT);
+                    ImageView iv = new ImageView(getIconForItem(item, false));
+                    iv.setFitWidth(16);
+                    iv.setFitHeight(16);
+                    Label name = new Label(item.getDisplayName());
+                    name.setStyle("-fx-font-size: 12px; -fx-text-fill: #333;");
+                    row.getChildren().addAll(iv, name);
+                    if (item.isDirectory()) {
+                        Region spacer = new Region();
+                        HBox.setHgrow(spacer, Priority.ALWAYS);
+                        Label arrow = new Label("›");
+                        arrow.setStyle("-fx-text-fill: #999; -fx-font-size: 16px;");
+                        row.getChildren().addAll(spacer, arrow);
+                    }
+                    setGraphic(row);
+                    setText(null);
+                    setStyle("-fx-padding: 4 8;");
+                }
+            }
+        });
+
+        lv.getSelectionModel().selectedItemProperty().addListener((obs, old, val) -> {
+            if (val != null) {
+                selectedItem = val;
+                onColumnItemSelected(val, colIndex);
+            }
+        });
+
+        lv.setOnMouseClicked(e -> {
+            if (e.getButton() == MouseButton.PRIMARY && e.getClickCount() == 2) {
+                FileItem sel = lv.getSelectionModel().getSelectedItem();
+                if (sel != null) handleDoubleClick(sel);
+            }
+        });
+
+        // 拖拽上传
+        lv.setOnDragOver(event -> {
+            if (currentBucket != null && event.getDragboard().hasFiles()) {
+                event.acceptTransferModes(TransferMode.COPY);
+            }
+            event.consume();
+        });
+        lv.setOnDragDropped(event -> {
+            Dragboard db = event.getDragboard();
+            boolean success = false;
+            if (currentBucket != null && db.hasFiles()) {
+                uploadLocalFiles(db.getFiles());
+                success = true;
+            }
+            event.setDropCompleted(success);
+            event.consume();
+        });
+
+        // 拖拽下载
+        lv.setOnDragDetected(event -> {
+            FileItem sel = lv.getSelectionModel().getSelectedItem();
+            if (sel != null && !sel.isDirectory()) {
+                File tempFile = downloadToTemp(sel);
+                if (tempFile != null) {
+                    Dragboard db = lv.startDragAndDrop(TransferMode.COPY);
+                    ClipboardContent content = new ClipboardContent();
+                    content.putFiles(Collections.singletonList(tempFile));
+                    db.setContent(content);
+                }
+            }
+            event.consume();
+        });
+
+        lv.setContextMenu(createContextMenu());
+        return lv;
+    }
+
+    /**
+     * 列内选中项变化：截断右侧列，若为目录则异步加载子目录到新列
+     */
+    private void onColumnItemSelected(FileItem item, int colIndex) {
+        truncateColumns(colIndex + 1);
+        if (item.isDirectory()) {
+            if (item.isBucket()) {
+                // 点击 Bucket：新列加载该 Bucket 根目录
+                loadColumnAsync(item.getName(), "");
+            } else {
+                // 点击文件夹：新列加载子目录
+                loadColumnAsync(currentBucket, item.getKey());
+            }
+        }
+        updatePathFromColumns();
+    }
+
+    /**
+     * 根据列视图的状态更新路径输入框
+     */
+    private void updatePathFromColumns() {
+        if (columnBuckets.isEmpty()) return;
+        String bucket = columnBuckets.get(columnBuckets.size() - 1);
+        String prefix = columnPrefixes.get(columnPrefixes.size() - 1);
+        currentBucket = bucket;
+        currentPrefix = prefix;
+        if (bucket == null) {
+            currentPathField.setText("/");
+        } else {
+            currentPathField.setText("/" + bucket + "/" + (prefix != null ? prefix : ""));
+        }
+    }
+
+    /**
+     * 截断列：只保留前 keepCount 列
+     */
+    private void truncateColumns(int keepCount) {
+        while (columnListViews.size() > keepCount) {
+            int last = columnListViews.size() - 1;
+            columnContainer.getChildren().remove(columnListViews.get(last));
+            columnListViews.remove(last);
+            columnItems.remove(last);
+            columnBuckets.remove(last);
+            columnPrefixes.remove(last);
+        }
+    }
+
+    /**
+     * 异步加载并添加为新列
+     * @param bucket null 表示加载 Bucket 列表；否则加载指定 Bucket 的 prefix 内容
+     */
+    private void loadColumnAsync(String bucket, String prefix) {
+        new Thread(() -> {
+            try {
+                List<FileItem> items = new ArrayList<>();
+                if (bucket == null) {
+                    // 加载 Bucket 列表
+                    List<String> buckets;
+                    if (isAliyunOSS) {
+                        buckets = OssService.listBuckets(config);
+                    } else {
+                        buckets = S3Service.listBuckets(config);
+                    }
+                    for (String bucketName : buckets) {
+                        FileItem item = new FileItem();
+                        item.setName(bucketName);
+                        item.setKey(bucketName);
+                        item.setDirectory(true);
+                        item.setBucket(true);
+                        items.add(item);
+                    }
+                } else {
+                    // 加载 Bucket 内容
+                    List<?> objects;
+                    if (isAliyunOSS) {
+                        objects = OssService.listObjects(config, bucket, prefix);
+                    } else {
+                        objects = S3Service.listObjects(config, bucket, prefix);
+                    }
+                    for (Object obj : objects) {
+                        FileItem item = new FileItem();
+                        if (isAliyunOSS) {
+                            OssService.OssObjectInfo ossObj = (OssService.OssObjectInfo) obj;
+                            item.setName(ossObj.getDisplayName());
+                            item.setKey(ossObj.getKey());
+                            item.setDirectory(ossObj.isDirectory());
+                            item.setSize(ossObj.getSize());
+                            item.setLastModified(ossObj.getLastModified() != null ? ossObj.getLastModified().toString() : "");
+                            item.setBucket(false);
+                        } else {
+                            S3Service.S3ObjectInfo s3Obj = (S3Service.S3ObjectInfo) obj;
+                            item.setName(s3Obj.getDisplayName());
+                            item.setKey(s3Obj.getKey());
+                            item.setDirectory(s3Obj.isDirectory());
+                            item.setSize(s3Obj.getSize());
+                            item.setLastModified(s3Obj.getLastModified() != null ? s3Obj.getLastModified().toString() : "");
+                            item.setBucket(false);
+                        }
+                        items.add(item);
+                    }
+                }
+                Platform.runLater(() -> {
+                    addColumn(bucket, prefix != null ? prefix : "", items);
+                    stateLabel.setText(items.size() + " 个条目");
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> stateLabel.setText("错误: " + e.getMessage()));
+            }
+        }, "S3-ColumnLoad").start();
+    }
+
+    /**
+     * 添加新列并滚动到最右侧
+     */
+    private void addColumn(String bucket, String prefix, List<FileItem> items) {
+        ObservableList<FileItem> colData = FXCollections.observableArrayList(items);
+        columnBuckets.add(bucket);
+        columnPrefixes.add(prefix);
+        columnItems.add(colData);
+        int colIndex = columnListViews.size();
+        ListView<FileItem> lv = createColumnListView(colIndex);
+        columnListViews.add(lv);
+        columnContainer.getChildren().add(lv);
+        updatePathFromColumns();
+        Platform.runLater(() -> columnScrollPane.setHvalue(1.0));
+    }
+
     private void switchViewMode(ViewMode mode) {
         currentViewMode = mode;
 
@@ -536,6 +808,10 @@ public class S3FileBrowserPane extends BorderPane {
             rebuildIconView();
             centerBox.getChildren().add(iconScrollPane);
             VBox.setVgrow(iconScrollPane, Priority.ALWAYS);
+        } else if (mode == ViewMode.COLUMN) {
+            rebuildColumnView();
+            centerBox.getChildren().add(columnScrollPane);
+            VBox.setVgrow(columnScrollPane, Priority.ALWAYS);
         } else {
             centerBox.getChildren().add(fileTable);
             VBox.setVgrow(fileTable, Priority.ALWAYS);
@@ -684,7 +960,9 @@ public class S3FileBrowserPane extends BorderPane {
         iconViewItem.setOnAction(e -> switchViewMode(ViewMode.ICON));
         MenuItem listViewItem = new MenuItem("列表视图");
         listViewItem.setOnAction(e -> switchViewMode(ViewMode.LIST));
-        viewMenu.getItems().addAll(iconViewItem, listViewItem);
+        MenuItem columnViewItem = new MenuItem("列视图");
+        columnViewItem.setOnAction(e -> switchViewMode(ViewMode.COLUMN));
+        viewMenu.getItems().addAll(iconViewItem, listViewItem, columnViewItem);
 
         menu.getItems().addAll(openItem, previewItem, editMdItem, downloadItem, new SeparatorMenuItem(),
                 mkdirItem, uploadItem, createFileItem, deleteItem, new SeparatorMenuItem(), viewMenu, new SeparatorMenuItem(), refreshItem);
@@ -706,6 +984,12 @@ public class S3FileBrowserPane extends BorderPane {
     private FileItem getSelectedItem() {
         if (currentViewMode == ViewMode.LIST) {
             return fileTable.getSelectionModel().getSelectedItem();
+        } else if (currentViewMode == ViewMode.COLUMN) {
+            for (ListView<FileItem> lv : columnListViews) {
+                FileItem sel = lv.getSelectionModel().getSelectedItem();
+                if (sel != null) return sel;
+            }
+            return selectedItem;
         }
         return selectedItem;
     }
@@ -748,6 +1032,8 @@ public class S3FileBrowserPane extends BorderPane {
                     if (currentViewMode == ViewMode.ICON) {
                         rebuildIconView();
                         loadThumbnailsForIconView();
+                    } else if (currentViewMode == ViewMode.COLUMN) {
+                        rebuildColumnView();
                     }
                 });
             } catch (Exception e) {
@@ -814,6 +1100,8 @@ public class S3FileBrowserPane extends BorderPane {
                     if (currentViewMode == ViewMode.ICON) {
                         rebuildIconView();
                         loadThumbnailsForIconView();
+                    } else if (currentViewMode == ViewMode.COLUMN) {
+                        rebuildColumnView();
                     }
                 });
             } catch (Exception e) {

@@ -50,7 +50,7 @@
     
     <Region fx:id="divider2" style="-fx-background-color: #E5E5E5;" prefWidth="1.0" minWidth="1.0" maxWidth="1.0"/>
     
-    <VBox fx:id="contentPane" style="-fx-background-color: #f7f7f7; -fx-background-insets: 0; -fx-padding: 0; -fx-border-insets: 0;" spacing="0" HBox.hgrow="ALWAYS">
+    <VBox fx:id="contentPane" style="-fx-background-color: #ffffff; -fx-background-insets: 0; -fx-padding: 0; -fx-border-insets: 0;" spacing="0" HBox.hgrow="ALWAYS">
       <children>
         <HBox fx:id="titleBar" style="-fx-background-color: #ffffff; -fx-border-color: #D9D9D7; -fx-border-width: 0 0 1 0;" prefHeight="52" minHeight="52" maxHeight="52" spacing="10">
           <padding>
