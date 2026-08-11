@@ -401,6 +401,10 @@ public class S3FileBrowserPane extends BorderPane {
                     handleDoubleClick(item);
                 } else if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 1) {
                     selectedItem = row.getItem();
+                } else if (event.getButton() == MouseButton.SECONDARY && !row.isEmpty()) {
+                    // 右键时先选中该行再弹出菜单
+                    fileTable.getSelectionModel().select(row.getItem());
+                    selectedItem = row.getItem();
                 }
             });
             // 拖拽下载：从列表行拖出 -> 下载到临时目录后放入剪贴板
@@ -594,6 +598,12 @@ public class S3FileBrowserPane extends BorderPane {
         lv.setCellFactory(list -> new ListCell<FileItem>() {
             {
                 setStyle("-fx-padding: 4 8;");
+                // 右键时先选中该单元格再弹出菜单
+                setOnMousePressed(e -> {
+                    if (e.getButton() == MouseButton.SECONDARY && !isEmpty()) {
+                        lv.getSelectionModel().select(getIndex());
+                    }
+                });
             }
 
             @Override
@@ -881,6 +891,11 @@ public class S3FileBrowserPane extends BorderPane {
                 if (e.getClickCount() == 2) {
                     handleDoubleClick(item);
                 }
+            } else if (e.getButton() == MouseButton.SECONDARY) {
+                // 右键时先选中再弹出菜单
+                clearIconSelection();
+                selectIconBox(box, item);
+                selectedItem = item;
             }
         });
 

@@ -534,6 +534,8 @@ public class TableDataView extends BorderPane {
         // TableView宽度填满视口（minWidth绑定视口宽度），垂直滚动条自然落在面板最右侧
         tableScrollPane = new ScrollPane(tableView);
         tableScrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-background-insets: 0; -fx-padding: 0; -fx-border-insets: 0;");
+        // 应用 session-scroll-pane 样式类：清除 .viewport 默认 background-insets，消除表格左侧1-2px留白
+        tableScrollPane.getStyleClass().add("session-scroll-pane");
         tableScrollPane.setFitToHeight(true);
         tableScrollPane.setFitToWidth(false);
         tableScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
@@ -599,6 +601,8 @@ public class TableDataView extends BorderPane {
         this.setBottom(statusBar);
         this.setPadding(Insets.EMPTY);
         this.setStyle("-fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
+        // 加载统一样式表：使 session-scroll-pane 等规则对 tableScrollPane 的 .viewport 生效
+        this.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
     }
 
     /**
@@ -938,8 +942,8 @@ public class TableDataView extends BorderPane {
                 setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
                 setAlignment(Pos.CENTER);
                 arrow.setVisible(false);
-                // 左侧加网格线
-                setStyle("-fx-border-color: transparent #BEBEBC transparent #BEBEBC; -fx-border-width: 0 1 0 1;");
+                // 左侧加网格线（首列不加左边框，避免表格最左边缘出现竖线）
+                setStyle("-fx-border-color: transparent #BEBEBC transparent transparent; -fx-border-width: 0 1 0 0;");
                 // 点击行选择器列时选中整行（使用addEventFilter在捕获阶段处理，避免被TableView的拖拽选择处理器覆盖）
                 addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
                     if (getTableRow() != null && getTableRow().getItem() != null) {
@@ -985,8 +989,8 @@ public class TableDataView extends BorderPane {
                     return;
                 }
 
-                // 初始状态
-                setStyle("-fx-border-color: transparent #BEBEBC #BEBEBC #BEBEBC; -fx-border-width: 0 1 1 1;");
+                // 初始状态（首列不加左边框，避免表格最左边缘出现竖线）
+                setStyle("-fx-border-color: transparent #BEBEBC #BEBEBC transparent; -fx-border-width: 0 1 1 0;");
                 arrow.setVisible(isRowSelected(getTableRow().getIndex()));
 
                 // 监听选中cells变化
