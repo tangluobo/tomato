@@ -20,6 +20,7 @@ import javafx.scene.input.TransferMode;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
+import javafx.scene.shape.Rectangle;
 import javafx.scene.Scene;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
@@ -111,6 +112,17 @@ public class S3FileBrowserPane extends BorderPane {
 
     // 选中状态
     private FileItem selectedItem = null;
+    private final Set<FileItem> selectedItems = new HashSet<>();
+
+    // 图标视图框选状态
+    private Rectangle selectionRect;
+    private double rubberBandStartX, rubberBandStartY;
+    private boolean isRubberBandActive = false;
+    private boolean rubberBandAppendMode = false; // Ctrl/Shift 追加模式
+    private Set<FileItem> rubberBandPreSelectedItems = new HashSet<>(); // 框选前已选中的项（追加模式用）
+    // 自动滚动相关
+    private javafx.animation.AnimationTimer autoScrollTimer = null;
+    private double autoScrollDX = 0, autoScrollDY = 0;
 
     // 编辑器 Tab 页（中心区域：文件浏览 + 多个 markdown 编辑器）
     private TabPane editorTabPane;
@@ -393,6 +405,7 @@ public class S3FileBrowserPane extends BorderPane {
         fileTable = new TableView<>();
         fileTable.setItems(fileData);
         fileTable.setStyle("-fx-font-size: 12px;");
+        fileTable.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         fileTable.setRowFactory(tv -> {
             TableRow<FileItem> row = new TableRow<>();
             row.setOnMouseClicked(event -> {
@@ -509,22 +522,208 @@ public class S3FileBrowserPane extends BorderPane {
         iconFlowPane.setPadding(new Insets(12));
         iconFlowPane.setStyle("-fx-background-color: white;");
 
+        // 框选矩形（不参与布局，覆盖在图标上方）
+        selectionRect = new Rectangle();
+        selectionRect.setFill(Color.rgb(51, 153, 255, 0.15));
+        selectionRect.setStroke(Color.rgb(51, 153, 255, 0.8));
+        selectionRect.setStrokeWidth(1);
+        selectionRect.setManaged(false);
+        selectionRect.setMouseTransparent(true);
+        selectionRect.setVisible(false);
+
         iconScrollPane = new ScrollPane(iconFlowPane);
         iconScrollPane.setFitToWidth(true);
         iconScrollPane.setFitToHeight(true);
         iconScrollPane.setStyle("-fx-background-color: white;");
         iconScrollPane.setContextMenu(createContextMenu());
 
-        iconFlowPane.setOnMouseClicked(e -> {
-            if (e.getTarget() == iconFlowPane) {
-                clearIconSelection();
-                selectedItem = null;
+        // 框选：在图标视图空白处按下鼠标开始框选
+        // 绑定到 ScrollPane 的内容视口区域，使用事件过滤器（在子节点处理之前捕获）
+        iconScrollPane.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, e -> {
+            if (e.getButton() != MouseButton.PRIMARY) return;
+            // 判断是否点击在空白区域：沿着事件链向上查找，找到的第一个 VBox 就是图标项，
+            // 如果一直到 iconFlowPane 都没找到 VBox，说明是在空白处点击
+            javafx.scene.Node targetNode = e.getTarget() instanceof javafx.scene.Node ? (javafx.scene.Node) e.getTarget() : null;
+            boolean clickedOnIconBox = false;
+            while (targetNode != null && targetNode != iconScrollPane) {
+                if (targetNode instanceof VBox && targetNode.getProperties().containsKey("fileItem")) {
+                    clickedOnIconBox = true;
+                    break;
+                }
+                if (targetNode == iconFlowPane) break;
+                targetNode = targetNode.getParent();
             }
+            if (clickedOnIconBox) return; // 点在图标上，交给图标自身的点击处理
+
+            // 点在空白处：开始框选
+            // 将鼠标坐标从 ScrollPane 坐标系转换到 iconFlowPane 坐标系
+            java.awt.geom.Point2D flowPoint = convertToFlowPane(e.getSceneX(), e.getSceneY());
+            if (flowPoint == null) return;
+
+            isRubberBandActive = true;
+            rubberBandAppendMode = e.isControlDown() || e.isShiftDown();
+            rubberBandStartX = flowPoint.getX();
+            rubberBandStartY = flowPoint.getY();
+            selectionRect.setX(rubberBandStartX);
+            selectionRect.setY(rubberBandStartY);
+            selectionRect.setWidth(0);
+            selectionRect.setHeight(0);
+            selectionRect.setVisible(true);
+
+            // 保存之前的选中状态（追加模式下）
+            rubberBandPreSelectedItems.clear();
+            if (rubberBandAppendMode) {
+                rubberBandPreSelectedItems.addAll(selectedItems);
+            } else {
+                clearIconSelection();
+            }
+            e.consume();
+        });
+
+        iconScrollPane.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_DRAGGED, e -> {
+            if (!isRubberBandActive) return;
+
+            java.awt.geom.Point2D flowPoint = convertToFlowPane(e.getSceneX(), e.getSceneY());
+            if (flowPoint == null) return;
+            double fx = flowPoint.getX();
+            double fy = flowPoint.getY();
+
+            double x = Math.min(rubberBandStartX, fx);
+            double y = Math.min(rubberBandStartY, fy);
+            double w = Math.abs(fx - rubberBandStartX);
+            double h = Math.abs(fy - rubberBandStartY);
+            selectionRect.setX(x);
+            selectionRect.setY(y);
+            selectionRect.setWidth(w);
+            selectionRect.setHeight(h);
+            updateRubberBandSelection(x, y, w, h);
+
+            // 自动滚动：检查是否靠近 ScrollPane 边缘
+            updateAutoScrollVelocity(e.getSceneX(), e.getSceneY());
+            startAutoScrollIfNeeded();
+
+            e.consume();
+        });
+
+        iconScrollPane.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_RELEASED, e -> {
+            if (e.getButton() != MouseButton.PRIMARY) return;
+            if (!isRubberBandActive) return;
+            isRubberBandActive = false;
+            selectionRect.setVisible(false);
+            stopAutoScroll();
+            e.consume();
         });
 
         // 拖拽上传：拖到图标视图（FlowPane 和 ScrollPane 均支持）
         setupDragUpload(iconFlowPane);
         setupDragUpload(iconScrollPane);
+    }
+
+    /**
+     * 将场景坐标转换为 iconFlowPane 内部的坐标
+     */
+    private java.awt.geom.Point2D convertToFlowPane(double sceneX, double sceneY) {
+        try {
+            javafx.geometry.Point2D localPoint = iconFlowPane.sceneToLocal(sceneX, sceneY, true);
+            if (localPoint == null) return null;
+            return new java.awt.geom.Point2D.Double(localPoint.getX(), localPoint.getY());
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    /**
+     * 计算拖拽点是否靠近 ScrollPane 边缘，返回自动滚动速度
+     */
+    private void updateAutoScrollVelocity(double sceneX, double sceneY) {
+        javafx.geometry.Point2D spPoint = iconScrollPane.sceneToLocal(sceneX, sceneY, true);
+        if (spPoint == null) { autoScrollDX = 0; autoScrollDY = 0; return; }
+        double spx = spPoint.getX();
+        double spy = spPoint.getY();
+        double spw = iconScrollPane.getViewportBounds().getWidth();
+        double sph = iconScrollPane.getViewportBounds().getHeight();
+        double edge = 25; // 边缘触发区域像素
+        double speed = 8; // 滚动速度像素/帧
+        autoScrollDX = 0;
+        autoScrollDY = 0;
+        if (spx < edge) autoScrollDX = -speed * (1 - spx / edge);
+        else if (spx > spw - edge) autoScrollDX = speed * (1 - (spw - spx) / edge);
+        if (spy < edge) autoScrollDY = -speed * (1 - spy / edge);
+        else if (spy > sph - edge) autoScrollDY = speed * (1 - (sph - spy) / edge);
+    }
+
+    private void startAutoScrollIfNeeded() {
+        if (autoScrollTimer != null) return;
+        if (Math.abs(autoScrollDX) < 0.5 && Math.abs(autoScrollDY) < 0.5) return;
+        autoScrollTimer = new javafx.animation.AnimationTimer() {
+            @Override public void handle(long now) {
+                if (!isRubberBandActive) { stop(); autoScrollTimer = null; return; }
+                if (Math.abs(autoScrollDX) < 0.5 && Math.abs(autoScrollDY) < 0.5) return;
+                // 直接用当前选择矩形的右下端点作为"当前"点继续扩展
+                double rx = selectionRect.getX();
+                double ry = selectionRect.getY();
+                double rw = selectionRect.getWidth();
+                double rh = selectionRect.getHeight();
+                // 判断当前是往哪个方向拖（起点固定在 rubberBandStartX/Y）
+                double curX, curY;
+                if (rw <= 0 || rx == rubberBandStartX) curX = rx + rw; else curX = rx;
+                if (rh <= 0 || ry == rubberBandStartY) curY = ry + rh; else curY = ry;
+                // 根据自动滚动方向确定端点的移动方向
+                double dx = autoScrollDX;
+                double dy = autoScrollDY;
+                // 保持端点相对于起点的方向
+                if (curX < rubberBandStartX) dx = -Math.abs(dx);
+                else if (curX > rubberBandStartX) dx = Math.abs(dx);
+                else dx = 0; // 尚未确定横向方向，暂不移动
+                if (curY < rubberBandStartY) dy = -Math.abs(dy);
+                else if (curY > rubberBandStartY) dy = Math.abs(dy);
+                else dy = 0;
+                curX += dx;
+                curY += dy;
+                // 限制端点不能超出 FlowPane 范围
+                double maxX = iconFlowPane.getBoundsInLocal().getWidth();
+                double maxY = iconFlowPane.getBoundsInLocal().getHeight();
+                curX = Math.max(0, Math.min(maxX, curX));
+                curY = Math.max(0, Math.min(maxY, curY));
+                // 先计算并执行 ScrollPane 滚动（比例值）
+                double vmax = iconScrollPane.getVmax();
+                double hmax = iconScrollPane.getHmax();
+                double hval = iconScrollPane.getHvalue();
+                double vval = iconScrollPane.getVvalue();
+                double contentWidth = maxX;
+                double contentHeight = maxY;
+                double viewW = iconScrollPane.getViewportBounds().getWidth();
+                double viewH = iconScrollPane.getViewportBounds().getHeight();
+                if (contentWidth > viewW && hmax > 0) {
+                    double dh = autoScrollDX / (contentWidth - viewW);
+                    iconScrollPane.setHvalue(Math.max(0, Math.min(hmax, hval + dh)));
+                }
+                if (contentHeight > viewH && vmax > 0) {
+                    double dv = autoScrollDY / (contentHeight - viewH);
+                    iconScrollPane.setVvalue(Math.max(0, Math.min(vmax, vval + dv)));
+                }
+                // 更新选择矩形和选中项
+                double nx = Math.min(rubberBandStartX, curX);
+                double ny = Math.min(rubberBandStartY, curY);
+                double nw = Math.abs(curX - rubberBandStartX);
+                double nh = Math.abs(curY - rubberBandStartY);
+                selectionRect.setX(nx);
+                selectionRect.setY(ny);
+                selectionRect.setWidth(nw);
+                selectionRect.setHeight(nh);
+                updateRubberBandSelection(nx, ny, nw, nh);
+            }
+        };
+        autoScrollTimer.start();
+    }
+
+    private void stopAutoScroll() {
+        if (autoScrollTimer != null) {
+            autoScrollTimer.stop();
+            autoScrollTimer = null;
+        }
+        autoScrollDX = 0;
+        autoScrollDY = 0;
     }
 
     /**
@@ -855,6 +1054,8 @@ public class S3FileBrowserPane extends BorderPane {
             VBox iconBox = createIconBox(item);
             iconFlowPane.getChildren().add(iconBox);
         }
+        // 框选矩形最后添加，确保渲染在所有图标之上（setManaged(false) 不参与 FlowPane 布局）
+        iconFlowPane.getChildren().add(selectionRect);
     }
 
     private VBox createIconBox(FileItem item) {
@@ -863,6 +1064,7 @@ public class S3FileBrowserPane extends BorderPane {
         box.setPrefWidth(90);
         box.setPadding(new Insets(6, 4, 6, 4));
         box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand;");
+        box.getProperties().put("fileItem", item);
 
         // 图标
         ImageView iconView = new ImageView();
@@ -884,18 +1086,38 @@ public class S3FileBrowserPane extends BorderPane {
         // 鼠标事件
         box.setOnMouseClicked(e -> {
             if (e.getButton() == MouseButton.PRIMARY) {
-                clearIconSelection();
-                selectIconBox(box, item);
-                selectedItem = item;
+                boolean append = e.isControlDown() || e.isShiftDown();
+                if (!append) {
+                    clearIconSelection();
+                }
+                // 追加模式下：如果已选中则取消；未选中则添加
+                if (append && selectedItems.contains(item)) {
+                    box.setUserData(null);
+                    box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand;");
+                    selectedItems.remove(item);
+                    if (selectedItem == item) {
+                        selectedItem = selectedItems.isEmpty() ? null : selectedItems.iterator().next();
+                    }
+                } else {
+                    selectIconBox(box, item);
+                    selectedItems.add(item);
+                    selectedItem = item;
+                }
 
                 if (e.getClickCount() == 2) {
                     handleDoubleClick(item);
                 }
             } else if (e.getButton() == MouseButton.SECONDARY) {
-                // 右键时先选中再弹出菜单
-                clearIconSelection();
-                selectIconBox(box, item);
-                selectedItem = item;
+                // 右键时：如果当前没选中才选中它（保持多选状态不变，如果已经是选中项则不切换）
+                if (!selectedItems.contains(item)) {
+                    boolean append = e.isControlDown() || e.isShiftDown();
+                    if (!append) {
+                        clearIconSelection();
+                    }
+                    selectIconBox(box, item);
+                    selectedItems.add(item);
+                    selectedItem = item;
+                }
             }
         });
 
@@ -939,6 +1161,57 @@ public class S3FileBrowserPane extends BorderPane {
                 box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand;");
             }
         }
+        selectedItems.clear();
+        selectedItem = null;
+    }
+
+    /**
+     * 框选过程中实时更新选中项：遍历所有图标，将与选区矩形相交的项设为选中
+     * 支持追加模式（Ctrl/Shift 按下时）：保留框选之前就已选中的项
+     */
+    private void updateRubberBandSelection(double x, double y, double w, double h) {
+        // 先清除所有视觉选中状态（不清除 selectedItems，下面重新填充）
+        for (var node : iconFlowPane.getChildren()) {
+            if (node instanceof VBox box) {
+                box.setUserData(null);
+                box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand;");
+            }
+        }
+        selectedItems.clear();
+
+        // 追加模式：先恢复之前已选中的项
+        if (rubberBandAppendMode && !rubberBandPreSelectedItems.isEmpty()) {
+            selectedItems.addAll(rubberBandPreSelectedItems);
+            // 重新渲染视觉选中状态
+            for (var node : iconFlowPane.getChildren()) {
+                if (node instanceof VBox box) {
+                    FileItem item = (FileItem) box.getProperties().get("fileItem");
+                    if (item != null && rubberBandPreSelectedItems.contains(item)) {
+                        selectIconBox(box, item);
+                    }
+                }
+            }
+        }
+
+        // 加上/切换本次框选到的项
+        for (var node : iconFlowPane.getChildren()) {
+            if (node instanceof VBox box) {
+                if (box.getBoundsInParent().intersects(x, y, w, h)) {
+                    FileItem item = (FileItem) box.getProperties().get("fileItem");
+                    if (item != null) {
+                        if (!selectedItems.contains(item)) {
+                            selectIconBox(box, item);
+                            selectedItems.add(item);
+                        } else {
+                            // 已在集合中，确保视觉选中
+                            selectIconBox(box, item);
+                        }
+                    }
+                }
+            }
+        }
+
+        selectedItem = selectedItems.isEmpty() ? null : selectedItems.iterator().next();
     }
 
     private ContextMenu createContextMenu() {
@@ -1000,10 +1273,16 @@ public class S3FileBrowserPane extends BorderPane {
 
         // 右键菜单显示时动态控制各项可见性
         menu.setOnShowing(e -> {
-            FileItem selected = getSelectedItem();
-            previewItem.setVisible(selected != null && !selected.isDirectory() && isImageFile(selected.getDisplayName()));
-            editMdItem.setVisible(selected != null && !selected.isDirectory() && isMarkdownFile(selected.getDisplayName()));
-            downloadItem.setVisible(selected != null && !selected.isDirectory());
+            List<FileItem> selected = getSelectedItems();
+            boolean single = selected.size() == 1;
+            FileItem first = selected.isEmpty() ? null : selected.get(0);
+
+            openItem.setVisible(single && first != null);
+            previewItem.setVisible(single && first != null && !first.isDirectory() && isImageFile(first.getDisplayName()));
+            editMdItem.setVisible(single && first != null && !first.isDirectory() && isMarkdownFile(first.getDisplayName()));
+            downloadItem.setVisible(single && first != null && !first.isDirectory());
+            deleteItem.setVisible(!selected.isEmpty());
+            deleteItem.setText(selected.size() > 1 ? "删除(" + selected.size() + "项)" : "删除");
             mkdirItem.setVisible(currentBucket != null);
             uploadItem.setVisible(currentBucket != null);
             createFileItem.setVisible(currentBucket != null);
@@ -1023,6 +1302,33 @@ public class S3FileBrowserPane extends BorderPane {
             return selectedItem;
         }
         return selectedItem;
+    }
+
+    /**
+     * 获取所有选中项（支持多选：图标视图框选、列表视图 Ctrl/Shift 多选）
+     */
+    private List<FileItem> getSelectedItems() {
+        if (currentViewMode == ViewMode.LIST) {
+            return new ArrayList<>(fileTable.getSelectionModel().getSelectedItems());
+        } else if (currentViewMode == ViewMode.COLUMN) {
+            List<FileItem> items = new ArrayList<>();
+            for (ListView<FileItem> lv : columnListViews) {
+                FileItem sel = lv.getSelectionModel().getSelectedItem();
+                if (sel != null) items.add(sel);
+            }
+            if (items.isEmpty() && selectedItem != null) {
+                items.add(selectedItem);
+            }
+            return items;
+        }
+        // 图标视图
+        if (!selectedItems.isEmpty()) {
+            return new ArrayList<>(selectedItems);
+        }
+        if (selectedItem != null) {
+            return List.of(selectedItem);
+        }
+        return new ArrayList<>();
     }
 
     /**
@@ -2031,46 +2337,71 @@ public class S3FileBrowserPane extends BorderPane {
     }
 
     private void handleDelete() {
-        FileItem selected = getSelectedItem();
-        if (selected == null) return;
+        List<FileItem> toDelete = getSelectedItems();
+        if (toDelete.isEmpty()) return;
+
+        // 构建确认消息
+        String msg;
+        if (toDelete.size() == 1) {
+            FileItem selected = toDelete.get(0);
+            if (selected.isBucket()) {
+                msg = "确定要删除Bucket \"" + selected.getName() + "\" 吗？Bucket必须为空才能删除。";
+            } else {
+                msg = "确定要删除文件 \"" + selected.getName() + "\" 吗？";
+            }
+        } else {
+            msg = "确定要删除选中的 " + toDelete.size() + " 个文件吗？";
+        }
 
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         confirm.setTitle("删除确认");
         confirm.setHeaderText(null);
-        if (selected.isBucket()) {
-            confirm.setContentText("确定要删除Bucket \"" + selected.getName() + "\" 吗？Bucket必须为空才能删除。");
-        } else {
-            confirm.setContentText("确定要删除文件 \"" + selected.getName() + "\" 吗？");
-        }
+        confirm.setContentText(msg);
 
         confirm.showAndWait().ifPresent(response -> {
             if (response != ButtonType.OK) return;
 
             new Thread(() -> {
-                try {
-                    if (selected.isBucket()) {
-                        if (isAliyunOSS) {
-                            throw new Exception("请通过管理控制台删除Bucket");
+                int success = 0;
+                int failed = 0;
+                String lastError = null;
+                for (FileItem selected : toDelete) {
+                    try {
+                        if (selected.isBucket()) {
+                            if (isAliyunOSS) {
+                                throw new Exception("请通过管理控制台删除Bucket");
+                            } else {
+                                S3Service.deleteBucket(config, selected.getName());
+                            }
                         } else {
-                            S3Service.deleteBucket(config, selected.getName());
+                            if (isAliyunOSS) {
+                                OssService.deleteObject(config, currentBucket, selected.getKey());
+                            } else {
+                                S3Service.deleteObject(config, currentBucket, selected.getKey());
+                            }
                         }
-                    } else {
-                        if (isAliyunOSS) {
-                            OssService.deleteObject(config, currentBucket, selected.getKey());
-                        } else {
-                            S3Service.deleteObject(config, currentBucket, selected.getKey());
-                        }
+                        success++;
+                    } catch (Exception e) {
+                        failed++;
+                        lastError = e.getMessage();
                     }
-                    Platform.runLater(() -> refresh());
-                } catch (Exception e) {
-                    Platform.runLater(() -> {
-                        Alert alert = new Alert(Alert.AlertType.ERROR);
-                        alert.setTitle("删除失败");
-                        alert.setHeaderText(null);
-                        alert.setContentText(e.getMessage());
-                        alert.showAndWait();
-                    });
                 }
+                final int okCount = success;
+                final int failCount = failed;
+                final String err = lastError;
+                Platform.runLater(() -> {
+                    if (failCount == 0) {
+                        stateLabel.setText("删除完成: 成功 " + okCount + " 个");
+                    } else {
+                        stateLabel.setText("删除结束: 成功 " + okCount + " 个, 失败 " + failCount + " 个");
+                        Alert alert = new Alert(Alert.AlertType.WARNING);
+                        alert.setTitle("部分删除失败");
+                        alert.setHeaderText("成功 " + okCount + " 个, 失败 " + failCount + " 个");
+                        alert.setContentText(err != null ? err : "");
+                        alert.showAndWait();
+                    }
+                    refresh();
+                });
             }, "S3-Delete").start();
         });
     }
