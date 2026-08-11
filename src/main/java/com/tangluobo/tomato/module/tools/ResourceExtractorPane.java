@@ -63,6 +63,8 @@ public class ResourceExtractorPane extends VBox {
         setFillWidth(true);
         setMaxWidth(Double.MAX_VALUE);
         setMaxHeight(Double.MAX_VALUE);
+        // 加载统一样式表，使 ScrollPane viewport 等组件清除默认 background-insets
+        getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
 
         HBox titleBar = new HBox(10);
         titleBar.setAlignment(Pos.CENTER_LEFT);
@@ -84,7 +86,9 @@ public class ResourceExtractorPane extends VBox {
         ScrollPane mainScroll = new ScrollPane();
         mainScroll.setFitToWidth(true);
         mainScroll.setFitToHeight(true);
-        mainScroll.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
+        mainScroll.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
+        // 应用 session-scroll-pane 样式类：清除 .viewport 默认 background-insets，消除内容左侧/顶部的1-2px留白
+        mainScroll.getStyleClass().add("session-scroll-pane");
         mainScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         mainScroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
 
