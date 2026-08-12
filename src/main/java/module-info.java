@@ -69,7 +69,7 @@ module tomato {
     exports com.tangluobo.tomato.module.tools.extractor;
     opens com.tangluobo.tomato.module.tools.extractor to javafx.fxml;
     exports com.tangluobo.tomato.module.tools.server;
-    opens com.tangluobo.tomato.module.tools.server to javafx.fxml;
+    opens com.tangluobo.tomato.module.tools.server to javafx.fxml, com.google.gson;
     exports com.tangluobo.tomato.module.server;
     opens com.tangluobo.tomato.module.server to javafx.fxml;
     exports com.tangluobo.tomato.utils;

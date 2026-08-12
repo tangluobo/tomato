@@ -110,10 +110,12 @@ public class FtpFileServer implements FileServer {
                     case "FEAT" -> handleFeat(out);
                     case "NOOP" -> send(out, 200, "OK");
                     case "TYPE" -> send(out, 200, "Type set to " + arg);
+                    case "OPTS" -> send(out, 200, "OK");
                     case "PWD", "XPWD" -> send(out, 257, "\"" + session.currentPath + "\" is current directory");
                     case "CWD", "XCWD" -> handleCwd(out, session, arg);
                     case "CDUP" -> handleCdup(out, session);
                     case "PASV" -> handlePasv(out, session, client);
+                    case "EPSV" -> handleEpsv(out, session);
                     case "PORT" -> handlePort(out, session, arg);
                     case "LIST", "NLST" -> handleList(out, session, arg, cmd.equals("NLST"));
                     case "RETR" -> handleRetr(out, session, arg);
@@ -121,12 +123,19 @@ public class FtpFileServer implements FileServer {
                     case "DELE" -> handleDele(out, session, arg);
                     case "RMD", "XRMD" -> handleRmd(out, session, arg);
                     case "MKD", "XMKD" -> handleMkd(out, session, arg);
+                    case "SIZE" -> handleSize(out, session, arg);
+                    case "MDTM" -> handleMdtm(out, session, arg);
                     case "REST" -> send(out, 350, "Restarting at " + arg + " (NOTE: actually ignored)");
+                    case "RNFR" -> handleRnfr(out, session, arg);
+                    case "RNTO" -> handleRnto(out, session, arg);
                     case "ABOR" -> send(out, 226, "ABOR command successful");
                     default -> send(out, 502, "Command not implemented: " + cmd);
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            System.err.println("FTP 客户端连接异常: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
     private void send(PrintWriter out, int code, String msg) {
@@ -186,6 +195,7 @@ public class FtpFileServer implements FileServer {
     private void handleFeat(PrintWriter out) {
         out.println("211-Features:");
         out.println(" PASV");
+        out.println(" EPSV");
         out.println(" UTF8");
         out.println(" SIZE");
         out.println(" MDTM");
@@ -203,13 +213,19 @@ public class FtpFileServer implements FileServer {
 
     private Path resolvePath(FtpSession sess, String rel) {
         Path base = sess.basePath;
+        // 解析当前路径（去掉前导/和尾部/）
+        String cp = sess.currentPath;
+        if (cp.length() > 1 && cp.endsWith("/")) cp = cp.substring(0, cp.length() - 1);
+        String cpRel = cp.length() > 1 ? cp.substring(1) : "";
+
+        Path current = cpRel.isEmpty() ? base : base.resolve(cpRel).normalize();
         Path target;
         if (rel == null || rel.isEmpty()) {
-            target = base.resolve(sess.currentPath.substring(1)).normalize();
+            target = current;
         } else if (rel.startsWith("/")) {
             target = base.resolve(rel.substring(1)).normalize();
         } else {
-            target = base.resolve(sess.currentPath.substring(1)).resolve(rel).normalize();
+            target = current.resolve(rel).normalize();
         }
         if (!target.startsWith(base)) return null;
         return target;
@@ -224,8 +240,7 @@ public class FtpFileServer implements FileServer {
             return;
         }
         String rel = "/" + sess.basePath.relativize(target).toString().replace('\\', '/');
-        if (!rel.endsWith("/") && !rel.equals("/")) rel += "/";
-        sess.currentPath = rel.equals("/") ? "/" : rel;
+        sess.currentPath = rel;
         send(out, 250, "CWD command successful");
     }
 
@@ -238,7 +253,7 @@ public class FtpFileServer implements FileServer {
         String p = sess.currentPath;
         if (p.endsWith("/")) p = p.substring(0, p.length() - 1);
         int last = p.lastIndexOf('/');
-        sess.currentPath = (last <= 0) ? "/" : (p.substring(0, last) + "/");
+        sess.currentPath = (last <= 0) ? "/" : p.substring(0, last);
         send(out, 250, "CDUP command successful");
     }
 
@@ -250,13 +265,32 @@ public class FtpFileServer implements FileServer {
             sess.dataServerSocket = ss;
             sess.dataMode = FtpSession.DataMode.PASV;
 
+            // 使用服务端本地地址（客户端连接的目标地址），IPv6 回退到 127.0.0.1
             String host = client.getLocalAddress().getHostAddress();
-            int port = ss.getLocalPort();
             String[] octets = host.split("\\.");
-            if (octets.length != 4) octets = new String[]{"127","0","0","1"};
+            if (octets.length != 4) {
+                host = "127.0.0.1";
+                octets = host.split("\\.");
+            }
+            int port = ss.getLocalPort();
             int p1 = port >> 8;
             int p2 = port & 0xff;
             send(out, 227, "Entering Passive Mode (" + octets[0] + "," + octets[1] + "," + octets[2] + "," + octets[3] + "," + p1 + "," + p2 + ")");
+        } catch (Exception e) {
+            send(out, 425, "Can't open data connection");
+        }
+    }
+
+    /** EPSV: 扩展被动模式，只返回端口号，不返回 IP（客户端自动使用控制连接的 IP） */
+    private void handleEpsv(PrintWriter out, FtpSession sess) {
+        if (!requireAuth(out, sess)) return;
+        try {
+            ServerSocket ss = new ServerSocket(0);
+            ss.setSoTimeout(30000);
+            sess.dataServerSocket = ss;
+            sess.dataMode = FtpSession.DataMode.PASV;
+            int port = ss.getLocalPort();
+            send(out, 229, "Entering Extended Passive Mode (|||" + port + "|)");
         } catch (Exception e) {
             send(out, 425, "Can't open data connection");
         }
@@ -294,9 +328,10 @@ public class FtpFileServer implements FileServer {
 
     private void handleList(PrintWriter out, FtpSession sess, String arg, boolean nlst) {
         if (!requireAuth(out, sess)) return;
+        // 先发 150，再开数据连接，避免部分客户端等待响应导致死锁
+        send(out, 150, "Opening data connection for file list");
         try (Socket ds = openDataConnection(out, sess)) {
             if (ds == null) return;
-            send(out, 150, "Opening data connection for file list");
             PrintWriter dout = new PrintWriter(new OutputStreamWriter(ds.getOutputStream(), StandardCharsets.UTF_8), true);
             Path target = resolvePath(sess, arg);
             if (target != null && Files.isDirectory(target)) {
@@ -309,9 +344,18 @@ public class FtpFileServer implements FileServer {
                             boolean isDir = Files.isDirectory(p);
                             String perms = isDir ? "drwxr-xr-x" : "-rw-r--r--";
                             long size = isDir ? 4096 : Files.size(p);
+                            // 标准 Unix ls -l 日期格式：英文月份缩写 + 空格填充天数
                             java.time.Instant mtime = Files.getLastModifiedTime(p).toInstant();
-                            java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter.ofPattern("MMM dd HH:mm").withZone(java.time.ZoneId.systemDefault());
-                            dout.printf("%s %3d %-8s %-8s %8d %s %s%n", perms, 1, "ftp", "ftp", size, fmt.format(mtime), name);
+                            java.time.ZoneId zone = java.time.ZoneId.systemDefault();
+                            java.time.LocalDateTime ldt = mtime.atZone(zone).toLocalDateTime();
+                            java.time.format.DateTimeFormatter monthFmt = java.time.format.DateTimeFormatter
+                                    .ofPattern("MMM", java.util.Locale.ENGLISH);
+                            String monthStr = ldt.format(monthFmt);
+                            int day = ldt.getDayOfMonth();
+                            int hour = ldt.getHour();
+                            int minute = ldt.getMinute();
+                            String dateStr = String.format("%s %2d %02d:%02d", monthStr, day, hour, minute);
+                            dout.printf("%s %3d %-8s %-8s %8d %s %s%n", perms, 1, "ftp", "ftp", size, dateStr, name);
                         }
                     }
                 }
@@ -330,9 +374,9 @@ public class FtpFileServer implements FileServer {
             send(out, 550, "File not found");
             return;
         }
+        send(out, 150, "Opening data connection");
         try (Socket ds = openDataConnection(out, sess)) {
             if (ds == null) return;
-            send(out, 150, "Opening data connection");
             try (OutputStream os = ds.getOutputStream();
                  InputStream is = Files.newInputStream(target)) {
                 byte[] buf = new byte[8192];
@@ -356,9 +400,9 @@ public class FtpFileServer implements FileServer {
         if (target == null) { send(out, 550, "Invalid path"); return; }
         try {
             Files.createDirectories(target.getParent());
+            send(out, 150, "Opening data connection");
             try (Socket ds = openDataConnection(out, sess)) {
                 if (ds == null) return;
-                send(out, 150, "Opening data connection");
                 try (OutputStream os = Files.newOutputStream(target);
                      InputStream is = ds.getInputStream()) {
                     byte[] buf = new byte[8192];
@@ -414,6 +458,78 @@ public class FtpFileServer implements FileServer {
         }
     }
 
+    private void handleSize(PrintWriter out, FtpSession sess, String arg) {
+        if (!requireAuth(out, sess)) return;
+        Path target = resolvePath(sess, arg);
+        if (target == null || !Files.exists(target) || Files.isDirectory(target)) {
+            send(out, 550, "File not found");
+            return;
+        }
+        try {
+            send(out, 213, String.valueOf(Files.size(target)));
+        } catch (Exception e) {
+            send(out, 550, "Size check failed");
+        }
+    }
+
+    private void handleMdtm(PrintWriter out, FtpSession sess, String arg) {
+        if (!requireAuth(out, sess)) return;
+        Path target = resolvePath(sess, arg);
+        if (target == null || !Files.exists(target)) {
+            send(out, 550, "File not found");
+            return;
+        }
+        try {
+            java.time.Instant mtime = Files.getLastModifiedTime(target).toInstant();
+            String ts = java.time.format.DateTimeFormatter
+                    .ofPattern("yyyyMMddHHmmss")
+                    .withZone(java.time.ZoneId.systemDefault())
+                    .format(mtime);
+            send(out, 213, ts);
+        } catch (Exception e) {
+            send(out, 550, "MDTM check failed");
+        }
+    }
+
+    /** RNFR: 指定要重命名的源文件/目录 */
+    private void handleRnfr(PrintWriter out, FtpSession sess, String arg) {
+        if (!requireAuth(out, sess)) return;
+        Path target = resolvePath(sess, arg);
+        if (target == null || !Files.exists(target)) {
+            send(out, 550, "File not found");
+            return;
+        }
+        sess.renameFrom = target;
+        send(out, 350, "Ready for RNTO");
+    }
+
+    /** RNTO: 指定重命名的目标路径，执行重命名 */
+    private void handleRnto(PrintWriter out, FtpSession sess, String arg) {
+        if (!requireAuth(out, sess)) return;
+        if (sess.renameFrom == null) {
+            send(out, 503, "Use RNFR first");
+            return;
+        }
+        if (isCurrentReadOnly(sess)) {
+            send(out, 550, "Permission denied (read-only share)");
+            sess.renameFrom = null;
+            return;
+        }
+        Path target = resolvePath(sess, arg);
+        if (target == null) {
+            send(out, 550, "Invalid target path");
+            sess.renameFrom = null;
+            return;
+        }
+        try {
+            Files.move(sess.renameFrom, target);
+            send(out, 250, "Rename successful");
+        } catch (Exception e) {
+            send(out, 550, "Rename failed: " + e.getMessage());
+        }
+        sess.renameFrom = null;
+    }
+
     /** 判断当前目录所在共享是否只读（简化判断：若配置了共享目录且第一个共享标记只读） */
     private boolean isCurrentReadOnly(FtpSession sess) {
         if (config.getSharedDirectories() != null && !config.getSharedDirectories().isEmpty()) {
@@ -437,5 +553,6 @@ public class FtpFileServer implements FileServer {
         ServerSocket dataServerSocket;
         String dataHost;
         int dataPort;
+        Path renameFrom; // RNFR 暂存的源路径
     }
 }

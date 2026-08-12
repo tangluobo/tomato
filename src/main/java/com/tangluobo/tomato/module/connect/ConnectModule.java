@@ -16,6 +16,7 @@ import com.tangluobo.tomato.module.connect.view.RocketmqDataView;
 import com.tangluobo.tomato.module.connect.view.SqlEditorView;
 import com.tangluobo.tomato.module.connect.view.ToolPane;
 import com.tangluobo.tomato.module.tools.ServerManagerPane;
+import com.tangluobo.tomato.module.tools.server.ServerConfig;
 import com.tangluobo.tomato.ssh.LocalTerminalPane;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
 import com.tangluobo.tomato.utils.SecurityUtils;
@@ -1480,12 +1481,25 @@ public class ConnectModule implements Module {
         ServerManagerPane serverPane;
         if (serverType != null) {
             serverPane = new ServerManagerPane(serverType);
-            if (config.getPort() > 0) {
+            // 加载已保存的完整服务器配置
+            if (config.getServerConfig() != null) {
+                serverPane.loadFromServerConfig(config.getServerConfig());
+            } else if (config.getPort() > 0) {
                 serverPane.setConfigPort(config.getPort());
             }
         } else {
             serverPane = new ServerManagerPane();
         }
+
+        // 配置变更时自动保存到连接树（在 loadFromServerConfig 之后设置，避免加载时触发）
+        serverPane.setOnConfigChanged(() -> {
+            ServerConfig sc = serverPane.getServerConfig();
+            config.setServerConfig(sc);
+            config.setPort(sc.getPort());
+            connections.removeIf(c -> c.getId().equals(config.getId()));
+            connections.add(config);
+            ConfigManager.saveConnections(connections);
+        });
 
         Tab serverTab = new Tab(tabTitle);
         serverTab.setUserData(config.getId());
@@ -1499,6 +1513,17 @@ public class ConnectModule implements Module {
                 serverTab.setGraphic(icon);
             } catch (Exception ignored) {}
         }
+
+        // Tab 关闭时也保存一次（兜底）
+        serverTab.setOnCloseRequest(e -> {
+            ServerConfig sc = serverPane.getServerConfig();
+            config.setServerConfig(sc);
+            config.setPort(sc.getPort());
+            connections.removeIf(c -> c.getId().equals(config.getId()));
+            connections.add(config);
+            ConfigManager.saveConnections(connections);
+        });
+
         terminalTabPane.getTabs().add(serverTab);
         terminalTabPane.getSelectionModel().select(serverTab);
     }

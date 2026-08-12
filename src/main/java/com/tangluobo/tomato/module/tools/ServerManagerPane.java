@@ -63,6 +63,9 @@ public class ServerManagerPane extends VBox {
 
     private final SimpleBooleanProperty runningProperty = new SimpleBooleanProperty(false);
 
+    /** 配置变更回调：每次修改目录/账号/端口等配置时触发，由外部保存到连接树 */
+    private Runnable onConfigChanged;
+
     // ============ 构造 ============
     public ServerManagerPane() {
         this(ServerType.HTTP);
@@ -85,6 +88,57 @@ public class ServerManagerPane extends VBox {
     /** 返回当前服务类型 */
     public ServerType getServerType() {
         return currentType;
+    }
+
+    /** 获取当前面板的完整服务器配置（用于保存到连接树） */
+    public ServerConfig getServerConfig() {
+        config.setType(currentType);
+        try {
+            config.setPort(Integer.parseInt(portField.getText().trim()));
+        } catch (NumberFormatException e) {
+            config.setPort(currentType.getDefaultPort());
+        }
+        config.setBindAddress(bindField.getText().trim());
+        config.setAnonymousAccess(anonymousCheck.isSelected());
+        config.setRootDirectory(rootDirField.getText().trim());
+        config.setSharedDirectories(new ArrayList<>(directoryList));
+        config.setAccounts(new ArrayList<>(accountList));
+        return config;
+    }
+
+    /** 从已保存的配置恢复面板状态 */
+    public void loadFromServerConfig(ServerConfig saved) {
+        if (saved == null) return;
+        if (saved.getPort() > 0) {
+            portField.setText(String.valueOf(saved.getPort()));
+        }
+        if (saved.getBindAddress() != null && !saved.getBindAddress().isEmpty()) {
+            bindField.setText(saved.getBindAddress());
+        }
+        anonymousCheck.setSelected(saved.isAnonymousAccess());
+        if (saved.getRootDirectory() != null) {
+            rootDirField.setText(saved.getRootDirectory());
+        }
+        directoryList.clear();
+        if (saved.getSharedDirectories() != null) {
+            directoryList.addAll(saved.getSharedDirectories());
+        }
+        accountList.clear();
+        if (saved.getAccounts() != null) {
+            accountList.addAll(saved.getAccounts());
+        }
+    }
+
+    /** 设置配置变更回调 */
+    public void setOnConfigChanged(Runnable r) {
+        this.onConfigChanged = r;
+    }
+
+    /** 通知外部配置已变更 */
+    private void notifyConfigChanged() {
+        if (onConfigChanged != null) {
+            onConfigChanged.run();
+        }
     }
 
     // ============ UI 初始化 ============
@@ -272,6 +326,7 @@ public class ServerManagerPane extends VBox {
                 if (a.showAndWait().orElse(ButtonType.NO) == ButtonType.YES) {
                     directoryList.removeAll(sel);
                     log("删除共享目录：" + sel.stream().map(SharedDirectory::getAlias).toList());
+                    notifyConfigChanged();
                 }
             }
         });
@@ -412,6 +467,7 @@ public class ServerManagerPane extends VBox {
                 directoryList.add(editing);
                 log("修改共享目录：" + alias);
             }
+            notifyConfigChanged();
             dlg.close();
         });
         btns.getChildren().addAll(cancel, ok);
@@ -455,6 +511,7 @@ public class ServerManagerPane extends VBox {
                 if (a.showAndWait().orElse(ButtonType.NO) == ButtonType.YES) {
                     accountList.removeAll(sel);
                     log("删除账号：" + sel.stream().map(ServerAccount::getUsername).toList());
+                    notifyConfigChanged();
                 }
             }
         });
@@ -584,6 +641,7 @@ public class ServerManagerPane extends VBox {
                 accountList.add(editing);
                 log("修改账号：" + name);
             }
+            notifyConfigChanged();
             dlg.close();
         });
         btns.getChildren().addAll(cancel, ok);
@@ -644,6 +702,12 @@ public class ServerManagerPane extends VBox {
                 startStopBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-width: 90px; -fx-font-weight: bold;");
             }
         });
+
+        // 端口/绑定地址/匿名/根目录 变更时自动保存
+        portField.textProperty().addListener((obs, o, n) -> notifyConfigChanged());
+        bindField.textProperty().addListener((obs, o, n) -> notifyConfigChanged());
+        anonymousCheck.selectedProperty().addListener((obs, o, n) -> notifyConfigChanged());
+        rootDirField.textProperty().addListener((obs, o, n) -> notifyConfigChanged());
     }
 
     // ============ 启动/停止 ============

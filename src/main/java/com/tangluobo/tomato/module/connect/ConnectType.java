@@ -16,8 +16,8 @@ public enum ConnectType {
     LOCAL_TERMINAL("LocalTerminal", "本地终端", "/images/connect/shell.png", Category.OTHERS),
     LOCAL_DIRECTORY("LocalDirectory", "本地目录", "/images/connect/folder.png", Category.OTHERS),
     TOOL("Tool", "工具", "/images/connect/beautiful.png", Category.TOOL),
-    HTTP_SERVER("HttpServer", "HTTP文件服务器", "/images/connect/code.png", Category.OTHERS),
-    FTP_SERVER("FtpServer", "FTP文件服务器", "/images/connect/ftp.png", Category.OTHERS),
+    HTTP_SERVER("HttpServer", "HTTP服务器", "/images/connect/code.png", Category.OTHERS),
+    FTP_SERVER("FtpServer", "FTP服务器", "/images/connect/ftp.png", Category.OTHERS),
     SMB_SERVER("SmbServer", "SMB文件共享", "/images/connect/server.png", Category.OTHERS);
 
     public enum Category {

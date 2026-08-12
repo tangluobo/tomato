@@ -332,6 +332,8 @@ public class ConnectionConfigDialog {
         for (ConnectType type : ConnectType.values()) {
             if (type.getCategory() != category) continue;
             if (type == ConnectType.TOOL && !includeTool) continue;
+            // HTTP/FTP/SMB 服务器类型只在"服务器"Tab中显示，不在"客户端"Tab中显示
+            if (type == ConnectType.HTTP_SERVER || type == ConnectType.FTP_SERVER || type == ConnectType.SMB_SERVER) continue;
             tilePane.getChildren().add(createConnectTypeTile(type));
         }
         return tilePane;

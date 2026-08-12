@@ -3,6 +3,8 @@ package com.tangluobo.tomato.module.connect;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.tangluobo.tomato.module.tools.server.ServerConfig;
+
 public class ConnectionConfig {
     private String id;
     private String name;
@@ -21,6 +23,9 @@ public class ConnectionConfig {
     private String database;
     private String description;
     private Integer scrollbackLines;
+
+    // 服务器配置（HTTP_SERVER/FTP_SERVER/SMB_SERVER 专用，保存共享目录、账号列表等完整配置）
+    private ServerConfig serverConfig;
 
     // RDP专属配置
     private String domain;
@@ -201,4 +206,7 @@ public class ConnectionConfig {
 
     public List<String> getSshTunnelPrivateKeyPaths() { return sshTunnelPrivateKeyPaths; }
     public void setSshTunnelPrivateKeyPaths(List<String> sshTunnelPrivateKeyPaths) { this.sshTunnelPrivateKeyPaths = sshTunnelPrivateKeyPaths != null ? sshTunnelPrivateKeyPaths : new ArrayList<>(); }
+
+    public ServerConfig getServerConfig() { return serverConfig; }
+    public void setServerConfig(ServerConfig serverConfig) { this.serverConfig = serverConfig; }
 }
