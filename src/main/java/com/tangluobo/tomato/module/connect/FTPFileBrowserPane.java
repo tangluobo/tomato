@@ -793,6 +793,7 @@ public class FTPFileBrowserPane extends BorderPane {
         private long parseUnixDate(String dateStr) {
             try {
                 // "Jan 1 12:00" 或 "Jan 1 2024"
+                // 注意：带时间的格式默认缺年份，需补当前年份，否则SimpleDateFormat会回退到1970年
                 String year;
                 String time = null;
                 String[] parts = dateStr.split("\\s+");
@@ -803,10 +804,10 @@ public class FTPFileBrowserPane extends BorderPane {
                     } else {
                         year = parts[2];
                     }
-                    String fmt = time != null ? "MMM d H:mm" : "MMM d yyyy";
+                    String fmt = time != null ? "MMM d yyyy H:mm" : "MMM d yyyy";
                     SimpleDateFormat sdf = new SimpleDateFormat(fmt, Locale.ENGLISH);
                     String toParse = time != null
-                            ? parts[0] + " " + parts[1] + " " + time
+                            ? parts[0] + " " + parts[1] + " " + year + " " + time
                             : parts[0] + " " + parts[1] + " " + year;
                     return sdf.parse(toParse).getTime();
                 }
