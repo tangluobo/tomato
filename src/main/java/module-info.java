@@ -5,6 +5,7 @@ module tomato {
     requires com.google.gson;
     requires java.desktop;
     requires java.net.http;
+    requires jdk.httpserver;
     requires com.jcraft.jsch;
     requires java.sql;
     requires mysql.connector.j;
@@ -67,6 +68,10 @@ module tomato {
     opens com.tangluobo.tomato.module.tools to javafx.fxml;
     exports com.tangluobo.tomato.module.tools.extractor;
     opens com.tangluobo.tomato.module.tools.extractor to javafx.fxml;
+    exports com.tangluobo.tomato.module.tools.server;
+    opens com.tangluobo.tomato.module.tools.server to javafx.fxml;
+    exports com.tangluobo.tomato.module.server;
+    opens com.tangluobo.tomato.module.server to javafx.fxml;
     exports com.tangluobo.tomato.utils;
     opens com.tangluobo.tomato.utils to com.google.gson, javafx.fxml;
     exports com.tangluobo.tomato.ssh;

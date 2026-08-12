@@ -15,6 +15,7 @@ import com.tangluobo.tomato.module.connect.service.RocketmqService;
 import com.tangluobo.tomato.module.connect.view.RocketmqDataView;
 import com.tangluobo.tomato.module.connect.view.SqlEditorView;
 import com.tangluobo.tomato.module.connect.view.ToolPane;
+import com.tangluobo.tomato.module.tools.ServerManagerPane;
 import com.tangluobo.tomato.ssh.LocalTerminalPane;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
 import com.tangluobo.tomato.utils.SecurityUtils;
@@ -1446,10 +1447,70 @@ public class ConnectModule implements Module {
             handleToolDoubleClick(hostItem, config);
             return;
         }
+        if (config.getType() == ConnectType.HTTP_SERVER
+                || config.getType() == ConnectType.FTP_SERVER
+                || config.getType() == ConnectType.SMB_SERVER) {
+            handleServerDoubleClick(hostItem, config);
+            return;
+        }
         ConnectHandler handler = createConnectHandler(config);
         if (handler != null) {
             handler.handleHostDoubleClick(this, hostItem, config);
         }
+    }
+
+    /** 服务器节点双击：打开服务器管理面板 */
+    private void handleServerDoubleClick(TreeItem<String> item, ConnectionConfig config) {
+        if (!ensureTabPaneInstalled()) return;
+        String tabTitle = config.getName() != null && !config.getName().isEmpty()
+                ? config.getName()
+                : (config.getType() != null ? config.getType().getDisplayName() : "服务器");
+
+        // 避免重复打开同一服务器标签
+        for (Tab t : terminalTabPane.getTabs()) {
+            if (tabTitle.equals(t.getText()) && t.getUserData() == config.getId()) {
+                terminalTabPane.getSelectionModel().select(t);
+                return;
+            }
+        }
+
+        // 转换为 com.tangluobo.tomato.module.tools.server.ServerType
+        com.tangluobo.tomato.module.tools.server.ServerType serverType =
+                toServerType(config.getType());
+        ServerManagerPane serverPane;
+        if (serverType != null) {
+            serverPane = new ServerManagerPane(serverType);
+            if (config.getPort() > 0) {
+                serverPane.setConfigPort(config.getPort());
+            }
+        } else {
+            serverPane = new ServerManagerPane();
+        }
+
+        Tab serverTab = new Tab(tabTitle);
+        serverTab.setUserData(config.getId());
+        serverTab.setContent(serverPane);
+        // 图标
+        if (config.getType() != null) {
+            try {
+                ImageView icon = new ImageView(new Image(getClass().getResourceAsStream(config.getType().getIconPath())));
+                icon.setFitWidth(16);
+                icon.setFitHeight(16);
+                serverTab.setGraphic(icon);
+            } catch (Exception ignored) {}
+        }
+        terminalTabPane.getTabs().add(serverTab);
+        terminalTabPane.getSelectionModel().select(serverTab);
+    }
+
+    private static com.tangluobo.tomato.module.tools.server.ServerType toServerType(ConnectType t) {
+        if (t == null) return null;
+        return switch (t) {
+            case HTTP_SERVER -> com.tangluobo.tomato.module.tools.server.ServerType.HTTP;
+            case FTP_SERVER -> com.tangluobo.tomato.module.tools.server.ServerType.FTP;
+            case SMB_SERVER -> com.tangluobo.tomato.module.tools.server.ServerType.SMB;
+            default -> null;
+        };
     }
 
     /** 工具节点双击：打开工具视图 */

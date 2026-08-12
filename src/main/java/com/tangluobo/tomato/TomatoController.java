@@ -2,6 +2,7 @@ package com.tangluobo.tomato;
 
 import com.tangluobo.tomato.module.Module;
 import com.tangluobo.tomato.module.connect.ConnectModule;
+import com.tangluobo.tomato.module.server.ServerModule;
 import com.tangluobo.tomato.module.settings.SettingsModule;
 import com.tangluobo.tomato.module.tools.ToolsModule;
 import javafx.fxml.FXML;
@@ -124,6 +125,8 @@ public class TomatoController {
                     return new ConnectModule();
                 case "tools":
                     return new ToolsModule();
+                case "server":
+                    return new ServerModule();
                 case "settings":
                     return new SettingsModule();
                 default:

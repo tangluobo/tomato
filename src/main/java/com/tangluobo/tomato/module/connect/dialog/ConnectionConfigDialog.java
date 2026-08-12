@@ -21,7 +21,6 @@ import javafx.stage.Stage;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
-
 public class ConnectionConfigDialog {
     private Stage dialogStage;
     private boolean confirmed = false;
@@ -225,13 +224,16 @@ public class ConnectionConfigDialog {
         Tab dbTab = new Tab("数据库");
         dbTab.setContent(buildCategoryTilePane(ConnectType.Category.DATABASE, false));
         // 其他标签
-        Tab othersTab = new Tab("其他");
+        Tab othersTab = new Tab("客户端");
         othersTab.setContent(buildCategoryTilePane(ConnectType.Category.OTHERS, false));
         // 工具标签
         Tab toolTab = new Tab("工具");
         toolTab.setContent(buildToolTilePane());
+        // 服务器标签
+        Tab serverTab = new Tab("服务器");
+        serverTab.setContent(buildServerTilePane());
 
-        categoryTabPane.getTabs().addAll(dbTab, othersTab, toolTab);
+        categoryTabPane.getTabs().addAll(dbTab, othersTab, toolTab, serverTab);
 
         HBox typeButtons = new HBox(10);
         typeButtons.setAlignment(Pos.CENTER_RIGHT);
@@ -349,6 +351,67 @@ public class ConnectionConfigDialog {
             tilePane.getChildren().add(createToolTile(toolType));
         }
         return tilePane;
+    }
+
+    /**
+     * 构建服务器标签页的方块面板（HTTP/FTP/SMB）
+     * 点击后直接创建连接节点添加到连接树（不走配置页），双击连接树节点时才打开管理面板
+     */
+    private FlowPane buildServerTilePane() {
+        FlowPane tilePane = new FlowPane();
+        tilePane.setHgap(10);
+        tilePane.setVgap(10);
+        tilePane.setPadding(new Insets(10, 5, 5, 5));
+        tilePane.setAlignment(Pos.CENTER);
+
+        for (ConnectType type : ConnectType.values()) {
+            if (type == ConnectType.HTTP_SERVER
+                    || type == ConnectType.FTP_SERVER
+                    || type == ConnectType.SMB_SERVER) {
+                tilePane.getChildren().add(createServerTile(type));
+            }
+        }
+        return tilePane;
+    }
+
+    /**
+     * 创建服务器方块：点击后直接确认（无需配置页），使用默认名称和端口
+     */
+    private VBox createServerTile(ConnectType type) {
+        VBox tile = new VBox(8);
+        tile.setAlignment(Pos.CENTER);
+        tile.setPadding(new Insets(14, 18, 14, 18));
+        tile.setPrefWidth(120);
+        tile.setPrefHeight(90);
+        tile.setStyle("-fx-background-color: #f5f5f5; -fx-background-radius: 8; -fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-cursor: hand;");
+
+        ImageView icon = new ImageView();
+        icon.setFitWidth(32);
+        icon.setFitHeight(32);
+        try {
+            icon.setImage(new Image(getClass().getResourceAsStream(type.getIconPath())));
+        } catch (Exception ignored) {}
+
+        Label nameLabel = new Label(type.getDisplayName());
+        nameLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-font-weight: bold;");
+
+        Label portLabel = new Label("端口 " + getDefaultPort(type));
+        portLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: #999;");
+
+        tile.getChildren().addAll(icon, nameLabel, portLabel);
+
+        attachTileHoverStyle(tile);
+        tile.setOnMouseClicked(e -> {
+            // 直接创建连接配置，不走配置页
+            config = new ConnectionConfig();
+            config.setType(type);
+            config.setName(type.getDisplayName());
+            config.setPort(getDefaultPort(type));
+            config.setHost("0.0.0.0");
+            confirmed = true;
+            dialogStage.close();
+        });
+        return tile;
     }
 
     /**
@@ -2244,6 +2307,9 @@ public class ConnectionConfigDialog {
             case LOCAL_TERMINAL -> 0;
             case LOCAL_DIRECTORY -> 0;
             case TOOL -> 0;
+            case HTTP_SERVER -> 8080;
+            case FTP_SERVER -> 2121;
+            case SMB_SERVER -> 445;
         };
     }
 
