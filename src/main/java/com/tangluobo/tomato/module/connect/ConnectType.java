@@ -5,7 +5,7 @@ public enum ConnectType {
     RDP("RDP", "远程桌面", "/images/connect/windows.png", Category.OTHERS),
     MYSQL("MySQL", "MySQL数据库", "/images/connect/mysql.png", Category.DATABASE),
     POSTGRESQL("PostgreSQL", "PostgreSQL数据库", "/images/connect/postgresql.png", Category.DATABASE),
-    FTP("FTP", "FTP服务器", "/images/connect/ftp.png", Category.OTHERS),
+    FTP("FTP", "FTP客户端", "/images/connect/ftp.png", Category.OTHERS),
     SFTP("SFTP", "SFTP服务器", "/images/connect/sftp.png", Category.OTHERS),
     ORACLE("Oracle", "Oracle数据库", "/images/connect/oracle.png", Category.DATABASE),
     S3("S3", "S3存储", "/images/connect/s3.png", Category.OTHERS),

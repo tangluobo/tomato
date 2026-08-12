@@ -1406,6 +1406,7 @@ public class ConnectModule implements Module {
         if (type == ConnectType.RDP) return new RdpConnectHandler();
         if (type == ConnectType.SSH) return new SshTerminalConnectHandler();
         if (type == ConnectType.SFTP) return new SFTPConnectHandler();
+        if (type == ConnectType.FTP) return new FTPConnectHandler();
         return null;
     }
 
