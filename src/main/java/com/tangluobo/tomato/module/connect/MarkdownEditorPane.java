@@ -12,6 +12,8 @@ import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
+import javafx.scene.input.MouseEvent;
+import javafx.scene.input.MouseButton;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Text;
@@ -56,7 +58,6 @@ import org.commonmark.renderer.html.HtmlNodeRendererContext;
 import org.commonmark.renderer.html.HtmlNodeRendererFactory;
 import org.commonmark.renderer.html.HtmlRenderer;
 import org.commonmark.renderer.html.HtmlWriter;
-import org.fxmisc.richtext.InlineCssTextArea;
 import org.fxmisc.flowless.VirtualizedScrollPane;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
 
@@ -69,12 +70,15 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.function.Consumer;
 
+import com.tangluobo.tomato.module.connect.markdown.editor.MarkdownTextArea;
+
 /**
  * Markdown 编辑器面板
- * 基于 RichTextFX InlineCssTextArea 编辑 + commonmark 解析 + TextFlow/VBox 预览
+ * 基于 RichTextFX MarkdownTextArea 编辑 + commonmark 解析 + TextFlow/VBox 预览
  * 支持三种模式：编辑 / 编辑+预览 / 预览
  * 保存到 S3/OSS
  */
@@ -93,9 +97,14 @@ public class MarkdownEditorPane extends BorderPane {
     private final String displayName;
     private final Storage storage;
 
-    private final InlineCssTextArea editor;
-    private final VirtualizedScrollPane<InlineCssTextArea> editorScroll;
-    // 预览面板：VBox 内混合 InlineCssTextArea（可选中文本，Ctrl+C/右键复制）+ GridPane（可视表格）
+    private final MarkdownTextArea editor;
+    private final VirtualizedScrollPane<MarkdownTextArea> editorScroll;
+    private final HBox editorBox;
+    private final VBox lineNumberBox;
+    private final java.util.List<Label> lineNumberLabels = new java.util.ArrayList<>();
+    private static final int LINE_HEIGHT_PX = 17; // Consolas 13px 行高，与编辑区一致
+    private static final int MAX_PREALLOC_LINES = 5000;
+    // 预览面板：VBox 内混合 TextFlow/VBox/StackPane（段落/标题/引用/代码块等块级结构）+ GridPane（可视表格）
     private final VBox previewBox;
     private final ScrollPane previewScroll;
     private final StackPane centerContainer;
@@ -124,14 +133,15 @@ public class MarkdownEditorPane extends BorderPane {
     private final java.util.List<int[]> findMatches = new java.util.ArrayList<>();
     private int findIndex = -1;
 
-    // 编辑器语法高亮样式
-    private static final String STYLE_HEADING = "-fx-fill: #1163a6; -fx-font-weight: bold;";
-    private static final String STYLE_CODE = "-fx-fill: #c7254e; -fx-font-family: 'Consolas','Courier New',monospace;";
-    private static final String STYLE_LINK = "-fx-fill: #1a73e8;";
-    private static final String STYLE_BOLD = "-fx-font-weight: bold;";
-    private static final String STYLE_ITALIC = "-fx-font-posture: italic;";
-    private static final String STYLE_LISTMARK = "-fx-fill: #d14; -fx-font-weight: bold;";
-    private static final String STYLE_QUOTEMARK = "-fx-fill: #1a73e8; -fx-font-weight: bold;";
+    // 编辑器语法高亮样式（CSS 类名方式，配合 markdown-editor-highlight.css）
+    private static final Collection<String> STYLE_HEADING = List.of("md-heading");
+    private static final Collection<String> STYLE_CODE = List.of("md-code");
+    private static final Collection<String> STYLE_LINK = List.of("md-link");
+    private static final Collection<String> STYLE_BOLD = List.of("md-bold");
+    private static final Collection<String> STYLE_ITALIC = List.of("md-italic");
+    private static final Collection<String> STYLE_LISTMARK = List.of("md-listmark");
+    private static final Collection<String> STYLE_QUOTEMARK = List.of("md-quotemark");
+    private static final Collection<String> STYLE_EMPTY = List.of();
 
     // 预览解析器：解析非表格片段的 Markdown（Parser 线程安全，构建一次复用）。
     // 表格不依赖 commonmark 扩展，由 renderMarkdown 自行检测并渲染。
@@ -157,6 +167,12 @@ public class MarkdownEditorPane extends BorderPane {
 
     // 预览渲染防抖
     private final PauseTransition previewDebounce = new PauseTransition(new Duration(250));
+
+    // ==================== Alt+鼠标矩形（列）选择 ====================
+    private boolean rectSelecting = false;           // 是否正在进行矩形选择
+    private int rectStartRow = -1, rectStartCol = -1; // 起点（鼠标按下时）
+    private int rectEndRow = -1, rectEndCol = -1;     // 终点（拖动中）
+    private static final Collection<String> STYLE_RECT_SELECT = List.of("md-rect-select"); // 矩形选择高亮样式
 
     /**
      * S3/OSS 编辑器构造：通过 config/bucket/key 保存到对象存储。
@@ -186,26 +202,90 @@ public class MarkdownEditorPane extends BorderPane {
         this.displayName = displayName;
         this.storage = storage;
 
-        this.editor = new InlineCssTextArea();
+        this.editor = new MarkdownTextArea();
+        this.editor.setWrapText(false);
         this.editor.setStyle(
                 "-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 13px; " +
                 "-fx-background-color: white; -fx-padding: 0; -fx-text-fill: #333;"
         );
-        this.editorScroll = new VirtualizedScrollPane<>(editor);
+        this.editor.getStylesheets().add(getClass().getResource("/css/markdown-editor-highlight.css").toExternalForm());
 
-        // 预览区：VBox + ScrollPane，子节点为 InlineCssTextArea（文本，可选中）与 GridPane（表格）混合
+        this.editorScroll = new VirtualizedScrollPane<>(editor);
+        this.editorScroll.getStyleClass().add("session-scroll-pane");
+        this.editorScroll.setStyle(
+                "-fx-background-color: white; -fx-background-insets: 0; " +
+                "-fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0; -fx-border-insets: 0;"
+        );
+
+        // 编辑器行号区：VBox + Label 列表（参考 SqlEditorView，避免 TextArea 自带多余滚动条）
+        this.lineNumberBox = new VBox();
+        this.lineNumberBox.setStyle("-fx-background-color: #f5f5f5; -fx-padding: 0;");
+        this.lineNumberBox.setMinWidth(40);
+        this.lineNumberBox.setPrefWidth(40);
+        this.lineNumberBox.setMaxWidth(40);
+        // 不驱动父布局高度，由父容器(HBox)分配空间后被动填充
+        this.lineNumberBox.setMinHeight(0);
+        this.lineNumberBox.setPrefHeight(0);
+
+        // 预分配 MAX_PREALLOC_LINES 个 Label，避免运行时频繁创建
+        for (int i = 1; i <= MAX_PREALLOC_LINES; i++) {
+            Label label = new Label(Integer.toString(i));
+            label.setStyle(
+                    "-fx-font-family: 'Consolas', monospace; -fx-font-size: 13px; " +
+                    "-fx-text-fill: #999; -fx-alignment: CENTER_RIGHT; " +
+                    "-fx-padding: 0 6 0 4; -fx-pref-height: " + LINE_HEIGHT_PX + "; -fx-min-height: " + LINE_HEIGHT_PX + ";"
+            );
+            label.setVisible(false);
+            label.setManaged(false);
+            lineNumberLabels.add(label);
+            lineNumberBox.getChildren().add(label);
+        }
+        // 底部占位，撑住高度
+        Region filler = new Region();
+        VBox.setVgrow(filler, Priority.ALWAYS);
+        lineNumberBox.getChildren().add(filler);
+
+        // 将行号区和编辑器滚动面板组合
+        this.editorBox = new HBox(0);
+        this.editorBox.getChildren().addAll(lineNumberBox, editorScroll);
+        this.editorBox.setStyle("-fx-background-color: white; -fx-background-insets: 0; -fx-padding: 0;");
+        HBox.setHgrow(lineNumberBox, Priority.NEVER);
+        HBox.setHgrow(editorScroll, Priority.ALWAYS);
+        HBox.setHgrow(editorBox, Priority.ALWAYS);
+        // 不驱动SplitPane分配，被动接受SplitPane给的空间
+        this.editorBox.setMinHeight(0);
+
+        // 同步行号内容
+        editor.textProperty().addListener((obs, oldVal, newVal) -> {
+            updateLineNumbers(newVal);
+        });
+        
+        // 同步滚动：监听编辑器的 estimatedScrollYProperty，行号直接 translateY 反平移（参考 SqlEditorView）
+        editor.estimatedScrollYProperty().addListener((obs, oldVal, newVal) -> {
+            lineNumberBox.setTranslateY(-newVal.doubleValue());
+        });
+
+        // 初始行号
+        updateLineNumbers("");
+
+        // 预览区：VBox + ScrollPane，子节点为 TextFlow/VBox/StackPane（块级结构）与 GridPane（表格）混合
         this.previewBox = new VBox(6);
         this.previewBox.setPadding(new Insets(0));
         this.previewBox.setStyle("-fx-background-color: white;");
         this.previewScroll = new ScrollPane(previewBox);
         this.previewScroll.setFitToWidth(true);
-        this.previewScroll.setFitToHeight(true);
-        this.previewScroll.setStyle("-fx-background-color: white;");
+        this.previewScroll.setFitToHeight(false);
+        this.previewScroll.getStyleClass().add("session-scroll-pane");
+        this.previewScroll.setStyle(
+                "-fx-background-color: white; -fx-background-insets: 0; " +
+                "-fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0; -fx-border-insets: 0;"
+        );
 
         this.splitPane = new SplitPane();
         this.splitPane.setOrientation(javafx.geometry.Orientation.HORIZONTAL);
-        this.splitPane.getItems().addAll(editorScroll, previewScroll);
+        this.splitPane.getItems().addAll(editorBox, previewScroll);
         this.splitPane.setDividerPositions(0.5);
+        this.splitPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
 
         this.centerContainer = new StackPane();
         setCenter(centerContainer);
@@ -217,12 +297,14 @@ public class MarkdownEditorPane extends BorderPane {
         if (initialContent == null) initialContent = "";
         this.originalContent = initialContent;
         this.editor.replaceText(initialContent);
-        applyHighlighting();
+        refreshHighlightWithRect();
         updatePreview();
 
         // 编辑器内容变化：实时更新高亮与预览（纯编辑模式下不渲染预览以省开销）
         editor.textProperty().addListener((obs, oldVal, newVal) -> {
-            applyHighlighting();
+            // 文本改变后矩形选择的偏移不再可靠，清除之
+            if (hasRectSelection()) clearRectSelection();
+            refreshHighlightWithRect();
             if (currentMode != Mode.EDIT) {
                 updatePreview();
             }
@@ -265,6 +347,74 @@ public class MarkdownEditorPane extends BorderPane {
             if (e.getCode() == KeyCode.ENTER && !e.isShiftDown()) {
                 if (handleEnter()) {
                     e.consume();
+                }
+            }
+            // 矩形选择时的按键处理：删除/插入
+            if (hasRectSelection()) {
+                if (e.getCode() == KeyCode.DELETE || e.getCode() == KeyCode.BACK_SPACE) {
+                    e.consume();
+                    deleteRectSelection();
+                    return;
+                }
+                // 可打印字符：插入到每一行的矩形起始列（如果是 Shift+Enter 等特殊组合不处理）
+                if (!e.isControlDown() && !e.isMetaDown() && !e.isAltDown() && e.getCode().isLetterKey()) {
+                    // 由 KEY_TYPED 处理字符插入；这里仅阻止默认选择消失
+                }
+            }
+        });
+
+        // Alt+鼠标 矩形（列）选择
+        editor.addEventFilter(MouseEvent.MOUSE_PRESSED, e -> {
+            if (e.isAltDown() && e.getButton() == MouseButton.PRIMARY) {
+                e.consume();
+                clearRectSelection();
+                editor.deselect(); // 清除普通选择
+                int[] rc = mousePositionToRowCol(e);
+                rectStartRow = rc[0];
+                rectStartCol = rc[1];
+                rectEndRow = rc[0];
+                rectEndCol = rc[1];
+                rectSelecting = true;
+                refreshHighlightWithRect();
+            }
+        });
+        editor.addEventFilter(MouseEvent.MOUSE_DRAGGED, e -> {
+            if (rectSelecting && e.getButton() == MouseButton.PRIMARY) {
+                e.consume();
+                int[] rc = mousePositionToRowCol(e);
+                rectEndRow = rc[0];
+                rectEndCol = rc[1];
+                refreshHighlightWithRect();
+            }
+        });
+        editor.addEventFilter(MouseEvent.MOUSE_RELEASED, e -> {
+            if (rectSelecting && e.getButton() == MouseButton.PRIMARY) {
+                e.consume();
+                rectSelecting = false;
+                // 如果选择退化为单点，清除矩形选择
+                int r1 = Math.min(rectStartRow, rectEndRow), r2 = Math.max(rectStartRow, rectEndRow);
+                int c1 = Math.min(rectStartCol, rectEndCol), c2 = Math.max(rectStartCol, rectEndCol);
+                if (r1 == r2 && c1 == c2) {
+                    clearRectSelection();
+                    refreshHighlightWithRect();
+                }
+            }
+        });
+        // 普通鼠标按下（无 Alt）时清除矩形选择
+        editor.addEventFilter(MouseEvent.MOUSE_PRESSED, e -> {
+            if (!e.isAltDown() && hasRectSelection()) {
+                clearRectSelection();
+                refreshHighlightWithRect();
+            }
+        });
+
+        // 矩形选择时的字符插入：监听 KEY_TYPED（可获取实际输入字符，支持中文等）
+        editor.addEventFilter(KeyEvent.KEY_TYPED, e -> {
+            if (hasRectSelection() && !e.isControlDown() && !e.isMetaDown() && !e.isAltDown()) {
+                String ch = e.getCharacter();
+                if (ch != null && !ch.isEmpty() && !ch.equals("\r") && !ch.equals("\n") && !ch.equals("\t")) {
+                    e.consume();
+                    insertIntoRectSelection(ch);
                 }
             }
         });
@@ -368,7 +518,7 @@ public class MarkdownEditorPane extends BorderPane {
     private void applyMode() {
         centerContainer.getChildren().clear();
         switch (currentMode) {
-            case EDIT -> centerContainer.getChildren().setAll(editorScroll);
+            case EDIT -> centerContainer.getChildren().setAll(editorBox);
             case EDIT_PREVIEW -> {
                 centerContainer.getChildren().setAll(splitPane);
                 updatePreview();
@@ -592,10 +742,10 @@ public class MarkdownEditorPane extends BorderPane {
         if (text.isEmpty()) return;
         try {
             java.util.regex.Matcher m = MD_PATTERN.matcher(text);
-            StyleSpansBuilder<String> b = new StyleSpansBuilder<>();
+            StyleSpansBuilder<Collection<String>> b = new StyleSpansBuilder<>();
             int last = 0;
             while (m.find()) {
-                String style;
+                Collection<String> style;
                 if (m.group("HEADING") != null) style = STYLE_HEADING;
                 else if (m.group("CODE") != null) style = STYLE_CODE;
                 else if (m.group("LINK") != null) style = STYLE_LINK;
@@ -603,16 +753,203 @@ public class MarkdownEditorPane extends BorderPane {
                 else if (m.group("ITALIC") != null) style = STYLE_ITALIC;
                 else if (m.group("LISTMARK") != null) style = STYLE_LISTMARK;
                 else if (m.group("QUOTEMARK") != null) style = STYLE_QUOTEMARK;
-                else style = "";
-                if (m.start() > last) b.add("", m.start() - last);
+                else style = STYLE_EMPTY;
+                if (m.start() > last) b.add(STYLE_EMPTY, m.start() - last);
                 b.add(style, m.end() - m.start());
                 last = m.end();
             }
-            if (last < text.length()) b.add("", text.length() - last);
+            if (last < text.length()) b.add(STYLE_EMPTY, text.length() - last);
             editor.setStyleSpans(0, b.create());
         } catch (Exception e) {
             System.err.println("Markdown高亮异常: " + e.getMessage());
         }
+    }
+
+    // ==================== Alt+鼠标矩形选择辅助方法 ====================
+
+    /** 是否有有效的矩形选择（非退化） */
+    private boolean hasRectSelection() {
+        if (rectStartRow < 0 || rectStartCol < 0 || rectEndRow < 0 || rectEndCol < 0) return false;
+        int r1 = Math.min(rectStartRow, rectEndRow), r2 = Math.max(rectStartRow, rectEndRow);
+        int c1 = Math.min(rectStartCol, rectEndCol), c2 = Math.max(rectStartCol, rectEndCol);
+        return !(r1 == r2 && c1 == c2);
+    }
+
+    /** 清除矩形选择状态 */
+    private void clearRectSelection() {
+        rectSelecting = false;
+        rectStartRow = rectStartCol = rectEndRow = rectEndCol = -1;
+    }
+
+    /** 规范化矩形：返回 [r1, c1, r2, c2]，保证 r1<=r2, c1<=c2，并修正行号到实际范围 */
+    private int[] getNormalizedRect() {
+        int paraCount = editor.getParagraphs().size();
+        int r1 = Math.min(rectStartRow, rectEndRow);
+        int r2 = Math.max(rectStartRow, rectEndRow);
+        int c1 = Math.min(rectStartCol, rectEndCol);
+        int c2 = Math.max(rectStartCol, rectEndCol);
+        r1 = Math.max(0, Math.min(r1, paraCount - 1));
+        r2 = Math.max(0, Math.min(r2, paraCount - 1));
+        c1 = Math.max(0, c1);
+        c2 = Math.max(0, c2);
+        return new int[]{r1, c1, r2, c2};
+    }
+
+    /** 将鼠标屏幕坐标转换为编辑器中的 [行, 列]（paragraph, column） */
+    private int[] mousePositionToRowCol(MouseEvent e) {
+        double sceneX = e.getSceneX(), sceneY = e.getSceneY();
+        javafx.geometry.Point2D local = editor.sceneToLocal(sceneX, sceneY, true);
+        if (local == null) local = new javafx.geometry.Point2D(0, 0);
+        try {
+            // RichTextFX 0.11.7: hit(x,y) 返回 CharacterHit，getInsertionIndex() 得到全局字符偏移
+            org.fxmisc.richtext.CharacterHit hit = editor.hit(local.getX(), local.getY());
+            int offset = hit.getInsertionIndex();
+            // offsetToPosition 将全局偏移转为 (paragraph, column)：getMajor()=行号, getMinor()=列号
+            org.fxmisc.richtext.model.TwoDimensional.Position pos =
+                    editor.offsetToPosition(offset, org.fxmisc.richtext.model.TwoDimensional.Bias.Forward);
+            return new int[]{pos.getMajor(), pos.getMinor()};
+        } catch (Exception ignore) {}
+        // 回退：根据当前光标位置
+        return new int[]{editor.getCurrentParagraph(), editor.getCaretColumn()};
+    }
+
+    /** 重新计算语法高亮并叠加矩形选择高亮。需要时调用此方法而非直接 applyHighlighting。 */
+    private void refreshHighlightWithRect() {
+        String text = editor.getText();
+        if (text.isEmpty()) {
+            editor.setStyleSpans(0, new StyleSpansBuilder<Collection<String>>().add(STYLE_EMPTY, 0).create());
+            return;
+        }
+        try {
+            // 第一步：生成语法高亮 spans（与 applyHighlighting 相同）
+            java.util.regex.Matcher m = MD_PATTERN.matcher(text);
+            // 用列表保存每个字符的样式，以便后续叠加
+            int len = text.length();
+            @SuppressWarnings("unchecked")
+            Collection<String>[] baseStyles = new Collection[len];
+            java.util.Arrays.fill(baseStyles, STYLE_EMPTY);
+            while (m.find()) {
+                Collection<String> style;
+                if (m.group("HEADING") != null) style = STYLE_HEADING;
+                else if (m.group("CODE") != null) style = STYLE_CODE;
+                else if (m.group("LINK") != null) style = STYLE_LINK;
+                else if (m.group("BOLD") != null) style = STYLE_BOLD;
+                else if (m.group("ITALIC") != null) style = STYLE_ITALIC;
+                else if (m.group("LISTMARK") != null) style = STYLE_LISTMARK;
+                else if (m.group("QUOTEMARK") != null) style = STYLE_QUOTEMARK;
+                else style = STYLE_EMPTY;
+                for (int i = m.start(); i < m.end() && i < len; i++) {
+                    baseStyles[i] = style;
+                }
+            }
+
+            // 第二步：若存在矩形选择，叠加选择高亮样式
+            if (hasRectSelection()) {
+                int[] rc = getNormalizedRect();
+                int r1 = rc[0], c1 = rc[1], r2 = rc[2], c2 = rc[3];
+                for (int r = r1; r <= r2; r++) {
+                    String para = editor.getParagraph(r).getText();
+                    int paraLen = para.length();
+                    int startCol = Math.min(c1, paraLen);
+                    int endCol = Math.min(c2, paraLen);
+                    if (startCol >= endCol) continue;
+                    int paraOffset = editor.getAbsolutePosition(r, 0);
+                    for (int c = startCol; c < endCol; c++) {
+                        int idx = paraOffset + c;
+                        if (idx < len) {
+                            Collection<String> existing = baseStyles[idx];
+                            // 合并样式：若已有语法高亮，追加矩形选择类名
+                            if (existing == null || existing.isEmpty()) {
+                                baseStyles[idx] = STYLE_RECT_SELECT;
+                            } else if (!existing.contains("md-rect-select")) {
+                                java.util.List<String> merged = new java.util.ArrayList<>(existing);
+                                merged.add("md-rect-select");
+                                baseStyles[idx] = merged;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 第三步：将 per-char 样式数组压缩为 StyleSpansBuilder
+            StyleSpansBuilder<Collection<String>> b = new StyleSpansBuilder<>();
+            int i = 0;
+            while (i < len) {
+                Collection<String> cur = baseStyles[i];
+                int j = i + 1;
+                while (j < len && safeEq(baseStyles[j], cur)) j++;
+                b.add(cur == null ? STYLE_EMPTY : cur, j - i);
+                i = j;
+            }
+            editor.setStyleSpans(0, b.create());
+        } catch (Exception e) {
+            System.err.println("矩形高亮异常: " + e.getMessage());
+            e.printStackTrace();
+            // 失败时回退到普通语法高亮
+            applyHighlighting();
+        }
+    }
+
+    private static boolean safeEq(Collection<String> a, Collection<String> b) {
+        if (a == null) return b == null;
+        return a.equals(b);
+    }
+
+    /** 删除矩形选择区域：从后往前逐行替换，避免前序修改影响行/列偏移。 */
+    private void deleteRectSelection() {
+        if (!hasRectSelection()) return;
+        int[] rc = getNormalizedRect();
+        int r1 = rc[0], c1 = rc[1], r2 = rc[2], c2 = rc[3];
+        // 从最后一行往前行处理，这样前面行的修改不会影响后面行的位置
+        for (int r = r2; r >= r1; r--) {
+            String para = editor.getParagraph(r).getText();
+            int paraLen = para.length();
+            int startCol = Math.min(c1, paraLen);
+            int endCol = Math.min(c2, paraLen);
+            if (startCol >= endCol) continue;
+            int startOffset = editor.getAbsolutePosition(r, startCol);
+            int endOffset = editor.getAbsolutePosition(r, endCol);
+            editor.replaceText(startOffset, endOffset, "");
+        }
+        clearRectSelection();
+        refreshHighlightWithRect();
+    }
+
+    /** 在矩形选择区域每一行的 c1 列位置插入 text；若矩形有宽度则先删除宽度部分再插入。 */
+    private void insertIntoRectSelection(String text) {
+        if (text == null || text.isEmpty()) return;
+        if (!hasRectSelection()) {
+            // 无矩形选择时按普通插入处理（但此方法仅在有矩形选择时被调用）
+            int pos = editor.getCaretPosition();
+            editor.insertText(pos, text);
+            return;
+        }
+        int[] rc = getNormalizedRect();
+        int r1 = rc[0], c1 = rc[1], r2 = rc[2], c2 = rc[3];
+        // 先删除矩形选择区域（逐行从后往前）
+        if (c2 > c1) {
+            for (int r = r2; r >= r1; r--) {
+                String para = editor.getParagraph(r).getText();
+                int paraLen = para.length();
+                int sc = Math.min(c1, paraLen);
+                int ec = Math.min(c2, paraLen);
+                if (sc < ec) {
+                    int so = editor.getAbsolutePosition(r, sc);
+                    int eo = editor.getAbsolutePosition(r, ec);
+                    editor.replaceText(so, eo, "");
+                }
+            }
+        }
+        // 从后往前逐行在 c1 位置插入，保证前面行的插入不影响后续行的段落号
+        for (int r = r2; r >= r1; r--) {
+            String para = editor.getParagraph(r).getText();
+            int paraLen = para.length();
+            int col = Math.min(c1, paraLen);
+            int offset = editor.getAbsolutePosition(r, col);
+            editor.insertText(offset, text);
+        }
+        clearRectSelection();
+        refreshHighlightWithRect();
     }
 
     // ==================== 预览渲染 ====================
@@ -621,219 +958,18 @@ public class MarkdownEditorPane extends BorderPane {
         String md = editor.getText();
         previewBox.getChildren().clear();
         try {
-            renderMarkdownToVBox(md, new InlineStyle(), previewBox.getChildren());
+            renderMarkdown(md, new InlineStyle(), previewBox.getChildren());
         } catch (Exception e) {
+            e.printStackTrace();
             Label err = new Label("预览渲染失败: " + e.getMessage());
             err.setStyle("-fx-text-fill: #c00; -fx-font-size: 11px;");
             previewBox.getChildren().add(err);
         }
     }
 
-    // ==================== 预览区渲染（混合：InlineCssTextArea 文本 + GridPane 表格） ====================
-    // 文本段渲染为可选中的 InlineCssTextArea（复用 renderInline/highlightCode/styledText 产出带 CSS 的 Text）；
-    // 表格段渲染为可视 GridPane（复用既有 renderTableLines/tableCell，正确处理 CJK 对齐与边框）。
-
     /**
-     * 分段渲染到预览 VBox：文本段→可选中的 InlineCssTextArea；表格段→可视 GridPane（复用 renderTableLines）。
-     * 文本与表格各自独立节点：选中文本在文本区生效，表格保持可视化边框/对齐，互不影响。
-     */
-    private void renderMarkdownToVBox(String md, InlineStyle base, ObservableList<Node> target) {
-        String[] lines = md.split("\n", -1);
-        int i = 0;
-        StringBuilder textBuf = new StringBuilder();
-        while (i < lines.length) {
-            // 表格块：表头行 + 分隔行 + 连续数据行
-            if (i + 1 < lines.length && isTableRow(lines[i]) && isDelimiterRow(lines[i + 1])) {
-                flushTextSegmentToVBox(textBuf, base, target);
-                List<String> tableLines = new ArrayList<>();
-                tableLines.add(lines[i]);
-                tableLines.add(lines[i + 1]);
-                int j = i + 2;
-                while (j < lines.length && isTableRow(lines[j])) {
-                    tableLines.add(lines[j]);
-                    j++;
-                }
-                renderTableLines(tableLines, base, target);
-                Region gap = new Region();
-                gap.setPrefHeight(6);
-                target.add(gap);
-                i = j;
-            } else {
-                if (textBuf.length() > 0) textBuf.append('\n');
-                textBuf.append(lines[i]);
-                i++;
-            }
-        }
-        flushTextSegmentToVBox(textBuf, base, target);
-    }
-
-    /** 将累积的文本段解析并渲染为一个可选中的 InlineCssTextArea，加入预览 VBox */
-    private void flushTextSegmentToVBox(StringBuilder textBuf, InlineStyle base, ObservableList<Node> target) {
-        if (textBuf.length() == 0) return;
-        String text = textBuf.toString();
-        textBuf.setLength(0);
-        List<Text> frags = new ArrayList<>();
-        appendBlocksToArea(PREVIEW_PARSER.parse(text), base, frags);
-        if (frags.isEmpty()) return;
-        target.add(createPreviewArea(frags));
-    }
-
-    /** 由带 CSS 的 Text 片段构建只读 InlineCssTextArea：支持选中、Ctrl+C、右键复制/全选 */
-    private InlineCssTextArea createPreviewArea(List<Text> frags) {
-        InlineCssTextArea area = new InlineCssTextArea();
-        area.setEditable(false);
-        area.setWrapText(true);
-        area.setStyle(
-                "-fx-background-color: white; -fx-padding: 0; " +
-                "-fx-font-family: 'Segoe UI','Microsoft YaHei',sans-serif; " +
-                "-fx-font-size: 14px; -fx-text-fill: #333;"
-        );
-        StringBuilder fullText = new StringBuilder();
-        StyleSpansBuilder<String> spans = new StyleSpansBuilder<>();
-        for (Text t : frags) {
-            String s = t.getText();
-            if (s == null || s.isEmpty()) continue;
-            String style = t.getStyle() == null ? "" : t.getStyle();
-            fullText.append(s);
-            spans.add(style, s.length());
-        }
-        if (fullText.length() > 0) {
-            area.replaceText(fullText.toString());
-            area.setStyleSpans(0, spans.create());
-        }
-        // 让文本区高度随内容自适应（不放在 VirtualizedScrollPane 中，由外层 ScrollPane 统一滚动）
-        area.prefHeightProperty().bind(area.totalHeightEstimateProperty());
-
-        ContextMenu menu = new ContextMenu();
-        MenuItem copyItem = new MenuItem("复制");
-        copyItem.setOnAction(e -> area.copy());
-        MenuItem selectAllItem = new MenuItem("全选");
-        selectAllItem.setOnAction(e -> area.selectAll());
-        menu.getItems().addAll(copyItem, selectAllItem);
-        area.setOnContextMenuRequested(e -> menu.show(area, e.getScreenX(), e.getScreenY()));
-        area.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
-            if (e.isControlDown() && e.getCode() == KeyCode.C) {
-                area.copy();
-                e.consume();
-            }
-        });
-        return area;
-    }
-
-    private void appendBlocksToArea(org.commonmark.node.Node parent, InlineStyle base, List<Text> out) {
-        for (org.commonmark.node.Node child = parent.getFirstChild(); child != null; child = child.getNext()) {
-            appendBlockToArea(child, base, out);
-        }
-    }
-
-    private void appendBlockToArea(org.commonmark.node.Node node, InlineStyle base, List<Text> out) {
-        if (node instanceof Paragraph p) {
-            renderInline(p, base, out);
-            out.add(textNode("\n\n", baseCss(base)));
-        } else if (node instanceof Heading h) {
-            int size = headingSize(h.getLevel());
-            String headingCss = "-fx-font-size: " + size + "px; -fx-font-weight: bold; -fx-fill: #1163a6;";
-            List<Text> inlines = new ArrayList<>();
-            renderInline(h, base, inlines);
-            for (Text t : inlines) {
-                String s = t.getStyle() == null ? "" : t.getStyle();
-                out.add(textNode(t.getText(), s + " " + headingCss));
-            }
-            out.add(textNode("\n\n", baseCss(base)));
-        } else if (node instanceof BlockQuote bq) {
-            appendBlockQuoteToArea(bq, base, out);
-        } else if (node instanceof BulletList) {
-            appendListToArea(node, base, false, 1, "", out);
-            out.add(textNode("\n", baseCss(base)));
-        } else if (node instanceof OrderedList ol) {
-            appendListToArea(ol, base, true, ol.getStartNumber(), "", out);
-            out.add(textNode("\n", baseCss(base)));
-        } else if (node instanceof FencedCodeBlock fcb) {
-            appendCodeToArea(fcb.getLiteral(), fcb.getInfo(), out);
-            out.add(textNode("\n", baseCss(base)));
-        } else if (node instanceof IndentedCodeBlock icb) {
-            appendCodeToArea(icb.getLiteral(), "", out);
-            out.add(textNode("\n", baseCss(base)));
-        } else if (node instanceof ThematicBreak) {
-            out.add(textNode("\n———\n\n", baseCss(base)));
-        } else if (node instanceof HtmlBlock hb) {
-            out.add(textNode(hb.getLiteral(),
-                    "-fx-font-family: 'Consolas',monospace; -fx-font-size: 11px; -fx-fill: #888;"));
-            out.add(textNode("\n", baseCss(base)));
-        } else {
-            appendBlocksToArea(node, base, out);
-        }
-    }
-
-    private void appendBlockQuoteToArea(BlockQuote bq, InlineStyle base, List<Text> out) {
-        InlineStyle qs = base.copy();
-        qs.quote = true;
-        for (org.commonmark.node.Node child = bq.getFirstChild(); child != null; child = child.getNext()) {
-            out.add(textNode("> ", STYLE_QUOTEMARK));
-            if (child instanceof Paragraph p) {
-                renderInline(p, qs, out);
-                out.add(textNode("\n", baseCss(qs)));
-            } else {
-                appendBlockToArea(child, qs, out);
-            }
-        }
-        out.add(textNode("\n", baseCss(base)));
-    }
-
-    private void appendListToArea(org.commonmark.node.Node list, InlineStyle base, boolean ordered, int start,
-                                  String indent, List<Text> out) {
-        int index = start;
-        for (org.commonmark.node.Node item = list.getFirstChild(); item != null; item = item.getNext()) {
-            if (!(item instanceof ListItem)) continue;
-            String marker = indent + (ordered ? (index + ". ") : "• ");
-            out.add(textNode(marker, STYLE_LISTMARK));
-            org.commonmark.node.Node firstChild = item.getFirstChild();
-            if (firstChild instanceof Paragraph p) {
-                renderInline(p, base, out);
-                out.add(textNode("\n", baseCss(base)));
-                org.commonmark.node.Node child = firstChild.getNext();
-                while (child != null) {
-                    if (child instanceof BulletList) {
-                        appendListToArea(child, base, false, 1, indent + "  ", out);
-                    } else if (child instanceof OrderedList ol2) {
-                        appendListToArea(ol2, base, true, ol2.getStartNumber(), indent + "  ", out);
-                    } else {
-                        appendBlockToArea(child, base, out);
-                    }
-                    child = child.getNext();
-                }
-            } else if (firstChild != null) {
-                appendBlockToArea(firstChild, base, out);
-            }
-            index++;
-        }
-    }
-
-    private void appendCodeToArea(String code, String lang, List<Text> out) {
-        String l = lang == null ? "" : lang.trim().toLowerCase();
-        List<Text> parts = new ArrayList<>();
-        highlightCode(code, l, parts);
-        if (parts.isEmpty()) {
-            out.add(codeText(code, HL_BASE));
-        } else {
-            out.addAll(parts);
-        }
-    }
-
-    /** 基础样式 CSS（复用 styledText 的 CSS 生成逻辑） */
-    private String baseCss(InlineStyle s) {
-        return styledText("", s).getStyle();
-    }
-
-    /** 构造一个带指定 CSS 的 Text 节点（用于结构性文本，如换行、表格边框、列表标记） */
-    private Text textNode(String content, String css) {
-        Text t = new Text(content);
-        t.setStyle(css == null ? "" : css);
-        return t;
-    }
-
-    /**
-     * 分段渲染 Markdown：自行检测 GFM 表格块并渲染为表格，其余文本交给 commonmark 解析。
+     * 分段渲染 Markdown（预览 + PDF 导出共用）：自行检测 GFM 表格块并渲染为 GridPane，
+     * 其余文本交给 commonmark 解析，由 renderBlock 产出 TextFlow/VBox/StackPane 等带块级结构的节点。
      * 不依赖 commonmark-ext-gfm-tables 扩展。
      */
     private void renderMarkdown(String md, InlineStyle base, ObservableList<Node> target) {
@@ -979,7 +1115,21 @@ public class MarkdownEditorPane extends BorderPane {
         }
     }
 
-    /** 渲染代码块：按语言做轻量语法高亮，放入带背景的容器 */
+    /** 更新编辑器行号显示：复用 Label，根据行数切换 visible/managed */
+    private void updateLineNumbers(String text) {
+        int lineCount = 1;
+        if (text != null && !text.isEmpty()) {
+            lineCount = text.split("\n", -1).length;
+        }
+        int visibleCount = Math.min(lineCount, lineNumberLabels.size());
+        for (int i = 0; i < lineNumberLabels.size(); i++) {
+            boolean show = i < visibleCount;
+            lineNumberLabels.get(i).setVisible(show);
+            lineNumberLabels.get(i).setManaged(show);
+        }
+    }
+
+    /** 渲染代码块：按语言做轻量语法高亮，放入带背景的容器，左侧带行号 */
     private Node renderCodeBlock(String literal, String info) {
         String lang = info == null ? "" : info.trim().toLowerCase();
         List<Text> parts = new ArrayList<>();
@@ -991,7 +1141,25 @@ public class MarkdownEditorPane extends BorderPane {
         }
         TextFlow flow = new TextFlow(parts.toArray(new Text[0]));
         flow.setPadding(new Insets(8, 12, 8, 12));
-        StackPane pane = new StackPane(flow);
+
+        // 生成代码块行号
+        String[] codeLines = literal.split("\n", -1);
+        StringBuilder lineNumText = new StringBuilder();
+        for (int i = 1; i <= codeLines.length; i++) {
+            lineNumText.append(i).append("\n");
+        }
+        Text lineNumTextNode = new Text(lineNumText.toString());
+        lineNumTextNode.setStyle("-fx-fill: #aaa; -fx-font-family: 'Consolas','Courier New',monospace; -fx-font-size: 12px;");
+        TextFlow lineNumFlow = new TextFlow(lineNumTextNode);
+        lineNumFlow.setPadding(new Insets(8, 6, 8, 4));
+
+        // 使用 HBox 包裹行号和代码
+        HBox codeBox = new HBox(lineNumFlow, flow);
+        codeBox.setStyle("-fx-background-color: #f6f8fa;");
+        codeBox.setPadding(new Insets(0));
+
+        // 整体容器带圆角边框
+        StackPane pane = new StackPane(codeBox);
         pane.setStyle("-fx-background-color: #f6f8fa; -fx-background-radius: 4; " +
                 "-fx-border-color: #e0e0e0; -fx-border-radius: 4;");
         return pane;

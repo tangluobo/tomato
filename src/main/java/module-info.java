@@ -52,9 +52,23 @@ module tomato {
     requires org.apache.xmlgraphics.batik.script;
     requires org.apache.xmlgraphics.batik.xml;
     requires org.commonmark;
+    requires flexmark;
+    requires flexmark.ext.abbreviation;
+    requires flexmark.ext.aside;
+    requires flexmark.ext.gfm.strikethrough;
+    requires flexmark.ext.gfm.tasklist;
+    requires flexmark.ext.tables;
+    requires flexmark.ext.wikilink;
+    requires flexmark.util.ast;
+    requires flexmark.util.html;
+    requires flexmark.util.misc;
+    requires flexmark.util.sequence;
     requires de.jensd.fx.glyphs.commons;
     requires de.jensd.fx.glyphs.fontawesome;
     requires com.fasterxml.jackson.databind;
+    requires com.google.common;
+    requires java.prefs;
+    requires com.miglayout.javafx;
 
     opens com.tangluobo.tomato to javafx.fxml;
     exports com.tangluobo.tomato;

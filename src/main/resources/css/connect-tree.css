@@ -839,6 +839,66 @@
     -fx-border-insets: 0;
 }
 
+/* RichTextFX VirtualizedScrollPane: 清除viewport默认间距 */
+.virtualized-scroll-pane {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-border-insets: 0;
+}
+
+.virtualized-scroll-pane > .viewport {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-border-insets: 0;
+}
+
+.virtualized-scroll-pane > .viewport > .content {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-border-insets: 0;
+}
+
+/* RichTextFX styled-text-area: 清除默认padding */
+.styled-text-area {
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
+.styled-text-area .paragraph-box {
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
+.styled-text-area .paragraph-box .paragraph-text {
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
+/* RichTextFX virtualized-flow: 清除渲染容器默认间距 */
+.virtualized-scroll-pane > .viewport > .virtualized-flow {
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
+.virtualized-scroll-pane > .viewport > .virtualized-flow > .clipped-container {
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
+.virtualized-scroll-pane > .viewport > .virtualized-flow > .clipped-container > .sheet {
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
 /* Trae会话管理 ListView：深度清除默认间距，让内容紧贴容器边缘 */
 .trae-session-task-list {
     -fx-background-color: transparent;
