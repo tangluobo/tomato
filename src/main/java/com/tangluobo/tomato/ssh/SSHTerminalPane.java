@@ -280,6 +280,13 @@ public class SSHTerminalPane extends BorderPane {
         // 设置粘贴回调（Ctrl+Shift+V触发）
         terminalView.setPasteHandler(() -> doPaste());
 
+        // 设置自动滚动回调（用户输入时自动滚动到底部）
+        terminalView.setAutoScrollHandler(() -> {
+            if (!emulator.isUsingAltBuffer() && emulator.getScrollOffset() != 0) {
+                terminalView.setScrollOffset(0);
+            }
+        });
+
         // 设置键盘输入回调
         terminalView.setKeyInputHandler(data -> {
             // 连接丢失时，按回车重新连接
@@ -639,6 +646,10 @@ public class SSHTerminalPane extends BorderPane {
                     e.printStackTrace();
                 }
                 terminalView.clearSelection();
+                // 粘贴后自动滚动到底部
+                if (!emulator.isUsingAltBuffer() && emulator.getScrollOffset() != 0) {
+                    terminalView.setScrollOffset(0);
+                }
             }
         }
     }
