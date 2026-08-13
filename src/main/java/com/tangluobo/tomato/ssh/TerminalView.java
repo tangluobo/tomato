@@ -86,10 +86,17 @@ public class TerminalView extends Canvas {
         void onResize(int cols, int rows, int width, int height);
     }
 
+    // 粘贴回调
     public interface PasteHandler {
         void onPaste();
     }
     private PasteHandler pasteHandler;
+
+    // 自动滚动回调（用户输入时触发，滚动到底部）
+    public interface AutoScrollHandler {
+        void onAutoScroll();
+    }
+    private AutoScrollHandler autoScrollHandler;
 
     public TerminalView(TerminalEmulator emulator) {
         this.emulator = emulator;
@@ -217,6 +224,19 @@ public class TerminalView extends Canvas {
         this.pasteHandler = handler;
     }
 
+    public void setAutoScrollHandler(AutoScrollHandler handler) {
+        this.autoScrollHandler = handler;
+    }
+
+    /**
+     * 触发自动滚动到底部（当用户有实际输入时调用）
+     */
+    private void fireAutoScroll() {
+        if (autoScrollHandler != null) {
+            autoScrollHandler.onAutoScroll();
+        }
+    }
+
     /**
      * 由外部滚动条驱动滚动
      */
@@ -250,6 +270,7 @@ public class TerminalView extends Canvas {
             data = "\033".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.ENTER) {
             data = "\r".getBytes();
+            fireAutoScroll();
         } else if (event.getCode() == javafx.scene.input.KeyCode.BACK_SPACE) {
             data = "\b".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.TAB) {
@@ -294,6 +315,7 @@ public class TerminalView extends Canvas {
             return;
         } else if (event.getCode() == javafx.scene.input.KeyCode.C && event.isControlDown() && !event.isShiftDown()) {
             data = "\003".getBytes();
+            fireAutoScroll();
         } else if (event.getCode() == javafx.scene.input.KeyCode.D && event.isControlDown() && !event.isShiftDown()) {
             data = "\004".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.Z && event.isControlDown()) {
@@ -385,6 +407,7 @@ public class TerminalView extends Canvas {
             char c = ch.charAt(0);
             if (c >= 0x20 && c != 0x7F) {
                 keyInputHandler.handleInput(ch.getBytes());
+                fireAutoScroll();
                 event.consume();
             }
         }
@@ -409,6 +432,7 @@ public class TerminalView extends Canvas {
         String committed = event.getCommitted();
         if (committed != null && !committed.isEmpty()) {
             keyInputHandler.handleInput(committed.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            fireAutoScroll();
             event.consume();
         }
     }
