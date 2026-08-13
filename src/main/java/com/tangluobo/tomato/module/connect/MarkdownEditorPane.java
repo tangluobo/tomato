@@ -268,6 +268,9 @@ public class MarkdownEditorPane extends BorderPane {
         // 初始行号
         updateLineNumbers("");
 
+        // 编辑器右键菜单：剪切/复制/粘贴/全选
+        setupEditorContextMenu();
+
         // 预览区：VBox + ScrollPane，子节点为 TextFlow/VBox/StackPane（块级结构）与 GridPane（表格）混合
         this.previewBox = new VBox(6);
         this.previewBox.setPadding(new Insets(0));
@@ -1073,7 +1076,9 @@ public class MarkdownEditorPane extends BorderPane {
         if (node instanceof Paragraph p) {
             List<Text> inlines = new ArrayList<>();
             renderInline(p, base, inlines);
-            target.add(new TextFlow(inlines.toArray(new Text[0])));
+            TextFlow flow = new TextFlow(inlines.toArray(new Text[0]));
+            setupSelectableTextFlow(flow);
+            target.add(flow);
         } else if (node instanceof Heading h) {
             List<Text> inlines = new ArrayList<>();
             renderInline(h, base, inlines);
@@ -1084,6 +1089,7 @@ public class MarkdownEditorPane extends BorderPane {
             }
             TextFlow flow = new TextFlow(inlines.toArray(new Text[0]));
             flow.setPadding(new Insets(6, 0, 4, 0));
+            setupSelectableTextFlow(flow);
             target.add(flow);
         } else if (node instanceof BlockQuote bq) {
             VBox quoteBox = new VBox(4);
@@ -1129,6 +1135,125 @@ public class MarkdownEditorPane extends BorderPane {
         }
     }
 
+    /** 编辑器右键菜单：剪切/复制/粘贴/全选，菜单项根据当前状态动态启用 */
+    private void setupEditorContextMenu() {
+        javafx.scene.input.Clipboard systemClipboard = javafx.scene.input.Clipboard.getSystemClipboard();
+        MenuItem cutItem = new MenuItem("剪切");
+        MenuItem copyItem = new MenuItem("复制");
+        MenuItem pasteItem = new MenuItem("粘贴");
+        MenuItem selectAllItem = new MenuItem("全选");
+
+        cutItem.setOnAction(e -> editor.cut());
+        copyItem.setOnAction(e -> editor.copy());
+        pasteItem.setOnAction(e -> editor.paste());
+        selectAllItem.setOnAction(e -> editor.selectAll());
+
+        ContextMenu contextMenu = new ContextMenu(cutItem, copyItem, pasteItem,
+                new SeparatorMenuItem(), selectAllItem);
+        contextMenu.setOnShowing(e -> {
+            boolean hasSelection = !editor.getSelectedText().isEmpty();
+            cutItem.setDisable(!hasSelection);
+            copyItem.setDisable(!hasSelection);
+            pasteItem.setDisable(!systemClipboard.hasString());
+            selectAllItem.setDisable(editor.getLength() == 0);
+        });
+        editor.setContextMenu(contextMenu);
+    }
+
+    /** 为预览区 TextFlow 启用鼠标拖选：拖动时高亮选中字符，释放后复制到剪贴板；并提供右键菜单"复制整段" */
+    private void setupSelectableTextFlow(TextFlow flow) {
+        final int[] selStart = {-1};
+        final List<Text> highlighted = new ArrayList<>();
+        final java.util.Map<Text, String> originalStyles = new java.util.IdentityHashMap<>();
+
+        // 右键菜单：复制整段（TextFlow 不是 Control，无 setContextMenu，用 ContextMenuRequested 事件手动弹出）
+        MenuItem copyAllItem = new MenuItem("复制整段");
+        copyAllItem.setOnAction(e -> {
+            StringBuilder sb = new StringBuilder();
+            for (javafx.scene.Node n : flow.getChildren()) {
+                if (n instanceof Text t) sb.append(t.getText());
+            }
+            javafx.scene.input.ClipboardContent cc = new javafx.scene.input.ClipboardContent();
+            cc.putString(sb.toString());
+            javafx.scene.input.Clipboard.getSystemClipboard().setContent(cc);
+        });
+        ContextMenu flowMenu = new ContextMenu(copyAllItem);
+        flow.setOnContextMenuRequested(e -> {
+            flowMenu.show(flow, e.getScreenX(), e.getScreenY());
+            e.consume();
+        });
+
+        // 鼠标按下：记录起始字符索引，清除上次高亮
+        flow.setOnMousePressed(e -> {
+            if (e.getButton() != MouseButton.PRIMARY) return;
+            clearSelection(highlighted, originalStyles);
+            javafx.scene.text.HitInfo hit = flow.hitTest(new javafx.geometry.Point2D(e.getX(), e.getY()));
+            selStart[0] = hit.getInsertionIndex();
+            flow.requestFocus();
+        });
+
+        // 鼠标拖动：高亮范围内的 Text（用浅蓝背景效果，这里改 fill 为蓝色并加 underline）
+        flow.setOnMouseDragged(e -> {
+            if (selStart[0] < 0) return;
+            javafx.scene.text.HitInfo hit = flow.hitTest(new javafx.geometry.Point2D(e.getX(), e.getY()));
+            int selEnd = hit.getInsertionIndex();
+            int start = Math.min(selStart[0], selEnd);
+            int end = Math.max(selStart[0], selEnd);
+            clearSelection(highlighted, originalStyles);
+            int cum = 0;
+            for (javafx.scene.Node n : flow.getChildren()) {
+                if (!(n instanceof Text)) continue;
+                Text t = (Text) n;
+                int tStart = cum;
+                int tEnd = cum + t.getText().length();
+                cum = tEnd;
+                if (tEnd <= start || tStart >= end) continue;
+                originalStyles.putIfAbsent(t, t.getStyle() == null ? "" : t.getStyle());
+                t.setStyle(originalStyles.get(t) + " -fx-fill: #1565c0; -fx-underline: true;");
+                highlighted.add(t);
+            }
+        });
+
+        // 鼠标释放：拼接选中字符并复制到剪贴板，1.5 秒后清除高亮
+        flow.setOnMouseReleased(e -> {
+            if (selStart[0] < 0) return;
+            javafx.scene.text.HitInfo hit = flow.hitTest(new javafx.geometry.Point2D(e.getX(), e.getY()));
+            int selEnd = hit.getInsertionIndex();
+            int start = Math.min(selStart[0], selEnd);
+            int end = Math.max(selStart[0], selEnd);
+            selStart[0] = -1;
+            if (start == end) return;
+            StringBuilder sb = new StringBuilder();
+            int cum = 0;
+            for (javafx.scene.Node n : flow.getChildren()) {
+                if (!(n instanceof Text)) continue;
+                Text t = (Text) n;
+                int tStart = cum;
+                int tEnd = cum + t.getText().length();
+                cum = tEnd;
+                int s = Math.max(start, tStart);
+                int en = Math.min(end, tEnd);
+                if (s < en) sb.append(t.getText(), s - tStart, en - tStart);
+            }
+            if (sb.length() > 0) {
+                javafx.scene.input.ClipboardContent cc = new javafx.scene.input.ClipboardContent();
+                cc.putString(sb.toString());
+                javafx.scene.input.Clipboard.getSystemClipboard().setContent(cc);
+            }
+            PauseTransition clear = new PauseTransition(javafx.util.Duration.millis(1500));
+            clear.setOnFinished(ev -> clearSelection(highlighted, originalStyles));
+            clear.play();
+        });
+    }
+
+    private void clearSelection(List<Text> highlighted, java.util.Map<Text, String> originalStyles) {
+        for (Text t : highlighted) {
+            t.setStyle(originalStyles.getOrDefault(t, ""));
+        }
+        highlighted.clear();
+        originalStyles.clear();
+    }
+
     /** 渲染代码块：按语言做轻量语法高亮，放入带背景的容器，左侧带行号 */
     private Node renderCodeBlock(String literal, String info) {
         String lang = info == null ? "" : info.trim().toLowerCase();
@@ -1158,10 +1283,37 @@ public class MarkdownEditorPane extends BorderPane {
         codeBox.setStyle("-fx-background-color: #f6f8fa;");
         codeBox.setPadding(new Insets(0));
 
-        // 整体容器带圆角边框
-        StackPane pane = new StackPane(codeBox);
+        // 右上角复制按钮：点击复制代码内容到剪贴板
+        Label copyBtn = new Label();
+        copyBtn.setGraphic(FontAwesomeIconFactory.get().createIcon(FontAwesomeIcon.COPY, "12"));
+        copyBtn.setStyle("-fx-background-color: transparent; -fx-cursor: hand; " +
+                "-fx-text-fill: #888; -fx-padding: 2;");
+        copyBtn.setTooltip(new Tooltip("复制代码"));
+        copyBtn.setOnMouseClicked(e -> {
+            javafx.scene.input.ClipboardContent cc = new javafx.scene.input.ClipboardContent();
+            cc.putString(literal);
+            javafx.scene.input.Clipboard.getSystemClipboard().setContent(cc);
+            // 切换图标为对勾反馈
+            copyBtn.setGraphic(FontAwesomeIconFactory.get().createIcon(FontAwesomeIcon.CHECK, "12"));
+            copyBtn.setStyle("-fx-background-color: transparent; -fx-cursor: hand; " +
+                    "-fx-text-fill: #28a745; -fx-padding: 2;");
+            PauseTransition revert = new PauseTransition(javafx.util.Duration.millis(1200));
+            revert.setOnFinished(ev -> {
+                copyBtn.setGraphic(FontAwesomeIconFactory.get().createIcon(FontAwesomeIcon.COPY, "12"));
+                copyBtn.setStyle("-fx-background-color: transparent; -fx-cursor: hand; " +
+                        "-fx-text-fill: #888; -fx-padding: 2;");
+            });
+            revert.play();
+        });
+
+        // 整体容器带圆角边框，复制按钮悬浮于右上角
+        StackPane pane = new StackPane(codeBox, copyBtn);
         pane.setStyle("-fx-background-color: #f6f8fa; -fx-background-radius: 4; " +
                 "-fx-border-color: #e0e0e0; -fx-border-radius: 4;");
+        StackPane.setAlignment(codeBox, Pos.CENTER);
+        StackPane.setAlignment(copyBtn, Pos.TOP_RIGHT);
+        StackPane.setMargin(copyBtn, new Insets(4, 6, 0, 0));
+        VBox.setMargin(pane, new Insets(0, 5, 0, 5));
         return pane;
     }
 
@@ -1499,6 +1651,7 @@ public class MarkdownEditorPane extends BorderPane {
             }
         }
         TextFlow flow = new TextFlow(inlines.toArray(new Text[0]));
+        setupSelectableTextFlow(flow);
         StackPane pane = new StackPane(flow);
         pane.setPadding(new Insets(6, 10, 6, 10));
         String bg = header ? "#f6f8fa" : "white";
@@ -1528,6 +1681,7 @@ public class MarkdownEditorPane extends BorderPane {
                 renderInline(item, base, inlines);
             }
             TextFlow flow = new TextFlow(inlines.toArray(new Text[0]));
+            setupSelectableTextFlow(flow);
             HBox itemBox = new HBox(flow);
             itemBox.setPadding(new Insets(0, 0, 0, 16));
             listBox.getChildren().add(itemBox);
@@ -1544,6 +1698,7 @@ public class MarkdownEditorPane extends BorderPane {
                     renderInline(p2, base, sub);
                     TextFlow subFlow = new TextFlow(sub.toArray(new Text[0]));
                     subFlow.setPadding(new Insets(0, 0, 0, 16));
+                    setupSelectableTextFlow(subFlow);
                     listBox.getChildren().add(subFlow);
                 } else {
                     renderBlock(child, base, listBox.getChildren());
