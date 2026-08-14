@@ -2485,6 +2485,228 @@ public class DatabaseService {
         return idx >= 0 && idx < row.size() ? row.get(idx) : "";
     }
 
+    // ==================== 复制表功能 ====================
+
+    /**
+     * 复制表：根据是否同连接选择不同策略
+     * @param srcConfig 源连接
+     * @param srcDb 源数据库
+     * @param srcSchema 源schema（可为null）
+     * @param srcTable 源表名
+     * @param dstConfig 目标连接
+     * @param dstDb 目标数据库
+     * @param dstSchema 目标schema（可为null）
+     * @param dstTable 目标表名
+     * @param copyStructure 是否复制结构
+     * @param copyData 是否复制数据
+     * @param dropIfExists 目标存在时是否先删除
+     */
+    public static void copyTable(ConnectionConfig srcConfig, String srcDb, String srcSchema, String srcTable,
+                                 ConnectionConfig dstConfig, String dstDb, String dstSchema, String dstTable,
+                                 boolean copyStructure, boolean copyData, boolean dropIfExists) throws Exception {
+        boolean sameConn = srcConfig.getId() != null && srcConfig.getId().equals(dstConfig.getId());
+        if (sameConn) {
+            copyTableSameConnection(srcConfig, srcDb, srcSchema, srcTable, dstDb, dstSchema, dstTable,
+                    copyStructure, copyData, dropIfExists);
+        } else {
+            copyTableCrossConnection(srcConfig, srcDb, srcSchema, srcTable, dstConfig, dstDb, dstSchema, dstTable,
+                    copyStructure, copyData, dropIfExists);
+        }
+    }
+
+    /**
+     * 同连接复制表：使用 CREATE TABLE ... LIKE + INSERT INTO ... SELECT（效率更高）
+     */
+    public static void copyTableSameConnection(ConnectionConfig config,
+                                               String srcDb, String srcSchema, String srcTable,
+                                               String dstDb, String dstSchema, String dstTable,
+                                               boolean copyStructure, boolean copyData, boolean dropIfExists) throws Exception {
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, srcDb)
+                : getConnection(config);
+
+        try (Statement stmt = conn.createStatement()) {
+            // 1. 目标表存在则删除
+            if (dropIfExists) {
+                String dropSql = buildDropTableSql(config, dstDb, dstSchema, dstTable);
+                try { stmt.executeUpdate(dropSql); } catch (Exception ignore) {}
+            }
+
+            String srcQualified = buildQualifiedTable(config, srcDb, srcSchema, srcTable);
+            String dstQualified = buildQualifiedTable(config, dstDb, dstSchema, dstTable);
+
+            // 2. 复制结构
+            if (copyStructure) {
+                String createSql;
+                if (config.getType() == ConnectType.MYSQL) {
+                    createSql = "CREATE TABLE " + dstQualified + " LIKE " + srcQualified;
+                } else if (config.getType() == ConnectType.POSTGRESQL) {
+                    String pgSrcSchema = srcSchema != null ? srcSchema : srcDb;
+                    String pgDstSchema = dstSchema != null ? dstSchema : dstDb;
+                    createSql = "CREATE TABLE \"" + pgDstSchema + "\".\"" + dstTable + "\" "
+                            + "(LIKE \"" + pgSrcSchema + "\".\"" + srcTable + "\" INCLUDING ALL)";
+                } else if (config.getType() == ConnectType.ORACLE) {
+                    createSql = "CREATE TABLE " + dstQualified + " AS SELECT * FROM " + srcQualified + " WHERE 1=0";
+                } else {
+                    throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+                }
+                stmt.executeUpdate(createSql);
+            } else if (copyData) {
+                // 只复制数据但不建结构，需要目标表已存在，直接跳过结构步骤
+            }
+
+            // 3. 复制数据
+            if (copyData) {
+                String insertSql;
+                if (config.getType() == ConnectType.MYSQL || config.getType() == ConnectType.POSTGRESQL) {
+                    insertSql = "INSERT INTO " + dstQualified + " SELECT * FROM " + srcQualified;
+                } else if (config.getType() == ConnectType.ORACLE) {
+                    insertSql = "INSERT INTO " + dstQualified + " SELECT * FROM " + srcQualified;
+                } else {
+                    throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+                }
+                stmt.executeUpdate(insertSql);
+            }
+        }
+    }
+
+    /**
+     * 跨连接复制表：
+     *  1) 获取源表DDL并在目标端执行（需要适配目标DB类型）
+     *  2) 分页读取源表数据，逐行INSERT到目标表
+     */
+    public static void copyTableCrossConnection(ConnectionConfig srcConfig, String srcDb, String srcSchema, String srcTable,
+                                                 ConnectionConfig dstConfig, String dstDb, String dstSchema, String dstTable,
+                                                 boolean copyStructure, boolean copyData, boolean dropIfExists) throws Exception {
+        java.util.concurrent.locks.ReentrantLock srcLock = acquireUsageLock(srcConfig, srcDb);
+        java.util.concurrent.locks.ReentrantLock dstLock = acquireUsageLock(dstConfig, dstDb);
+        boolean srcLocked = false, dstLocked = false;
+        try {
+            srcLock.lock(); srcLocked = true;
+            dstLock.lock(); dstLocked = true;
+
+            // 1. 可选：删除目标表
+            if (dropIfExists) {
+                try {
+                    dropTables(dstConfig, dstDb, dstSchema, List.of(dstTable));
+                } catch (Exception ignore) {}
+            }
+
+            List<Map<String, String>> columns = getTableColumns(srcConfig, srcDb, srcSchema, srcTable);
+            List<String> columnNames = new ArrayList<>();
+            for (Map<String, String> col : columns) {
+                columnNames.add(col.get("字段名"));
+            }
+
+            // 2. 复制结构
+            if (copyStructure) {
+                String ddl = getTableDdl(srcConfig, srcDb, srcSchema, srcTable);
+                ddl = adaptDdlForTarget(srcConfig, dstConfig, ddl, srcDb, srcSchema, srcTable, dstDb, dstSchema, dstTable);
+                executeDdlOnTarget(dstConfig, dstDb, ddl);
+            }
+
+            // 3. 复制数据
+            if (copyData) {
+                int pageSize = 500;
+                int page = 1;
+                int totalInserted = 0;
+                while (true) {
+                    TableRowData pageData = queryTableData(srcConfig, srcDb, srcSchema, srcTable, page, pageSize, null, false);
+                    if (pageData == null || pageData.getRows() == null || pageData.getRows().isEmpty()) {
+                        break;
+                    }
+                    List<String> pks = getPrimaryKeys(srcConfig, srcDb, srcSchema, srcTable);
+                    int inserted = insertRows(dstConfig, dstDb, dstSchema, dstTable, columnNames, pageData.getRows(), pks);
+                    totalInserted += inserted;
+                    if (pageData.getRows().size() < pageSize) {
+                        break;
+                    }
+                    page++;
+                }
+            }
+        } finally {
+            if (dstLocked) dstLock.unlock();
+            if (srcLocked) srcLock.unlock();
+        }
+    }
+
+    /** 构造全限定表名 */
+    private static String buildQualifiedTable(ConnectionConfig config, String db, String schema, String table) {
+        String pgSchema = schema != null ? schema : db;
+        return switch (config.getType()) {
+            case MYSQL -> "`" + db + "`.`" + table + "`";
+            case POSTGRESQL -> "\"" + pgSchema + "\".\"" + table + "\"";
+            case ORACLE -> "\"" + db + "\".\"" + table + "\"";
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        };
+    }
+
+    /** 将源DDL适配到目标数据库（仅做基础的标识符引号转换） */
+    private static String adaptDdlForTarget(ConnectionConfig srcCfg, ConnectionConfig dstCfg,
+                                            String ddl, String srcDb, String srcSchema, String srcTable,
+                                            String dstDb, String dstSchema, String dstTable) {
+        if (ddl == null || ddl.isEmpty()) return ddl;
+
+        // 去掉源限定符并替换为目标表名
+        String result = ddl;
+        if (dstCfg.getType() == ConnectType.MYSQL) {
+            result = result.replaceAll("\"([^\"]+)\"", "`$1`");
+        } else if (dstCfg.getType() == ConnectType.POSTGRESQL || dstCfg.getType() == ConnectType.ORACLE) {
+            result = result.replaceAll("`([^`]+)`", "\"$1\"");
+        }
+
+        // 将CREATE TABLE后的限定名替换为目标
+        // （简化处理：基于源DB类型生成全新的目标限定头）
+        String oldHead = "";
+        String newHead = "";
+        if (srcCfg.getType() == ConnectType.MYSQL) {
+            oldHead = "CREATE TABLE `" + srcDb + "`.`" + srcTable + "`";
+        } else if (srcCfg.getType() == ConnectType.POSTGRESQL) {
+            String pgSrc = srcSchema != null ? srcSchema : srcDb;
+            oldHead = "CREATE TABLE \"" + pgSrc + "\".\"" + srcTable + "\"";
+        } else if (srcCfg.getType() == ConnectType.ORACLE) {
+            oldHead = "CREATE TABLE \"" + srcDb + "\".\"" + srcTable + "\"";
+        }
+        if (dstCfg.getType() == ConnectType.MYSQL) {
+            newHead = "CREATE TABLE `" + dstDb + "`.`" + dstTable + "`";
+        } else if (dstCfg.getType() == ConnectType.POSTGRESQL) {
+            String pgDst = dstSchema != null ? dstSchema : dstDb;
+            newHead = "CREATE TABLE \"" + pgDst + "\".\"" + dstTable + "\"";
+        } else if (dstCfg.getType() == ConnectType.ORACLE) {
+            newHead = "CREATE TABLE \"" + dstDb + "\".\"" + dstTable + "\"";
+        }
+        if (!oldHead.isEmpty() && !newHead.isEmpty()) {
+            // 先尝试精确匹配
+            if (result.contains(oldHead)) {
+                result = result.replace(oldHead, newHead);
+            } else {
+                // 尝试不带限定符的版本（比如 SHOW CREATE TABLE 返回时可能省略部分限定）
+                int idx = result.toUpperCase().indexOf("CREATE TABLE");
+                if (idx >= 0) {
+                    int parenIdx = result.indexOf("(", idx);
+                    if (parenIdx > idx) {
+                        String prefix = result.substring(0, idx);
+                        String suffix = result.substring(parenIdx);
+                        result = prefix + newHead + " " + suffix.trim();
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    /** 在目标端执行DDL（PostgreSQL用绑定DB的连接） */
+    private static void executeDdlOnTarget(ConnectionConfig dstConfig, String dstDb, String ddl) throws Exception {
+        Connection conn = (dstConfig.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(dstConfig, dstDb)
+                : getConnection(dstConfig);
+        try (Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(ddl);
+        }
+    }
+
+    // ==================== 工具方法 ====================
+
     /**
      * 构建JDBC URL
      */

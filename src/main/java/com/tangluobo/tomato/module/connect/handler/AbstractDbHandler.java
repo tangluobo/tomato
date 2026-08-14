@@ -1,6 +1,7 @@
 package com.tangluobo.tomato.module.connect.handler;
 
 import com.tangluobo.tomato.module.connect.*;
+import com.tangluobo.tomato.module.connect.dialog.CopyTableDialog;
 import com.tangluobo.tomato.module.connect.dialog.CreateDatabaseDialog;
 import com.tangluobo.tomato.module.connect.dialog.EditDatabaseDialog;
 import com.tangluobo.tomato.module.connect.dialog.PasswordPromptDialog;
@@ -1061,9 +1062,11 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 designItem.setOnAction(e -> handleTableStructureDoubleClick(item, data));
                 MenuItem openDataItem = new MenuItem("打开数据");
                 openDataItem.setOnAction(e -> handleTableDataDoubleClick(item, data));
+                MenuItem copyTableItem = new MenuItem("复制表");
+                copyTableItem.setOnAction(e -> handleCopyTable(item, data));
                 MenuItem deleteItem = new MenuItem("删除");
                 deleteItem.setOnAction(e -> module.deleteDbNodes());
-                contextMenu.getItems().addAll(designItem, openDataItem, new SeparatorMenuItem(), deleteItem);
+                contextMenu.getItems().addAll(designItem, openDataItem, new SeparatorMenuItem(), copyTableItem, new SeparatorMenuItem(), deleteItem);
             }
             case QUERY -> {
                 MenuItem openQueryItem = new MenuItem("打开");
@@ -1128,6 +1131,99 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             // fallback
         }
         hostItem.setGraphic(imageView);
+    }
+
+    // ==================== 复制表 ====================
+
+    /**
+     * 复制表处理：
+     *  - 打开配置对话框（CopyTableDialog）让用户选择目标连接/数据库/表名
+     *  - 同连接直接复制（CREATE TABLE LIKE + INSERT SELECT）
+     *  - 跨连接迁移（DDL + 分页迁移数据）
+     */
+    public void handleCopyTable(TreeItem<String> tableItem, DatabaseNodeData data) {
+        ConnectionConfig srcConfig = data.getConnectionConfig();
+        String srcDb = data.getDatabaseName();
+        String srcSchema = data.getSchemaName();
+        String srcTable = data.getName();
+        if (srcConfig == null || srcDb == null || srcTable == null) {
+            return;
+        }
+
+        // 1. 打开数据传输配置对话框
+        CopyTableDialog dialog = new CopyTableDialog(
+                module.getStage(),
+                module.getConnections(),
+                srcConfig, srcDb, srcTable, srcSchema
+        );
+        dialog.showAndWait();
+        if (!dialog.isConfirmed()) {
+            return;
+        }
+
+        ConnectionConfig dstConfig = dialog.getTargetConfig();
+        String dstDb = dialog.getTargetDatabase();
+        String dstSchema = dialog.getTargetSchema();
+        String dstTable = dialog.getTargetTable();
+        boolean copyStructure = dialog.isCopyStructure();
+        boolean copyData = dialog.isCopyData();
+        boolean dropIfExists = dialog.isDropIfExists();
+
+        if (dstConfig == null || dstDb == null || dstTable == null) {
+            return;
+        }
+
+        // 2. 后台执行复制操作
+        final String srcTableFinal = srcTable;
+        final String dstTableFinal = dstTable;
+        new Thread(() -> {
+            try {
+                DatabaseService.copyTable(
+                        srcConfig, srcDb, srcSchema, srcTableFinal,
+                        dstConfig, dstDb, dstSchema, dstTableFinal,
+                        copyStructure, copyData, dropIfExists
+                );
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.INFORMATION, "表复制成功！", ButtonType.OK);
+                    alert.setTitle("复制表");
+                    alert.setHeaderText(null);
+                    alert.initOwner(module.getStage());
+                    alert.showAndWait();
+
+                    // 刷新目标数据库节点
+                    refreshDbNodeForConfig(dstConfig, dstDb, dstSchema);
+                });
+            } catch (Exception ex) {
+                String errMsg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR, "表复制失败: " + errMsg, ButtonType.OK);
+                    alert.setTitle("复制表");
+                    alert.setHeaderText(null);
+                    alert.initOwner(module.getStage());
+                    alert.showAndWait();
+                });
+            }
+        }, "DB-CopyTable").start();
+    }
+
+    /**
+     * 按连接配置+数据库名刷新对应的数据库节点（如果节点已打开）
+     */
+    private void refreshDbNodeForConfig(ConnectionConfig config, String dbName, String schemaName) {
+        if (config == null || dbName == null) return;
+        Map<TreeItem<String>, DatabaseNodeData> dataMap = module.getDbNodeDataMap();
+        for (Map.Entry<TreeItem<String>, DatabaseNodeData> entry : dataMap.entrySet()) {
+            DatabaseNodeData d = entry.getValue();
+            if (d.getType() == DatabaseNodeData.NodeType.DATABASE
+                    && config.getId() != null
+                    && config.getId().equals(d.getConnectionConfig() != null ? d.getConnectionConfig().getId() : null)
+                    && dbName.equals(d.getDatabaseName())) {
+                if (d.isOpened()) {
+                    refreshDbNode(entry.getKey(), d);
+                }
+                return;
+            }
+        }
     }
 
     // ==================== 查询节点 ====================
