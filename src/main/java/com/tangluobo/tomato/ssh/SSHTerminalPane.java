@@ -34,6 +34,7 @@ import java.io.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -114,6 +115,11 @@ public class SSHTerminalPane extends BorderPane {
 
     // 连接丢失标志（非用户主动断开）
     private volatile boolean connectionLost = false;
+
+    // rz 命令预选文件：用户输入 rz 时先选好文件，再发送 rz 到远端
+    private volatile CompletableFuture<List<File>> pendingUploadFuture = null;
+    // rz 命令行缓冲（用于检测用户输入 rz 命令）
+    private final StringBuilder rzCommandBuffer = new StringBuilder();
 
     public SSHTerminalPane() {
         emulator = new TerminalEmulator();
@@ -304,6 +310,55 @@ public class SSHTerminalPane extends BorderPane {
                 }
                 return;
             }
+
+            // rz 命令检测：在主缓冲区模式下拦截 rz 命令，先选文件再发送到远端
+            if (!emulator.isUsingAltBuffer() && pendingUploadFuture == null) {
+                for (byte b : data) {
+                    if (b == '\r' || b == '\n') {
+                        String line = rzCommandBuffer.toString().trim();
+                        if (line.equals("rz") || line.startsWith("rz ")) {
+                            // 拦截 rz 命令：先发送回车执行 rz，再异步弹出文件选择框
+                            rzCommandBuffer.setLength(0);
+                            try {
+                                OutputStream os = sshSession.getOutputStream();
+                                if (os != null) {
+                                    os.write(b);
+                                    os.flush();
+                                }
+                            } catch (IOException e) {
+                                e.printStackTrace();
+                            }
+                            // 异步弹出文件选择框（FX线程），结果存入 pendingUploadFuture
+                            // supplier 中通过 future.get() 等待结果，避免弹出第二个文件选择框
+                            pendingUploadFuture = new CompletableFuture<>();
+                            Platform.runLater(() -> {
+                                try {
+                                    FileChooser fileChooser = new FileChooser();
+                                    fileChooser.setTitle("选择要上传的文件");
+                                    fileChooser.getExtensionFilters().addAll(
+                                        new FileChooser.ExtensionFilter("所有文件", "*.*")
+                                    );
+                                    List<File> files = fileChooser.showOpenMultipleDialog(getStage());
+                                    pendingUploadFuture.complete(files != null ? files : List.of());
+                                } catch (Exception e) {
+                                    pendingUploadFuture.complete(List.of());
+                                }
+                            });
+                            return;
+                        }
+                        rzCommandBuffer.setLength(0);
+                    } else if (b >= 0x20 && b < 0x7F) {
+                        rzCommandBuffer.append((char) b);
+                    } else if (b == 0x7F || b == 0x08) {
+                        if (rzCommandBuffer.length() > 0) {
+                            rzCommandBuffer.deleteCharAt(rzCommandBuffer.length() - 1);
+                        }
+                    } else {
+                        rzCommandBuffer.setLength(0);
+                    }
+                }
+            }
+
             try {
                 OutputStream os = sshSession.getOutputStream();
                 if (os != null) {
@@ -915,22 +970,33 @@ public class SSHTerminalPane extends BorderPane {
 
         try {
             zmodem = new ZModem(zmodemIn, outputStream);
-            List<File> selectedFiles = openFileDialog();
-            if (selectedFiles == null || selectedFiles.isEmpty()) {
+            zmodem.send(() -> {
+                // 等待预选文件结果（rz 命令拦截时已弹出文件选择框）
+                List<File> selectedFiles = null;
+                if (pendingUploadFuture != null) {
+                    try {
+                        selectedFiles = pendingUploadFuture.get(30, TimeUnit.SECONDS);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    } finally {
+                        pendingUploadFuture = null;
+                    }
+                }
+                if (selectedFiles == null || selectedFiles.isEmpty()) {
+                    // 预选文件不可用（非用户输入rz触发，或超时/取消），回退到弹框选择
+                    selectedFiles = openFileDialog();
+                }
+                if (selectedFiles == null || selectedFiles.isEmpty()) {
+                    Platform.runLater(() -> {
+                        emulator.process(("\r\n[ZModem] 未选择文件，取消上传\r\n").getBytes());
+                        scheduleRender();
+                    });
+                    return new ArrayList<>();
+                }
                 Platform.runLater(() -> {
-                    emulator.process(("\r\n[ZModem] 未选择文件，取消上传\r\n").getBytes());
+                    emulator.process(("\r\n[ZModem] 正在上传文件...\r\n").getBytes());
                     scheduleRender();
                 });
-                zmodem.cancel();
-                return;
-            }
-
-            Platform.runLater(() -> {
-                emulator.process(("\r\n[ZModem] 正在上传文件...\r\n").getBytes());
-                scheduleRender();
-            });
-
-            zmodem.send(() -> {
                 List<FileAdapter> files = new ArrayList<>();
                 for (File f : selectedFiles) {
                     files.add(new CustomFile(f));
@@ -951,6 +1017,7 @@ public class SSHTerminalPane extends BorderPane {
         } finally {
             inZModemMode = false;
             zmodem = null;
+            pendingUploadFuture = null;
             updateStatusBar("已连接");
         }
     }
