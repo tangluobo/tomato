@@ -277,8 +277,12 @@ public class TerminalView extends Canvas {
             data = "\t".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.UP) {
             data = emulator.isApplicationCursorKeys() ? "\033OA".getBytes() : "\033[A".getBytes();
+            // 非应用光标键模式（shell模式）下切换历史命令时滚动到底部
+            if (!emulator.isApplicationCursorKeys()) fireAutoScroll();
         } else if (event.getCode() == javafx.scene.input.KeyCode.DOWN) {
             data = emulator.isApplicationCursorKeys() ? "\033OB".getBytes() : "\033[B".getBytes();
+            // 非应用光标键模式（shell模式）下切换历史命令时滚动到底部
+            if (!emulator.isApplicationCursorKeys()) fireAutoScroll();
         } else if (event.getCode() == javafx.scene.input.KeyCode.RIGHT) {
             data = emulator.isApplicationCursorKeys() ? "\033OC".getBytes() : "\033[C".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.LEFT) {
