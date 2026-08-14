@@ -501,7 +501,7 @@ public class TerminalView extends Canvas {
                         Color fg;
                         if (lineChars != null) {
                             int bgIdx = emulator.getBg(firstAttr);
-                            bg = (bgIdx >= 0 && bgIdx < FX_COLORS.length) ? FX_COLORS[bgIdx] : defaultBg;
+                            bg = (bgIdx <= 0 || bgIdx >= FX_COLORS.length) ? defaultBg : FX_COLORS[bgIdx];
                             int fgIdx = emulator.getFg(firstAttr);
                             fg = (fgIdx >= 0 && fgIdx < FX_COLORS.length) ? FX_COLORS[fgIdx] : defaultFg;
                             if (emulator.isReverse(firstAttr)) {
@@ -601,6 +601,17 @@ public class TerminalView extends Canvas {
                 if (screenRow < 0) continue; // 不在可见范围，跳过
                 int lineStart = (absRow == startRow) ? startCol : 0;
                 int lineEnd = (absRow == endRow) ? endCol : cols - 1;
+                // 限制高亮范围不超过行的实际内容末尾，不延伸到行尾填充空格
+                int contentEnd = -1;
+                for (int c = cols - 1; c >= 0; c--) {
+                    char ch = getCharAtAbsolute(c, absRow);
+                    if (ch != ' ' && ch != '\0') {
+                        contentEnd = c;
+                        break;
+                    }
+                }
+                if (contentEnd < lineStart) continue; // 选择范围内无实际内容
+                if (lineEnd > contentEnd) lineEnd = contentEnd;
                 double sx = x0 + lineStart * charWidth;
                 double sy = y0 + screenRow * charHeight;
                 double sw = (lineEnd - lineStart + 1) * charWidth;
@@ -640,7 +651,7 @@ public class TerminalView extends Canvas {
             }
         }
         int bgIdx = emulator.getBg(attr);
-        if (bgIdx < 0 || bgIdx >= FX_COLORS.length) return defaultBg;
+        if (bgIdx < 0 || bgIdx >= FX_COLORS.length || bgIdx == 0) return defaultBg;
         return FX_COLORS[bgIdx];
     }
 
@@ -966,11 +977,18 @@ public class TerminalView extends Canvas {
         for (int row = startRow; row <= endRow; row++) {
             int lineStart = (row == startRow) ? startCol : 0;
             int lineEnd = (row == endRow) ? endCol : cols - 1;
+            int lineLenBefore = sb.length();
             for (int col = lineStart; col <= lineEnd; col++) {
                 char c = getCharAtAbsolute(col, row);
                 if (c == '\0') continue; // 跳过宽字符占位符
                 sb.append(c);
             }
+            // 去除行末填充空格（终端buffer用空格填充到列宽，复制时不应包含）
+            int end = sb.length();
+            while (end > lineLenBefore && sb.charAt(end - 1) == ' ') {
+                end--;
+            }
+            sb.delete(end, sb.length());
             if (row < endRow) {
                 sb.append('\n');
             }
