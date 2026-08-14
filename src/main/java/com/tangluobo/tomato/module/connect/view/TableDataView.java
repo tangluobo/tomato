@@ -285,36 +285,60 @@ public class TableDataView extends BorderPane {
      */
     private void setupKeyboardShortcuts() {
         tableView.setOnKeyPressed(event -> {
+            // Ctrl+C 复制选中单元格（整行选中时即行复制）
             if (event.isControlDown() && event.getCode() == javafx.scene.input.KeyCode.C) {
                 handleCopySelectedCells();
                 event.consume();
                 return;
             }
+            // Ctrl+V 粘贴剪贴板内容为新行（行粘贴）
+            if (event.isControlDown() && event.getCode() == javafx.scene.input.KeyCode.V) {
+                handlePasteRows();
+                event.consume();
+                return;
+            }
 
-            if (!batchEditing) return;
-
-            switch (event.getCode()) {
-                case ENTER -> {
-                    commitBatchEdit();
-                    event.consume();
-                }
-                case ESCAPE -> {
-                    revertBatchEdit();
-                    event.consume();
-                }
-                case BACK_SPACE -> {
-                    if (!batchEditValue.isEmpty()) {
-                        batchEditValue = batchEditValue.substring(0, batchEditValue.length() - 1);
-                        applyBatchValue();
+            // 批量输入状态下的控制键处理
+            if (batchEditing) {
+                switch (event.getCode()) {
+                    case ENTER -> {
+                        commitBatchEdit();
+                        event.consume();
+                        return;
                     }
+                    case ESCAPE -> {
+                        revertBatchEdit();
+                        event.consume();
+                        return;
+                    }
+                    case BACK_SPACE -> {
+                        if (!batchEditValue.isEmpty()) {
+                            batchEditValue = batchEditValue.substring(0, batchEditValue.length() - 1);
+                            applyBatchValue();
+                        }
+                        event.consume();
+                        return;
+                    }
+                    case TAB, UP, DOWN, LEFT, RIGHT -> {
+                        // 导航键结束批量输入，继续往下处理导航
+                        commitBatchEdit();
+                    }
+                    default -> {
+                        // 可打印字符由 keyTyped 处理
+                        return;
+                    }
+                }
+            }
+
+            // 最后一行按 Down 新增空行
+            if (event.getCode() == javafx.scene.input.KeyCode.DOWN
+                    && !event.isControlDown() && !event.isShiftDown() && !event.isAltDown()) {
+                int focusedRow = tableView.getFocusModel().getFocusedIndex();
+                int lastRow = tableView.getItems().size() - 1;
+                if (lastRow >= 0 && focusedRow >= lastRow) {
+                    addEmptyNewRow();
+                    selectRowAtColumn(tableView.getItems().size() - 1);
                     event.consume();
-                }
-                case TAB, UP, DOWN, LEFT, RIGHT -> {
-                    // 导航键结束批量输入，不 consume 让 TableView 处理导航
-                    commitBatchEdit();
-                }
-                default -> {
-                    // 可打印字符由 keyTyped 处理
                 }
             }
         });
@@ -339,6 +363,67 @@ public class TableDataView extends BorderPane {
             applyBatchValue();
             event.consume();
         });
+    }
+
+    /**
+     * 粘贴剪贴板内容为新行：每行一条记录，Tab 分隔列值，插入到当前焦点行下方
+     */
+    private void handlePasteRows() {
+        javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
+        String text = clipboard.getString();
+        if (text == null || text.isEmpty()) return;
+
+        List<String> columns = getDataColumnNames();
+        if (columns.isEmpty()) return;
+
+        // 解析剪贴板：按换行分割行，按 Tab 分割列
+        String[] lines = text.split("\n");
+        List<ObservableList<String>> pastedRows = new ArrayList<>();
+        for (String line : lines) {
+            String cleanLine = line.endsWith("\r") ? line.substring(0, line.length() - 1) : line;
+            String[] values = cleanLine.split("\t", -1);
+            ObservableList<String> row = FXCollections.observableArrayList();
+            for (int i = 0; i < columns.size(); i++) {
+                row.add(i < values.length ? values[i] : "");
+            }
+            pastedRows.add(row);
+        }
+        if (pastedRows.isEmpty()) return;
+
+        // 插入位置：当前焦点行下方，否则追加到末尾
+        int insertIndex = tableView.getItems().size();
+        TablePosition<ObservableList<String>, ?> focusedCell = tableView.getFocusModel().getFocusedCell();
+        if (focusedCell != null && focusedCell.getRow() >= 0 && focusedCell.getRow() < tableView.getItems().size()) {
+            insertIndex = focusedCell.getRow() + 1;
+        }
+
+        for (ObservableList<String> row : pastedRows) {
+            newRows.add(row);
+            tableView.getItems().add(insertIndex, row);
+            insertIndex++;
+        }
+
+        // 选中新粘贴的第一行
+        selectRowAtColumn(insertIndex - pastedRows.size());
+    }
+
+    /**
+     * 选中指定行的数据单元格（保持当前焦点列，否则用第一数据列），并滚动到可视区域
+     */
+    private void selectRowAtColumn(int rowIndex) {
+        if (rowIndex < 0 || rowIndex >= tableView.getItems().size()) return;
+        TableColumn<ObservableList<String>, ?> col = null;
+        TablePosition<ObservableList<String>, ?> focusedCell = tableView.getFocusModel().getFocusedCell();
+        if (focusedCell != null && focusedCell.getTableColumn() != null
+                && !ROW_SELECTOR_COL.equals(focusedCell.getTableColumn().getUserData())) {
+            col = focusedCell.getTableColumn();
+        }
+        if (col == null && tableView.getColumns().size() > 1) {
+            col = tableView.getColumns().get(1); // 第一数据列
+        }
+        tableView.scrollTo(rowIndex);
+        tableView.getSelectionModel().clearAndSelect(rowIndex, col);
+        tableView.getFocusModel().focus(rowIndex, col);
     }
 
     /**
@@ -1094,7 +1179,7 @@ public class TableDataView extends BorderPane {
                 setAlignment(Pos.CENTER);
                 arrow.setVisible(false);
                 // 左侧加网格线（首列不加左边框，避免表格最左边缘出现竖线）
-                setStyle("-fx-border-color: transparent #BEBEBC transparent transparent; -fx-border-width: 0 1 0 0;");
+                setStyle("-fx-border-color: transparent #BEBEBC transparent transparent; -fx-border-width: 0 1 0 0; -fx-alignment: center;");
                 // 点击行选择器列时选中整行（使用addEventFilter在捕获阶段处理，避免被TableView的拖拽选择处理器覆盖）
                 addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
                     if (getTableRow() != null && getTableRow().getItem() != null) {
@@ -1400,11 +1485,22 @@ public class TableDataView extends BorderPane {
         private TextField textField;
         /** 标记用户是否按下了Escape键（真正取消编辑） */
         private boolean escapePressed = false;
+        /**
+         * 非编辑模式下用于显示文本的 Text 节点。
+         * Labeled 的 setText 用 LOGICAL bounds（ascent+descent）居中，ascent > descent 导致视觉偏上；
+         * Text 节点配合 VISUAL bounds + VPos.CENTER 实现真正的视觉垂直居中，与行高无关。
+         */
+        private final javafx.scene.text.Text displayText;
 
         public EditableTableCell() {
             super();
             getStyleClass().add("data-cell");
             setAlignment(Pos.CENTER_LEFT);
+            displayText = new javafx.scene.text.Text();
+            displayText.setTextOrigin(javafx.geometry.VPos.CENTER);
+            displayText.setBoundsType(javafx.scene.text.TextBoundsType.VISUAL);
+            displayText.fontProperty().bind(fontProperty());
+            displayText.fillProperty().bind(textFillProperty());
         }
 
         @Override
@@ -1420,7 +1516,7 @@ public class TableDataView extends BorderPane {
             textField.selectAll();
             textField.requestFocus();
             // 编辑状态：白色背景+蓝色边框覆盖表格线
-            setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 2; -fx-padding: 0; -fx-text-fill: black;");
+            setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 2; -fx-padding: 0; -fx-text-fill: black; -fx-alignment: center-left;");
         }
 
         @Override
@@ -1439,8 +1535,10 @@ public class TableDataView extends BorderPane {
             // cancelEdit后getItem()返回的是原值，但数据模型可能已更新，
             // 需要重新从数据模型读取显示值
             String displayValue = getCellData();
-            setText(displayValue != null ? displayValue : "");
-            setGraphic(null);
+            displayText.setText(displayValue != null ? displayValue : "");
+            setGraphic(displayText);
+            setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+            setText(null);
             applyRowStateStyle();
         }
 
@@ -1450,7 +1548,7 @@ public class TableDataView extends BorderPane {
             if (empty) {
                 setText(null);
                 setGraphic(null);
-                setStyle("-fx-border-color: transparent; -fx-padding: 0;");
+                setStyle("-fx-border-color: transparent; -fx-padding: 0; -fx-alignment: center-left;");
             } else {
                 if (isEditing()) {
                     if (textField != null) {
@@ -1458,10 +1556,12 @@ public class TableDataView extends BorderPane {
                     }
                     setText(null);
                     setGraphic(textField);
-                    setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 2; -fx-padding: 0; -fx-text-fill: black;");
+                    setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 2; -fx-padding: 0; -fx-text-fill: black; -fx-alignment: center-left;");
                 } else {
-                    setText(item != null ? item : "");
-                    setGraphic(null);
+                    displayText.setText(item != null ? item : "");
+                    setGraphic(displayText);
+                    setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+                    setText(null);
                     applyRowStateStyle();
                 }
             }
@@ -1514,11 +1614,11 @@ public class TableDataView extends BorderPane {
             RowState state = getRowState(row);
             switch (state) {
                 case NEW ->
-                    setStyle("-fx-background-color: #FFFFF0; -fx-font-style: italic; -fx-text-fill: #666;");
+                    setStyle("-fx-background-color: #FFFFF0; -fx-font-style: italic; -fx-text-fill: #666; -fx-alignment: center-left;");
                 case EXISTING_DIRTY ->
-                    setStyle("-fx-background-color: #E8F4FD;");
+                    setStyle("-fx-background-color: #E8F4FD; -fx-alignment: center-left;");
                 default ->
-                    setStyle("");
+                    setStyle("-fx-alignment: center-left;");
             }
         }
 

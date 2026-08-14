@@ -952,6 +952,11 @@
 }
 
 /* 数据表单元格：内容垂直居中、水平左对齐 */
-.data-cell {
+.table-view .data-cell {
     -fx-alignment: center-left;
+}
+
+/* 表头：内容垂直居中 */
+.table-view .column-header {
+    -fx-alignment: center;
 }

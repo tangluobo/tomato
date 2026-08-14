@@ -1175,17 +1175,36 @@ public class DatabaseService {
 
         String deleteSql = "DELETE FROM " + qualifiedTable + " WHERE " + whereClause;
 
+        // 使用事务 + 批量执行：保证多行删除的原子性（全部成功或全部回滚）
         try (PreparedStatement pstmt = conn.prepareStatement(deleteSql)) {
-            for (ObservableList<String> row : rows) {
-                for (int i = 0; i < pkIndexes.size(); i++) {
-                    String value = row.get(pkIndexes.get(i));
-                    if ("NULL".equals(value)) {
-                        pstmt.setNull(i + 1, Types.VARCHAR);
-                    } else {
-                        pstmt.setString(i + 1, value);
+            conn.setAutoCommit(false);
+            try {
+                for (ObservableList<String> row : rows) {
+                    for (int i = 0; i < pkIndexes.size(); i++) {
+                        String value = row.get(pkIndexes.get(i));
+                        if ("NULL".equals(value)) {
+                            pstmt.setNull(i + 1, Types.VARCHAR);
+                        } else {
+                            pstmt.setString(i + 1, value);
+                        }
+                    }
+                    pstmt.addBatch();
+                }
+                int[] results = pstmt.executeBatch();
+                for (int r : results) {
+                    if (r >= 0) {
+                        totalDeleted += r;
+                    } else if (r == java.sql.Statement.SUCCESS_NO_INFO) {
+                        // 批量执行时驱动可能不返回确切行数
+                        totalDeleted++;
                     }
                 }
-                totalDeleted += pstmt.executeUpdate();
+                conn.commit();
+            } catch (Exception e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
             }
         }
 
