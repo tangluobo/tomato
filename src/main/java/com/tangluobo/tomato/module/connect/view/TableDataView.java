@@ -52,6 +52,12 @@ public class TableDataView extends BorderPane {
     private StackPane centerPane;
     private ProgressIndicator loadingIndicator;
 
+    // 批量输入状态：选中多个单元格后直接键入，实时同步到所有选中单元格
+    private boolean batchEditing = false;
+    private String batchEditValue = "";
+    /** 批量输入前的原始值（key: row,dataColIndex），用于 Esc 撤销 */
+    private final Map<String, String> batchEditOriginals = new HashMap<>();
+
     private int currentPage = 1;
     private int totalPages = 0;
     private long totalCount = 0;
@@ -162,6 +168,10 @@ public class TableDataView extends BorderPane {
 
         tableView.setOnMousePressed(event -> {
             if (event.getButton() != MouseButton.PRIMARY) return;
+            // 鼠标点击时结束批量输入（提交已输入内容）
+            if (batchEditing) {
+                commitBatchEdit();
+            }
             // 找到点击的cell位置
             int[] cellPos = getCellPositionAt(event);
             if (cellPos == null) return;
@@ -271,15 +281,156 @@ public class TableDataView extends BorderPane {
     }
 
     /**
-     * 键盘快捷键：Ctrl+C复制
+     * 键盘快捷键：Ctrl+C复制；选中多个单元格时直接键入可批量同步输入到所有选中单元格
      */
     private void setupKeyboardShortcuts() {
         tableView.setOnKeyPressed(event -> {
             if (event.isControlDown() && event.getCode() == javafx.scene.input.KeyCode.C) {
                 handleCopySelectedCells();
                 event.consume();
+                return;
+            }
+
+            if (!batchEditing) return;
+
+            switch (event.getCode()) {
+                case ENTER -> {
+                    commitBatchEdit();
+                    event.consume();
+                }
+                case ESCAPE -> {
+                    revertBatchEdit();
+                    event.consume();
+                }
+                case BACK_SPACE -> {
+                    if (!batchEditValue.isEmpty()) {
+                        batchEditValue = batchEditValue.substring(0, batchEditValue.length() - 1);
+                        applyBatchValue();
+                    }
+                    event.consume();
+                }
+                case TAB, UP, DOWN, LEFT, RIGHT -> {
+                    // 导航键结束批量输入，不 consume 让 TableView 处理导航
+                    commitBatchEdit();
+                }
+                default -> {
+                    // 可打印字符由 keyTyped 处理
+                }
             }
         });
+
+        // 选中多个数据单元格时，输入可打印字符直接同步到所有选中单元格
+        tableView.setOnKeyTyped(event -> {
+            if (event.isControlDown() || event.isMetaDown() || event.isAltDown()) return;
+            String ch = event.getCharacter();
+            if (ch == null || ch.isEmpty()) return;
+            // 只处理可打印字符（排除 Enter、Backspace 等控制字符）
+            if (ch.length() != 1 || ch.charAt(0) < ' ') return;
+
+            List<TablePosition<ObservableList<String>, ?>> dataCells = getSelectedDataCells();
+            if (dataCells.isEmpty()) return;
+
+            if (!batchEditing) {
+                if (dataCells.size() < 2) return; // 单个单元格不触发批量输入
+                startBatchEdit(dataCells);
+            }
+
+            batchEditValue += ch;
+            applyBatchValue();
+            event.consume();
+        });
+    }
+
+    /**
+     * 获取选中的数据单元格（跳过行选择器列）
+     */
+    @SuppressWarnings("unchecked")
+    private List<TablePosition<ObservableList<String>, ?>> getSelectedDataCells() {
+        ObservableList<TablePosition<ObservableList<String>, ?>> selectedCells =
+                (ObservableList<TablePosition<ObservableList<String>, ?>>) (ObservableList<?>) tableView.getSelectionModel().getSelectedCells();
+        List<TablePosition<ObservableList<String>, ?>> result = new ArrayList<>();
+        for (TablePosition<ObservableList<String>, ?> pos : selectedCells) {
+            if (pos.getTableColumn() != null && !ROW_SELECTOR_COL.equals(pos.getTableColumn().getUserData())) {
+                result.add(pos);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 开始批量输入：记录选中单元格的原始值（用于 Esc 撤销）
+     */
+    private void startBatchEdit(List<TablePosition<ObservableList<String>, ?>> cells) {
+        // 如果正在编辑某个单元格，先取消编辑
+        if (tableView.getEditingCell() != null) {
+            tableView.edit(-1, null);
+        }
+        batchEditing = true;
+        batchEditValue = "";
+        batchEditOriginals.clear();
+        for (TablePosition<ObservableList<String>, ?> pos : cells) {
+            int row = pos.getRow();
+            int dataColIndex = getDataColIndex(pos);
+            if (row < 0 || row >= tableView.getItems().size()) continue;
+            ObservableList<String> rowData = tableView.getItems().get(row);
+            String orig = (dataColIndex >= 0 && dataColIndex < rowData.size()) ? rowData.get(dataColIndex) : "";
+            batchEditOriginals.put(row + "," + dataColIndex, orig);
+        }
+    }
+
+    /**
+     * 将当前输入值实时同步到所有选中单元格
+     */
+    private void applyBatchValue() {
+        for (String key : batchEditOriginals.keySet()) {
+            String[] parts = key.split(",");
+            int row = Integer.parseInt(parts[0]);
+            int dataColIndex = Integer.parseInt(parts[1]);
+            if (row < 0 || row >= tableView.getItems().size()) continue;
+            ObservableList<String> rowData = tableView.getItems().get(row);
+            if (dataColIndex >= 0 && dataColIndex < rowData.size()) {
+                rowData.set(dataColIndex, batchEditValue);
+            }
+        }
+        tableView.refresh();
+    }
+
+    /**
+     * 提交批量输入：保留已输入内容，结束编辑状态
+     */
+    private void commitBatchEdit() {
+        batchEditing = false;
+        batchEditValue = "";
+        batchEditOriginals.clear();
+        tableView.refresh();
+    }
+
+    /**
+     * 撤销批量输入：恢复所有选中单元格到编辑前的原始值
+     */
+    private void revertBatchEdit() {
+        for (String key : batchEditOriginals.keySet()) {
+            String[] parts = key.split(",");
+            int row = Integer.parseInt(parts[0]);
+            int dataColIndex = Integer.parseInt(parts[1]);
+            if (row < 0 || row >= tableView.getItems().size()) continue;
+            ObservableList<String> rowData = tableView.getItems().get(row);
+            if (dataColIndex >= 0 && dataColIndex < rowData.size()) {
+                rowData.set(dataColIndex, batchEditOriginals.get(key));
+            }
+        }
+        batchEditing = false;
+        batchEditValue = "";
+        batchEditOriginals.clear();
+        tableView.refresh();
+    }
+
+    /**
+     * 获取数据列索引（tableView 列索引减去行选择器列）
+     */
+    private int getDataColIndex(TablePosition<ObservableList<String>, ?> pos) {
+        int tableViewColIndex = tableView.getColumns().indexOf(pos.getTableColumn());
+        return tableViewColIndex - 1;
     }
 
     /**
@@ -1252,6 +1403,8 @@ public class TableDataView extends BorderPane {
 
         public EditableTableCell() {
             super();
+            getStyleClass().add("data-cell");
+            setAlignment(Pos.CENTER_LEFT);
         }
 
         @Override

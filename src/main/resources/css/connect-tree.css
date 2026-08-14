@@ -950,3 +950,8 @@
     -fx-border-color: transparent;
     -fx-border-insets: 0;
 }
+
+/* 数据表单元格：内容垂直居中、水平左对齐 */
+.data-cell {
+    -fx-alignment: center-left;
+}
