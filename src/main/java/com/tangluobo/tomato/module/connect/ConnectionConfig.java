@@ -68,6 +68,8 @@ public class ConnectionConfig {
     private boolean sshTunnelSavePassword = true;
     private boolean sshTunnelUseKey = false;
     private List<String> sshTunnelPrivateKeyPaths = new ArrayList<>();
+    // SSH通道引用的已有SSH主机连接ID（S3等通过引用方式使用，不复制具体连接信息）
+    private String sshTunnelHostId;
 
     public ConnectionConfig() {
     }
@@ -206,6 +208,9 @@ public class ConnectionConfig {
 
     public List<String> getSshTunnelPrivateKeyPaths() { return sshTunnelPrivateKeyPaths; }
     public void setSshTunnelPrivateKeyPaths(List<String> sshTunnelPrivateKeyPaths) { this.sshTunnelPrivateKeyPaths = sshTunnelPrivateKeyPaths != null ? sshTunnelPrivateKeyPaths : new ArrayList<>(); }
+
+    public String getSshTunnelHostId() { return sshTunnelHostId; }
+    public void setSshTunnelHostId(String sshTunnelHostId) { this.sshTunnelHostId = sshTunnelHostId; }
 
     public ServerConfig getServerConfig() { return serverConfig; }
     public void setServerConfig(ServerConfig serverConfig) { this.serverConfig = serverConfig; }

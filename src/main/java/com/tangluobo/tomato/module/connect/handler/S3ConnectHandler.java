@@ -6,6 +6,7 @@ import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import com.tangluobo.tomato.module.connect.S3FileBrowserPane;
 import com.tangluobo.tomato.module.connect.dialog.PasswordPromptDialog;
 import com.tangluobo.tomato.module.connect.dialog.SessionConfigDialog;
+import com.tangluobo.tomato.module.connect.service.S3Service;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
@@ -73,6 +74,7 @@ public class S3ConnectHandler implements ConnectHandler {
         tab.setContextMenu(tabContextMenu);
 
         tab.setOnClosed(e -> {
+            S3Service.closeSshTunnel(config.getId());
             if (module.getTerminalTabPane().getTabs().isEmpty()) {
                 module.showWelcomeView();
             }

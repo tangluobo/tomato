@@ -1,5 +1,6 @@
 package com.tangluobo.tomato.module.connect.dialog;
 
+import com.tangluobo.tomato.module.connect.ConfigManager;
 import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import com.tangluobo.tomato.module.connect.ToolType;
@@ -65,6 +66,13 @@ public class ConnectionConfigDialog {
     private VBox sshTunnelKeyListContainer;
     private List<KeyEntry> sshTunnelKeyEntries = new ArrayList<>();
 
+    // S3专用 SSH通道（引用方式：选择已有SSH主机，不复制连接信息）
+    private Tab s3SshTunnelTab;
+    private CheckBox s3UseSshTunnelCheckBox;
+    private VBox s3SshTunnelContent;
+    private ComboBox<ConnectionConfig> s3SshHostCombo;
+    private List<ConnectionConfig> availableSshHosts = new ArrayList<>();
+
     // ===== SSH/SFTP类型专用 =====
     private VBox sshConfigContent;
     private TextField sshNameField;
@@ -103,6 +111,8 @@ public class ConnectionConfigDialog {
 
     // ===== S3/阿里云OSS专属字段 =====
     private VBox s3ConfigContent;
+    private TabPane s3TabPane;
+    private Tab s3GeneralTab;
     private TextField s3NameField;
     private TextField s3EndpointField;
     private TextField s3RegionField;
@@ -301,7 +311,7 @@ public class ConnectionConfigDialog {
 
         configButtons.getChildren().addAll(backBtn, cancelBtn2, okBtn);
 
-        configPage.getChildren().addAll(configTitle, dbTabPane, sshConfigContent, simpleConfigContent, localTerminalConfigContent, s3ConfigContent, redisConfigContent, rocketmqConfigContent, aliyunConfigContent, localDirectoryConfigContent, configButtons);
+        configPage.getChildren().addAll(configTitle, dbTabPane, sshConfigContent, simpleConfigContent, localTerminalConfigContent, s3TabPane, redisConfigContent, rocketmqConfigContent, aliyunConfigContent, localDirectoryConfigContent, configButtons);
 
         // 编辑已有连接时直接显示配置页
         if (existingConfig != null) {
@@ -693,6 +703,147 @@ public class ConnectionConfigDialog {
     }
 
     /**
+     * 加载已保存的 SSH/SFTP 连接，用于 S3 SSH通道 选择已有主机
+     */
+    private void loadAvailableSshHosts() {
+        availableSshHosts.clear();
+        if (s3SshHostCombo == null) return;
+        s3SshHostCombo.getItems().clear();
+        try {
+            List<ConnectionConfig> all = ConfigManager.loadConnections();
+            for (ConnectionConfig c : all) {
+                if (c.getType() == ConnectType.SSH || c.getType() == ConnectType.SFTP) {
+                    availableSshHosts.add(c);
+                    s3SshHostCombo.getItems().add(c);
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * 从已有连接配置填充 SSH通道 字段（编辑连接时）
+     */
+    private void fillSshTunnelFromExistingConfig() {
+        useSshTunnelCheckBox.setSelected(existingConfig.isUseSshTunnel());
+        if (existingConfig.getSshTunnelHost() != null) {
+            sshTunnelHostField.setText(existingConfig.getSshTunnelHost());
+        } else {
+            sshTunnelHostField.clear();
+        }
+        sshTunnelPortField.setText(String.valueOf(existingConfig.getSshTunnelPort()));
+        if (existingConfig.getSshTunnelUsername() != null) {
+            sshTunnelUsernameField.setText(existingConfig.getSshTunnelUsername());
+        } else {
+            sshTunnelUsernameField.clear();
+        }
+
+        sshTunnelUsePasswordCheckBox.setSelected(existingConfig.isSshTunnelUsePassword());
+        if (existingConfig.getSshTunnelPassword() != null) {
+            sshTunnelPasswordField.setText(existingConfig.getSshTunnelPassword());
+        } else {
+            sshTunnelPasswordField.clear();
+        }
+        sshTunnelSavePasswordCheckBox.setSelected(existingConfig.isSshTunnelSavePassword());
+        sshTunnelUseKeyCheckBox.setSelected(existingConfig.isSshTunnelUseKey());
+
+        // SSH通道密钥列表
+        sshTunnelKeyEntries.clear();
+        sshTunnelKeyListContainer.getChildren().clear();
+        List<String> tunnelKeyPaths = existingConfig.getSshTunnelPrivateKeyPaths();
+        if (tunnelKeyPaths != null && !tunnelKeyPaths.isEmpty()) {
+            for (String path : tunnelKeyPaths) {
+                addSshTunnelKeyEntry(path, true);
+            }
+        }
+    }
+
+    /**
+     * 将 SSH通道 字段保存到连接配置
+     */
+    private void applySshTunnelToConfig(ConnectionConfig config) {
+        config.setUseSshTunnel(useSshTunnelCheckBox.isSelected());
+        if (useSshTunnelCheckBox.isSelected()) {
+            config.setSshTunnelHost(sshTunnelHostField.getText().trim());
+            config.setSshTunnelPort(Integer.parseInt(sshTunnelPortField.getText().trim()));
+            config.setSshTunnelUsername(sshTunnelUsernameField.getText().trim());
+
+            config.setSshTunnelUsePassword(sshTunnelUsePasswordCheckBox.isSelected());
+            config.setSshTunnelUseKey(sshTunnelUseKeyCheckBox.isSelected());
+
+            // SSH通道密钥列表
+            List<String> tunnelKeyPaths = new ArrayList<>();
+            for (KeyEntry entry : sshTunnelKeyEntries) {
+                if (entry.checkBox.isSelected() && !entry.pathField.getText().trim().isEmpty()) {
+                    tunnelKeyPaths.add(entry.pathField.getText().trim());
+                }
+            }
+            config.setSshTunnelPrivateKeyPaths(tunnelKeyPaths);
+
+            if (sshTunnelUsePasswordCheckBox.isSelected()) {
+                config.setSshTunnelSavePassword(sshTunnelSavePasswordCheckBox.isSelected());
+                if (sshTunnelSavePasswordCheckBox.isSelected()) {
+                    config.setSshTunnelPassword(sshTunnelPasswordField.getText());
+                } else {
+                    config.setSshTunnelPassword(null);
+                }
+            } else {
+                config.setSshTunnelSavePassword(false);
+                // 仅密钥认证时，密码作为 passphrase
+                if (sshTunnelUseKeyCheckBox.isSelected() && sshTunnelPasswordField.getText() != null && !sshTunnelPasswordField.getText().isEmpty()) {
+                    config.setSshTunnelPassword(sshTunnelPasswordField.getText());
+                } else {
+                    config.setSshTunnelPassword(null);
+                }
+            }
+        }
+    }
+
+    /**
+     * 验证 SSH通道 输入（启用时）
+     */
+    private boolean validateSshTunnel() {
+        if (!useSshTunnelCheckBox.isSelected()) return true;
+        if (sshTunnelHostField.getText().trim().isEmpty()) {
+            showAlert("请输入SSH主机地址");
+            return false;
+        }
+        try {
+            Integer.parseInt(sshTunnelPortField.getText().trim());
+        } catch (NumberFormatException e) {
+            showAlert("SSH端口号必须是数字");
+            return false;
+        }
+        if (sshTunnelUsernameField.getText().trim().isEmpty()) {
+            showAlert("请输入SSH用户名");
+            return false;
+        }
+        if (!sshTunnelUsePasswordCheckBox.isSelected() && !sshTunnelUseKeyCheckBox.isSelected()) {
+            showAlert("请至少选择一种SSH认证方式");
+            return false;
+        }
+        if (sshTunnelUsePasswordCheckBox.isSelected() && sshTunnelPasswordField.getText().trim().isEmpty()) {
+            showAlert("请输入SSH密码");
+            return false;
+        }
+        if (sshTunnelUseKeyCheckBox.isSelected()) {
+            boolean hasEnabledKey = false;
+            for (KeyEntry entry : sshTunnelKeyEntries) {
+                if (entry.checkBox.isSelected() && !entry.pathField.getText().trim().isEmpty()) {
+                    hasEnabledKey = true;
+                    break;
+                }
+            }
+            if (!hasEnabledKey) {
+                showAlert("请至少添加并启用一个SSH密钥文件");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * 构建SSH/SFTP类型的配置内容
      */
     private void buildSshConfigContent() {
@@ -956,13 +1107,11 @@ public class ConnectionConfigDialog {
      */
     private void buildS3ConfigContent() {
         s3ConfigContent = new VBox(15);
-        s3ConfigContent.setVisible(false);
-        s3ConfigContent.setManaged(false);
+        s3ConfigContent.setPadding(new Insets(10, 0, 0, 20));
 
         GridPane grid = new GridPane();
         grid.setHgap(10);
         grid.setVgap(10);
-        grid.setPadding(new Insets(10, 0, 0, 0));
 
         int row = 0;
 
@@ -1019,6 +1168,67 @@ public class ConnectionConfigDialog {
         hint.setWrapText(true);
 
         s3ConfigContent.getChildren().addAll(grid, hint);
+
+        // 构建 S3 专用 TabPane（常规 + SSH通道），与数据库 TabPane 结构一致
+        s3TabPane = new TabPane();
+        s3TabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        s3TabPane.setVisible(false);
+        s3TabPane.setManaged(false);
+        s3TabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+
+        s3GeneralTab = new Tab("常规");
+        s3GeneralTab.setContent(s3ConfigContent);
+
+        // ===== S3 专用 SSH通道 Tab（引用方式：选择已有SSH主机，不复制连接信息）=====
+        VBox s3TunnelContent = new VBox(10);
+        s3TunnelContent.setPadding(new Insets(10, 0, 0, 20));
+
+        s3UseSshTunnelCheckBox = new CheckBox("启用SSH通道");
+        s3UseSshTunnelCheckBox.setStyle("-fx-font-weight: bold;");
+
+        s3SshTunnelContent = new VBox(10);
+        s3SshTunnelContent.setPadding(new Insets(5, 0, 0, 0));
+        s3SshTunnelContent.setDisable(true);
+
+        s3UseSshTunnelCheckBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
+            s3SshTunnelContent.setDisable(!newVal);
+        });
+
+        // 选择已有SSH主机
+        HBox s3SelectHostBox = new HBox(8);
+        s3SelectHostBox.setAlignment(Pos.CENTER_LEFT);
+        Label s3SelectHostLabel = new Label("选择已有SSH主机：");
+        s3SshHostCombo = new ComboBox<>();
+        s3SshHostCombo.setPrefWidth(280);
+        s3SshHostCombo.setPromptText("选择已保存的SSH连接");
+        s3SshHostCombo.setCellFactory(lv -> new ListCell<ConnectionConfig>() {
+            @Override
+            protected void updateItem(ConnectionConfig item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : item.getName() + " (" + item.getHost() + ":" + item.getPort() + ")");
+            }
+        });
+        s3SshHostCombo.setButtonCell(new ListCell<ConnectionConfig>() {
+            @Override
+            protected void updateItem(ConnectionConfig item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : item.getName() + " (" + item.getHost() + ":" + item.getPort() + ")");
+            }
+        });
+        s3SelectHostBox.getChildren().addAll(s3SelectHostLabel, s3SshHostCombo);
+        loadAvailableSshHosts();
+
+        Label s3TunnelHint = new Label("启用后，将通过所选SSH主机建立安全通道连接S3存储；SSH连接信息随引用主机自动更新。");
+        s3TunnelHint.setStyle("-fx-font-size: 10px; -fx-text-fill: #999;");
+        s3TunnelHint.setWrapText(true);
+
+        s3SshTunnelContent.getChildren().addAll(s3SelectHostBox, s3TunnelHint);
+        s3TunnelContent.getChildren().addAll(s3UseSshTunnelCheckBox, s3SshTunnelContent);
+
+        s3SshTunnelTab = new Tab("SSH通道");
+        s3SshTunnelTab.setContent(s3TunnelContent);
+
+        s3TabPane.getTabs().addAll(s3GeneralTab, s3SshTunnelTab);
     }
 
     /**
@@ -1507,11 +1717,12 @@ public class ConnectionConfigDialog {
         boolean isLocalDirectory = selectedType == ConnectType.LOCAL_DIRECTORY;
         boolean isSimple = !isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis && !isRocketmq && !isAliyun && !isLocalDirectory;
 
-        // 数据库类型TabPane已有标签标题，隐藏顶部标题避免重复
-        configTitle.setVisible(!isDatabase);
-        configTitle.setManaged(!isDatabase);
-        // 数据库类型时去掉顶部和左侧padding，让标签顶到最上面和最左边
-        if (isDatabase) {
+        // 数据库/S3 类型 TabPane 已有标签标题，隐藏顶部标题避免重复
+        boolean useTabPane = isDatabase || isS3orOSS;
+        configTitle.setVisible(!useTabPane);
+        configTitle.setManaged(!useTabPane);
+        // TabPane 类型时去掉顶部和左侧 padding，让标签顶到最上面和最左边
+        if (useTabPane) {
             root.setPadding(new Insets(0, 20, 20, 0));
         } else {
             root.setPadding(new Insets(20));
@@ -1525,8 +1736,8 @@ public class ConnectionConfigDialog {
         simpleConfigContent.setManaged(isSimple);
         localTerminalConfigContent.setVisible(isLocalTerminal);
         localTerminalConfigContent.setManaged(isLocalTerminal);
-        s3ConfigContent.setVisible(isS3orOSS);
-        s3ConfigContent.setManaged(isS3orOSS);
+        s3TabPane.setVisible(isS3orOSS);
+        s3TabPane.setManaged(isS3orOSS);
         redisConfigContent.setVisible(isRedis);
         redisConfigContent.setManaged(isRedis);
         rocketmqConfigContent.setVisible(isRocketmq);
@@ -1615,31 +1826,7 @@ public class ConnectionConfigDialog {
             descriptionField.setText(existingConfig.getDescription());
 
             // SSH通道配置
-            useSshTunnelCheckBox.setSelected(existingConfig.isUseSshTunnel());
-            if (existingConfig.getSshTunnelHost() != null) {
-                sshTunnelHostField.setText(existingConfig.getSshTunnelHost());
-            }
-            sshTunnelPortField.setText(String.valueOf(existingConfig.getSshTunnelPort()));
-            if (existingConfig.getSshTunnelUsername() != null) {
-                sshTunnelUsernameField.setText(existingConfig.getSshTunnelUsername());
-            }
-
-            sshTunnelUsePasswordCheckBox.setSelected(existingConfig.isSshTunnelUsePassword());
-            if (existingConfig.getSshTunnelPassword() != null) {
-                sshTunnelPasswordField.setText(existingConfig.getSshTunnelPassword());
-            }
-            sshTunnelSavePasswordCheckBox.setSelected(existingConfig.isSshTunnelSavePassword());
-            sshTunnelUseKeyCheckBox.setSelected(existingConfig.isSshTunnelUseKey());
-
-            // SSH通道密钥列表
-            sshTunnelKeyEntries.clear();
-            sshTunnelKeyListContainer.getChildren().clear();
-            List<String> tunnelKeyPaths = existingConfig.getSshTunnelPrivateKeyPaths();
-            if (tunnelKeyPaths != null && !tunnelKeyPaths.isEmpty()) {
-                for (String path : tunnelKeyPaths) {
-                    addSshTunnelKeyEntry(path, true);
-                }
-            }
+            fillSshTunnelFromExistingConfig();
 
         } else if (isSSH) {
             sshNameField.setText(existingConfig.getName());
@@ -1682,6 +1869,17 @@ public class ConnectionConfigDialog {
             s3SaveSecretKeyCheckBox.setSelected(existingConfig.isSavePassword());
             s3PathStyleAccessCheckBox.setSelected(existingConfig.isPathStyleAccess());
             s3DescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
+            // SSH通道配置（引用方式：记录引用的SSH主机ID）
+            s3UseSshTunnelCheckBox.setSelected(existingConfig.isUseSshTunnel());
+            s3SshHostCombo.setValue(null);
+            if (existingConfig.getSshTunnelHostId() != null) {
+                for (ConnectionConfig c : availableSshHosts) {
+                    if (existingConfig.getSshTunnelHostId().equals(c.getId())) {
+                        s3SshHostCombo.setValue(c);
+                        break;
+                    }
+                }
+            }
         } else if (isRedis) {
             redisNameField.setText(existingConfig.getName());
             redisHostField.setText(existingConfig.getHost());
@@ -1811,41 +2009,7 @@ public class ConnectionConfigDialog {
             config.setDescription(descriptionField.getText().trim());
 
             // SSH通道配置
-            config.setUseSshTunnel(useSshTunnelCheckBox.isSelected());
-            if (useSshTunnelCheckBox.isSelected()) {
-                config.setSshTunnelHost(sshTunnelHostField.getText().trim());
-                config.setSshTunnelPort(Integer.parseInt(sshTunnelPortField.getText().trim()));
-                config.setSshTunnelUsername(sshTunnelUsernameField.getText().trim());
-
-                config.setSshTunnelUsePassword(sshTunnelUsePasswordCheckBox.isSelected());
-                config.setSshTunnelUseKey(sshTunnelUseKeyCheckBox.isSelected());
-
-                // SSH通道密钥列表
-                List<String> tunnelKeyPaths = new ArrayList<>();
-                for (KeyEntry entry : sshTunnelKeyEntries) {
-                    if (entry.checkBox.isSelected() && !entry.pathField.getText().trim().isEmpty()) {
-                        tunnelKeyPaths.add(entry.pathField.getText().trim());
-                    }
-                }
-                config.setSshTunnelPrivateKeyPaths(tunnelKeyPaths);
-
-                if (sshTunnelUsePasswordCheckBox.isSelected()) {
-                    config.setSshTunnelSavePassword(sshTunnelSavePasswordCheckBox.isSelected());
-                    if (sshTunnelSavePasswordCheckBox.isSelected()) {
-                        config.setSshTunnelPassword(sshTunnelPasswordField.getText());
-                    } else {
-                        config.setSshTunnelPassword(null);
-                    }
-                } else {
-                    config.setSshTunnelSavePassword(false);
-                    // 仅密钥认证时，密码作为 passphrase
-                    if (sshTunnelUseKeyCheckBox.isSelected() && sshTunnelPasswordField.getText() != null && !sshTunnelPasswordField.getText().isEmpty()) {
-                        config.setSshTunnelPassword(sshTunnelPasswordField.getText());
-                    } else {
-                        config.setSshTunnelPassword(null);
-                    }
-                }
-            }
+            applySshTunnelToConfig(config);
 
         } else if (isSSH) {
             config.setName(sshNameField.getText().trim());
@@ -1898,6 +2062,11 @@ public class ConnectionConfigDialog {
                 config.setPassword(null);
             }
             config.setDescription(s3DescriptionField.getText().trim());
+
+            // SSH通道配置（引用方式：记录引用的SSH主机ID）
+            config.setUseSshTunnel(s3UseSshTunnelCheckBox.isSelected());
+            ConnectionConfig selectedHost = s3SshHostCombo.getValue();
+            config.setSshTunnelHostId(selectedHost != null ? selectedHost.getId() : null);
 
         } else if (isRedis) {
             config.setName(redisNameField.getText().trim());
@@ -2095,45 +2264,8 @@ public class ConnectionConfigDialog {
         }
 
         // SSH通道验证
-        if (useSshTunnelCheckBox.isSelected()) {
-            if (sshTunnelHostField.getText().trim().isEmpty()) {
-                showAlert("请输入SSH主机地址");
-                return false;
-            }
-            try {
-                Integer.parseInt(sshTunnelPortField.getText().trim());
-            } catch (NumberFormatException e) {
-                showAlert("SSH端口号必须是数字");
-                return false;
-            }
-            if (sshTunnelUsernameField.getText().trim().isEmpty()) {
-                showAlert("请输入SSH用户名");
-                return false;
-            }
-            // 至少选择一种SSH认证方式
-            if (!sshTunnelUsePasswordCheckBox.isSelected() && !sshTunnelUseKeyCheckBox.isSelected()) {
-                showAlert("请至少选择一种SSH认证方式");
-                return false;
-            }
-            // SSH密码认证时密码必填
-            if (sshTunnelUsePasswordCheckBox.isSelected() && sshTunnelPasswordField.getText().trim().isEmpty()) {
-                showAlert("请输入SSH密码");
-                return false;
-            }
-            // SSH密钥认证时至少添加一个密钥并勾选启用
-            if (sshTunnelUseKeyCheckBox.isSelected()) {
-                boolean hasEnabledKey = false;
-                for (KeyEntry entry : sshTunnelKeyEntries) {
-                    if (entry.checkBox.isSelected() && !entry.pathField.getText().trim().isEmpty()) {
-                        hasEnabledKey = true;
-                        break;
-                    }
-                }
-                if (!hasEnabledKey) {
-                    showAlert("请至少添加并启用一个SSH密钥文件");
-                    return false;
-                }
-            }
+        if (!validateSshTunnel()) {
+            return false;
         }
         return true;
     }
@@ -2200,6 +2332,11 @@ public class ConnectionConfigDialog {
         }
         if (s3SecretKeyField.getText().trim().isEmpty()) {
             showAlert("请输入Secret Key");
+            return false;
+        }
+        // SSH通道验证（引用方式：启用时必须选择已有SSH主机）
+        if (s3UseSshTunnelCheckBox.isSelected() && s3SshHostCombo.getValue() == null) {
+            showAlert("启用SSH通道后请选择已有SSH主机");
             return false;
         }
         return true;

@@ -2,7 +2,9 @@ package com.tangluobo.tomato.module.connect.service;
 
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.google.gson.JsonParseException;
+import com.tangluobo.tomato.module.connect.ConfigManager;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.SshTunnel;
 import io.minio.CopyObjectArgs;
 import io.minio.CopySource;
 import io.minio.GetObjectArgs;
@@ -18,20 +20,35 @@ import io.minio.errors.*;
 import io.minio.messages.Bucket;
 import io.minio.messages.Item;
 
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
+import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * S3存储服务：基于MinIO SDK，支持AWS S3、MinIO等S3兼容存储
  */
 public class S3Service {
+
+    // SSH隧道缓存：configId + "_" + targetHost:targetPort -> SshTunnel
+    private static final Map<String, SshTunnel> tunnelCache = new ConcurrentHashMap<>();
 
     /**
      * 创建MinIO客户端连接
@@ -44,19 +61,219 @@ public class S3Service {
         }
 
         // 构造端点：优先使用自定义端点，否则按region构造AWS S3端点
-        String endpoint = config.getEndpoint();
-        if (endpoint == null || endpoint.isEmpty()) {
-            endpoint = "https://s3." + region + ".amazonaws.com";
-        } else if (!endpoint.startsWith("http://") && !endpoint.startsWith("https://")) {
-            endpoint = "http://" + endpoint;
+        String originalEndpoint = config.getEndpoint();
+        if (originalEndpoint == null || originalEndpoint.isEmpty()) {
+            originalEndpoint = "https://s3." + region + ".amazonaws.com";
+        } else if (!originalEndpoint.startsWith("http://") && !originalEndpoint.startsWith("https://")) {
+            originalEndpoint = "http://" + originalEndpoint;
         }
 
-        MinioClient.Builder builder = MinioClient.builder()
+        // 解析原始端点，用于判断 SSH 隧道场景下的 HTTPS 证书处理
+        URI originalUri = URI.create(originalEndpoint);
+        String originalScheme = originalUri.getScheme() != null ? originalUri.getScheme() : "http";
+
+        String endpoint = originalEndpoint;
+        boolean viaSshTunnel = false;
+
+        // SSH隧道（引用方式：根据 sshTunnelHostId 查找SSH主机配置建立端口转发）
+        if (config.isUseSshTunnel() && config.getSshTunnelHostId() != null) {
+            try {
+                endpoint = setupSshTunnel(config, originalEndpoint);
+                viaSshTunnel = true;
+            } catch (Exception e) {
+                throw new RuntimeException("建立SSH隧道失败: " + e.getMessage(), e);
+            }
+        }
+
+        MinioClient client = MinioClient.builder()
                 .endpoint(endpoint)
                 .credentials(config.getUsername(), config.getPassword())
-                .region(region);
+                .region(region)
+                .build();
 
-        return builder.build();
+        // SSH隧道场景下：
+        // - HTTP：无需替换，MinIO 直接以 localhost:隧道端口 作为端点，签名与 Host 头一致
+        // - HTTPS：需替换 OkHttpClient 跳过主机名验证（证书域名与 localhost 不匹配）
+        if (viaSshTunnel && "https".equalsIgnoreCase(originalScheme)) {
+            replaceOkHttpClient(client);
+        }
+
+        return client;
+    }
+
+    /**
+     * 通过反射替换 MinioClient 内部的 OkHttpClient（HTTPS SSH 隧道场景）。
+     * 隧道端点为 localhost:端口，与服务器证书域名不匹配，需基于现有 OkHttpClient
+     * 的 newBuilder() 创建副本并跳过主机名验证。全程使用反射，避免 tomato 模块
+     * 直接引用 unnamed module 上的 OkHttp 类。
+     *
+     * 注意：不覆盖 Host 头。MinIO 在 S3Base.executeAsync() 中对请求签名（SigV4
+     * 包含 Host 头），签名发生在请求进入 OkHttp 拦截器链之前；若在拦截器中改写
+     * Host 头，服务器计算的签名会与请求中的 Authorization 不匹配。隧道端点
+     * localhost:port 同时用于签名和实际 Host 头，二者一致即可通过校验，
+     * SSH 隧道负责将 TCP 连接转发到真实目标。
+     */
+    private static void replaceOkHttpClient(MinioClient client) {
+        try {
+            ClassLoader cl = client.getClass().getClassLoader();
+
+            // 1. 查找 MinioClient 中的 OkHttpClient 字段（位于 S3Base.httpClient）
+            FieldRef ref = findOkHttpClientField(client);
+            if (ref == null) {
+                throw new RuntimeException("SSH隧道: MinioClient及其嵌套对象中未找到OkHttpClient");
+            }
+            Object existingClient = ref.field.get(ref.owner);
+
+            // 2. 基于现有 OkHttpClient 创建 Builder（保留超时、Dispatcher 等配置）
+            Class<?> okHttpClientClass = Class.forName("okhttp3.OkHttpClient", true, cl);
+            Class<?> builderClass = Class.forName("okhttp3.OkHttpClient$Builder", true, cl);
+            Method newBuilderMethod = okHttpClientClass.getMethod("newBuilder");
+            Object builder = newBuilderMethod.invoke(existingClient);
+
+            // 3. 跳过主机名验证（隧道端点 localhost:port 与证书域名不匹配）
+            final SSLContext sslContext = SSLContext.getInstance("TLS");
+            final X509TrustManager trustManager = new X509TrustManager() {
+                public void checkClientTrusted(X509Certificate[] chain, String authType) {}
+                public void checkServerTrusted(X509Certificate[] chain, String authType) {}
+                public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+            };
+            sslContext.init(null, new TrustManager[]{trustManager}, new java.security.SecureRandom());
+
+            Method sslMethod = builderClass.getMethod("sslSocketFactory", SSLSocketFactory.class, X509TrustManager.class);
+            sslMethod.invoke(builder, sslContext.getSocketFactory(), trustManager);
+
+            Method hvMethod = builderClass.getMethod("hostnameVerifier", HostnameVerifier.class);
+            hvMethod.invoke(builder, (HostnameVerifier) (hostname, session) -> true);
+
+            // 4. 构建新的 OkHttpClient 并替换
+            Method buildMethod = builderClass.getMethod("build");
+            Object newOkHttpClient = buildMethod.invoke(builder);
+            ref.field.set(ref.owner, newOkHttpClient);
+        } catch (Exception e) {
+            throw new RuntimeException("SSH隧道: 替换OkHttpClient失败: " + e.getMessage(), e);
+        }
+    }
+
+    /** OkHttpClient 字段引用：持有字段所在对象和字段本身，用于读取原值/设置新值 */
+    private static final class FieldRef {
+        final Object owner;
+        final Field field;
+        FieldRef(Object owner, Field field) { this.owner = owner; this.field = field; }
+    }
+
+    /**
+     * 递归查找对象中的 OkHttpClient 字段。
+     * 遍历对象所属类及其所有父类的字段（MinioClient → MinioAsyncClient → S3Base，
+     * httpClient 字段声明在 S3Base 上）。
+     */
+    private static FieldRef findOkHttpClientField(Object obj) {
+        return findOkHttpClientField(obj, java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
+    }
+
+    private static FieldRef findOkHttpClientField(Object obj, java.util.Set<Object> visited) {
+        if (obj == null || visited.contains(obj)) return null;
+        visited.add(obj);
+
+        Class<?> clazz = obj.getClass();
+        while (clazz != null && clazz != Object.class) {
+            for (Field f : clazz.getDeclaredFields()) {
+                if (Modifier.isStatic(f.getModifiers())) continue;
+                try {
+                    f.setAccessible(true);
+                    Object val = f.get(obj);
+                    if (val == null) continue;
+
+                    String valClassName = val.getClass().getName();
+                    if (valClassName.startsWith("okhttp3.OkHttpClient")) {
+                        return new FieldRef(obj, f);
+                    }
+                    // 递归进入 MinIO / OkHttp 嵌套对象继续查找
+                    if (valClassName.startsWith("io.minio.") || valClassName.startsWith("okhttp3.")) {
+                        FieldRef found = findOkHttpClientField(val, visited);
+                        if (found != null) return found;
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+            clazz = clazz.getSuperclass();
+        }
+        return null;
+    }
+
+    /**
+     * 建立/复用 SSH 隧道，返回指向本地转发端口的 endpoint。
+     * 隧道通过引用的 SSH 主机（sshTunnelHostId）建立，目标为 S3 endpoint 解析出的 host:port。
+     */
+    private static String setupSshTunnel(ConnectionConfig config, String originalEndpoint) throws Exception {
+        URI uri = URI.create(originalEndpoint);
+        String targetHost = uri.getHost();
+        int targetPort = uri.getPort();
+        if (targetPort < 0) {
+            targetPort = "https".equals(uri.getScheme()) ? 443 : 80;
+        }
+        String scheme = uri.getScheme() != null ? uri.getScheme() : "http";
+
+        String tunnelKey = config.getId() + "_" + targetHost + ":" + targetPort;
+        SshTunnel tunnel = tunnelCache.get(tunnelKey);
+        if (tunnel != null && tunnel.isActive()) {
+            return scheme + "://localhost:" + tunnel.getForwardedLocalPort();
+        }
+
+        // 查找引用的 SSH 主机配置
+        ConnectionConfig sshHost = findSshHostConfig(config.getSshTunnelHostId());
+        if (sshHost == null) {
+            throw new RuntimeException("找不到引用的SSH主机配置(ID: " + config.getSshTunnelHostId() + ")");
+        }
+
+        // 用 SSH 主机的认证信息建立隧道，目标为 S3 endpoint 的 host:port
+        List<String> keyPaths = sshHost.isUseKey() ? sshHost.getPrivateKeyPaths() : null;
+        String password = sshHost.isUsePassword() ? sshHost.getPassword() : null;
+        if (!sshHost.isUsePassword() && sshHost.isUseKey() && sshHost.getPassword() != null) {
+            password = sshHost.getPassword();
+        }
+
+        tunnel = new SshTunnel(
+            sshHost.getHost(),
+            sshHost.getPort(),
+            sshHost.getUsername(),
+            password,
+            keyPaths,
+            targetHost,
+            targetPort
+        );
+        int localPort = tunnel.connect();
+        tunnelCache.put(tunnelKey, tunnel);
+
+        return scheme + "://localhost:" + localPort;
+    }
+
+    /**
+     * 根据 sshTunnelHostId 查找引用的 SSH 主机配置
+     */
+    private static ConnectionConfig findSshHostConfig(String hostId) {
+        if (hostId == null) return null;
+        try {
+            List<ConnectionConfig> all = ConfigManager.loadConnections();
+            for (ConnectionConfig c : all) {
+                if (hostId.equals(c.getId())) return c;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    /**
+     * 关闭指定连接的所有 SSH 隧道（关闭S3标签页时调用）
+     */
+    public static void closeSshTunnel(String configId) {
+        tunnelCache.entrySet().removeIf(entry -> {
+            if (entry.getKey().startsWith(configId + "_")) {
+                entry.getValue().disconnect();
+                return true;
+            }
+            return false;
+        });
     }
 
     /**
