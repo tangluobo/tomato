@@ -1033,18 +1033,18 @@
 }
 
 /* 悬停和选中状态保持可读性 */
-/* 未选中行悬停：淡蓝色 */
+/* 未选中行悬停：仅单元格淡蓝色，行背景白色（右侧空白列保持白色） */
 .objects-detail-table .table-row-cell:filled:hover {
-    -fx-background-color: #D8E6F2;
+    -fx-background-color: white;
 }
 
 .objects-detail-table .table-row-cell:filled:hover .table-cell {
     -fx-background-color: #D8E6F2;
 }
 
-/* 选中行：蓝色背景，白色文字（含第一列自定义 Label） */
+/* 选中行：仅单元格蓝色背景，行背景保持白色（右侧空白列也保持白色，与 .table-view 一致） */
 .objects-detail-table .table-row-cell:selected {
-    -fx-background-color: #3592CB;
+    -fx-background-color: white;
 }
 
 .objects-detail-table .table-row-cell:selected .table-cell {
@@ -1056,9 +1056,9 @@
     -fx-text-fill: white;
 }
 
-/* 选中行悬停：保持蓝色（优先级高于 :filled:hover） */
+/* 选中行悬停：保持蓝色单元格（优先级高于 :filled:hover） */
 .objects-detail-table .table-row-cell:selected:hover {
-    -fx-background-color: #3592CB;
+    -fx-background-color: white;
 }
 
 .objects-detail-table .table-row-cell:selected:hover .table-cell {
