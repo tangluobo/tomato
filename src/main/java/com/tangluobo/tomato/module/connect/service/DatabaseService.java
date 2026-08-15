@@ -262,6 +262,170 @@ public class DatabaseService {
         return views;
     }
 
+    /**
+     * 批量获取当前数据库/Schema 下所有表和视图的元数据信息，用于对象视图的详细列表。
+     * @return 每个 Map 包含：name(名), type(TABLE/VIEW), engine(引擎), autoIncrement(自动递增值),
+     *         updateTime(修改日期), dataLength(数据长度), rows(行数), comment(注释)
+     */
+    public static List<Map<String, String>> getTablesInfo(ConnectionConfig config, String databaseName, String schemaName) throws Exception {
+        List<Map<String, String>> result = new ArrayList<>();
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL) ? getConnection(config, databaseName) : getConnection(config);
+        String pgSchema = schemaName != null ? schemaName : databaseName;
+
+        if (config.getType() == ConnectType.MYSQL) {
+            String sql = "SELECT TABLE_NAME, TABLE_TYPE, ENGINE, AUTO_INCREMENT, "
+                    + "DATE_FORMAT(UPDATE_TIME, '%Y-%m-%d %H:%i:%s') AS UPDATE_TIME, "
+                    + "(IFNULL(DATA_LENGTH,0) + IFNULL(INDEX_LENGTH,0)) AS DATA_LENGTH, "
+                    + "TABLE_ROWS, TABLE_COMMENT "
+                    + "FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? "
+                    + "ORDER BY TABLE_TYPE, TABLE_NAME";
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, databaseName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, String> m = new LinkedHashMap<>();
+                        m.put("name", rs.getString("TABLE_NAME"));
+                        String tableType = rs.getString("TABLE_TYPE");
+                        m.put("type", "VIEW".equalsIgnoreCase(tableType) ? "VIEW" : "TABLE");
+                        m.put("engine", rs.getString("ENGINE") != null ? rs.getString("ENGINE") : "");
+                        String ai = rs.getString("AUTO_INCREMENT");
+                        m.put("autoIncrement", ai != null ? ai : "");
+                        String ut = rs.getString("UPDATE_TIME");
+                        m.put("updateTime", ut != null ? ut : "");
+                        long dl = rs.getLong("DATA_LENGTH");
+                        m.put("dataLength", dl > 0 ? formatDataLength(dl) : "");
+                        long rows = rs.getLong("TABLE_ROWS");
+                        m.put("rows", rs.wasNull() ? "" : String.valueOf(rows));
+                        m.put("comment", rs.getString("TABLE_COMMENT") != null ? rs.getString("TABLE_COMMENT") : "");
+                        result.add(m);
+                    }
+                }
+            }
+        } else if (config.getType() == ConnectType.POSTGRESQL) {
+            // 表
+            String tableSql = "SELECT c.relname AS name, 'TABLE' AS type, "
+                    + "'' AS engine, "
+                    + "'' AS autoIncrement, "
+                    + "(SELECT pg_stat_last_operation_time(c.oid, 'AUTO_INCREMENT')) AS update_time, "
+                    + "pg_total_relation_size(c.oid) AS data_length, "
+                    + "c.reltuples::bigint AS rows, "
+                    + "COALESCE(pg_catalog.obj_description(c.oid), '') AS comment "
+                    + "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    + "WHERE n.nspname = ? AND c.relkind IN ('r','p') "
+                    + "ORDER BY c.relname";
+            try (PreparedStatement stmt = conn.prepareStatement(tableSql)) {
+                stmt.setString(1, pgSchema);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, String> m = new LinkedHashMap<>();
+                        m.put("name", rs.getString("name"));
+                        m.put("type", "TABLE");
+                        m.put("engine", "");
+                        m.put("autoIncrement", "");
+                        m.put("updateTime", "");
+                        long dl = rs.getLong("data_length");
+                        m.put("dataLength", dl > 0 ? formatDataLength(dl) : "");
+                        long rows = rs.getLong("rows");
+                        m.put("rows", rs.wasNull() ? "" : String.valueOf(rows));
+                        m.put("comment", rs.getString("comment") != null ? rs.getString("comment") : "");
+                        result.add(m);
+                    }
+                }
+            }
+            // 视图
+            String viewSql = "SELECT c.relname AS name, 'VIEW' AS type, "
+                    + "'' AS engine, '' AS autoIncrement, '' AS update_time, 0 AS data_length, 0 AS rows, "
+                    + "COALESCE(pg_catalog.obj_description(c.oid), '') AS comment "
+                    + "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    + "WHERE n.nspname = ? AND c.relkind IN ('v','m') "
+                    + "ORDER BY c.relname";
+            try (PreparedStatement stmt = conn.prepareStatement(viewSql)) {
+                stmt.setString(1, pgSchema);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, String> m = new LinkedHashMap<>();
+                        m.put("name", rs.getString("name"));
+                        m.put("type", "VIEW");
+                        m.put("engine", "");
+                        m.put("autoIncrement", "");
+                        m.put("updateTime", "");
+                        m.put("dataLength", "");
+                        m.put("rows", "");
+                        m.put("comment", rs.getString("comment") != null ? rs.getString("comment") : "");
+                        result.add(m);
+                    }
+                }
+            }
+        } else if (config.getType() == ConnectType.ORACLE) {
+            // 表
+            String tableSql = "SELECT t.table_name AS name, 'TABLE' AS type, "
+                    + "'' AS engine, '' AS autoIncrement, "
+                    + "TO_CHAR(t.last_analyzed, 'YYYY-MM-DD HH24:MI:SS') AS update_time, "
+                    + "(t.blocks * 8192) AS data_length, t.num_rows AS rows, "
+                    + "NVL(c.comments, '') AS comment "
+                    + "FROM all_tables t LEFT JOIN all_tab_comments c "
+                    + "ON t.owner = c.owner AND t.table_name = c.table_name AND c.table_type = 'TABLE' "
+                    + "WHERE t.owner = ? ORDER BY t.table_name";
+            try (PreparedStatement stmt = conn.prepareStatement(tableSql)) {
+                stmt.setString(1, databaseName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, String> m = new LinkedHashMap<>();
+                        m.put("name", rs.getString("name"));
+                        m.put("type", "TABLE");
+                        m.put("engine", "");
+                        m.put("autoIncrement", "");
+                        m.put("updateTime", rs.getString("update_time") != null ? rs.getString("update_time") : "");
+                        long dl = rs.getLong("data_length");
+                        m.put("dataLength", dl > 0 ? formatDataLength(dl) : "");
+                        long rows = rs.getLong("rows");
+                        m.put("rows", rs.wasNull() ? "" : String.valueOf(rows));
+                        m.put("comment", rs.getString("comment") != null ? rs.getString("comment") : "");
+                        result.add(m);
+                    }
+                }
+            }
+            // 视图
+            String viewSql = "SELECT v.view_name AS name, 'VIEW' AS type, "
+                    + "'' AS engine, '' AS autoIncrement, '' AS update_time, 0 AS data_length, 0 AS rows, "
+                    + "NVL(c.comments, '') AS comment "
+                    + "FROM all_views v LEFT JOIN all_tab_comments c "
+                    + "ON v.owner = c.owner AND v.view_name = c.table_name AND c.table_type = 'VIEW' "
+                    + "WHERE v.owner = ? ORDER BY v.view_name";
+            try (PreparedStatement stmt = conn.prepareStatement(viewSql)) {
+                stmt.setString(1, databaseName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, String> m = new LinkedHashMap<>();
+                        m.put("name", rs.getString("name"));
+                        m.put("type", "VIEW");
+                        m.put("engine", "");
+                        m.put("autoIncrement", "");
+                        m.put("updateTime", "");
+                        m.put("dataLength", "");
+                        m.put("rows", "");
+                        m.put("comment", rs.getString("comment") != null ? rs.getString("comment") : "");
+                        result.add(m);
+                    }
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /** 将字节长度格式化为易读字符串（B/KB/MB/GB/TB） */
+    private static String formatDataLength(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        double kb = bytes / 1024.0;
+        if (kb < 1024) return String.format("%.2f KB", kb);
+        double mb = kb / 1024.0;
+        if (mb < 1024) return String.format("%.2f MB", mb);
+        double gb = mb / 1024.0;
+        if (gb < 1024) return String.format("%.2f GB", gb);
+        return String.format("%.2f TB", gb / 1024.0);
+    }
+
     public static List<String> getFunctions(ConnectionConfig config, String databaseName) throws Exception {
         Connection conn = getConnection(config);
         List<String> functions = new ArrayList<>();

@@ -18,6 +18,8 @@ import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.CubicCurve;
 import javafx.scene.shape.SVGPath;
+import javafx.scene.text.Font;
+import javafx.scene.text.Text;
 import javafx.scene.text.TextAlignment;
 
 import java.util.ArrayList;
@@ -40,13 +42,23 @@ public class TableObjectsView extends BorderPane {
     /** 对象类型 */
     private enum ObjectType { TABLE, VIEW }
 
-    /** 对象信息 POJO */
+    /** 对象信息 POJO（详细列表所有列） */
     private static class ObjectInfo {
         final String name;
         final ObjectType type;
         final String comment;
-        ObjectInfo(String name, ObjectType type, String comment) {
+        final String engine;
+        final String autoIncrement;
+        final String updateTime;
+        final String dataLength;
+        final String rows;
+        ObjectInfo(String name, ObjectType type, String comment,
+                   String engine, String autoIncrement, String updateTime,
+                   String dataLength, String rows) {
             this.name = name; this.type = type; this.comment = comment;
+            this.engine = engine; this.autoIncrement = autoIncrement;
+            this.updateTime = updateTime; this.dataLength = dataLength;
+            this.rows = rows;
         }
     }
 
@@ -316,10 +328,13 @@ public class TableObjectsView extends BorderPane {
         if (iconBox != null) {
             iconBox.setStyle("-fx-background-color: #d4edda; -fx-background-radius: 4; -fx-border-color: #07c160; -fx-border-radius: 4;");
         }
-        // 同步详细列表选中
+        // 同步详细列表选中（使用 COL_KEY_NAME + COL_KEY_TYPE 双重匹配避免同名混淆）
         if (obj != null) {
+            String expectedType = obj.type == ObjectType.TABLE ? "TABLE" : "VIEW";
             for (ObservableList<String> row : detailTableView.getItems()) {
-                if (row.size() >= 1 && obj.name.equals(row.get(0))) {
+                if (row.size() > COL_KEY_TYPE
+                        && obj.name.equals(row.get(COL_KEY_NAME))
+                        && expectedType.equals(row.get(COL_KEY_TYPE))) {
                     detailTableView.getSelectionModel().select(row);
                     break;
                 }
@@ -330,31 +345,88 @@ public class TableObjectsView extends BorderPane {
 
     // ==================== 详细列表视图 ====================
 
+    /** 详细列表行数据：0=名(显示用), 1=自动递增值, 2=修改日期, 3=数据长度, 4=引擎, 5=行, 6=注释, 7=名(原始key,选中同步用), 8=类型(原始key,选中同步用) */
+    private static final int COL_NAME = 0;
+    private static final int COL_AUTOINC = 1;
+    private static final int COL_UPDATETIME = 2;
+    private static final int COL_DATALEN = 3;
+    private static final int COL_ENGINE = 4;
+    private static final int COL_ROWS = 5;
+    private static final int COL_COMMENT = 6;
+    private static final int COL_KEY_NAME = 7;
+    private static final int COL_KEY_TYPE = 8;
+
     private Node createDetailView() {
         detailTableView = new TableView<>();
         detailTableView.setEditable(false);
+        detailTableView.getStyleClass().add("objects-detail-table");
         detailTableView.setStyle("-fx-padding: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-background-insets: 0;");
         detailTableView.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         detailTableView.setPlaceholder(new Label("暂无对象"));
 
-        String[] titles = {"名称", "类型", "注释"};
-        double[] widths = {200, 80, 300};
-        for (int i = 0; i < titles.length; i++) {
+        // 列定义：名、自动递增值、修改日期、数据长度、引擎、行、注释
+        // 列宽自适应：初始给默认值避免首帧闪烁，数据加载后由 autoFitColumns 按内容+表头计算
+        String[] titles = {"名", "自动递增值", "修改日期", "数据长度", "引擎", "行", "注释"};
+        final double colMin = 60;
+        final double colMax = 400;
+
+        // 0. 名列（图标 + 名，自定义单元格）
+        {
+            TableColumn<ObservableList<String>, String> col = new TableColumn<>(titles[0]);
+            col.setMinWidth(colMin);
+            col.setMaxWidth(colMax);
+            col.setPrefWidth(160); // 初始值，autoFitColumns 会覆盖
+            col.setCellValueFactory(param -> new SimpleStringProperty(param.getValue().get(COL_NAME)));
+            col.setCellFactory(tc -> new TableCell<ObservableList<String>, String>() {
+                @Override
+                protected void updateItem(String item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) {
+                        setGraphic(null);
+                        setText(null);
+                        return;
+                    }
+                    ObservableList<String> row = getTableView().getItems().get(getIndex());
+                    String typeKey = row.size() > COL_KEY_TYPE ? row.get(COL_KEY_TYPE) : "TABLE";
+                    boolean isView = "VIEW".equals(typeKey);
+                    Image img = isView ? viewImg : tableImg;
+                    HBox box = new HBox(6);
+                    box.setAlignment(Pos.CENTER_LEFT);
+                    if (img != null) {
+                        ImageView iv = new ImageView(img);
+                        iv.setFitWidth(16);
+                        iv.setFitHeight(16);
+                        iv.setPreserveRatio(true);
+                        box.getChildren().add(iv);
+                    }
+                    Label nameLbl = new Label(item);
+                    nameLbl.setStyle("-fx-font-size: 12px;");
+                    box.getChildren().add(nameLbl);
+                    setGraphic(box);
+                    setText(null);
+                }
+            });
+            detailTableView.getColumns().add(col);
+        }
+
+        // 1-6. 其余列（普通文本）
+        for (int i = 1; i <= 6; i++) {
             final int colIndex = i;
             TableColumn<ObservableList<String>, String> col = new TableColumn<>(titles[i]);
-            col.setPrefWidth(widths[i]);
+            col.setMinWidth(colMin);
+            col.setMaxWidth(colMax);
+            col.setPrefWidth(100); // 初始值，autoFitColumns 会覆盖
             col.setCellValueFactory(param -> new SimpleStringProperty(param.getValue().get(colIndex)));
             detailTableView.getColumns().add(col);
         }
 
-        // 选中行时同步 selectedObject
+        // 选中行时同步 selectedObject：使用隐藏列 COL_KEY_NAME / COL_KEY_TYPE
         detailTableView.getSelectionModel().selectedItemProperty().addListener((obs, oldRow, newRow) -> {
-            if (newRow != null && newRow.size() >= 2) {
-                String name = newRow.get(0);
-                String typeStr = newRow.get(1);
-                ObjectType type = "视图".equals(typeStr) ? ObjectType.VIEW : ObjectType.TABLE;
+            if (newRow != null && newRow.size() > COL_KEY_TYPE) {
+                String name = newRow.get(COL_KEY_NAME);
+                String typeKey = newRow.get(COL_KEY_TYPE);
+                ObjectType type = "VIEW".equals(typeKey) ? ObjectType.VIEW : ObjectType.TABLE;
                 selectedObject = findObjectInfo(name, type);
-                // 清除图标视图高亮（详细列表选中时不维护图标高亮）
                 if (selectedIconBox != null) {
                     selectedIconBox.setStyle("");
                     selectedIconBox = null;
@@ -371,13 +443,15 @@ public class TableObjectsView extends BorderPane {
             row.setOnMouseClicked(e -> {
                 if (e.getClickCount() == 2 && !row.isEmpty()) {
                     ObservableList<String> rowData = row.getItem();
-                    String name = rowData.get(0);
-                    String typeStr = rowData.get(1);
-                    ObjectType type = "视图".equals(typeStr) ? ObjectType.VIEW : ObjectType.TABLE;
-                    ObjectInfo obj = findObjectInfo(name, type);
-                    if (obj != null) {
-                        selectedObject = obj;
-                        if (operations != null) operations.openObject(buildNodeData(obj));
+                    if (rowData.size() > COL_KEY_TYPE) {
+                        String name = rowData.get(COL_KEY_NAME);
+                        String typeKey = rowData.get(COL_KEY_TYPE);
+                        ObjectType type = "VIEW".equals(typeKey) ? ObjectType.VIEW : ObjectType.TABLE;
+                        ObjectInfo obj = findObjectInfo(name, type);
+                        if (obj != null) {
+                            selectedObject = obj;
+                            if (operations != null) operations.openObject(buildNodeData(obj));
+                        }
                     }
                 }
             });
@@ -399,12 +473,69 @@ public class TableObjectsView extends BorderPane {
         ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
         for (ObjectInfo obj : objects) {
             rows.add(FXCollections.observableArrayList(
-                    obj.name,
-                    obj.type == ObjectType.TABLE ? "表" : "视图",
-                    obj.comment != null ? obj.comment : ""
+                    obj.name,                                                // 0 名(显示)
+                    obj.autoIncrement != null ? obj.autoIncrement : "",      // 1 自动递增值
+                    obj.updateTime != null ? obj.updateTime : "",            // 2 修改日期
+                    obj.dataLength != null ? obj.dataLength : "",            // 3 数据长度
+                    obj.engine != null ? obj.engine : "",                    // 4 引擎
+                    obj.rows != null ? obj.rows : "",                        // 5 行
+                    obj.comment != null ? obj.comment : "",                  // 6 注释
+                    obj.name,                                                // 7 名(key,选中同步用)
+                    obj.type == ObjectType.TABLE ? "TABLE" : "VIEW"          // 8 类型(key,选中同步用)
             ));
         }
         detailTableView.setItems(rows);
+        autoFitColumns();
+    }
+
+    /**
+     * 根据表头文字和实际数据内容自适应每列宽度。
+     * 取 max(表头宽度, 数据最大宽度)，并限制在 [colMin, colMax] 范围内，
+     * 避免列太宽或太窄。
+     */
+    private void autoFitColumns() {
+        if (detailTableView.getColumns().isEmpty()) return;
+
+        // CSS: .table-cell padding = 4 8 4 8 -> 左右各 8px = 16
+        // .column-header .label padding = 4 8 4 8 -> 左右各 8px = 16
+        // 表头额外空间：排序图标/箭头约 20px
+        final double cellHPad = 16;
+        final double headerExtra = 20;
+        final double minColWidth = 60;
+        final double maxColWidth = 400;
+        final double nameIconExtra = 22; // 第一列图标(16) + HBox gap(6)
+
+        Font dataFont = Font.font("System", 12);
+
+        for (int colIdx = 0; colIdx < detailTableView.getColumns().size(); colIdx++) {
+            TableColumn<ObservableList<String>, ?> column = detailTableView.getColumns().get(colIdx);
+
+            // 表头宽度
+            double headerWidth = measureTextWidth(column.getText(), dataFont) + cellHPad + headerExtra;
+
+            // 数据最大宽度
+            double maxDataWidth = 0;
+            for (ObservableList<String> row : detailTableView.getItems()) {
+                if (colIdx < row.size() && row.get(colIdx) != null) {
+                    double w = measureTextWidth(row.get(colIdx), dataFont) + cellHPad;
+                    if (colIdx == COL_NAME) w += nameIconExtra;
+                    if (w > maxDataWidth) maxDataWidth = w;
+                }
+            }
+
+            double prefWidth = Math.max(headerWidth, maxDataWidth);
+            prefWidth = Math.max(minColWidth, Math.min(maxColWidth, prefWidth));
+
+            column.setPrefWidth(prefWidth);
+        }
+    }
+
+    /** 测量文本在指定字体下的渲染宽度（基于字体 metrics，无需加入 scene graph） */
+    private double measureTextWidth(String text, Font font) {
+        if (text == null || text.isEmpty()) return 0;
+        Text textNode = new Text(text);
+        textNode.setFont(font);
+        return textNode.getLayoutBounds().getWidth();
     }
 
     // ==================== ER 视图 ====================
@@ -635,23 +766,23 @@ public class TableObjectsView extends BorderPane {
             ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
             connLock.lock();
             try {
-                List<String> tables = DatabaseService.getTables(config, databaseName, schemaName);
-                List<String> views = DatabaseService.getViews(config, databaseName, schemaName);
-
+                // 批量获取所有表/视图元数据（代替逐表 getTableComment）
+                List<Map<String, String>> info = DatabaseService.getTablesInfo(config, databaseName, schemaName);
                 List<ObjectInfo> objs = new ArrayList<>();
-                for (String t : tables) {
-                    String comment = "";
-                    try {
-                        comment = DatabaseService.getTableComment(config, databaseName, schemaName, t);
-                    } catch (Exception ignored) {}
-                    objs.add(new ObjectInfo(t, ObjectType.TABLE, comment));
-                }
-                for (String v : views) {
-                    String comment = "";
-                    try {
-                        comment = DatabaseService.getTableComment(config, databaseName, schemaName, v);
-                    } catch (Exception ignored) {}
-                    objs.add(new ObjectInfo(v, ObjectType.VIEW, comment));
+                for (Map<String, String> m : info) {
+                    String name = m.get("name");
+                    String typeKey = m.get("type");
+                    ObjectType type = "VIEW".equals(typeKey) ? ObjectType.VIEW : ObjectType.TABLE;
+                    objs.add(new ObjectInfo(
+                            name,
+                            type,
+                            m.get("comment") != null ? m.get("comment") : "",
+                            m.get("engine") != null ? m.get("engine") : "",
+                            m.get("autoIncrement") != null ? m.get("autoIncrement") : "",
+                            m.get("updateTime") != null ? m.get("updateTime") : "",
+                            m.get("dataLength") != null ? m.get("dataLength") : "",
+                            m.get("rows") != null ? m.get("rows") : ""
+                    ));
                 }
 
                 List<FkRelation> fks = new ArrayList<>();

@@ -960,3 +960,112 @@
 .table-view .column-header {
     -fx-alignment: center;
 }
+
+/* ==================== 对象视图：详细列表表格样式 ====================
+   表头背景白色（与数据行一致），去掉所有表格线，只保留表头列间竖线分隔
+===================================================================== */
+.objects-detail-table .column-header-background {
+    -fx-background-color: white;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-padding: 0;
+    -fx-background-insets: 0;
+}
+
+.objects-detail-table .column-header-background .nested-column-header {
+    -fx-background-color: white;
+    -fx-padding: 0;
+    -fx-background-insets: 0;
+}
+
+/* 列头：白底 + 仅右侧1px竖线分隔，去掉底部线（无表头/数据区边界） */
+.objects-detail-table .column-header {
+    -fx-background-color: white;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+    -fx-border-color: transparent #E5E5E5 transparent transparent;
+    -fx-border-width: 0 1 0 0;
+}
+
+.objects-detail-table .column-header .label {
+    -fx-background-color: white;
+    -fx-padding: 4 8 4 8;
+    -fx-font-size: 12px;
+}
+
+.objects-detail-table .column-header-background .filler {
+    -fx-background-color: white;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-padding: 0;
+    -fx-background-insets: 0;
+}
+
+/* 数据行与单元格：白底，无任何边框线，取消行列线 */
+.objects-detail-table .table-row-cell {
+    -fx-background-color: white;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
+.objects-detail-table .table-row-cell:odd {
+    -fx-background-color: white;
+    -fx-background-insets: 0;
+}
+
+.objects-detail-table .table-row-cell:empty {
+    -fx-background-color: white;
+    -fx-border-color: transparent;
+}
+
+.objects-detail-table .table-row-cell:empty .table-cell {
+    -fx-border-color: transparent;
+}
+
+.objects-detail-table .table-cell {
+    -fx-background-color: white;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-padding: 4 8 4 8;
+    -fx-font-size: 12px;
+}
+
+/* 悬停和选中状态保持可读性 */
+/* 未选中行悬停：淡蓝色 */
+.objects-detail-table .table-row-cell:filled:hover {
+    -fx-background-color: #D8E6F2;
+}
+
+.objects-detail-table .table-row-cell:filled:hover .table-cell {
+    -fx-background-color: #D8E6F2;
+}
+
+/* 选中行：蓝色背景，白色文字（含第一列自定义 Label） */
+.objects-detail-table .table-row-cell:selected {
+    -fx-background-color: #3592CB;
+}
+
+.objects-detail-table .table-row-cell:selected .table-cell {
+    -fx-background-color: #3592CB;
+    -fx-text-fill: white;
+}
+
+.objects-detail-table .table-row-cell:selected .table-cell .label {
+    -fx-text-fill: white;
+}
+
+/* 选中行悬停：保持蓝色（优先级高于 :filled:hover） */
+.objects-detail-table .table-row-cell:selected:hover {
+    -fx-background-color: #3592CB;
+}
+
+.objects-detail-table .table-row-cell:selected:hover .table-cell {
+    -fx-background-color: #3592CB;
+    -fx-text-fill: white;
+}
+
+.objects-detail-table .table-row-cell:selected:hover .table-cell .label {
+    -fx-text-fill: white;
+}
