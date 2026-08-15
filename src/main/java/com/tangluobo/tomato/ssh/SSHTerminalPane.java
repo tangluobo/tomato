@@ -763,7 +763,10 @@ public class SSHTerminalPane extends BorderPane {
      * 重新连接
      */
     private void reconnect() {
-        if (host == null || password == null) return;
+        // host必须存在，且（密码存在 或 私钥路径存在），否则无法重连
+        if (host == null || (password == null && (privateKeyPaths == null || privateKeyPaths.isEmpty()))) {
+            return;
+        }
         connectionLost = false;
         updateStatusBar("重新连接中...");
 
@@ -909,6 +912,8 @@ public class SSHTerminalPane extends BorderPane {
                 emulator.process(("\r\n[连接已断开 - 按回车重新连接]\r\n").getBytes());
                 scheduleRender();
                 updateStatusBar("已断开 - 按回车重连");
+                // 主动请求焦点，确保用户按回车时键盘事件能被 terminalView 捕获
+                terminalView.requestFocus();
             });
         }, "SSH-Read-Thread");
         readThread.setDaemon(true);
