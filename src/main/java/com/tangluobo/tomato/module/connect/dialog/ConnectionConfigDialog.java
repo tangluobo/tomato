@@ -153,11 +153,19 @@ public class ConnectionConfigDialog {
     private ComboBox<ConnectionConfig> redisSshHostCombo;
 
     // ===== RocketMQ专属字段 =====
+    private TabPane rocketmqTabPane;
+    private Tab rocketmqGeneralTab;
     private VBox rocketmqConfigContent;
     private TextField rocketmqNameField;
     private TextField rocketmqHostField;
     private TextField rocketmqPortField;
     private TextField rocketmqDescriptionField;
+
+    // RocketMQ专用 SSH通道（引用方式：选择已有SSH主机作为跳板机）
+    private Tab rocketmqSshTunnelTab;
+    private CheckBox rocketmqUseSshTunnelCheckBox;
+    private VBox rocketmqSshTunnelContent;
+    private ComboBox<ConnectionConfig> rocketmqSshHostCombo;
 
     // ===== 阿里云专属字段 =====
     private VBox aliyunConfigContent;
@@ -327,7 +335,7 @@ public class ConnectionConfigDialog {
 
         configButtons.getChildren().addAll(backBtn, cancelBtn2, okBtn);
 
-        configPage.getChildren().addAll(configTitle, dbTabPane, sshTabPane, simpleConfigContent, localTerminalConfigContent, s3TabPane, redisTabPane, rocketmqConfigContent, aliyunConfigContent, localDirectoryConfigContent, configButtons);
+        configPage.getChildren().addAll(configTitle, dbTabPane, sshTabPane, simpleConfigContent, localTerminalConfigContent, s3TabPane, redisTabPane, rocketmqTabPane, aliyunConfigContent, localDirectoryConfigContent, configButtons);
 
         // 编辑已有连接时直接显示配置页
         if (existingConfig != null) {
@@ -719,13 +727,14 @@ public class ConnectionConfigDialog {
     }
 
     /**
-     * 加载已保存的 SSH/SFTP 连接，用于 S3/Redis/SSH SSH通道 选择已有主机/跳板机
+     * 加载已保存的 SSH/SFTP 连接，用于 S3/Redis/SSH/RocketMQ SSH通道 选择已有主机/跳板机
      */
     private void loadAvailableSshHosts() {
         availableSshHosts.clear();
         if (s3SshHostCombo != null) s3SshHostCombo.getItems().clear();
         if (redisSshHostCombo != null) redisSshHostCombo.getItems().clear();
         if (sshSshHostCombo != null) sshSshHostCombo.getItems().clear();
+        if (rocketmqSshHostCombo != null) rocketmqSshHostCombo.getItems().clear();
         try {
             List<ConnectionConfig> all = ConfigManager.loadConnections();
             for (ConnectionConfig c : all) {
@@ -734,6 +743,7 @@ public class ConnectionConfigDialog {
                     if (s3SshHostCombo != null) s3SshHostCombo.getItems().add(c);
                     if (redisSshHostCombo != null) redisSshHostCombo.getItems().add(c);
                     if (sshSshHostCombo != null) sshSshHostCombo.getItems().add(c);
+                    if (rocketmqSshHostCombo != null) rocketmqSshHostCombo.getItems().add(c);
                 }
             }
         } catch (Exception e) {
@@ -1482,8 +1492,6 @@ public class ConnectionConfigDialog {
      */
     private void buildRocketmqConfigContent() {
         rocketmqConfigContent = new VBox(15);
-        rocketmqConfigContent.setVisible(false);
-        rocketmqConfigContent.setManaged(false);
 
         GridPane grid = new GridPane();
         grid.setHgap(10);
@@ -1521,6 +1529,67 @@ public class ConnectionConfigDialog {
         hint.setWrapText(true);
 
         rocketmqConfigContent.getChildren().addAll(grid, hint);
+
+        // 构建 RocketMQ 专用 TabPane（常规 + SSH通道），与 S3/Redis/SSH 结构一致
+        rocketmqTabPane = new TabPane();
+        rocketmqTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        rocketmqTabPane.setVisible(false);
+        rocketmqTabPane.setManaged(false);
+        rocketmqTabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+
+        rocketmqGeneralTab = new Tab("常规");
+        rocketmqGeneralTab.setContent(rocketmqConfigContent);
+
+        // ===== RocketMQ 专用 SSH通道 Tab（引用方式：选择已有SSH主机作为跳板机）=====
+        VBox rocketmqTunnelContent = new VBox(10);
+        rocketmqTunnelContent.setPadding(new Insets(10, 0, 0, 20));
+
+        rocketmqUseSshTunnelCheckBox = new CheckBox("启用SSH通道（跳板机）");
+        rocketmqUseSshTunnelCheckBox.setStyle("-fx-font-weight: bold;");
+
+        rocketmqSshTunnelContent = new VBox(10);
+        rocketmqSshTunnelContent.setPadding(new Insets(5, 0, 0, 0));
+        rocketmqSshTunnelContent.setDisable(true);
+
+        rocketmqUseSshTunnelCheckBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
+            rocketmqSshTunnelContent.setDisable(!newVal);
+        });
+
+        // 选择已有SSH主机作为跳板机
+        HBox rocketmqSelectHostBox = new HBox(8);
+        rocketmqSelectHostBox.setAlignment(Pos.CENTER_LEFT);
+        Label rocketmqSelectHostLabel = new Label("选择已有SSH主机：");
+        rocketmqSshHostCombo = new ComboBox<>();
+        rocketmqSshHostCombo.setPrefWidth(280);
+        rocketmqSshHostCombo.setPromptText("选择已保存的SSH连接作为跳板机");
+        rocketmqSshHostCombo.setCellFactory(lv -> new ListCell<ConnectionConfig>() {
+            @Override
+            protected void updateItem(ConnectionConfig item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : item.getName() + " (" + item.getHost() + ":" + item.getPort() + ")");
+            }
+        });
+        rocketmqSshHostCombo.setButtonCell(new ListCell<ConnectionConfig>() {
+            @Override
+            protected void updateItem(ConnectionConfig item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : item.getName() + " (" + item.getHost() + ":" + item.getPort() + ")");
+            }
+        });
+        rocketmqSelectHostBox.getChildren().addAll(rocketmqSelectHostLabel, rocketmqSshHostCombo);
+        loadAvailableSshHosts();
+
+        Label rocketmqTunnelHint = new Label("启用后，将通过所选SSH主机（跳板机）建立安全通道访问NameServer；SSH连接信息随引用主机自动更新。跳板机需已保存凭据。");
+        rocketmqTunnelHint.setStyle("-fx-font-size: 10px; -fx-text-fill: #999;");
+        rocketmqTunnelHint.setWrapText(true);
+
+        rocketmqSshTunnelContent.getChildren().addAll(rocketmqSelectHostBox, rocketmqTunnelHint);
+        rocketmqTunnelContent.getChildren().addAll(rocketmqUseSshTunnelCheckBox, rocketmqSshTunnelContent);
+
+        rocketmqSshTunnelTab = new Tab("SSH通道");
+        rocketmqSshTunnelTab.setContent(rocketmqTunnelContent);
+
+        rocketmqTabPane.getTabs().addAll(rocketmqGeneralTab, rocketmqSshTunnelTab);
     }
 
     /**
@@ -1854,8 +1923,8 @@ public class ConnectionConfigDialog {
         boolean isLocalDirectory = selectedType == ConnectType.LOCAL_DIRECTORY;
         boolean isSimple = !isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis && !isRocketmq && !isAliyun && !isLocalDirectory;
 
-        // 数据库/S3/Redis/SSH 类型 TabPane 已有标签标题，隐藏顶部标题避免重复
-        boolean useTabPane = isDatabase || isS3orOSS || isRedis || isSSH;
+        // 数据库/S3/Redis/SSH/RocketMQ 类型 TabPane 已有标签标题，隐藏顶部标题避免重复
+        boolean useTabPane = isDatabase || isS3orOSS || isRedis || isSSH || isRocketmq;
         configTitle.setVisible(!useTabPane);
         configTitle.setManaged(!useTabPane);
         // TabPane 类型时去掉顶部和左侧 padding，让标签顶到最上面和最左边
@@ -1877,8 +1946,8 @@ public class ConnectionConfigDialog {
         s3TabPane.setManaged(isS3orOSS);
         redisTabPane.setVisible(isRedis);
         redisTabPane.setManaged(isRedis);
-        rocketmqConfigContent.setVisible(isRocketmq);
-        rocketmqConfigContent.setManaged(isRocketmq);
+        rocketmqTabPane.setVisible(isRocketmq);
+        rocketmqTabPane.setManaged(isRocketmq);
         aliyunConfigContent.setVisible(isAliyun);
         aliyunConfigContent.setManaged(isAliyun);
         localDirectoryConfigContent.setVisible(isLocalDirectory);
@@ -2065,6 +2134,17 @@ public class ConnectionConfigDialog {
             rocketmqHostField.setText(existingConfig.getHost());
             rocketmqPortField.setText(String.valueOf(existingConfig.getPort()));
             rocketmqDescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
+            // SSH通道配置（引用方式：记录引用的SSH跳板机ID）
+            rocketmqUseSshTunnelCheckBox.setSelected(existingConfig.isUseSshTunnel());
+            rocketmqSshHostCombo.setValue(null);
+            if (existingConfig.getSshTunnelHostId() != null) {
+                for (ConnectionConfig c : availableSshHosts) {
+                    if (existingConfig.getSshTunnelHostId().equals(c.getId())) {
+                        rocketmqSshHostCombo.setValue(c);
+                        break;
+                    }
+                }
+            }
         } else if (isAliyun) {
             aliyunNameField.setText(existingConfig.getName());
             aliyunAccessKeyField.setText(existingConfig.getUsername() != null ? existingConfig.getUsername() : "");
@@ -2261,6 +2341,11 @@ public class ConnectionConfigDialog {
             config.setHost(rocketmqHostField.getText().trim());
             config.setPort(Integer.parseInt(rocketmqPortField.getText().trim()));
             config.setDescription(rocketmqDescriptionField.getText().trim());
+
+            // SSH通道配置（引用方式：记录引用的SSH跳板机ID）
+            config.setUseSshTunnel(rocketmqUseSshTunnelCheckBox.isSelected());
+            ConnectionConfig selectedRocketmqJumpHost = rocketmqSshHostCombo.getValue();
+            config.setSshTunnelHostId(selectedRocketmqJumpHost != null ? selectedRocketmqJumpHost.getId() : null);
 
         } else if (isAliyun) {
             config.setName(aliyunNameField.getText().trim());
@@ -2563,6 +2648,11 @@ public class ConnectionConfigDialog {
         }
         if (rocketmqHostField.getText().trim().isEmpty()) {
             showAlert("请输入NameServer主机地址");
+            return false;
+        }
+        // SSH通道验证（引用方式：启用时必须选择已有SSH跳板机）
+        if (rocketmqUseSshTunnelCheckBox.isSelected() && rocketmqSshHostCombo.getValue() == null) {
+            showAlert("启用SSH通道后请选择已有SSH跳板机");
             return false;
         }
         return true;

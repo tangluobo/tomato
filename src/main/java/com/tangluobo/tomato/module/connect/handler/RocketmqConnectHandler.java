@@ -371,6 +371,9 @@ public class RocketmqConnectHandler implements ConnectHandler {
                           .append("\n");
                     }
                 }
+                if (detail.containsKey("warning")) {
+                    sb.append("\n⚠️ ").append(detail.get("warning")).append("\n");
+                }
                 Platform.runLater(() -> detailArea.setText(sb.toString()));
             } catch (Exception e) {
                 Platform.runLater(() -> detailArea.setText("加载消费详情失败: " + e.getMessage()));

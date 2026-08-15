@@ -88,6 +88,83 @@ public class SshTunnelManager {
     }
 
     /**
+     * 查看已建立的活跃隧道本地端口（不改变引用计数）。
+     * 用于短生命周期消费者（如RocketMQ PullConsumer）复用长生命周期消费者（如Admin）已建立的隧道。
+     * 无隧道或隧道未建立时返回 -1。
+     */
+    public static synchronized int peek(ConnectionConfig config) {
+        if (!config.isUseSshTunnel() || config.getSshTunnelHostId() == null) {
+            return -1;
+        }
+        String key = config.getId() + "_" + config.getHost() + ":" + config.getPort();
+        TunnelEntry entry = cache.get(key);
+        if (entry != null && entry.tunnel.isActive()) {
+            return entry.tunnel.getForwardedLocalPort();
+        }
+        return -1;
+    }
+
+    /**
+     * 建立/复用 RocketMQ broker 跳板隧道（按 configId+brokerHost:port 缓存，不使用引用计数）。
+     * NameServer 返回的 broker 地址常为内网 IP，客户端直连失败；通过隧道转发到跳板机可达 broker。
+     * 由 closeBrokerTunnels(config) 统一关闭（在 closeAdmin 时调用）。
+     * 返回本地转发端口；未启用隧道返回 -1。
+     */
+    public static synchronized int ensureBrokerTunnel(ConnectionConfig config, String brokerHost, int brokerPort) {
+        if (!config.isUseSshTunnel() || config.getSshTunnelHostId() == null) {
+            return -1;
+        }
+        String key = config.getId() + "_broker_" + brokerHost + ":" + brokerPort;
+        TunnelEntry entry = cache.get(key);
+        if (entry != null && entry.tunnel.isActive()) {
+            return entry.tunnel.getForwardedLocalPort();
+        }
+        try {
+            ConnectionConfig sshHost = findSshHostConfig(config.getSshTunnelHostId());
+            if (sshHost == null) {
+                throw new RuntimeException("找不到引用的SSH主机配置(ID: " + config.getSshTunnelHostId() + ")");
+            }
+            List<String> keyPaths = sshHost.isUseKey() ? sshHost.getPrivateKeyPaths() : null;
+            String password = sshHost.isUsePassword() ? sshHost.getPassword() : null;
+            if (!sshHost.isUsePassword() && sshHost.isUseKey() && sshHost.getPassword() != null) {
+                password = sshHost.getPassword();
+            }
+            SshTunnel tunnel = new SshTunnel(
+                    sshHost.getHost(),
+                    sshHost.getPort(),
+                    sshHost.getUsername(),
+                    password,
+                    keyPaths,
+                    brokerHost,
+                    brokerPort
+            );
+            int localPort = tunnel.connect();
+            entry = new TunnelEntry(tunnel);
+            cache.put(key, entry);
+            return localPort;
+        } catch (Exception e) {
+            throw new RuntimeException("建立broker跳板隧道失败(" + brokerHost + ":" + brokerPort + "): " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 关闭指定配置的所有 broker 跳板隧道（在 closeAdmin 时调用）。
+     */
+    public static synchronized void closeBrokerTunnels(ConnectionConfig config) {
+        if (!config.isUseSshTunnel() || config.getSshTunnelHostId() == null) {
+            return;
+        }
+        String prefix = config.getId() + "_broker_";
+        cache.entrySet().removeIf(e -> {
+            if (e.getKey().startsWith(prefix)) {
+                try { e.getValue().tunnel.disconnect(); } catch (Exception ignored) {}
+                return true;
+            }
+            return false;
+        });
+    }
+
+    /**
      * 根据 sshTunnelHostId 查找引用的 SSH 主机配置
      */
     private static ConnectionConfig findSshHostConfig(String hostId) {
