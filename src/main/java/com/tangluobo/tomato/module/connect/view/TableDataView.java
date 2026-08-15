@@ -1178,8 +1178,8 @@ public class TableDataView extends BorderPane {
                 setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
                 setAlignment(Pos.CENTER);
                 arrow.setVisible(false);
-                // 左侧加网格线（首列不加左边框，避免表格最左边缘出现竖线）
-                setStyle("-fx-border-color: transparent #BEBEBC transparent transparent; -fx-border-width: 0 1 0 0; -fx-alignment: center;");
+                // 左右两侧均加网格线
+                setStyle("-fx-border-color: transparent #BEBEBC transparent #BEBEBC; -fx-border-width: 0 1 0 1; -fx-alignment: center;");
                 // 点击行选择器列时选中整行（使用addEventFilter在捕获阶段处理，避免被TableView的拖拽选择处理器覆盖）
                 addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
                     if (getTableRow() != null && getTableRow().getItem() != null) {
@@ -1225,8 +1225,8 @@ public class TableDataView extends BorderPane {
                     return;
                 }
 
-                // 初始状态（首列不加左边框，避免表格最左边缘出现竖线）
-                setStyle("-fx-border-color: transparent #BEBEBC #BEBEBC transparent; -fx-border-width: 0 1 1 0;");
+                // 左右两侧及底部加网格线
+                setStyle("-fx-border-color: transparent #BEBEBC #BEBEBC #BEBEBC; -fx-border-width: 0 1 1 1;");
                 arrow.setVisible(isRowSelected(getTableRow().getIndex()));
 
                 // 监听选中cells变化
