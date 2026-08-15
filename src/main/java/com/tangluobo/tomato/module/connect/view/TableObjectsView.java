@@ -584,6 +584,8 @@ public class TableObjectsView extends BorderPane {
             item.setAlignment(Pos.CENTER);
             item.setPrefWidth(80);
             item.setCursor(Cursor.HAND);
+            // 默认透明边框，与选中态几何尺寸一致，避免切换时闪烁/重排
+            item.setStyle("-fx-background-color: transparent; -fx-background-radius: 4; -fx-border-color: transparent; -fx-border-radius: 4; -fx-border-width: 1px;");
 
             Image img = obj.type == ObjectType.TABLE ? tableImg : viewImg;
             if (img != null) {
@@ -808,9 +810,9 @@ public class TableObjectsView extends BorderPane {
         for (Map.Entry<ObjectInfo, VBox> entry : iconBoxMap.entrySet()) {
             VBox box = entry.getValue();
             if (selectedObjects.contains(entry.getKey())) {
-                box.setStyle("-fx-background-color: #d4edda; -fx-background-radius: 4; -fx-border-color: #07c160; -fx-border-radius: 4;");
+                box.setStyle("-fx-background-color: #d4edda; -fx-background-radius: 4; -fx-border-color: #07c160; -fx-border-radius: 4; -fx-border-width: 1px;");
             } else {
-                box.setStyle("");
+                box.setStyle("-fx-background-color: transparent; -fx-background-radius: 4; -fx-border-color: transparent; -fx-border-radius: 4; -fx-border-width: 1px;");
             }
         }
     }
