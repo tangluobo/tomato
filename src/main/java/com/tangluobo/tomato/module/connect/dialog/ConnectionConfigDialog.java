@@ -123,6 +123,8 @@ public class ConnectionConfigDialog {
     private TextField s3DescriptionField;
 
     // ===== Redis专属字段 =====
+    private TabPane redisTabPane;
+    private Tab redisGeneralTab;
     private VBox redisConfigContent;
     private TextField redisNameField;
     private TextField redisHostField;
@@ -135,6 +137,12 @@ public class ConnectionConfigDialog {
     private TextField redisClusterNodesField;
     private TextField redisDatabaseField;
     private TextField redisDescriptionField;
+
+    // Redis专用 SSH通道（引用方式：选择已有SSH主机，不复制连接信息）
+    private Tab redisSshTunnelTab;
+    private CheckBox redisUseSshTunnelCheckBox;
+    private VBox redisSshTunnelContent;
+    private ComboBox<ConnectionConfig> redisSshHostCombo;
 
     // ===== RocketMQ专属字段 =====
     private VBox rocketmqConfigContent;
@@ -311,7 +319,7 @@ public class ConnectionConfigDialog {
 
         configButtons.getChildren().addAll(backBtn, cancelBtn2, okBtn);
 
-        configPage.getChildren().addAll(configTitle, dbTabPane, sshConfigContent, simpleConfigContent, localTerminalConfigContent, s3TabPane, redisConfigContent, rocketmqConfigContent, aliyunConfigContent, localDirectoryConfigContent, configButtons);
+        configPage.getChildren().addAll(configTitle, dbTabPane, sshConfigContent, simpleConfigContent, localTerminalConfigContent, s3TabPane, redisTabPane, rocketmqConfigContent, aliyunConfigContent, localDirectoryConfigContent, configButtons);
 
         // 编辑已有连接时直接显示配置页
         if (existingConfig != null) {
@@ -703,18 +711,19 @@ public class ConnectionConfigDialog {
     }
 
     /**
-     * 加载已保存的 SSH/SFTP 连接，用于 S3 SSH通道 选择已有主机
+     * 加载已保存的 SSH/SFTP 连接，用于 S3/Redis SSH通道 选择已有主机
      */
     private void loadAvailableSshHosts() {
         availableSshHosts.clear();
-        if (s3SshHostCombo == null) return;
-        s3SshHostCombo.getItems().clear();
+        if (s3SshHostCombo != null) s3SshHostCombo.getItems().clear();
+        if (redisSshHostCombo != null) redisSshHostCombo.getItems().clear();
         try {
             List<ConnectionConfig> all = ConfigManager.loadConnections();
             for (ConnectionConfig c : all) {
                 if (c.getType() == ConnectType.SSH || c.getType() == ConnectType.SFTP) {
                     availableSshHosts.add(c);
-                    s3SshHostCombo.getItems().add(c);
+                    if (s3SshHostCombo != null) s3SshHostCombo.getItems().add(c);
+                    if (redisSshHostCombo != null) redisSshHostCombo.getItems().add(c);
                 }
             }
         } catch (Exception e) {
@@ -1236,8 +1245,6 @@ public class ConnectionConfigDialog {
      */
     private void buildRedisConfigContent() {
         redisConfigContent = new VBox(15);
-        redisConfigContent.setVisible(false);
-        redisConfigContent.setManaged(false);
 
         GridPane grid = new GridPane();
         grid.setHgap(10);
@@ -1338,6 +1345,67 @@ public class ConnectionConfigDialog {
         hint.setWrapText(true);
 
         redisConfigContent.getChildren().addAll(grid, hint);
+
+        // 构建 Redis 专用 TabPane（常规 + SSH通道），与 S3/数据库 TabPane 结构一致
+        redisTabPane = new TabPane();
+        redisTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        redisTabPane.setVisible(false);
+        redisTabPane.setManaged(false);
+        redisTabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+
+        redisGeneralTab = new Tab("常规");
+        redisGeneralTab.setContent(redisConfigContent);
+
+        // ===== Redis 专用 SSH通道 Tab（引用方式：选择已有SSH主机，不复制连接信息）=====
+        VBox redisTunnelContent = new VBox(10);
+        redisTunnelContent.setPadding(new Insets(10, 0, 0, 20));
+
+        redisUseSshTunnelCheckBox = new CheckBox("启用SSH通道");
+        redisUseSshTunnelCheckBox.setStyle("-fx-font-weight: bold;");
+
+        redisSshTunnelContent = new VBox(10);
+        redisSshTunnelContent.setPadding(new Insets(5, 0, 0, 0));
+        redisSshTunnelContent.setDisable(true);
+
+        redisUseSshTunnelCheckBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
+            redisSshTunnelContent.setDisable(!newVal);
+        });
+
+        // 选择已有SSH主机
+        HBox redisSelectHostBox = new HBox(8);
+        redisSelectHostBox.setAlignment(Pos.CENTER_LEFT);
+        Label redisSelectHostLabel = new Label("选择已有SSH主机：");
+        redisSshHostCombo = new ComboBox<>();
+        redisSshHostCombo.setPrefWidth(280);
+        redisSshHostCombo.setPromptText("选择已保存的SSH连接");
+        redisSshHostCombo.setCellFactory(lv -> new ListCell<ConnectionConfig>() {
+            @Override
+            protected void updateItem(ConnectionConfig item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : item.getName() + " (" + item.getHost() + ":" + item.getPort() + ")");
+            }
+        });
+        redisSshHostCombo.setButtonCell(new ListCell<ConnectionConfig>() {
+            @Override
+            protected void updateItem(ConnectionConfig item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : item.getName() + " (" + item.getHost() + ":" + item.getPort() + ")");
+            }
+        });
+        redisSelectHostBox.getChildren().addAll(redisSelectHostLabel, redisSshHostCombo);
+        loadAvailableSshHosts();
+
+        Label redisTunnelHint = new Label("启用后，将通过所选SSH主机建立安全通道连接Redis；SSH连接信息随引用主机自动更新。集群模式暂不支持SSH通道。");
+        redisTunnelHint.setStyle("-fx-font-size: 10px; -fx-text-fill: #999;");
+        redisTunnelHint.setWrapText(true);
+
+        redisSshTunnelContent.getChildren().addAll(redisSelectHostBox, redisTunnelHint);
+        redisTunnelContent.getChildren().addAll(redisUseSshTunnelCheckBox, redisSshTunnelContent);
+
+        redisSshTunnelTab = new Tab("SSH通道");
+        redisSshTunnelTab.setContent(redisTunnelContent);
+
+        redisTabPane.getTabs().addAll(redisGeneralTab, redisSshTunnelTab);
     }
 
     /**
@@ -1717,8 +1785,8 @@ public class ConnectionConfigDialog {
         boolean isLocalDirectory = selectedType == ConnectType.LOCAL_DIRECTORY;
         boolean isSimple = !isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis && !isRocketmq && !isAliyun && !isLocalDirectory;
 
-        // 数据库/S3 类型 TabPane 已有标签标题，隐藏顶部标题避免重复
-        boolean useTabPane = isDatabase || isS3orOSS;
+        // 数据库/S3/Redis 类型 TabPane 已有标签标题，隐藏顶部标题避免重复
+        boolean useTabPane = isDatabase || isS3orOSS || isRedis;
         configTitle.setVisible(!useTabPane);
         configTitle.setManaged(!useTabPane);
         // TabPane 类型时去掉顶部和左侧 padding，让标签顶到最上面和最左边
@@ -1738,8 +1806,8 @@ public class ConnectionConfigDialog {
         localTerminalConfigContent.setManaged(isLocalTerminal);
         s3TabPane.setVisible(isS3orOSS);
         s3TabPane.setManaged(isS3orOSS);
-        redisConfigContent.setVisible(isRedis);
-        redisConfigContent.setManaged(isRedis);
+        redisTabPane.setVisible(isRedis);
+        redisTabPane.setManaged(isRedis);
         rocketmqConfigContent.setVisible(isRocketmq);
         rocketmqConfigContent.setManaged(isRocketmq);
         aliyunConfigContent.setVisible(isAliyun);
@@ -1900,6 +1968,17 @@ public class ConnectionConfigDialog {
             }
             redisDatabaseField.setText(String.valueOf(existingConfig.getRedisDatabase()));
             redisDescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
+            // SSH通道配置（引用方式：记录引用的SSH主机ID）
+            redisUseSshTunnelCheckBox.setSelected(existingConfig.isUseSshTunnel());
+            redisSshHostCombo.setValue(null);
+            if (existingConfig.getSshTunnelHostId() != null) {
+                for (ConnectionConfig c : availableSshHosts) {
+                    if (existingConfig.getSshTunnelHostId().equals(c.getId())) {
+                        redisSshHostCombo.setValue(c);
+                        break;
+                    }
+                }
+            }
         } else if (isRocketmq) {
             rocketmqNameField.setText(existingConfig.getName());
             rocketmqHostField.setText(existingConfig.getHost());
@@ -2085,6 +2164,11 @@ public class ConnectionConfigDialog {
             config.setRedisClusterNodes(redisClusterNodesField.getText().trim());
             config.setRedisDatabase(Integer.parseInt(redisDatabaseField.getText().trim()));
             config.setDescription(redisDescriptionField.getText().trim());
+
+            // SSH通道配置（引用方式：记录引用的SSH主机ID）
+            config.setUseSshTunnel(redisUseSshTunnelCheckBox.isSelected());
+            ConnectionConfig selectedRedisHost = redisSshHostCombo.getValue();
+            config.setSshTunnelHostId(selectedRedisHost != null ? selectedRedisHost.getId() : null);
 
         } else if (isRocketmq) {
             config.setName(rocketmqNameField.getText().trim());
@@ -2372,6 +2456,11 @@ public class ConnectionConfigDialog {
                 showAlert("集群模式下请输入集群节点");
                 return false;
             }
+        }
+        // SSH通道验证（引用方式：启用时必须选择已有SSH主机）
+        if (redisUseSshTunnelCheckBox.isSelected() && redisSshHostCombo.getValue() == null) {
+            showAlert("启用SSH通道后请选择已有SSH主机");
+            return false;
         }
         return true;
     }

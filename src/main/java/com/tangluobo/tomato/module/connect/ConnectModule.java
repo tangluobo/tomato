@@ -1357,6 +1357,7 @@ public class ConnectModule implements Module {
                     handler.closeConnection(config);
                 } else if (config.getType() == ConnectType.REDIS) {
                     RedisService.closeJedisCluster(config);
+                    RedisService.closeSshTunnel(config.getId());
                 } else if (config.getType() == ConnectType.ROCKETMQ) {
                     RocketmqService.closeAdmin(config);
                 }
@@ -1464,7 +1465,7 @@ public class ConnectModule implements Module {
      */
     private boolean saveConnectionsWithFeedback() {
         try {
-            saveConnectionsWithFeedback();
+            ConfigManager.saveConnections(connections);
             return true;
         } catch (ConfigManager.SaveException e) {
             System.err.println("[ConnectModule] 保存连接配置失败: " + e.getMessage());
