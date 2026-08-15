@@ -130,6 +130,9 @@ public class TableObjectsView extends BorderPane {
     private ToggleGroup viewToggleGroup;
     private ProgressIndicator loadingIndicator;
 
+    // 右键菜单
+    private ContextMenu contextMenu;
+
     // 工具栏按钮（按选中状态启用/禁用）
     private Button openTableBtn, designTableBtn, deleteTableBtn;
 
@@ -600,6 +603,15 @@ public class TableObjectsView extends BorderPane {
             });
             item.setOnMouseClicked(e -> {
                 if (isRubberBanding) return; // 橡皮筋拖动中忽略点击
+                // 右键：保持已选中项的多选状态（便于对多表操作）
+                if (e.getButton() == javafx.scene.input.MouseButton.SECONDARY) {
+                    if (!selectedObjects.contains(obj)) {
+                        clearSelection();
+                        addToSelection(obj);
+                    }
+                    e.consume();
+                    return;
+                }
                 boolean ctrl = e.isControlDown();
                 boolean shift = e.isShiftDown();
                 if (shift && anchorObject != null) {
@@ -653,20 +665,27 @@ public class TableObjectsView extends BorderPane {
 
     /** 注册右键菜单：图标视图 + 详细列表 */
     private void setupContextMenu() {
-        ContextMenu menu = new ContextMenu();
+        contextMenu = new ContextMenu();
         MenuItem copyItem = new MenuItem("复制表");
         copyItem.setOnAction(e -> copySelectedTablesToClipboard());
-        menu.getItems().add(copyItem);
+        contextMenu.getItems().add(copyItem);
 
         iconScroll.setOnContextMenuRequested(e -> {
             copyItem.setDisable(selectedObjects.isEmpty());
-            menu.show(this, e.getScreenX(), e.getScreenY());
+            contextMenu.show(this, e.getScreenX(), e.getScreenY());
             e.consume();
         });
         detailTableView.setOnContextMenuRequested(e -> {
             copyItem.setDisable(selectedObjects.isEmpty());
-            menu.show(this, e.getScreenX(), e.getScreenY());
+            contextMenu.show(this, e.getScreenX(), e.getScreenY());
             e.consume();
+        });
+
+        // 点击其他位置时隐藏右键菜单（捕获阶段，早于节点 handler 的 consume）
+        addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, e -> {
+            if (contextMenu.isShowing()) {
+                contextMenu.hide();
+            }
         });
     }
 
@@ -1224,7 +1243,7 @@ public class TableObjectsView extends BorderPane {
 
     private HBox createStatusBar() {
         HBox statusBar = new HBox(10);
-        statusBar.setPadding(new Insets(6, 12, 6, 12));
+        statusBar.setPadding(new Insets(3, 12, 3, 12));
         statusBar.setStyle("-fx-background-color: #f5f5f5; -fx-border-color: #ddd; -fx-border-width: 1 0 0 0;");
         statusBar.setAlignment(Pos.CENTER_LEFT);
 
@@ -1235,7 +1254,7 @@ public class TableObjectsView extends BorderPane {
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
         HBox toggleBox = new HBox(2);
-        toggleBox.setStyle("-fx-border-color: #ccc; -fx-border-width: 1; -fx-border-radius: 4; -fx-background-radius: 4; -fx-background-color: white;");
+        toggleBox.setStyle("-fx-background-color: transparent;");
 
         viewToggleGroup = new ToggleGroup();
         iconBtn = createViewToggleButton(createListIconSvg(), "图标视图");
@@ -1265,17 +1284,11 @@ public class TableObjectsView extends BorderPane {
         ToggleButton btn = new ToggleButton();
         btn.setGraphic(icon);
         btn.setTooltip(new Tooltip(tooltip));
-        btn.setStyle("-fx-background-color: transparent; -fx-padding: 4 10; -fx-border-width: 0; -fx-background-radius: 0;");
+        btn.getStyleClass().add("view-toggle-btn");
         btn.setCursor(Cursor.HAND);
-        btn.selectedProperty().addListener((obs, wasSel, isSel) -> {
-            if (isSel) {
-                btn.setStyle("-fx-background-color: #07c160; -fx-padding: 4 10; -fx-border-width: 0; -fx-background-radius: 0;");
-                applyIconColor(icon, Color.WHITE);
-            } else {
-                btn.setStyle("-fx-background-color: transparent; -fx-padding: 4 10; -fx-border-width: 0; -fx-background-radius: 0;");
-                applyIconColor(icon, Color.valueOf("#555"));
-            }
-        });
+        // 背景始终透明，仅通过图标颜色区分选中状态
+        btn.selectedProperty().addListener((obs, wasSel, isSel) ->
+                applyIconColor(icon, isSel ? Color.valueOf("#07c160") : Color.valueOf("#555")));
         return btn;
     }
 
@@ -1290,7 +1303,8 @@ public class TableObjectsView extends BorderPane {
 
     private SVGPath createListIconSvg() {
         SVGPath p = new SVGPath();
-        p.setContent("M3 5h18M3 12h18M3 19h18");
+        // 11x11 框，三条线垂直居中
+        p.setContent("M0 1.2h11M0 5.5h11M0 9.8h11");
         p.setStroke(Color.valueOf("#555"));
         p.setStrokeWidth(2);
         p.setFill(null);
@@ -1299,7 +1313,8 @@ public class TableObjectsView extends BorderPane {
 
     private SVGPath createDetailIconSvg() {
         SVGPath p = new SVGPath();
-        p.setContent("M3 3h18v18H3z M3 9h18 M3 15h18 M9 3v18 M15 3v18");
+        // 11x11 网格
+        p.setContent("M0 0h11v11H0z M0 3.7h11 M0 7.3h11 M3.7 0v11 M7.3 0v11");
         p.setStroke(Color.valueOf("#555"));
         p.setStrokeWidth(1.5);
         p.setFill(null);
@@ -1308,7 +1323,8 @@ public class TableObjectsView extends BorderPane {
 
     private SVGPath createErIconSvg() {
         SVGPath p = new SVGPath();
-        p.setContent("M4 4h5v5H4z M15 14h5v5h-5z M9 6.5h6 M6.5 9v5");
+        // 11x11 框，两框+连线居中
+        p.setContent("M0.6 0.9h3.1v3.1H0.6z M7.3 7h3.1v3.1h-3.1z M3.7 2.4h3.7 M2.1 3.7v3.1");
         p.setStroke(Color.valueOf("#555"));
         p.setStrokeWidth(1.5);
         p.setFill(null);

@@ -587,6 +587,30 @@
     -fx-border-width: 1px;
 }
 
+/* 视图切换按钮：背景与图标同尺寸，透明背景，仅保留按下效果 */
+.view-toggle-btn {
+    -fx-background-color: transparent;
+    -fx-background-radius: 3;
+    -fx-background-insets: 0;
+    -fx-border-width: 0;
+    -fx-border-insets: 0;
+    -fx-padding: 0;
+    -fx-min-width: 0;
+    -fx-min-height: 0;
+    -fx-content-display: GRAPHIC_ONLY;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+}
+
+.view-toggle-btn:hover {
+    -fx-background-color: #E5E5E5;
+}
+
+.view-toggle-btn:pressed,
+.view-toggle-btn:selected {
+    -fx-background-color: #D0D0D0;
+}
+
 /* 方框复选框样式 */
 .check-box {
     -fx-focus-color: transparent;
