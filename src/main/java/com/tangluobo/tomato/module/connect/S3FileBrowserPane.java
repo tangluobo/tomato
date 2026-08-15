@@ -1063,7 +1063,7 @@ public class S3FileBrowserPane extends BorderPane {
         box.setAlignment(Pos.TOP_CENTER);
         box.setPrefWidth(90);
         box.setPadding(new Insets(6, 4, 6, 4));
-        box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand;");
+        box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand; -fx-border-color: transparent; -fx-border-width: 1; -fx-border-radius: 6; -fx-border-insets: 0;");
         box.getProperties().put("fileItem", item);
 
         // 图标
@@ -1093,7 +1093,7 @@ public class S3FileBrowserPane extends BorderPane {
                 // 追加模式下：如果已选中则取消；未选中则添加
                 if (append && selectedItems.contains(item)) {
                     box.setUserData(null);
-                    box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand;");
+                    box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand; -fx-border-color: transparent; -fx-border-width: 1; -fx-border-radius: 6; -fx-border-insets: 0;");
                     selectedItems.remove(item);
                     if (selectedItem == item) {
                         selectedItem = selectedItems.isEmpty() ? null : selectedItems.iterator().next();
@@ -1137,12 +1137,12 @@ public class S3FileBrowserPane extends BorderPane {
 
         box.setOnMouseEntered(e -> {
             if (box.getUserData() != "selected") {
-                box.setStyle("-fx-background-color: #f0f7ff; -fx-background-radius: 6; -fx-cursor: hand;");
+                box.setStyle("-fx-background-color: #f0f7ff; -fx-background-radius: 6; -fx-cursor: hand; -fx-border-color: transparent; -fx-border-width: 1; -fx-border-radius: 6; -fx-border-insets: 0;");
             }
         });
         box.setOnMouseExited(e -> {
             if (box.getUserData() != "selected") {
-                box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand;");
+                box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand; -fx-border-color: transparent; -fx-border-width: 1; -fx-border-radius: 6; -fx-border-insets: 0;");
             }
         });
 
@@ -1151,14 +1151,14 @@ public class S3FileBrowserPane extends BorderPane {
 
     private void selectIconBox(VBox box, FileItem item) {
         box.setUserData("selected");
-        box.setStyle("-fx-background-color: #cce5ff; -fx-background-radius: 6; -fx-cursor: hand; -fx-border-color: #3399ff; -fx-border-width: 1; -fx-border-radius: 6;");
+        box.setStyle("-fx-background-color: #cce5ff; -fx-background-radius: 6; -fx-cursor: hand; -fx-border-color: #3399ff; -fx-border-width: 1; -fx-border-radius: 6; -fx-border-insets: 0;");
     }
 
     private void clearIconSelection() {
         for (var node : iconFlowPane.getChildren()) {
             if (node instanceof VBox box) {
                 box.setUserData(null);
-                box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand;");
+                box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand; -fx-border-color: transparent; -fx-border-width: 1; -fx-border-radius: 6; -fx-border-insets: 0;");
             }
         }
         selectedItems.clear();
@@ -1174,7 +1174,7 @@ public class S3FileBrowserPane extends BorderPane {
         for (var node : iconFlowPane.getChildren()) {
             if (node instanceof VBox box) {
                 box.setUserData(null);
-                box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand;");
+                box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand; -fx-border-color: transparent; -fx-border-width: 1; -fx-border-radius: 6; -fx-border-insets: 0;");
             }
         }
         selectedItems.clear();
