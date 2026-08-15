@@ -74,6 +74,8 @@ public class ConnectionConfigDialog {
     private List<ConnectionConfig> availableSshHosts = new ArrayList<>();
 
     // ===== SSH/SFTP类型专用 =====
+    private TabPane sshTabPane;
+    private Tab sshGeneralTab;
     private VBox sshConfigContent;
     private TextField sshNameField;
     private TextField sshHostField;
@@ -86,6 +88,12 @@ public class ConnectionConfigDialog {
     private VBox sshKeyListContainer;
     private List<KeyEntry> sshKeyEntries = new ArrayList<>();
     private TextField sshDescriptionField;
+
+    // SSH/SFTP专用 SSH通道（引用方式：选择已有SSH主机作为跳板机）
+    private Tab sshSshTunnelTab;
+    private CheckBox sshUseSshTunnelCheckBox;
+    private VBox sshSshTunnelContent;
+    private ComboBox<ConnectionConfig> sshSshHostCombo;
 
     // ===== 其他类型(RDP/FTP/Oracle)专用 =====
     private VBox simpleConfigContent;
@@ -319,7 +327,7 @@ public class ConnectionConfigDialog {
 
         configButtons.getChildren().addAll(backBtn, cancelBtn2, okBtn);
 
-        configPage.getChildren().addAll(configTitle, dbTabPane, sshConfigContent, simpleConfigContent, localTerminalConfigContent, s3TabPane, redisTabPane, rocketmqConfigContent, aliyunConfigContent, localDirectoryConfigContent, configButtons);
+        configPage.getChildren().addAll(configTitle, dbTabPane, sshTabPane, simpleConfigContent, localTerminalConfigContent, s3TabPane, redisTabPane, rocketmqConfigContent, aliyunConfigContent, localDirectoryConfigContent, configButtons);
 
         // 编辑已有连接时直接显示配置页
         if (existingConfig != null) {
@@ -711,12 +719,13 @@ public class ConnectionConfigDialog {
     }
 
     /**
-     * 加载已保存的 SSH/SFTP 连接，用于 S3/Redis SSH通道 选择已有主机
+     * 加载已保存的 SSH/SFTP 连接，用于 S3/Redis/SSH SSH通道 选择已有主机/跳板机
      */
     private void loadAvailableSshHosts() {
         availableSshHosts.clear();
         if (s3SshHostCombo != null) s3SshHostCombo.getItems().clear();
         if (redisSshHostCombo != null) redisSshHostCombo.getItems().clear();
+        if (sshSshHostCombo != null) sshSshHostCombo.getItems().clear();
         try {
             List<ConnectionConfig> all = ConfigManager.loadConnections();
             for (ConnectionConfig c : all) {
@@ -724,6 +733,7 @@ public class ConnectionConfigDialog {
                     availableSshHosts.add(c);
                     if (s3SshHostCombo != null) s3SshHostCombo.getItems().add(c);
                     if (redisSshHostCombo != null) redisSshHostCombo.getItems().add(c);
+                    if (sshSshHostCombo != null) sshSshHostCombo.getItems().add(c);
                 }
             }
         } catch (Exception e) {
@@ -857,8 +867,6 @@ public class ConnectionConfigDialog {
      */
     private void buildSshConfigContent() {
         sshConfigContent = new VBox(15);
-        sshConfigContent.setVisible(false);
-        sshConfigContent.setManaged(false);
 
         GridPane grid = new GridPane();
         grid.setHgap(10);
@@ -964,6 +972,67 @@ public class ConnectionConfigDialog {
                 sshUsePasswordCheckBox.setSelected(true);
             }
         });
+
+        // 构建 SSH/SFTP 专用 TabPane（常规 + SSH通道），与 S3/Redis TabPane 结构一致
+        sshTabPane = new TabPane();
+        sshTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        sshTabPane.setVisible(false);
+        sshTabPane.setManaged(false);
+        sshTabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+
+        sshGeneralTab = new Tab("常规");
+        sshGeneralTab.setContent(sshConfigContent);
+
+        // ===== SSH/SFTP 专用 SSH通道 Tab（引用方式：选择已有SSH主机作为跳板机）=====
+        VBox sshTunnelContent = new VBox(10);
+        sshTunnelContent.setPadding(new Insets(10, 0, 0, 20));
+
+        sshUseSshTunnelCheckBox = new CheckBox("启用SSH通道（跳板机）");
+        sshUseSshTunnelCheckBox.setStyle("-fx-font-weight: bold;");
+
+        sshSshTunnelContent = new VBox(10);
+        sshSshTunnelContent.setPadding(new Insets(5, 0, 0, 0));
+        sshSshTunnelContent.setDisable(true);
+
+        sshUseSshTunnelCheckBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
+            sshSshTunnelContent.setDisable(!newVal);
+        });
+
+        // 选择已有SSH主机作为跳板机
+        HBox sshSelectHostBox = new HBox(8);
+        sshSelectHostBox.setAlignment(Pos.CENTER_LEFT);
+        Label sshSelectHostLabel = new Label("选择已有SSH主机：");
+        sshSshHostCombo = new ComboBox<>();
+        sshSshHostCombo.setPrefWidth(280);
+        sshSshHostCombo.setPromptText("选择已保存的SSH连接作为跳板机");
+        sshSshHostCombo.setCellFactory(lv -> new ListCell<ConnectionConfig>() {
+            @Override
+            protected void updateItem(ConnectionConfig item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : item.getName() + " (" + item.getHost() + ":" + item.getPort() + ")");
+            }
+        });
+        sshSshHostCombo.setButtonCell(new ListCell<ConnectionConfig>() {
+            @Override
+            protected void updateItem(ConnectionConfig item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : item.getName() + " (" + item.getHost() + ":" + item.getPort() + ")");
+            }
+        });
+        sshSelectHostBox.getChildren().addAll(sshSelectHostLabel, sshSshHostCombo);
+        loadAvailableSshHosts();
+
+        Label sshTunnelHint = new Label("启用后，将通过所选SSH主机（跳板机）建立安全通道连接目标主机；SSH连接信息随引用主机自动更新。跳板机需已保存凭据。");
+        sshTunnelHint.setStyle("-fx-font-size: 10px; -fx-text-fill: #999;");
+        sshTunnelHint.setWrapText(true);
+
+        sshSshTunnelContent.getChildren().addAll(sshSelectHostBox, sshTunnelHint);
+        sshTunnelContent.getChildren().addAll(sshUseSshTunnelCheckBox, sshSshTunnelContent);
+
+        sshSshTunnelTab = new Tab("SSH通道");
+        sshSshTunnelTab.setContent(sshTunnelContent);
+
+        sshTabPane.getTabs().addAll(sshGeneralTab, sshSshTunnelTab);
     }
 
     /**
@@ -1785,8 +1854,8 @@ public class ConnectionConfigDialog {
         boolean isLocalDirectory = selectedType == ConnectType.LOCAL_DIRECTORY;
         boolean isSimple = !isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis && !isRocketmq && !isAliyun && !isLocalDirectory;
 
-        // 数据库/S3/Redis 类型 TabPane 已有标签标题，隐藏顶部标题避免重复
-        boolean useTabPane = isDatabase || isS3orOSS || isRedis;
+        // 数据库/S3/Redis/SSH 类型 TabPane 已有标签标题，隐藏顶部标题避免重复
+        boolean useTabPane = isDatabase || isS3orOSS || isRedis || isSSH;
         configTitle.setVisible(!useTabPane);
         configTitle.setManaged(!useTabPane);
         // TabPane 类型时去掉顶部和左侧 padding，让标签顶到最上面和最左边
@@ -1798,8 +1867,8 @@ public class ConnectionConfigDialog {
 
         dbTabPane.setVisible(isDatabase);
         dbTabPane.setManaged(isDatabase);
-        sshConfigContent.setVisible(isSSH);
-        sshConfigContent.setManaged(isSSH);
+        sshTabPane.setVisible(isSSH);
+        sshTabPane.setManaged(isSSH);
         simpleConfigContent.setVisible(isSimple);
         simpleConfigContent.setManaged(isSimple);
         localTerminalConfigContent.setVisible(isLocalTerminal);
@@ -1921,6 +1990,18 @@ public class ConnectionConfigDialog {
             }
 
             sshDescriptionField.setText(existingConfig.getDescription());
+
+            // SSH通道配置（引用方式：记录引用的SSH跳板机ID）
+            sshUseSshTunnelCheckBox.setSelected(existingConfig.isUseSshTunnel());
+            sshSshHostCombo.setValue(null);
+            if (existingConfig.getSshTunnelHostId() != null) {
+                for (ConnectionConfig c : availableSshHosts) {
+                    if (existingConfig.getSshTunnelHostId().equals(c.getId())) {
+                        sshSshHostCombo.setValue(c);
+                        break;
+                    }
+                }
+            }
 
         } else if (isS3orOSS) {
             s3NameField.setText(existingConfig.getName());
@@ -2125,6 +2206,11 @@ public class ConnectionConfigDialog {
             }
 
             config.setDescription(sshDescriptionField.getText().trim());
+
+            // SSH通道配置（引用方式：记录引用的SSH跳板机ID）
+            config.setUseSshTunnel(sshUseSshTunnelCheckBox.isSelected());
+            ConnectionConfig selectedSshJumpHost = sshSshHostCombo.getValue();
+            config.setSshTunnelHostId(selectedSshJumpHost != null ? selectedSshJumpHost.getId() : null);
 
         } else if (isS3orOSS) {
             config.setName(s3NameField.getText().trim());
@@ -2393,6 +2479,11 @@ public class ConnectionConfigDialog {
                 showAlert("请至少添加并启用一个密钥文件");
                 return false;
             }
+        }
+        // SSH通道验证（引用方式：启用时必须选择已有SSH跳板机）
+        if (sshUseSshTunnelCheckBox.isSelected() && sshSshHostCombo.getValue() == null) {
+            showAlert("启用SSH通道后请选择已有SSH跳板机");
+            return false;
         }
         return true;
     }

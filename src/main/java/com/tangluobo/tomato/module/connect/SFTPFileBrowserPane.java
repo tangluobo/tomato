@@ -1023,7 +1023,30 @@ public class SFTPFileBrowserPane extends BorderPane {
      */
     private void connectAndLoad() {
         new Thread(() -> {
+            int tunnelLocalPort = -1;
             try {
+                // 先建立/复用跳板隧道（引用方式，按 configId+host:port 缓存并引用计数）
+                try {
+                    tunnelLocalPort = SshTunnelManager.resolve(config);
+                } catch (Exception te) {
+                    Platform.runLater(() -> {
+                        statusDot.setFill(Color.RED);
+                        stateLabel.setText("连接失败");
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("连接失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("建立SSH跳板隧道失败: " + te.getMessage());
+                        alert.showAndWait();
+                    });
+                    te.printStackTrace();
+                    return;
+                }
+                String host = config.getHost();
+                int port = config.getPort();
+                if (tunnelLocalPort != -1) {
+                    host = "localhost";
+                    port = tunnelLocalPort;
+                }
                 JSch jsch = new JSch();
                 List<String> keyPaths = config.isUseKey() ? config.getPrivateKeyPaths() : null;
                 if (keyPaths != null && !keyPaths.isEmpty()) {
@@ -1038,7 +1061,7 @@ public class SFTPFileBrowserPane extends BorderPane {
                         }
                     }
                 }
-                jschSession = jsch.getSession(config.getUsername(), config.getHost(), config.getPort());
+                jschSession = jsch.getSession(config.getUsername(), host, port);
                 if (keyPaths == null || keyPaths.isEmpty()) {
                     jschSession.setPassword(config.getPassword());
                 }
@@ -1054,6 +1077,9 @@ public class SFTPFileBrowserPane extends BorderPane {
                     navigateTo(home);
                 });
             } catch (Exception e) {
+                if (tunnelLocalPort != -1) {
+                    SshTunnelManager.release(config);
+                }
                 Platform.runLater(() -> {
                     statusDot.setFill(Color.RED);
                     stateLabel.setText("连接失败");
@@ -1813,6 +1839,8 @@ public class SFTPFileBrowserPane extends BorderPane {
                 jschSession.disconnect();
             }
             jschSession = null;
+            // 释放跳板隧道引用（引用计数归零时才真正断开隧道，支持多会话共享）
+            SshTunnelManager.release(config);
         }, "SFTP-Disconnect").start();
     }
 

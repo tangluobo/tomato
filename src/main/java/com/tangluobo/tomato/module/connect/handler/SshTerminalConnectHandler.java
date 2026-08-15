@@ -4,6 +4,7 @@ import com.tangluobo.tomato.module.connect.ConnectModule;
 import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import com.tangluobo.tomato.module.connect.GlobalConfig;
+import com.tangluobo.tomato.module.connect.SshTunnelManager;
 import com.tangluobo.tomato.module.connect.dialog.GlobalConfigDialog;
 import com.tangluobo.tomato.module.connect.dialog.PasswordPromptDialog;
 import com.tangluobo.tomato.module.connect.dialog.SessionConfigDialog;
@@ -73,6 +74,7 @@ public class SshTerminalConnectHandler implements ConnectHandler {
 
         tab.setOnClosed(e -> {
             terminalPane.disconnect();
+            SshTunnelManager.release(config);
             if (module.getTerminalTabPane().getTabs().isEmpty()) {
                 module.showWelcomeView();
             }
@@ -107,14 +109,39 @@ public class SshTerminalConnectHandler implements ConnectHandler {
     }
 
     /**
-     * 后台建立 SSH 连接
+     * 后台建立 SSH 连接（若配置了SSH跳板隧道则先建立隧道，再连接 localhost:转发端口）
      */
     private void connectWithAuth(SSHTerminalPane terminalPane, ConnectionConfig config, String password) {
         List<String> keyPaths = config.isUseKey() ? config.getPrivateKeyPaths() : null;
         new Thread(() -> {
+            // 先建立/复用跳板隧道（引用方式，按 configId+host:port 缓存并引用计数）
+            int tunnelLocalPort = -1;
             try {
-                terminalPane.connect(config.getHost(), config.getPort(), config.getUsername(), password, keyPaths);
+                tunnelLocalPort = SshTunnelManager.resolve(config);
+            } catch (Exception te) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("连接失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("建立SSH跳板隧道失败: " + te.getMessage());
+                    alert.showAndWait();
+                    terminalPane.disconnect();
+                });
+                te.printStackTrace();
+                return;
+            }
+            try {
+                String host = config.getHost();
+                int port = config.getPort();
+                if (tunnelLocalPort != -1) {
+                    host = "localhost";
+                    port = tunnelLocalPort;
+                }
+                terminalPane.connect(host, port, config.getUsername(), password, keyPaths);
             } catch (Exception e) {
+                if (tunnelLocalPort != -1) {
+                    SshTunnelManager.release(config);
+                }
                 Platform.runLater(() -> {
                     Alert alert = new Alert(Alert.AlertType.ERROR);
                     alert.setTitle("连接失败");
