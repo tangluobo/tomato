@@ -663,6 +663,12 @@ public class ConnectModule implements Module {
                 }
 
                 if (event.getClickCount() == 1) {
+                    // TABLES_FOLDER（"表"文件夹）单击立即打开对象视图（无双击重命名需求，无需定时器）
+                    if (dbData.getType() == DatabaseNodeData.NodeType.TABLES_FOLDER) {
+                        AbstractDbHandler h = createDbHandler(dbData.getConnectionConfig());
+                        if (h != null) h.openObjectsView(selectedItem, dbData);
+                        return;
+                    }
                     if ((isTableOrView || isLocalDirNode) && canReedit && editingItem == null) {
                         TreeItem<String> itemToEdit = selectedItem;
                         if (singleClickTimer != null) {

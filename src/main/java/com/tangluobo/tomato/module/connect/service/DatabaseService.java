@@ -1847,6 +1847,117 @@ public class DatabaseService {
     }
 
     /**
+     * 获取数据库/schema 下所有表的外键关系列表（用于 ER 视图）。
+     * 与 getTableForeignKeys 区别：不限定单表，返回所有表的外键，并在 Map 中增加 "表名" 字段标识外键所属表。
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     */
+    public static List<Map<String, String>> getDatabaseForeignKeys(ConnectionConfig config, String databaseName, String schemaName) throws Exception {
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL) ? getConnection(config, databaseName) : getConnection(config);
+        String pgSchema = schemaName != null ? schemaName : databaseName;
+        List<Map<String, String>> foreignKeys = new ArrayList<>();
+
+        if (config.getType() == ConnectType.MYSQL) {
+            String sql = "SELECT kcu.TABLE_NAME, kcu.CONSTRAINT_NAME, "
+                    + "GROUP_CONCAT(kcu.COLUMN_NAME ORDER BY kcu.ORDINAL_POSITION SEPARATOR ',') AS COLUMNS, "
+                    + "kcu.REFERENCED_TABLE_SCHEMA AS REF_DB, "
+                    + "kcu.REFERENCED_TABLE_NAME AS REF_TABLE, "
+                    + "GROUP_CONCAT(kcu.REFERENCED_COLUMN_NAME ORDER BY kcu.ORDINAL_POSITION SEPARATOR ',') AS REF_COLUMNS, "
+                    + "rc.DELETE_RULE, rc.UPDATE_RULE "
+                    + "FROM information_schema.KEY_COLUMN_USAGE kcu "
+                    + "JOIN information_schema.REFERENTIAL_CONSTRAINTS rc "
+                    + "ON kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND kcu.TABLE_SCHEMA = rc.CONSTRAINT_SCHEMA "
+                    + "WHERE kcu.TABLE_SCHEMA = ? AND kcu.REFERENCED_TABLE_NAME IS NOT NULL "
+                    + "GROUP BY kcu.TABLE_NAME, kcu.CONSTRAINT_NAME, kcu.REFERENCED_TABLE_SCHEMA, kcu.REFERENCED_TABLE_NAME, rc.DELETE_RULE, rc.UPDATE_RULE "
+                    + "ORDER BY kcu.TABLE_NAME, kcu.CONSTRAINT_NAME";
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, databaseName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, String> fk = new LinkedHashMap<>();
+                        fk.put("表名", rs.getString("TABLE_NAME"));
+                        fk.put("名称", rs.getString("CONSTRAINT_NAME"));
+                        fk.put("字段", rs.getString("COLUMNS"));
+                        fk.put("参考数据库", rs.getString("REF_DB"));
+                        fk.put("参考表", rs.getString("REF_TABLE"));
+                        fk.put("参考字段", rs.getString("REF_COLUMNS"));
+                        fk.put("删除时", rs.getString("DELETE_RULE"));
+                        fk.put("更新时", rs.getString("UPDATE_RULE"));
+                        foreignKeys.add(fk);
+                    }
+                }
+            }
+        } else if (config.getType() == ConnectType.POSTGRESQL) {
+            String sql = "SELECT c.relname AS table_name, con.conname AS constraint_name, "
+                    + "string_agg(a.attname, ',' ORDER BY u.ord) AS columns, "
+                    + "rn.nspname AS ref_schema, cl.relname AS ref_table, "
+                    + "string_agg(af.attname, ',' ORDER BY uf.ord) AS ref_columns, "
+                    + "con.confdeltype AS delete_rule, con.confupdtype AS update_rule "
+                    + "FROM pg_constraint con "
+                    + "JOIN pg_class c ON c.oid = con.conrelid "
+                    + "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    + "JOIN pg_class cl ON cl.oid = con.confrelid "
+                    + "JOIN pg_namespace rn ON rn.oid = cl.relnamespace "
+                    + "JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS u(attnum, ord) ON true "
+                    + "JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = u.attnum "
+                    + "JOIN LATERAL unnest(con.confkey) WITH ORDINALITY AS uf(attnum, ord) ON uf.ord = u.ord "
+                    + "JOIN pg_attribute af ON af.attrelid = cl.oid AND af.attnum = uf.attnum "
+                    + "WHERE n.nspname = ? AND con.contype = 'f' "
+                    + "GROUP BY c.relname, con.conname, rn.nspname, cl.relname, con.confdeltype, con.confupdtype "
+                    + "ORDER BY c.relname, con.conname";
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, pgSchema);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, String> fk = new LinkedHashMap<>();
+                        fk.put("表名", rs.getString("table_name"));
+                        fk.put("名称", rs.getString("constraint_name"));
+                        fk.put("字段", rs.getString("columns"));
+                        fk.put("参考数据库", rs.getString("ref_schema"));
+                        fk.put("参考表", rs.getString("ref_table"));
+                        fk.put("参考字段", rs.getString("ref_columns"));
+                        fk.put("删除时", mapPgRule(rs.getString("delete_rule")));
+                        fk.put("更新时", mapPgRule(rs.getString("update_rule")));
+                        foreignKeys.add(fk);
+                    }
+                }
+            }
+        } else if (config.getType() == ConnectType.ORACLE) {
+            String sql = "SELECT c.TABLE_NAME, c.CONSTRAINT_NAME, "
+                    + "LISTAGG(col.COLUMN_NAME, ',') WITHIN GROUP (ORDER BY col.POSITION) AS COLUMNS, "
+                    + "rc.OWNER AS REF_OWNER, rc.TABLE_NAME AS REF_TABLE, "
+                    + "LISTAGG(rcol.COLUMN_NAME, ',') WITHIN GROUP (ORDER BY rcol.POSITION) AS REF_COLUMNS, "
+                    + "c.DELETE_RULE "
+                    + "FROM ALL_CONSTRAINTS c "
+                    + "JOIN ALL_CONS_COLUMNS col ON c.OWNER = col.OWNER AND c.CONSTRAINT_NAME = col.CONSTRAINT_NAME "
+                    + "JOIN ALL_CONSTRAINTS rc ON c.R_OWNER = rc.OWNER AND c.R_CONSTRAINT_NAME = rc.CONSTRAINT_NAME "
+                    + "JOIN ALL_CONS_COLUMNS rcol ON rc.OWNER = rcol.OWNER AND rc.CONSTRAINT_NAME = rcol.CONSTRAINT_NAME "
+                    + "WHERE c.OWNER = ? AND c.CONSTRAINT_TYPE = 'R' "
+                    + "GROUP BY c.TABLE_NAME, c.CONSTRAINT_NAME, rc.OWNER, rc.TABLE_NAME, c.DELETE_RULE "
+                    + "ORDER BY c.TABLE_NAME, c.CONSTRAINT_NAME";
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, databaseName);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, String> fk = new LinkedHashMap<>();
+                        fk.put("表名", rs.getString("TABLE_NAME"));
+                        fk.put("名称", rs.getString("CONSTRAINT_NAME"));
+                        fk.put("字段", rs.getString("COLUMNS"));
+                        fk.put("参考数据库", rs.getString("REF_OWNER"));
+                        fk.put("参考表", rs.getString("REF_TABLE"));
+                        fk.put("参考字段", rs.getString("REF_COLUMNS"));
+                        String delRule = rs.getString("DELETE_RULE");
+                        fk.put("删除时", delRule != null ? delRule : "NO ACTION");
+                        fk.put("更新时", "NO ACTION");
+                        foreignKeys.add(fk);
+                    }
+                }
+            }
+        }
+
+        return foreignKeys;
+    }
+
+    /**
      * PostgreSQL外键规则代码映射
      */
     private static String mapPgRule(String code) {

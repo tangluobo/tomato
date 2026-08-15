@@ -12,6 +12,7 @@ import com.tangluobo.tomato.module.connect.service.DatabaseService;
 import com.tangluobo.tomato.module.connect.view.SqlEditorView;
 import com.tangluobo.tomato.module.connect.view.TableDataView;
 import com.tangluobo.tomato.module.connect.view.TableStructureView;
+import com.tangluobo.tomato.module.connect.view.TableObjectsView;
 import javafx.application.Platform;
 import javafx.collections.ObservableList;
 import javafx.scene.control.Alert;
@@ -805,13 +806,103 @@ public abstract class AbstractDbHandler implements ConnectHandler {
 
     // ==================== 文件夹双击：加载表/视图列表 ====================
 
-    /** 双击表文件夹：若已加载则切换展开状态，否则加载表列表 */
+    /** 双击表文件夹：打开对象视图 Tab，若已加载则切换展开状态，否则加载表列表 */
     public void handleTablesFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
+        // 打开对象视图 Tab（已存在则激活）
+        openObjectsView(folderItem, data);
+
         if (!folderItem.getChildren().isEmpty()) {
             folderItem.setExpanded(!folderItem.isExpanded());
             return;
         }
         loadTablesForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(), true);
+    }
+
+    /**
+     * 打开对象视图 Tab：展示当前数据库/Schema 的所有表和视图对象。
+     * 支持 Tab 去重（相同 schema 的对象视图只开一个），且 Tab 不可关闭。
+     */
+    public void openObjectsView(TreeItem<String> folderItem, DatabaseNodeData data) {
+        if (module.getTerminalTabPane() == null) return;
+        if (!module.ensureTabPaneInstalled()) return;
+
+        String tabId = "objects_" + data.getConnectionConfig().getId() + "_" + data.getDatabaseName()
+                + (data.getSchemaName() != null ? "_" + data.getSchemaName() : "");
+        for (Tab tab : module.getTerminalTabPane().getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                module.getTerminalTabPane().getSelectionModel().select(tab);
+                module.showDataView();
+                return;
+            }
+        }
+
+        // 创建视图，注入对象操作回调（复用 handler 已有的去重/业务逻辑）
+        // 使用 holder 数组避免"变量尚未初始化"错误（匿名内部类需在构造时引用视图自身）
+        final TableObjectsView[] holder = new TableObjectsView[1];
+        TableObjectsView objectsView = new TableObjectsView(
+                data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(),
+                new TableObjectsView.ObjectOperations() {
+                    @Override
+                    public void openObject(DatabaseNodeData objData) {
+                        handleTableDataDoubleClick(folderItem, objData);
+                    }
+
+                    @Override
+                    public void designObject(DatabaseNodeData objData) {
+                        handleTableStructureDoubleClick(folderItem, objData);
+                    }
+
+                    @Override
+                    public void createTable() {
+                        handleNewTable(folderItem, data);
+                    }
+
+                    @Override
+                    public void deleteObject(DatabaseNodeData objData) {
+                        handleDeleteDbNodes();
+                        if (holder[0] != null) holder[0].notifyObjectDeleted();
+                    }
+
+                    @Override
+                    public void importWizard() {
+                        handleRestoreBackup(null, data);
+                    }
+
+                    @Override
+                    public void exportWizard() {
+                        module.handleNewBackup(folderItem, data);
+                    }
+                });
+        holder[0] = objectsView;
+
+        ConnectionConfig config = data.getConnectionConfig();
+        String tabTitle = "对象@" + data.getDatabaseName()
+                + (data.getSchemaName() != null ? "/" + data.getSchemaName() : "")
+                + "(" + config.getHost() + ":" + config.getPort() + ")";
+        Tab tab = new Tab(tabTitle);
+        try {
+            Image folderIcon = new Image(getClass().getResourceAsStream("/images/connect/folder.png"));
+            if (folderIcon != null) {
+                ImageView tabIconView = new ImageView(folderIcon);
+                tabIconView.setFitWidth(18);
+                tabIconView.setFitHeight(18);
+                tab.setGraphic(tabIconView);
+            }
+        } catch (Exception ignored) {}
+        tab.setContent(objectsView);
+        tab.setUserData(tabId);
+        tab.setClosable(false);  // 不可关闭
+
+        // 右键菜单：仅刷新
+        ContextMenu ctxMenu = new ContextMenu();
+        MenuItem refreshItem = new MenuItem("刷新对象");
+        refreshItem.setOnAction(e -> objectsView.refreshData());
+        ctxMenu.getItems().add(refreshItem);
+        tab.setContextMenu(ctxMenu);
+
+        module.getTerminalTabPane().getTabs().add(tab);
+        module.getTerminalTabPane().getSelectionModel().select(tab);
+        module.showDataView();
     }
 
     /** 双击视图文件夹：若已加载则切换展开状态，否则加载视图列表 */
@@ -1032,11 +1123,13 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 contextMenu.getItems().addAll(openItem, new SeparatorMenuItem(), refreshItem);
             }
             case TABLES_FOLDER -> {
+                MenuItem openObjectsItem = new MenuItem("打开对象");
+                openObjectsItem.setOnAction(e -> openObjectsView(item, data));
                 MenuItem newTableItem = new MenuItem("新建表");
                 newTableItem.setOnAction(e -> handleNewTable(item, data));
                 MenuItem refreshItem = new MenuItem("刷新");
                 refreshItem.setOnAction(e -> refreshDbNode(item, data));
-                contextMenu.getItems().addAll(newTableItem, new SeparatorMenuItem(), refreshItem);
+                contextMenu.getItems().addAll(openObjectsItem, new SeparatorMenuItem(), newTableItem, new SeparatorMenuItem(), refreshItem);
             }
             case VIEWS_FOLDER -> {
                 MenuItem refreshItem = new MenuItem("刷新");
