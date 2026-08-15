@@ -34,12 +34,16 @@ public class CopyTableDialog {
     // 源配置
     private final ConnectionConfig sourceConfig;
     private final String sourceDatabase;
-    private final String sourceTable;
     private final String sourceSchema;
+    /** 源表名列表（支持单表/多表） */
+    private final List<String> sourceTables;
+    /** 目标表名列表（与 sourceTables 一一对应，用户可编辑） */
+    private final List<String> targetTables = new ArrayList<>();
 
     // 目标配置（用户选择）
     private ConnectionConfig targetConfig;
     private String targetDatabase;
+    /** 兼容旧 API：单表时的目标表名 */
     private String targetTable;
 
     // 选项
@@ -53,9 +57,8 @@ public class CopyTableDialog {
     private ComboBox<String> targetConnCombo;
     private ComboBox<String> targetDbCombo;
     private TextField targetTableField;
-    private CheckBox structureCheck;
-    private CheckBox dataCheck;
-    private CheckBox dropCheck;
+    /** 多表时使用的目标表名输入框列表（与 sourceTables 一一对应） */
+    private final List<TextField> targetTableFields = new ArrayList<>();
 
     // 顶部显示引用
     private Text topTargetConnText;
@@ -69,24 +72,47 @@ public class CopyTableDialog {
     private VBox sourceInfoBox;
     private VBox targetInfoBox;
 
+    /** 是否多表模式 */
+    private final boolean multiTableMode;
+
+    /** 预设的目标数据库名（粘贴场景调用 presetTarget 后，onTargetConnChange 加载完成后优先匹配此值） */
+    private String presetTargetDb;
+
     /**
-     * 构造复制表对话框
-     * @param parent 父窗口
-     * @param allConnections 所有连接配置列表
-     * @param sourceConfig 源连接配置
-     * @param sourceDatabase 源数据库名
-     * @param sourceTable 源表名
-     * @param sourceSchema 源schema（可为null，MySQL/Oracle用）
+     * 兼容旧 API 的单表构造方法。
      */
     public CopyTableDialog(Stage parent, List<ConnectionConfig> allConnections,
                            ConnectionConfig sourceConfig, String sourceDatabase,
                            String sourceTable, String sourceSchema) {
+        this(parent, allConnections, sourceConfig, sourceDatabase, sourceSchema,
+                sourceTable != null ? java.util.Collections.singletonList(sourceTable) : java.util.Collections.emptyList());
+    }
+
+    /**
+     * 构造复制表对话框（支持多表）。
+     * @param parent 父窗口
+     * @param allConnections 所有连接配置列表
+     * @param sourceConfig 源连接配置
+     * @param sourceDatabase 源数据库名
+     * @param sourceSchema 源 schema（可为 null，MySQL/Oracle 用）
+     * @param sourceTables 源表名列表
+     */
+    public CopyTableDialog(Stage parent, List<ConnectionConfig> allConnections,
+                           ConnectionConfig sourceConfig, String sourceDatabase,
+                           String sourceSchema, List<String> sourceTables) {
         this.allConnections = allConnections == null ? new ArrayList<>() : allConnections;
         this.sourceConfig = sourceConfig;
         this.sourceDatabase = sourceDatabase;
-        this.sourceTable = sourceTable;
         this.sourceSchema = sourceSchema;
-        this.targetTable = sourceTable + "_copy";
+        this.sourceTables = sourceTables == null ? new ArrayList<>() : new ArrayList<>(sourceTables);
+        this.multiTableMode = this.sourceTables.size() > 1;
+        // 默认目标表名：单表 = 源表名 + "_copy"；多表 = 源表名（用户可在 UI 中修改）
+        for (String t : this.sourceTables) {
+            targetTables.add(multiTableMode ? t : t + "_copy");
+        }
+        if (!this.sourceTables.isEmpty()) {
+            this.targetTable = targetTables.get(0);
+        }
 
         initUI(parent);
     }
@@ -183,13 +209,19 @@ public class CopyTableDialog {
         }
         sourceDbCombo.setDisable(true);
 
-        Label sourceTableLabel = new Label("表名:");
-        sourceTableLabel.setStyle("-fx-font-size: 13px;");
-        TextField sourceTableField = new TextField(sourceTable != null ? sourceTable : "");
-        sourceTableField.setDisable(true);
-
-        sourcePanel.getChildren().addAll(sourceTitle, sourceConnLabel, sourceConnCombo,
-                sourceDbLabel, sourceDbCombo, sourceTableLabel, sourceTableField);
+        if (multiTableMode) {
+            // 多表模式：不显示表名列表，源面板只展示连接和数据库
+            sourcePanel.getChildren().addAll(sourceTitle, sourceConnLabel, sourceConnCombo,
+                    sourceDbLabel, sourceDbCombo);
+        } else {
+            // 单表模式：保留原 TextField
+            Label sourceTableLabel = new Label("表名:");
+            sourceTableLabel.setStyle("-fx-font-size: 13px;");
+            TextField sourceTableField = new TextField(sourceTables.isEmpty() ? "" : sourceTables.get(0));
+            sourceTableField.setDisable(true);
+            sourcePanel.getChildren().addAll(sourceTitle, sourceConnLabel, sourceConnCombo,
+                    sourceDbLabel, sourceDbCombo, sourceTableLabel, sourceTableField);
+        }
 
         // --- 中间交换按钮 ---
         VBox swapBox = new VBox(10);
@@ -247,12 +279,18 @@ public class CopyTableDialog {
             }
         });
 
-        Label targetTableLabel = new Label("新表名:");
-        targetTableLabel.setStyle("-fx-font-size: 13px;");
-        targetTableField = new TextField(this.targetTable);
-
-        targetPanel.getChildren().addAll(targetTitle, targetTypeBox, targetConnLabel, targetConnCombo,
-                targetDbLabelField, targetDbCombo, targetTableLabel, targetTableField);
+        if (multiTableMode) {
+            // 多表模式：不显示新表名列表，目标表名默认与源表名相同
+            targetPanel.getChildren().addAll(targetTitle, targetTypeBox, targetConnLabel, targetConnCombo,
+                    targetDbLabelField, targetDbCombo);
+        } else {
+            // 单表模式：保留原"新表名"输入框
+            Label targetTableLabel = new Label("新表名:");
+            targetTableLabel.setStyle("-fx-font-size: 13px;");
+            targetTableField = new TextField(this.targetTable);
+            targetPanel.getChildren().addAll(targetTitle, targetTypeBox, targetConnLabel, targetConnCombo,
+                    targetDbLabelField, targetDbCombo, targetTableLabel, targetTableField);
+        }
 
         configRow.getChildren().addAll(sourcePanel, swapBox, targetPanel);
         centerBox.getChildren().add(configRow);
@@ -291,28 +329,6 @@ public class CopyTableDialog {
         infoRow.getChildren().addAll(sourceInfoBox, sep1, targetInfoBox);
         centerBox.getChildren().add(infoRow);
 
-        // --- 选项区域 ---
-        TitledPane optionsPane = new TitledPane();
-        optionsPane.setText("选项");
-        optionsPane.setCollapsible(true);
-        optionsPane.setExpanded(false);
-        optionsPane.setStyle("-fx-font-size: 13px; -fx-background-color: white;");
-
-        VBox optionsBox = new VBox(10);
-        optionsBox.setPadding(new Insets(12, 15, 15, 15));
-        optionsBox.setStyle("-fx-background-color: white;");
-
-        structureCheck = new CheckBox("复制表结构");
-        structureCheck.setSelected(copyStructure);
-        dataCheck = new CheckBox("复制表数据");
-        dataCheck.setSelected(copyData);
-        dropCheck = new CheckBox("目标表存在时先删除");
-        dropCheck.setSelected(dropIfExists);
-
-        optionsBox.getChildren().addAll(structureCheck, dataCheck, dropCheck);
-        optionsPane.setContent(optionsBox);
-        centerBox.getChildren().add(optionsPane);
-
         centerScroll.setContent(centerBox);
         root.setCenter(centerScroll);
 
@@ -332,7 +348,7 @@ public class CopyTableDialog {
 
         Button optionsBtn = new Button("选项");
         optionsBtn.setStyle("-fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-height: 32px;");
-        optionsBtn.setOnAction(e -> optionsPane.setExpanded(!optionsPane.isExpanded()));
+        optionsBtn.setOnAction(e -> showOptionsDialog());
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
@@ -409,10 +425,12 @@ public class CopyTableDialog {
                 List<String> dbs = DatabaseService.getDatabases(cfg);
                 Platform.runLater(() -> {
                     targetDbCombo.getItems().addAll(dbs);
-                    if (sourceDatabase != null && dbs.contains(sourceDatabase)) {
-                        targetDbCombo.setValue(sourceDatabase);
-                        targetDatabase = sourceDatabase;
-                        if (topTargetDbText != null) topTargetDbText.setText(sourceDatabase);
+                    // 优先匹配 presetTargetDb（粘贴场景），其次匹配 sourceDatabase，最后取第一个
+                    String preferred = presetTargetDb != null ? presetTargetDb : sourceDatabase;
+                    if (preferred != null && dbs.contains(preferred)) {
+                        targetDbCombo.setValue(preferred);
+                        targetDatabase = preferred;
+                        if (topTargetDbText != null) topTargetDbText.setText(preferred);
                     } else if (!dbs.isEmpty()) {
                         String first = dbs.get(0);
                         targetDbCombo.setValue(first);
@@ -435,7 +453,7 @@ public class CopyTableDialog {
             return;
         }
         addInfoRow(infoBox, "项目名:", "我的连接");
-        addInfoRow(infoBox, "连接类型:", cfg.getType() != null ? cfg.getType().getDisplayName() : "");
+        addInfoRow(infoBox, "连接类型:", cfg.getType() != null ? cfg.getType().getCode() : "");
         addInfoRow(infoBox, "连接名:", cfg.getName() != null ? cfg.getName() : "");
         addInfoRow(infoBox, "主机:", cfg.getHost() != null ? cfg.getHost() : "");
         addInfoRow(infoBox, "端口:", String.valueOf(cfg.getPort()));
@@ -474,13 +492,60 @@ public class CopyTableDialog {
         } catch (Exception ignore) {}
     }
 
+    /** 显示选项弹窗：复制结构、复制数据、目标已存在时删除 */
+    private void showOptionsDialog() {
+        Stage optStage = new Stage();
+        optStage.initModality(Modality.WINDOW_MODAL);
+        optStage.initOwner(dialogStage);
+        optStage.setTitle("选项");
+        optStage.setResizable(false);
+
+        VBox root = new VBox(14);
+        root.setPadding(new Insets(20));
+        root.setStyle("-fx-background-color: white;");
+
+        Label title = new Label("复制选项");
+        title.setFont(Font.font("System", FontWeight.NORMAL, 14));
+        title.setTextFill(javafx.scene.paint.Color.valueOf("#1890FF"));
+
+        CheckBox copyStructureCb = new CheckBox("复制表结构 (CREATE TABLE)");
+        copyStructureCb.setSelected(copyStructure);
+
+        CheckBox copyDataCb = new CheckBox("复制表数据 (INSERT)");
+        copyDataCb.setSelected(copyData);
+
+        CheckBox dropIfExistsCb = new CheckBox("目标已存在时删除 (DROP TABLE IF EXISTS)");
+        dropIfExistsCb.setSelected(dropIfExists);
+
+        HBox btnRow = new HBox(10);
+        btnRow.setAlignment(Pos.CENTER_RIGHT);
+        btnRow.setPadding(new Insets(10, 0, 0, 0));
+
+        Button okBtn = new Button("确定");
+        okBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-height: 30px; -fx-pref-width: 80px;");
+        okBtn.setOnAction(e -> {
+            copyStructure = copyStructureCb.isSelected();
+            copyData = copyDataCb.isSelected();
+            dropIfExists = dropIfExistsCb.isSelected();
+            optStage.close();
+        });
+
+        Button cancelOptBtn = new Button("取消");
+        cancelOptBtn.setStyle("-fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-height: 30px; -fx-pref-width: 80px;");
+        cancelOptBtn.setOnAction(e -> optStage.close());
+
+        btnRow.getChildren().addAll(cancelOptBtn, okBtn);
+        root.getChildren().addAll(title, copyStructureCb, copyDataCb, dropIfExistsCb, btnRow);
+
+        Scene scene = new Scene(root);
+        scene.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+        optStage.setScene(scene);
+        optStage.showAndWait();
+    }
+
     private void handleNext() {
         targetConfig = findConfigByLabel(targetConnCombo.getValue());
         targetDatabase = targetDbCombo.getValue();
-        targetTable = targetTableField.getText().trim();
-        copyStructure = structureCheck.isSelected();
-        copyData = dataCheck.isSelected();
-        dropIfExists = dropCheck.isSelected();
 
         if (targetConfig == null) {
             showAlert("请选择目标连接");
@@ -490,13 +555,23 @@ public class CopyTableDialog {
             showAlert("请选择目标数据库");
             return;
         }
-        if (targetTable == null || targetTable.isEmpty()) {
-            showAlert("请输入目标表名");
-            return;
-        }
-        if (!copyStructure && !copyData) {
-            showAlert("请至少选择复制结构或复制数据");
-            return;
+
+        // 重新读取 UI 中编辑后的目标表名列表
+        if (multiTableMode) {
+            // 多表模式：目标表名默认与源表名相同（不提供编辑UI），targetTables 已在构造时初始化
+            if (targetTables.isEmpty()) {
+                showAlert("没有可复制的表");
+                return;
+            }
+            targetTable = targetTables.get(0);
+        } else {
+            targetTable = targetTableField != null ? targetTableField.getText().trim() : "";
+            if (targetTable.isEmpty()) {
+                showAlert("请输入目标表名");
+                return;
+            }
+            targetTables.clear();
+            targetTables.add(targetTable);
         }
 
         confirmed = true;
@@ -515,7 +590,12 @@ public class CopyTableDialog {
     public ConnectionConfig getSourceConfig() { return sourceConfig; }
     public String getSourceDatabase() { return sourceDatabase; }
     public String getSourceSchema() { return sourceSchema; }
-    public String getSourceTable() { return sourceTable; }
+    /** 兼容旧 API：单表时的源表名；多表时返回第一张 */
+    public String getSourceTable() { return sourceTables.isEmpty() ? null : sourceTables.get(0); }
+    /** 源表名列表（单表/多表统一接口） */
+    public List<String> getSourceTables() { return new ArrayList<>(sourceTables); }
+    /** 目标表名列表（与 getSourceTables 一一对应） */
+    public List<String> getTargetTables() { return new ArrayList<>(targetTables); }
     public ConnectionConfig getTargetConfig() { return targetConfig; }
     public String getTargetDatabase() { return targetDatabase; }
     public String getTargetSchema() {
@@ -524,10 +604,26 @@ public class CopyTableDialog {
         }
         return null;
     }
+    /** 兼容旧 API：单表时的目标表名；多表时返回第一张 */
     public String getTargetTable() { return targetTable; }
     public boolean isCopyStructure() { return copyStructure; }
     public boolean isCopyData() { return copyData; }
     public boolean isDropIfExists() { return dropIfExists; }
+
+    /**
+     * 预设目标连接/数据库（粘贴表场景：用户在目标数据库节点右键粘贴时调用）。
+     * @param targetCfg 目标连接配置
+     * @param targetDb 目标数据库名
+     * @param targetSchema 目标 schema（可为 null）
+     */
+    public void presetTarget(ConnectionConfig targetCfg, String targetDb, String targetSchema) {
+        if (targetCfg == null || targetDb == null) return;
+        presetTargetDb = targetDb;
+        // setValue 会触发 onTargetConnChange，加载数据库列表完成后会优先匹配 presetTargetDb
+        if (targetConnCombo != null) {
+            targetConnCombo.setValue(buildConnLabel(targetCfg));
+        }
+    }
 
     public boolean isSameConnection() {
         if (sourceConfig == null || targetConfig == null) return false;

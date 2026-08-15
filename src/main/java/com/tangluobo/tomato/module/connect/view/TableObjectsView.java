@@ -14,6 +14,9 @@ import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.DataFormat;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.CubicCurve;
@@ -44,6 +47,16 @@ public class TableObjectsView extends BorderPane {
 
     /** 对象类型 */
     private enum ObjectType { TABLE, VIEW }
+
+    /**
+     * 表复制剪贴板自定义数据格式。
+     * 内容格式（UTF-8 字符串）：
+     *   TOMATO_COPY_TABLES\n{connId}\n{srcDb}\n{srcSchema}\n{table1}\n{table2}...
+     * srcSchema 为空时占位为空字符串。
+     */
+    public static final DataFormat COPY_TABLES_FORMAT = new DataFormat("application/x-tomato-copy-tables");
+    /** 剪贴板内容前缀，用于在纯文本模式下识别 */
+    public static final String COPY_TABLES_PREFIX = "TOMATO_COPY_TABLES";
 
     /** 对象信息 POJO（详细列表所有列） */
     private static class ObjectInfo {
@@ -95,6 +108,8 @@ public class TableObjectsView extends BorderPane {
         void importWizard();
         /** 导出向导 */
         void exportWizard();
+        /** 粘贴表：从剪贴板读取复制的表元信息，弹出数据传输对话框进行批量复制（目标为当前视图对应的连接/数据库） */
+        void pasteTables();
     }
 
     private final ConnectionConfig config;
@@ -178,13 +193,28 @@ public class TableObjectsView extends BorderPane {
 
         setBottom(createStatusBar());
 
-        // 全局事件过滤器：在捕获阶段拦截 Ctrl+A，防止事件传递到左侧连接树导致树也被全选
+        // 全局事件过滤器：在捕获阶段拦截 Ctrl+A / Ctrl+C / Ctrl+V，防止事件传递到左侧连接树
         addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, e -> {
             if (e.isControlDown() && e.getCode() == javafx.scene.input.KeyCode.A) {
                 selectAll();
                 e.consume();
+            } else if (e.isControlDown() && e.getCode() == javafx.scene.input.KeyCode.C) {
+                // 仅当焦点在对象视图内部时复制选中表元信息到剪贴板
+                if (!selectedObjects.isEmpty() && isFocusInside()) {
+                    copySelectedTablesToClipboard();
+                    e.consume();
+                }
+            } else if (e.isControlDown() && e.getCode() == javafx.scene.input.KeyCode.V) {
+                // 粘贴表：焦点在对象视图内部且剪贴板有内容时，弹出数据传输对话框
+                if (isFocusInside() && isClipboardHasTables() && operations != null) {
+                    operations.pasteTables();
+                    e.consume();
+                }
             }
         });
+
+        // 注册右键菜单：图标视图 + 详细列表
+        setupContextMenu();
 
         switchView(ViewType.ICON);
         updateButtonStates();
@@ -592,6 +622,80 @@ public class TableObjectsView extends BorderPane {
             iconFlowPane.getChildren().add(item);
         }
         updateIconHighlights();
+    }
+
+    // ==================== 复制表到剪贴板 ====================
+
+    /** 判断当前焦点是否在本视图内部（用于 Ctrl+C/Ctrl+V 触发判断） */
+    private boolean isFocusInside() {
+        Node focusOwner = getScene() != null ? getScene().getFocusOwner() : null;
+        if (focusOwner == null) return false;
+        Node n = focusOwner;
+        while (n != null) {
+            if (n == this) return true;
+            n = n.getParent();
+        }
+        return false;
+    }
+
+    /** 判断系统剪贴板中是否有 TOMATO_COPY_TABLES 内容 */
+    private boolean isClipboardHasTables() {
+        Clipboard cb = Clipboard.getSystemClipboard();
+        if (cb.hasContent(COPY_TABLES_FORMAT)) {
+            return true;
+        }
+        if (cb.hasString()) {
+            String s = cb.getString();
+            return s != null && s.startsWith(COPY_TABLES_PREFIX + "\n");
+        }
+        return false;
+    }
+
+    /** 注册右键菜单：图标视图 + 详细列表 */
+    private void setupContextMenu() {
+        ContextMenu menu = new ContextMenu();
+        MenuItem copyItem = new MenuItem("复制表");
+        copyItem.setOnAction(e -> copySelectedTablesToClipboard());
+        menu.getItems().add(copyItem);
+
+        iconScroll.setOnContextMenuRequested(e -> {
+            copyItem.setDisable(selectedObjects.isEmpty());
+            menu.show(this, e.getScreenX(), e.getScreenY());
+            e.consume();
+        });
+        detailTableView.setOnContextMenuRequested(e -> {
+            copyItem.setDisable(selectedObjects.isEmpty());
+            menu.show(this, e.getScreenX(), e.getScreenY());
+            e.consume();
+        });
+    }
+
+    /**
+     * 将当前选中的表/视图元信息写入系统剪贴板。
+     * 内容格式：TOMATO_COPY_TABLES\n{connId}\n{srcDb}\n{srcSchema}\n{table1}\n{table2}...
+     * 同时写入纯文本格式（兼容跨进程粘贴）。
+     */
+    private void copySelectedTablesToClipboard() {
+        if (selectedObjects.isEmpty()) return;
+
+        String connId = config != null ? config.getId() : "";
+        String srcDb = databaseName != null ? databaseName : "";
+        String srcSchema = schemaName != null ? schemaName : "";
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(COPY_TABLES_PREFIX).append('\n');
+        sb.append(connId).append('\n');
+        sb.append(srcDb).append('\n');
+        sb.append(srcSchema);
+        for (ObjectInfo obj : selectedObjects) {
+            sb.append('\n').append(obj.name);
+        }
+        String content = sb.toString();
+
+        ClipboardContent cc = new ClipboardContent();
+        cc.put(COPY_TABLES_FORMAT, content);
+        cc.putString(content);
+        Clipboard.getSystemClipboard().setContent(cc);
     }
 
     // ==================== 多选逻辑 ====================

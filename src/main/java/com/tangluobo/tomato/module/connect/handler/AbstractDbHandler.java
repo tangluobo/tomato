@@ -26,6 +26,8 @@ import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.TreeItem;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.DataFormat;
 import javafx.stage.Stage;
 
 import java.nio.charset.StandardCharsets;
@@ -872,6 +874,12 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                     public void exportWizard() {
                         module.handleNewBackup(folderItem, data);
                     }
+
+                    @Override
+                    public void pasteTables() {
+                        // 目标为当前对象视图对应的连接/数据库
+                        handlePasteTables(folderItem, data);
+                    }
                 });
         holder[0] = objectsView;
 
@@ -1113,7 +1121,11 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 deleteDbItem.setOnAction(e -> handleDeleteDatabase(item, data));
                 MenuItem refreshItem = new MenuItem("刷新");
                 refreshItem.setOnAction(e -> refreshDbNode(item, data));
-                contextMenu.getItems().addAll(new SeparatorMenuItem(), editDbItem, deleteDbItem, new SeparatorMenuItem(), refreshItem);
+                // 粘贴表：剪贴板中有 TOMATO_COPY_TABLES 内容时启用
+                MenuItem pasteTablesItem = new MenuItem("粘贴表");
+                pasteTablesItem.setOnAction(e -> handlePasteTables(item, data));
+                pasteTablesItem.setDisable(!isClipboardHasTables());
+                contextMenu.getItems().addAll(new SeparatorMenuItem(), editDbItem, deleteDbItem, new SeparatorMenuItem(), pasteTablesItem, new SeparatorMenuItem(), refreshItem);
             }
             case SCHEMA -> {
                 MenuItem openItem = new MenuItem("打开");
@@ -1129,7 +1141,11 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 newTableItem.setOnAction(e -> handleNewTable(item, data));
                 MenuItem refreshItem = new MenuItem("刷新");
                 refreshItem.setOnAction(e -> refreshDbNode(item, data));
-                contextMenu.getItems().addAll(openObjectsItem, new SeparatorMenuItem(), newTableItem, new SeparatorMenuItem(), refreshItem);
+                // 粘贴表：剪贴板中有 TOMATO_COPY_TABLES 内容时启用
+                MenuItem pasteTablesItem = new MenuItem("粘贴表");
+                pasteTablesItem.setOnAction(e -> handlePasteTables(item, data));
+                pasteTablesItem.setDisable(!isClipboardHasTables());
+                contextMenu.getItems().addAll(openObjectsItem, new SeparatorMenuItem(), newTableItem, new SeparatorMenuItem(), pasteTablesItem, new SeparatorMenuItem(), refreshItem);
             }
             case VIEWS_FOLDER -> {
                 MenuItem refreshItem = new MenuItem("刷新");
@@ -1247,7 +1263,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         CopyTableDialog dialog = new CopyTableDialog(
                 module.getStage(),
                 module.getConnections(),
-                srcConfig, srcDb, srcTable, srcSchema
+                srcConfig, srcDb, srcSchema, java.util.Collections.singletonList(srcTable)
         );
         dialog.showAndWait();
         if (!dialog.isConfirmed()) {
@@ -1257,23 +1273,22 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         ConnectionConfig dstConfig = dialog.getTargetConfig();
         String dstDb = dialog.getTargetDatabase();
         String dstSchema = dialog.getTargetSchema();
-        String dstTable = dialog.getTargetTable();
         boolean copyStructure = dialog.isCopyStructure();
         boolean copyData = dialog.isCopyData();
         boolean dropIfExists = dialog.isDropIfExists();
 
-        if (dstConfig == null || dstDb == null || dstTable == null) {
+        if (dstConfig == null || dstDb == null) {
             return;
         }
 
-        // 2. 后台执行复制操作
-        final String srcTableFinal = srcTable;
-        final String dstTableFinal = dstTable;
+        // 2. 后台执行复制操作（单表/多表统一走批量复制）
+        final List<String> srcTables = dialog.getSourceTables();
+        final List<String> dstTables = dialog.getTargetTables();
         new Thread(() -> {
             try {
-                DatabaseService.copyTable(
-                        srcConfig, srcDb, srcSchema, srcTableFinal,
-                        dstConfig, dstDb, dstSchema, dstTableFinal,
+                DatabaseService.copyTables(
+                        srcConfig, srcDb, srcSchema, srcTables,
+                        dstConfig, dstDb, dstSchema, dstTables,
                         copyStructure, copyData, dropIfExists
                 );
                 Platform.runLater(() -> {
@@ -1297,6 +1312,149 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 });
             }
         }, "DB-CopyTable").start();
+    }
+
+    /** 判断系统剪贴板中是否有 TOMATO_COPY_TABLES 内容 */
+    private boolean isClipboardHasTables() {
+        Clipboard cb = Clipboard.getSystemClipboard();
+        if (cb.hasContent(TableObjectsView.COPY_TABLES_FORMAT)) {
+            return true;
+        }
+        // 兼容纯文本模式（跨进程/重启后）
+        if (cb.hasString()) {
+            String s = cb.getString();
+            return s != null && s.startsWith(TableObjectsView.COPY_TABLES_PREFIX + "\n");
+        }
+        return false;
+    }
+
+    /**
+     * 粘贴表处理：从剪贴板读取复制的表元信息，弹出数据传输对话框进行批量复制。
+     * 目标连接/数据库由用户在对话框中选择；目标 schema 由目标数据库类型推断。
+     */
+    public void handlePasteTables(TreeItem<String> targetItem, DatabaseNodeData targetData) {
+        Clipboard cb = Clipboard.getSystemClipboard();
+        String content = null;
+        if (cb.hasContent(TableObjectsView.COPY_TABLES_FORMAT)) {
+            Object raw = cb.getContent(TableObjectsView.COPY_TABLES_FORMAT);
+            if (raw instanceof String s) content = s;
+        }
+        if (content == null && cb.hasString()) {
+            String s = cb.getString();
+            if (s != null && s.startsWith(TableObjectsView.COPY_TABLES_PREFIX + "\n")) {
+                content = s;
+            }
+        }
+        if (content == null) {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION, "剪贴板中没有可粘贴的表", ButtonType.OK);
+            alert.setTitle("粘贴表");
+            alert.setHeaderText(null);
+            alert.initOwner(module.getStage());
+            alert.showAndWait();
+            return;
+        }
+
+        // 解析剪贴板内容：TOMATO_COPY_TABLES\n{connId}\n{srcDb}\n{srcSchema}\n{table1}\n{table2}...
+        String[] lines = content.split("\n", -1);
+        if (lines.length < 5) {
+            Alert alert = new Alert(Alert.AlertType.WARNING, "剪贴板内容格式不正确", ButtonType.OK);
+            alert.setTitle("粘贴表");
+            alert.setHeaderText(null);
+            alert.initOwner(module.getStage());
+            alert.showAndWait();
+            return;
+        }
+        String srcConnId = lines[1];
+        String srcDb = lines[2];
+        String srcSchema = lines[3].isEmpty() ? null : lines[3];
+        List<String> srcTables = new ArrayList<>();
+        for (int i = 4; i < lines.length; i++) {
+            if (!lines[i].isEmpty()) {
+                srcTables.add(lines[i]);
+            }
+        }
+        if (srcTables.isEmpty()) {
+            Alert alert = new Alert(Alert.AlertType.WARNING, "剪贴板中没有表可粘贴", ButtonType.OK);
+            alert.setTitle("粘贴表");
+            alert.setHeaderText(null);
+            alert.initOwner(module.getStage());
+            alert.showAndWait();
+            return;
+        }
+
+        // 根据 connId 在连接列表中反查源连接配置
+        ConnectionConfig srcConfig = null;
+        if (srcConnId != null && !srcConnId.isEmpty()) {
+            for (ConnectionConfig cfg : module.getConnections()) {
+                if (srcConnId.equals(cfg.getId())) {
+                    srcConfig = cfg;
+                    break;
+                }
+            }
+        }
+        if (srcConfig == null) {
+            Alert alert = new Alert(Alert.AlertType.WARNING, "找不到源连接（可能已被删除）", ButtonType.OK);
+            alert.setTitle("粘贴表");
+            alert.setHeaderText(null);
+            alert.initOwner(module.getStage());
+            alert.showAndWait();
+            return;
+        }
+
+        // 打开数据传输配置对话框（目标默认为当前右键的数据库节点）
+        CopyTableDialog dialog = new CopyTableDialog(
+                module.getStage(),
+                module.getConnections(),
+                srcConfig, srcDb, srcSchema, srcTables
+        );
+        // 若右键的是 DATABASE/TABLES_FOLDER 节点，预填目标为该节点对应的连接/数据库
+        if (targetData != null && targetData.getConnectionConfig() != null && targetData.getDatabaseName() != null) {
+            dialog.presetTarget(targetData.getConnectionConfig(), targetData.getDatabaseName(), targetData.getSchemaName());
+        }
+        dialog.showAndWait();
+        if (!dialog.isConfirmed()) {
+            return;
+        }
+
+        ConnectionConfig dstConfig = dialog.getTargetConfig();
+        String dstDb = dialog.getTargetDatabase();
+        String dstSchema = dialog.getTargetSchema();
+        boolean copyStructure = dialog.isCopyStructure();
+        boolean copyData = dialog.isCopyData();
+        boolean dropIfExists = dialog.isDropIfExists();
+        if (dstConfig == null || dstDb == null) {
+            return;
+        }
+
+        final List<String> srcTablesFinal = dialog.getSourceTables();
+        final List<String> dstTablesFinal = dialog.getTargetTables();
+        final ConnectionConfig srcConfigFinal = srcConfig;
+        new Thread(() -> {
+            try {
+                DatabaseService.copyTables(
+                        srcConfigFinal, srcDb, srcSchema, srcTablesFinal,
+                        dstConfig, dstDb, dstSchema, dstTablesFinal,
+                        copyStructure, copyData, dropIfExists
+                );
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.INFORMATION, "表粘贴成功！", ButtonType.OK);
+                    alert.setTitle("粘贴表");
+                    alert.setHeaderText(null);
+                    alert.initOwner(module.getStage());
+                    alert.showAndWait();
+                    refreshDbNodeForConfig(dstConfig, dstDb, dstSchema);
+                });
+            } catch (Exception ex) {
+                String errMsg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR, "表粘贴失败: " + errMsg, ButtonType.OK);
+                    alert.setTitle("粘贴表");
+                    alert.setHeaderText(null);
+                    alert.initOwner(module.getStage());
+                    alert.showAndWait();
+                });
+            }
+        }, "DB-PasteTables").start();
     }
 
     /**

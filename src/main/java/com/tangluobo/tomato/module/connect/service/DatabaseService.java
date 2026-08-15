@@ -2790,6 +2790,43 @@ public class DatabaseService {
     }
 
     /**
+     * 批量复制多张表：依次调用 copyTable 完成每张表的复制。
+     * 任一张表失败时抛出异常并终止后续复制（已复制的表不会回滚）。
+     * @param srcTables 源表名列表（与 dstTables 一一对应）
+     * @param dstTables 目标表名列表（与 srcTables 一一对应）
+     */
+    public static void copyTables(ConnectionConfig srcConfig, String srcDb, String srcSchema, List<String> srcTables,
+                                  ConnectionConfig dstConfig, String dstDb, String dstSchema, List<String> dstTables,
+                                  boolean copyStructure, boolean copyData, boolean dropIfExists) throws Exception {
+        if (srcTables == null || dstTables == null || srcTables.size() != dstTables.size()) {
+            throw new IllegalArgumentException("源表名列表与目标表名列表长度不一致");
+        }
+        Exception lastError = null;
+        int successCount = 0;
+        int failedCount = 0;
+        for (int i = 0; i < srcTables.size(); i++) {
+            String srcTable = srcTables.get(i);
+            String dstTable = dstTables.get(i);
+            try {
+                copyTable(srcConfig, srcDb, srcSchema, srcTable,
+                        dstConfig, dstDb, dstSchema, dstTable,
+                        copyStructure, copyData, dropIfExists);
+                successCount++;
+            } catch (Exception ex) {
+                failedCount++;
+                lastError = ex;
+                // 继续尝试后续表，记录最后一个错误
+            }
+        }
+        // 全部失败时抛出异常；部分成功时也抛出（提示用户）
+        if (failedCount > 0) {
+            String msg = "批量复制完成：成功 " + successCount + " 张，失败 " + failedCount + " 张"
+                    + (lastError != null ? "；最后错误: " + lastError.getMessage() : "");
+            throw new Exception(msg);
+        }
+    }
+
+    /**
      * 同连接复制表：使用 CREATE TABLE ... LIKE + INSERT INTO ... SELECT（效率更高）
      */
     public static void copyTableSameConnection(ConnectionConfig config,
