@@ -117,11 +117,20 @@ public class TableObjectsView extends BorderPane {
 
     // 数据缓存
     private List<ObjectInfo> objects = new ArrayList<>();
+    /** 全量对象缓存（搜索过滤前的原始列表） */
+    private List<ObjectInfo> allObjects = new ArrayList<>();
     private List<FkRelation> foreignKeys = new ArrayList<>();
     /** 当前选中的对象（图标视图点击或详细列表选中行） */
     private ObjectInfo selectedObject;
     /** 当前图标视图中选中的 VBox（用于高亮切换） */
     private VBox selectedIconBox;
+
+    // 搜索相关
+    private TextField searchField;
+    /** 字段缓存：key=对象名, value=该对象所有字段 [字段名, 字段注释] 列表 */
+    private final Map<String, List<String[]>> columnsCache = new HashMap<>();
+    /** 字段缓存是否已加载完成（用于搜索时判断是否可按字段名/字段注释过滤） */
+    private volatile boolean columnsLoaded = false;
 
     // 图标缓存
     private Image tableImg;
@@ -203,10 +212,171 @@ public class TableObjectsView extends BorderPane {
         Button refreshBtn = createToolBarButton("刷新", createImageIcon("/images/connect/refresh.png", 16));
         refreshBtn.setOnAction(e -> loadData());
 
+        // 弹性间隔：将搜索框推到工具栏右侧
+        Region toolBarSpacer = new Region();
+        HBox.setHgrow(toolBarSpacer, Priority.ALWAYS);
+
+        Node searchBox = createSearchBox();
+
         toolBar.getChildren().addAll(
                 openTableBtn, designTableBtn, createTableBtn, deleteTableBtn,
-                sep1, importBtn, exportBtn, sep2, refreshBtn);
+                sep1, importBtn, exportBtn, sep2, refreshBtn,
+                toolBarSpacer, searchBox);
         return toolBar;
+    }
+
+    /**
+     * 创建搜索框：样式参考工具模块左上角搜索栏（放大镜图标 + 透明输入框）。
+     * 支持按表名、表注释、字段名、字段注释过滤对象列表。
+     */
+    private Node createSearchBox() {
+        HBox box = new HBox(6);
+        box.setAlignment(Pos.CENTER_LEFT);
+        box.setPadding(new Insets(4, 8, 4, 8));
+        box.setStyle("-fx-background-color: #f0f0f0; -fx-background-radius: 4; -fx-border-radius: 4;");
+        box.setPrefWidth(220);
+        box.setMaxWidth(220);
+
+        SVGPath searchIcon = new SVGPath();
+        searchIcon.setContent("M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z");
+        searchIcon.setFill(Color.web("#999999"));
+        searchIcon.setScaleX(0.7);
+        searchIcon.setScaleY(0.7);
+
+        searchField = new TextField();
+        searchField.setPromptText("搜索表名/注释/字段...");
+        searchField.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-padding: 0; -fx-font-size: 12px; -fx-prompt-text-fill: #999; -fx-text-fill: #333;");
+        HBox.setHgrow(searchField, Priority.ALWAYS);
+
+        // 输入即过滤（防抖：输入停止 300ms 后执行，避免频繁过滤）
+        searchField.textProperty().addListener((obs, oldVal, newVal) -> {
+            applySearchDelayed(newVal);
+        });
+
+        box.getChildren().addAll(searchIcon, searchField);
+        return box;
+    }
+
+    private javafx.animation.Timeline searchTimeline;
+
+    /** 防抖搜索：输入停止 300ms 后执行过滤 */
+    private void applySearchDelayed(String keyword) {
+        if (searchTimeline != null) {
+            searchTimeline.stop();
+        }
+        searchTimeline = new javafx.animation.Timeline(
+                new javafx.animation.KeyFrame(javafx.util.Duration.millis(300), e -> applySearch(keyword)));
+        searchTimeline.play();
+    }
+
+    /**
+     * 按关键字过滤对象列表。
+     * 匹配范围：表名、表注释、字段名、字段注释（字段缓存加载完成后生效）。
+     * 关键字为空时恢复显示全部对象。
+     */
+    private void applySearch(String keyword) {
+        String kw = keyword == null ? "" : keyword.trim().toLowerCase();
+        if (kw.isEmpty()) {
+            objects = new ArrayList<>(allObjects);
+        } else {
+            List<ObjectInfo> filtered = new ArrayList<>();
+            for (ObjectInfo obj : allObjects) {
+                if (matchesKeyword(obj, kw)) {
+                    filtered.add(obj);
+                }
+            }
+            objects = filtered;
+        }
+
+        // 若当前选中对象已被过滤掉，清除选中
+        if (selectedObject != null && !objects.contains(selectedObject)) {
+            selectedObject = null;
+            selectedIconBox = null;
+        }
+
+        populateIconView();
+        populateDetailView();
+        populateErView();
+        updateCountLabel();
+        updateButtonStates();
+    }
+
+    /** 判断对象是否匹配关键字（表名/表注释/字段名/字段注释） */
+    private boolean matchesKeyword(ObjectInfo obj, String kw) {
+        if (obj.name != null && obj.name.toLowerCase().contains(kw)) return true;
+        if (obj.comment != null && obj.comment.toLowerCase().contains(kw)) return true;
+        // 字段名/字段注释：依赖 columnsCache，未加载完成则跳过字段匹配
+        if (columnsLoaded) {
+            List<String[]> cols = columnsCache.get(obj.name);
+            if (cols != null) {
+                for (String[] col : cols) {
+                    if (col.length >= 1 && col[0] != null && col[0].toLowerCase().contains(kw)) return true;
+                    if (col.length >= 2 && col[1] != null && col[1].toLowerCase().contains(kw)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** 后台预加载所有对象的字段信息（字段名+注释），用于搜索字段名/字段注释 */
+    private void preloadColumns() {
+        columnsLoaded = false;
+        columnsCache.clear();
+        if (allObjects.isEmpty()) {
+            columnsLoaded = true;
+            return;
+        }
+        new Thread(() -> {
+            ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
+            connLock.lock();
+            try {
+                Map<String, List<String[]>> cache = new HashMap<>();
+                for (ObjectInfo obj : allObjects) {
+                    try {
+                        List<Map<String, String>> cols = DatabaseService.getTableColumns(config, databaseName, schemaName, obj.name);
+                        List<String[]> arr = new ArrayList<>();
+                        for (Map<String, String> c : cols) {
+                            String colName = c.get("字段名");
+                            String colComment = c.get("注释");
+                            arr.add(new String[]{
+                                    colName != null ? colName : "",
+                                    colComment != null ? colComment : ""
+                            });
+                        }
+                        cache.put(obj.name, arr);
+                    } catch (Exception e) {
+                        cache.put(obj.name, new ArrayList<>());
+                    }
+                }
+                Platform.runLater(() -> {
+                    columnsCache.clear();
+                    columnsCache.putAll(cache);
+                    columnsLoaded = true;
+                    // 若搜索框已有内容，重新过滤以纳入字段匹配结果
+                    if (searchField != null && !searchField.getText().trim().isEmpty()) {
+                        applySearch(searchField.getText());
+                    }
+                });
+            } finally {
+                connLock.unlock();
+            }
+        }, "DB-PreloadColumns").start();
+    }
+
+    /** 更新底部状态栏计数（搜索时附加过滤提示） */
+    private void updateCountLabel() {
+        if (countLabel == null) return;
+        long tableCount = objects.stream().filter(o -> o.type == ObjectType.TABLE).count();
+        long viewCount = objects.size() - tableCount;
+        String text = "共 " + objects.size() + " 个对象（表 " + tableCount + "，视图 " + viewCount + "）"
+                + (foreignKeys.isEmpty() ? "" : "  |  " + foreignKeys.size() + " 个外键关系");
+        if (searchField != null && !searchField.getText().trim().isEmpty()) {
+            text += "  |  已筛选（共 " + allObjects.size() + " 个）";
+            if (!columnsLoaded) {
+                text += "  |  字段加载中...";
+            }
+        }
+        countLabel.setText(text);
     }
 
     /** 创建工具栏按钮（图标+文字），样式参考 TableStructureView.createToolBarButton */
@@ -301,7 +471,8 @@ public class TableObjectsView extends BorderPane {
 
             Label name = new Label(obj.name);
             name.setStyle("-fx-font-size: 12px;");
-            name.setWrapText(true);
+            name.setWrapText(false);
+            name.setEllipsisString("...");
             name.setMaxWidth(76);
             name.setAlignment(Pos.CENTER);
             name.setTextAlignment(TextAlignment.CENTER);
@@ -803,23 +974,32 @@ public class TableObjectsView extends BorderPane {
                 final List<ObjectInfo> finalObjs = objs;
                 final List<FkRelation> finalFks = fks;
                 Platform.runLater(() -> {
-                    this.objects = finalObjs;
+                    this.allObjects = finalObjs;
+                    this.objects = new ArrayList<>(finalObjs);
                     this.foreignKeys = finalFks;
-                    // 若已删除选中对象，清除选中状态
-                    if (selectedObject != null && findObjectInfo(selectedObject.name, selectedObject.type) == null) {
-                        selectedObject = null;
-                        selectedIconBox = null;
+                    // 若已删除选中对象，清除选中状态；否则更新为新引用（保持 contains 有效）
+                    if (selectedObject != null) {
+                        ObjectInfo found = findObjectInfo(selectedObject.name, selectedObject.type);
+                        if (found == null) {
+                            selectedObject = null;
+                            selectedIconBox = null;
+                        } else {
+                            selectedObject = found;
+                        }
                     }
-                    populateIconView();
-                    populateDetailView();
-                    populateErView();
-
-                    long tableCount = finalObjs.stream().filter(o -> o.type == ObjectType.TABLE).count();
-                    long viewCount = finalObjs.size() - tableCount;
-                    countLabel.setText("共 " + finalObjs.size() + " 个对象（表 " + tableCount + "，视图 " + viewCount + "）"
-                            + (finalFks.isEmpty() ? "" : "  |  " + finalFks.size() + " 个外键关系"));
+                    // 若搜索框有内容则按关键字过滤，否则直接填充
+                    if (searchField != null && !searchField.getText().trim().isEmpty()) {
+                        applySearch(searchField.getText());
+                    } else {
+                        populateIconView();
+                        populateDetailView();
+                        populateErView();
+                        updateCountLabel();
+                    }
                     loadingIndicator.setVisible(false);
                     updateButtonStates();
+                    // 后台预加载字段信息（用于搜索字段名/字段注释）
+                    preloadColumns();
                 });
             } catch (Exception e) {
                 e.printStackTrace();
