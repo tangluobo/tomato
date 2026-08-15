@@ -122,6 +122,10 @@ public class CopyTableDialog {
         dialogStage.setResizable(true);
         dialogStage.setMinWidth(800);
         dialogStage.setMinHeight(600);
+        try {
+            dialogStage.getIcons().add(new Image(getClass().getResourceAsStream("/images/connect/copy_tables.png")));
+        } catch (Exception ignored) {
+        }
 
         BorderPane root = new BorderPane();
         root.setPadding(new Insets(0));

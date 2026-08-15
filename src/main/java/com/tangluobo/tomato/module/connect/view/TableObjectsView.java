@@ -232,7 +232,7 @@ public class TableObjectsView extends BorderPane {
         toolBar.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #ddd; -fx-border-width: 0 0 1 0;");
         toolBar.setAlignment(Pos.CENTER_LEFT);
 
-        openTableBtn = createToolBarButton("打开表", createImageIcon("/images/connect/table.png", 16));
+        openTableBtn = createToolBarButton("打开表", createImageIcon("/images/connect/table_open.png", 16));
         openTableBtn.setOnAction(e -> handleOpenTable());
 
         designTableBtn = createToolBarButton("设计表", createImageIcon("/images/connect/table_edit.png", 16));
@@ -250,12 +250,12 @@ public class TableObjectsView extends BorderPane {
         sep1.setOrientation(javafx.geometry.Orientation.VERTICAL);
         sep1.setPadding(new Insets(2, 4, 2, 4));
 
-        Button importBtn = createToolBarButton("导入向导", createImageIcon("/images/connect/backup1.png", 16));
+        Button importBtn = createToolBarButton("导入向导", createImageIcon("/images/connect/table_import.png", 16));
         importBtn.setOnAction(e -> {
             if (operations != null) operations.importWizard();
         });
 
-        Button exportBtn = createToolBarButton("导出向导", createImageIcon("/images/connect/backup.png", 16));
+        Button exportBtn = createToolBarButton("导出向导", createImageIcon("/images/connect/table_export.png", 16));
         exportBtn.setOnAction(e -> {
             if (operations != null) operations.exportWizard();
         });
