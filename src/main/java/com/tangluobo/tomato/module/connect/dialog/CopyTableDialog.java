@@ -56,9 +56,6 @@ public class CopyTableDialog {
     private ComboBox<String> sourceDbCombo;
     private ComboBox<String> targetConnCombo;
     private ComboBox<String> targetDbCombo;
-    private TextField targetTableField;
-    /** 多表时使用的目标表名输入框列表（与 sourceTables 一一对应） */
-    private final List<TextField> targetTableFields = new ArrayList<>();
 
     // 顶部显示引用
     private Text topTargetConnText;
@@ -106,9 +103,9 @@ public class CopyTableDialog {
         this.sourceSchema = sourceSchema;
         this.sourceTables = sourceTables == null ? new ArrayList<>() : new ArrayList<>(sourceTables);
         this.multiTableMode = this.sourceTables.size() > 1;
-        // 默认目标表名：单表 = 源表名 + "_copy"；多表 = 源表名（用户可在 UI 中修改）
+        // 默认目标表名 = 源表名（用户可在 UI 中修改）
         for (String t : this.sourceTables) {
-            targetTables.add(multiTableMode ? t : t + "_copy");
+            targetTables.add(t);
         }
         if (!this.sourceTables.isEmpty()) {
             this.targetTable = targetTables.get(0);
@@ -214,13 +211,9 @@ public class CopyTableDialog {
             sourcePanel.getChildren().addAll(sourceTitle, sourceConnLabel, sourceConnCombo,
                     sourceDbLabel, sourceDbCombo);
         } else {
-            // 单表模式：保留原 TextField
-            Label sourceTableLabel = new Label("表名:");
-            sourceTableLabel.setStyle("-fx-font-size: 13px;");
-            TextField sourceTableField = new TextField(sourceTables.isEmpty() ? "" : sourceTables.get(0));
-            sourceTableField.setDisable(true);
+            // 单表模式：同样只展示连接和数据库
             sourcePanel.getChildren().addAll(sourceTitle, sourceConnLabel, sourceConnCombo,
-                    sourceDbLabel, sourceDbCombo, sourceTableLabel, sourceTableField);
+                    sourceDbLabel, sourceDbCombo);
         }
 
         // --- 中间交换按钮 ---
@@ -254,8 +247,6 @@ public class CopyTableDialog {
         targetFileRadio.setDisable(true);
         targetTypeBox.getChildren().addAll(targetConnRadio, targetFileRadio);
 
-        Label targetConnLabel = new Label("连接:");
-        targetConnLabel.setStyle("-fx-font-size: 13px;");
         targetConnCombo = new ComboBox<>();
         targetConnCombo.setMaxWidth(Double.MAX_VALUE);
         loadDbConnectionsToCombo(targetConnCombo);
@@ -281,15 +272,12 @@ public class CopyTableDialog {
 
         if (multiTableMode) {
             // 多表模式：不显示新表名列表，目标表名默认与源表名相同
-            targetPanel.getChildren().addAll(targetTitle, targetTypeBox, targetConnLabel, targetConnCombo,
+            targetPanel.getChildren().addAll(targetTitle, targetTypeBox, targetConnCombo,
                     targetDbLabelField, targetDbCombo);
         } else {
-            // 单表模式：保留原"新表名"输入框
-            Label targetTableLabel = new Label("新表名:");
-            targetTableLabel.setStyle("-fx-font-size: 13px;");
-            targetTableField = new TextField(this.targetTable);
-            targetPanel.getChildren().addAll(targetTitle, targetTypeBox, targetConnLabel, targetConnCombo,
-                    targetDbLabelField, targetDbCombo, targetTableLabel, targetTableField);
+            // 单表模式：同样不显示新表名输入框
+            targetPanel.getChildren().addAll(targetTitle, targetTypeBox, targetConnCombo,
+                    targetDbLabelField, targetDbCombo);
         }
 
         configRow.getChildren().addAll(sourcePanel, swapBox, targetPanel);
@@ -556,23 +544,12 @@ public class CopyTableDialog {
             return;
         }
 
-        // 重新读取 UI 中编辑后的目标表名列表
-        if (multiTableMode) {
-            // 多表模式：目标表名默认与源表名相同（不提供编辑UI），targetTables 已在构造时初始化
-            if (targetTables.isEmpty()) {
-                showAlert("没有可复制的表");
-                return;
-            }
-            targetTable = targetTables.get(0);
-        } else {
-            targetTable = targetTableField != null ? targetTableField.getText().trim() : "";
-            if (targetTable.isEmpty()) {
-                showAlert("请输入目标表名");
-                return;
-            }
-            targetTables.clear();
-            targetTables.add(targetTable);
+        // 目标表名默认与源表名相同（不提供编辑UI），targetTables 已在构造时初始化
+        if (targetTables.isEmpty()) {
+            showAlert("没有可复制的表");
+            return;
         }
+        targetTable = targetTables.get(0);
 
         confirmed = true;
         dialogStage.close();

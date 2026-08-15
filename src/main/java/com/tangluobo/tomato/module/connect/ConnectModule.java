@@ -141,6 +141,20 @@ public class ConnectModule implements Module {
         connections = ConfigManager.loadConnections();
         loadTree();
 
+        // 注册 JVM 退出钩子：应用关闭前最后一次兜底保存连接配置，避免异常情况下丢失修改
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                try {
+                    ConfigManager.saveConnections(connections);
+                } catch (ConfigManager.SaveException e) {
+                    System.err.println("[ConnectModule-ShutdownHook] 退出时保存连接配置失败: " + e.getMessage());
+                    e.printStackTrace();
+                }
+            }, "tomato-connect-save-hook"));
+        } catch (IllegalStateException | SecurityException ignored) {
+            // JVM 已在关闭中或无权限，忽略
+        }
+
         setupContextMenu();
         setupDragAndDrop();
 
@@ -835,7 +849,7 @@ public class ConnectModule implements Module {
                         ConnectionConfig cfg = itemConfigMap.get(treeItem);
                         if (cfg != null) {
                             cfg.setName(newName);
-                            ConfigManager.saveConnections(connections);
+                            saveConnectionsWithFeedback();
                             treeItem.setValue(newName);
                         }
                     }
@@ -1118,7 +1132,7 @@ public class ConnectModule implements Module {
         newParent.getChildren().add(item);
         newParent.setExpanded(true);
 
-        ConfigManager.saveConnections(connections);
+        saveConnectionsWithFeedback();
     }
 
     private void handleDbNodeDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
@@ -1441,7 +1455,31 @@ public class ConnectModule implements Module {
 
     /** 供 handler 调用：保存连接配置 */
     public void saveConnections() {
-        ConfigManager.saveConnections(connections);
+        saveConnectionsWithFeedback();
+    }
+
+    /**
+     * 内部统一使用：保存连接配置并在失败时弹窗提示用户。
+     * 返回 true 表示保存成功，false 表示保存失败。
+     */
+    private boolean saveConnectionsWithFeedback() {
+        try {
+            saveConnectionsWithFeedback();
+            return true;
+        } catch (ConfigManager.SaveException e) {
+            System.err.println("[ConnectModule] 保存连接配置失败: " + e.getMessage());
+            e.printStackTrace();
+            try {
+                Alert alert = new Alert(Alert.AlertType.ERROR);
+                alert.setTitle("保存失败");
+                alert.setHeaderText("连接配置未保存");
+                alert.setContentText("原因: " + e.getMessage() + "\n\n配置文件路径: " + ConfigManager.getConfigFilePath());
+                alert.showAndWait();
+            } catch (Exception uiEx) {
+                uiEx.printStackTrace();
+            }
+            return false;
+        }
     }
 
     /** 供 handler 调用：触发连接（用于"复制会话"菜单） */
@@ -1505,7 +1543,7 @@ public class ConnectModule implements Module {
             config.setPort(sc.getPort());
             connections.removeIf(c -> c.getId().equals(config.getId()));
             connections.add(config);
-            ConfigManager.saveConnections(connections);
+            saveConnectionsWithFeedback();
         });
 
         Tab serverTab = new Tab(tabTitle);
@@ -1528,7 +1566,7 @@ public class ConnectModule implements Module {
             config.setPort(sc.getPort());
             connections.removeIf(c -> c.getId().equals(config.getId()));
             connections.add(config);
-            ConfigManager.saveConnections(connections);
+            saveConnectionsWithFeedback();
         });
 
         terminalTabPane.getTabs().add(serverTab);
@@ -1680,7 +1718,7 @@ public class ConnectModule implements Module {
             folderConfig.setType(null);
 
             connections.add(folderConfig);
-            ConfigManager.saveConnections(connections);
+            saveConnectionsWithFeedback();
 
             TreeItem<String> folderItem = new TreeItem<>(folderName);
             if (folderIcon != null) {
@@ -1708,7 +1746,7 @@ public class ConnectModule implements Module {
             }
 
             connections.add(config);
-            ConfigManager.saveConnections(connections);
+            saveConnectionsWithFeedback();
 
             TreeItem<String> connectionItem = createTreeItem(config);
             parent.getChildren().add(connectionItem);
@@ -1728,7 +1766,7 @@ public class ConnectModule implements Module {
         if (updatedConfig != null) {
             connections.removeIf(c -> c.getId().equals(existingConfig.getId()));
             connections.add(updatedConfig);
-            ConfigManager.saveConnections(connections);
+            saveConnectionsWithFeedback();
 
             itemConfigMap.remove(item);
             itemConfigMap.put(item, updatedConfig);
@@ -1738,24 +1776,29 @@ public class ConnectModule implements Module {
     }
 
     private void handleCopyConnection(TreeItem<String> item, ConnectionConfig sourceConfig) {
-        com.google.gson.Gson gson = new com.google.gson.Gson();
+        Gson gson = new Gson();
         ConnectionConfig copiedConfig = gson.fromJson(gson.toJson(sourceConfig), ConnectionConfig.class);
         copiedConfig.setId(ConfigManager.generateId());
         copiedConfig.setName(sourceConfig.getName() + " - 副本");
 
-        ConnectionConfig parentConfig = itemConfigMap.get(item);
-        if (parentConfig != null) {
-            copiedConfig.setParentId(parentConfig.getParentId());
-        }
+        // 保持与原连接相同的 parentId：如果原连接是根级（parentId==null），则副本也是根级
+        copiedConfig.setParentId(sourceConfig.getParentId());
 
         connections.add(copiedConfig);
-        ConfigManager.saveConnections(connections);
+        if (!saveConnectionsWithFeedback()) {
+            // 保存失败，回滚 connections，保持内存与磁盘一致
+            connections.remove(copiedConfig);
+            return;
+        }
 
         TreeItem<String> copiedItem = createTreeItem(copiedConfig);
         TreeItem<String> parent = item.getParent();
         if (parent != null) {
             int index = parent.getChildren().indexOf(item);
             parent.getChildren().add(index + 1, copiedItem);
+        } else {
+            // 理论上不会出现（item 必有 parent），兜底作为根节点子项
+            root.getChildren().add(copiedItem);
         }
     }
 
@@ -1789,11 +1832,11 @@ public class ConnectModule implements Module {
                         }
                     }
                     connections.removeIf(c -> c.getId().equals(config.getId()));
-                    ConfigManager.saveConnections(connections);
+                    saveConnectionsWithFeedback();
                     loadTree();
                 } else if (result.get() == deleteAllBtn) {
                     removeConfigAndChildren(config.getId());
-                    ConfigManager.saveConnections(connections);
+                    saveConnectionsWithFeedback();
                     loadTree();
                 }
             }
@@ -1805,7 +1848,7 @@ public class ConnectModule implements Module {
             Optional<ButtonType> result = alert.showAndWait();
             if (result.isPresent() && result.get() == ButtonType.OK) {
                 removeConfigAndChildren(config.getId());
-                ConfigManager.saveConnections(connections);
+                saveConnectionsWithFeedback();
                 loadTree();
             }
         }
@@ -2003,7 +2046,7 @@ public class ConnectModule implements Module {
             }
 
             connections.addAll(importConfigs);
-            ConfigManager.saveConnections(connections);
+            saveConnectionsWithFeedback();
             loadTree();
 
             Alert alert = new Alert(Alert.AlertType.INFORMATION);

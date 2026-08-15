@@ -102,8 +102,8 @@ public class TableObjectsView extends BorderPane {
         void designObject(DatabaseNodeData data);
         /** 新建表 */
         void createTable();
-        /** 删除表/视图（视图内部已刷新，无需再刷新） */
-        void deleteObject(DatabaseNodeData data);
+        /** 删除表/视图（批量，视图内部已刷新，无需再刷新） */
+        void deleteObjects(List<DatabaseNodeData> dataList);
         /** 导入向导 */
         void importWizard();
         /** 导出向导 */
@@ -476,8 +476,12 @@ public class TableObjectsView extends BorderPane {
     }
 
     private void handleDeleteTable() {
-        if (selectedObject == null || operations == null) return;
-        operations.deleteObject(buildNodeData(selectedObject));
+        if (selectedObjects.isEmpty() || operations == null) return;
+        List<DatabaseNodeData> list = new ArrayList<>();
+        for (ObjectInfo obj : selectedObjects) {
+            list.add(buildNodeData(obj));
+        }
+        operations.deleteObjects(list);
     }
 
     private DatabaseNodeData buildNodeData(ObjectInfo obj) {
@@ -668,15 +672,23 @@ public class TableObjectsView extends BorderPane {
         contextMenu = new ContextMenu();
         MenuItem copyItem = new MenuItem("复制表");
         copyItem.setOnAction(e -> copySelectedTablesToClipboard());
-        contextMenu.getItems().add(copyItem);
+        MenuItem deleteItem = new MenuItem("删除表");
+        deleteItem.setOnAction(e -> handleDeleteTable());
+        MenuItem refreshItem = new MenuItem("刷新");
+        refreshItem.setOnAction(e -> loadData());
+        contextMenu.getItems().addAll(copyItem, new SeparatorMenuItem(), deleteItem, new SeparatorMenuItem(), refreshItem);
 
         iconScroll.setOnContextMenuRequested(e -> {
-            copyItem.setDisable(selectedObjects.isEmpty());
+            boolean empty = selectedObjects.isEmpty();
+            copyItem.setDisable(empty);
+            deleteItem.setDisable(empty);
             contextMenu.show(this, e.getScreenX(), e.getScreenY());
             e.consume();
         });
         detailTableView.setOnContextMenuRequested(e -> {
-            copyItem.setDisable(selectedObjects.isEmpty());
+            boolean empty = selectedObjects.isEmpty();
+            copyItem.setDisable(empty);
+            deleteItem.setDisable(empty);
             contextMenu.show(this, e.getScreenX(), e.getScreenY());
             e.consume();
         });

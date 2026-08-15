@@ -506,6 +506,83 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         }
     }
 
+    /**
+     * 删除对象视图传入的表/视图（不依赖左侧树选中状态）。
+     * 用于对象视图（TableObjectsView）的"删除表"按钮：根据传入的 DatabaseNodeData 列表
+     * 分组调用 DatabaseService.dropTables/dropViews，删除完成后回调刷新视图。
+     */
+    public void handleDeleteObjects(List<DatabaseNodeData> dataList, Runnable onComplete) {
+        if (dataList == null || dataList.isEmpty()) {
+            if (onComplete != null) onComplete.run();
+            return;
+        }
+
+        // 按表/视图分组收集名称（对象视图同属一个连接/数据库/schema）
+        List<String> tableNames = new ArrayList<>();
+        List<String> viewNames = new ArrayList<>();
+        DatabaseNodeData sample = null;
+        for (DatabaseNodeData d : dataList) {
+            if (d.getType() == DatabaseNodeData.NodeType.TABLE) {
+                tableNames.add(d.getName());
+                if (sample == null) sample = d;
+            } else if (d.getType() == DatabaseNodeData.NodeType.VIEW) {
+                viewNames.add(d.getName());
+                if (sample == null) sample = d;
+            }
+        }
+        if (sample == null) {
+            if (onComplete != null) onComplete.run();
+            return;
+        }
+
+        // 确认对话框（仅提示数量，不列出表名）
+        StringBuilder msg = new StringBuilder("确定要删除选中的 ");
+        if (!tableNames.isEmpty()) {
+            msg.append(tableNames.size()).append(" 张表");
+        }
+        if (!viewNames.isEmpty()) {
+            if (!tableNames.isEmpty()) msg.append("、");
+            msg.append(viewNames.size()).append(" 个视图");
+        }
+        msg.append("吗？此操作不可恢复！");
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("确认删除");
+        confirm.setHeaderText(null);
+        confirm.setContentText(msg.toString());
+        ButtonType deleteBtn = new ButtonType("确认删除");
+        confirm.getButtonTypes().setAll(deleteBtn, ButtonType.CANCEL);
+        Optional<ButtonType> result = confirm.showAndWait();
+        if (result.isEmpty() || result.get() != deleteBtn) {
+            if (onComplete != null) onComplete.run();
+            return;
+        }
+
+        ConnectionConfig cfg = sample.getConnectionConfig();
+        String dbName = sample.getDatabaseName();
+        String schema = sample.getSchemaName();
+
+        new Thread(() -> {
+            try {
+                if (!tableNames.isEmpty()) {
+                    DatabaseService.dropTables(cfg, dbName, schema, tableNames);
+                }
+                if (!viewNames.isEmpty()) {
+                    DatabaseService.dropViews(cfg, dbName, schema, viewNames);
+                }
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert err = new Alert(Alert.AlertType.ERROR);
+                    err.setTitle("删除失败");
+                    err.setHeaderText(null);
+                    err.setContentText(e.getMessage());
+                    err.showAndWait();
+                });
+            } finally {
+                if (onComplete != null) Platform.runLater(onComplete);
+            }
+        }, "DB-DeleteObjects").start();
+    }
+
     // ==================== 刷新 ====================
 
     /** 刷新数据库主机：重新加载数据库列表 */
@@ -860,9 +937,10 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                     }
 
                     @Override
-                    public void deleteObject(DatabaseNodeData objData) {
-                        handleDeleteDbNodes();
-                        if (holder[0] != null) holder[0].notifyObjectDeleted();
+                    public void deleteObjects(List<DatabaseNodeData> dataList) {
+                        handleDeleteObjects(dataList, () -> {
+                            if (holder[0] != null) holder[0].notifyObjectDeleted();
+                        });
                     }
 
                     @Override
@@ -878,7 +956,9 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                     @Override
                     public void pasteTables() {
                         // 目标为当前对象视图对应的连接/数据库
-                        handlePasteTables(folderItem, data);
+                        handlePasteTables(folderItem, data, () -> {
+                            if (holder[0] != null) holder[0].notifyObjectDeleted();
+                        });
                     }
                 });
         holder[0] = objectsView;
@@ -1333,6 +1413,13 @@ public abstract class AbstractDbHandler implements ConnectHandler {
      * 目标连接/数据库由用户在对话框中选择；目标 schema 由目标数据库类型推断。
      */
     public void handlePasteTables(TreeItem<String> targetItem, DatabaseNodeData targetData) {
+        handlePasteTables(targetItem, targetData, null);
+    }
+
+    /**
+     * 粘贴表处理（带完成回调）：传输成功或失败后在 JavaFX 线程回调 onComplete。
+     */
+    public void handlePasteTables(TreeItem<String> targetItem, DatabaseNodeData targetData, Runnable onComplete) {
         Clipboard cb = Clipboard.getSystemClipboard();
         String content = null;
         if (cb.hasContent(TableObjectsView.COPY_TABLES_FORMAT)) {
@@ -1401,7 +1488,18 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             return;
         }
 
-        // 打开数据传输配置对话框（目标默认为当前右键的数据库节点）
+        // 判断源和目标是否同一连接：同一连接直接传输，不弹对话框
+        ConnectionConfig targetCfg = targetData != null ? targetData.getConnectionConfig() : null;
+        if (targetCfg != null && targetData.getDatabaseName() != null
+                && srcConfig.getId() != null && srcConfig.getId().equals(targetCfg.getId())) {
+            // 同一连接：直接进行传输
+            executePasteTablesCopy(srcConfig, srcDb, srcSchema, srcTables,
+                    targetCfg, targetData.getDatabaseName(), targetData.getSchemaName(),
+                    new ArrayList<>(srcTables), true, true, false, onComplete);
+            return;
+        }
+
+        // 不同连接：打开数据传输配置对话框（目标默认为当前右键的数据库节点）
         CopyTableDialog dialog = new CopyTableDialog(
                 module.getStage(),
                 module.getConnections(),
@@ -1426,14 +1524,21 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             return;
         }
 
-        final List<String> srcTablesFinal = dialog.getSourceTables();
-        final List<String> dstTablesFinal = dialog.getTargetTables();
-        final ConnectionConfig srcConfigFinal = srcConfig;
+        executePasteTablesCopy(srcConfig, srcDb, srcSchema, dialog.getSourceTables(),
+                dstConfig, dstDb, dstSchema, dialog.getTargetTables(),
+                copyStructure, copyData, dropIfExists, onComplete);
+    }
+
+    /** 后台执行表粘贴/复制操作 */
+    private void executePasteTablesCopy(
+            ConnectionConfig srcConfig, String srcDb, String srcSchema, List<String> srcTables,
+            ConnectionConfig dstConfig, String dstDb, String dstSchema, List<String> dstTables,
+            boolean copyStructure, boolean copyData, boolean dropIfExists, Runnable onComplete) {
         new Thread(() -> {
             try {
                 DatabaseService.copyTables(
-                        srcConfigFinal, srcDb, srcSchema, srcTablesFinal,
-                        dstConfig, dstDb, dstSchema, dstTablesFinal,
+                        srcConfig, srcDb, srcSchema, srcTables,
+                        dstConfig, dstDb, dstSchema, dstTables,
                         copyStructure, copyData, dropIfExists
                 );
                 Platform.runLater(() -> {
@@ -1443,6 +1548,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                     alert.initOwner(module.getStage());
                     alert.showAndWait();
                     refreshDbNodeForConfig(dstConfig, dstDb, dstSchema);
+                    if (onComplete != null) onComplete.run();
                 });
             } catch (Exception ex) {
                 String errMsg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
@@ -1452,6 +1558,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                     alert.setHeaderText(null);
                     alert.initOwner(module.getStage());
                     alert.showAndWait();
+                    if (onComplete != null) onComplete.run();
                 });
             }
         }, "DB-PasteTables").start();
