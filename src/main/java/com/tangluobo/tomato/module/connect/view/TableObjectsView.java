@@ -17,6 +17,7 @@ import javafx.scene.image.ImageView;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.CubicCurve;
+import javafx.scene.shape.Rectangle;
 import javafx.scene.shape.SVGPath;
 import javafx.scene.text.Font;
 import javafx.scene.text.Text;
@@ -24,8 +25,10 @@ import javafx.scene.text.TextAlignment;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -120,10 +123,23 @@ public class TableObjectsView extends BorderPane {
     /** 全量对象缓存（搜索过滤前的原始列表） */
     private List<ObjectInfo> allObjects = new ArrayList<>();
     private List<FkRelation> foreignKeys = new ArrayList<>();
-    /** 当前选中的对象（图标视图点击或详细列表选中行） */
+    /** 主选中对象（最后操作的，用于打开/设计/删除按钮） */
     private ObjectInfo selectedObject;
-    /** 当前图标视图中选中的 VBox（用于高亮切换） */
-    private VBox selectedIconBox;
+    /** 全部选中对象集合（支持多选、Ctrl+A、拖动范围选择） */
+    private final Set<ObjectInfo> selectedObjects = new LinkedHashSet<>();
+    /** 图标项映射：ObjectInfo → VBox，用于高亮和范围选择命中检测 */
+    private final Map<ObjectInfo, VBox> iconBoxMap = new HashMap<>();
+    /** Shift 范围选择锚点 */
+    private ObjectInfo anchorObject;
+    /** 防止详细列表选择监听器与图标视图循环同步的标志 */
+    private boolean syncingDetail = false;
+    /** 详细列表拖拽选择起始行索引 */
+    private int detailDragStartIndex = -1;
+
+    // 橡皮筋选择框
+    private Rectangle rubberBandRect;
+    private double rubberBandStartX, rubberBandStartY;
+    private boolean isRubberBanding = false;
 
     // 搜索相关
     private TextField searchField;
@@ -163,6 +179,14 @@ public class TableObjectsView extends BorderPane {
         setCenter(centerStack);
 
         setBottom(createStatusBar());
+
+        // 全局事件过滤器：在捕获阶段拦截 Ctrl+A，防止事件传递到左侧连接树导致树也被全选
+        addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, e -> {
+            if (e.isControlDown() && e.getCode() == javafx.scene.input.KeyCode.A) {
+                selectAll();
+                e.consume();
+            }
+        });
 
         switchView(ViewType.ICON);
         updateButtonStates();
@@ -288,15 +312,16 @@ public class TableObjectsView extends BorderPane {
             objects = filtered;
         }
 
-        // 若当前选中对象已被过滤掉，清除选中
+        // 移除已不在过滤结果中的选中项
+        selectedObjects.removeIf(o -> !objects.contains(o));
         if (selectedObject != null && !objects.contains(selectedObject)) {
-            selectedObject = null;
-            selectedIconBox = null;
+            selectedObject = selectedObjects.isEmpty() ? null : selectedObjects.iterator().next();
         }
 
         populateIconView();
         populateDetailView();
         populateErView();
+        syncDetailSelection();
         updateCountLabel();
         updateButtonStates();
     }
@@ -370,6 +395,9 @@ public class TableObjectsView extends BorderPane {
         long viewCount = objects.size() - tableCount;
         String text = "共 " + objects.size() + " 个对象（表 " + tableCount + "，视图 " + viewCount + "）"
                 + (foreignKeys.isEmpty() ? "" : "  |  " + foreignKeys.size() + " 个外键关系");
+        if (!selectedObjects.isEmpty()) {
+            text += "  |  已选中 " + selectedObjects.size() + " 个";
+        }
         if (searchField != null && !searchField.getText().trim().isEmpty()) {
             text += "  |  已筛选（共 " + allObjects.size() + " 个）";
             if (!columnsLoaded) {
@@ -427,12 +455,13 @@ public class TableObjectsView extends BorderPane {
                 obj.name, config, databaseName, schemaName);
     }
 
-    /** 选中对象变化时更新按钮启用状态 */
+    /** 选中对象变化时更新按钮启用状态和状态栏计数 */
     private void updateButtonStates() {
         boolean hasSelection = selectedObject != null;
         if (openTableBtn != null) openTableBtn.setDisable(!hasSelection);
         if (designTableBtn != null) designTableBtn.setDisable(!hasSelection);
         if (deleteTableBtn != null) deleteTableBtn.setDisable(!hasSelection);
+        updateCountLabel();
     }
 
     // ==================== 图标列表视图 ====================
@@ -444,17 +473,77 @@ public class TableObjectsView extends BorderPane {
         iconFlowPane.setVgap(16);
         iconFlowPane.setStyle("-fx-background-color: #ffffff;");
 
-        iconScroll = new ScrollPane(iconFlowPane);
+        // 橡皮筋选择框（半透明蓝色矩形）
+        rubberBandRect = new Rectangle();
+        rubberBandRect.setFill(Color.rgb(53, 146, 203, 0.15));
+        rubberBandRect.setStroke(Color.web("#3592CB"));
+        rubberBandRect.setStrokeWidth(1);
+        rubberBandRect.setMouseTransparent(true);
+        rubberBandRect.setManaged(false); // 不参与 StackPane 布局，由 setX/setY 精确定位
+        rubberBandRect.setVisible(false);
+
+        // StackPane 叠放 FlowPane 和橡皮筋矩形
+        StackPane iconStack = new StackPane(iconFlowPane, rubberBandRect);
+        iconStack.setStyle("-fx-background-color: #ffffff;");
+        // FlowPane 顶左对齐，使其坐标原点与 StackPane 一致（修复橡皮筋矩形位置偏移）
+        StackPane.setAlignment(iconFlowPane, Pos.TOP_LEFT);
+
+        // 橡皮筋选择：在 FlowPane 背景按下时启动
+        iconFlowPane.setOnMousePressed(e -> {
+            iconScroll.requestFocus(); // 转移焦点到对象视图，防止 Ctrl+A 传到左侧树
+            if (e.getTarget() == iconFlowPane) {
+                // 在空白处按下：启动橡皮筋选择
+                isRubberBanding = true;
+                rubberBandStartX = e.getX();
+                rubberBandStartY = e.getY();
+                rubberBandRect.setX(e.getX());
+                rubberBandRect.setY(e.getY());
+                rubberBandRect.setWidth(0);
+                rubberBandRect.setHeight(0);
+                rubberBandRect.setVisible(true);
+                // 非 Ctrl 时清除已有选择
+                if (!e.isControlDown()) {
+                    clearSelection();
+                }
+                e.consume();
+            }
+        });
+        iconFlowPane.setOnMouseDragged(e -> {
+            if (isRubberBanding) {
+                double x = Math.min(e.getX(), rubberBandStartX);
+                double y = Math.min(e.getY(), rubberBandStartY);
+                double w = Math.abs(e.getX() - rubberBandStartX);
+                double h = Math.abs(e.getY() - rubberBandStartY);
+                rubberBandRect.setX(x);
+                rubberBandRect.setY(y);
+                rubberBandRect.setWidth(w);
+                rubberBandRect.setHeight(h);
+                // 实时高亮命中项
+                updateRubberBandSelection(x, y, w, h, e.isControlDown());
+                e.consume();
+            }
+        });
+        iconFlowPane.setOnMouseReleased(e -> {
+            if (isRubberBanding) {
+                isRubberBanding = false;
+                rubberBandRect.setVisible(false);
+                e.consume();
+            }
+        });
+
+        iconScroll = new ScrollPane(iconStack);
         iconScroll.setFitToWidth(true);
         iconScroll.setFitToHeight(true);
+        iconScroll.setFocusTraversable(true);
         iconScroll.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-background-insets: 0; -fx-padding: 0; -fx-border-insets: 0;");
         iconScroll.getStyleClass().add("session-scroll-pane");
+
         return iconScroll;
     }
 
     private void populateIconView() {
         iconFlowPane.getChildren().clear();
-        selectedIconBox = null;
+        iconBoxMap.clear();
         for (ObjectInfo obj : objects) {
             VBox item = new VBox(4);
             item.setAlignment(Pos.CENTER);
@@ -478,40 +567,165 @@ public class TableObjectsView extends BorderPane {
             name.setTextAlignment(TextAlignment.CENTER);
             item.getChildren().add(name);
 
+            item.setOnMousePressed(e -> {
+                iconScroll.requestFocus(); // 转移焦点到对象视图，防止 Ctrl+A 传到左侧树
+            });
             item.setOnMouseClicked(e -> {
-                selectObject(obj, item);
+                if (isRubberBanding) return; // 橡皮筋拖动中忽略点击
+                boolean ctrl = e.isControlDown();
+                boolean shift = e.isShiftDown();
+                if (shift && anchorObject != null) {
+                    // Shift 范围选择：从锚点到当前
+                    selectRange(anchorObject, obj);
+                } else if (ctrl) {
+                    // Ctrl 切换选择
+                    toggleSelection(obj);
+                } else {
+                    // 普通点击：仅选此对象
+                    clearSelection();
+                    addToSelection(obj);
+                }
                 if (e.getClickCount() == 2) {
                     handleOpenTable();
                 }
+                e.consume();
             });
+            iconBoxMap.put(obj, item);
             iconFlowPane.getChildren().add(item);
+        }
+        updateIconHighlights();
+    }
+
+    // ==================== 多选逻辑 ====================
+
+    /** 清除所有选中 */
+    private void clearSelection() {
+        selectedObjects.clear();
+        selectedObject = null;
+        anchorObject = null;
+        updateIconHighlights();
+        syncDetailSelection();
+        updateButtonStates();
+    }
+
+    /** 添加到选中集合，设为主选中对象和锚点 */
+    private void addToSelection(ObjectInfo obj) {
+        if (obj == null) return;
+        selectedObjects.add(obj);
+        selectedObject = obj;
+        anchorObject = obj;
+        updateIconHighlights();
+        syncDetailSelection();
+        updateButtonStates();
+    }
+
+    /** Ctrl 切换选中状态 */
+    private void toggleSelection(ObjectInfo obj) {
+        if (obj == null) return;
+        if (selectedObjects.contains(obj)) {
+            selectedObjects.remove(obj);
+            if (selectedObject == obj) {
+                selectedObject = selectedObjects.isEmpty() ? null : selectedObjects.iterator().next();
+            }
+        } else {
+            selectedObjects.add(obj);
+            selectedObject = obj;
+            anchorObject = obj;
+        }
+        updateIconHighlights();
+        syncDetailSelection();
+        updateButtonStates();
+    }
+
+    /** Shift 范围选择：从 anchor 到 target（按 objects 列表顺序） */
+    private void selectRange(ObjectInfo anchor, ObjectInfo target) {
+        if (anchor == null || target == null) return;
+        int anchorIdx = -1, targetIdx = -1;
+        for (int i = 0; i < objects.size(); i++) {
+            if (objects.get(i) == anchor) anchorIdx = i;
+            if (objects.get(i) == target) targetIdx = i;
+        }
+        if (anchorIdx < 0 || targetIdx < 0) return;
+        int from = Math.min(anchorIdx, targetIdx);
+        int to = Math.max(anchorIdx, targetIdx);
+        selectedObjects.clear();
+        for (int i = from; i <= to; i++) {
+            selectedObjects.add(objects.get(i));
+        }
+        selectedObject = target;
+        updateIconHighlights();
+        syncDetailSelection();
+        updateButtonStates();
+    }
+
+    /** 全选当前列表中的所有对象 */
+    private void selectAll() {
+        selectedObjects.clear();
+        selectedObjects.addAll(objects);
+        if (!selectedObjects.isEmpty()) {
+            selectedObject = selectedObjects.iterator().next();
+        }
+        updateIconHighlights();
+        syncDetailSelection();
+        updateButtonStates();
+    }
+
+    /** 更新所有图标项的高亮状态 */
+    private void updateIconHighlights() {
+        for (Map.Entry<ObjectInfo, VBox> entry : iconBoxMap.entrySet()) {
+            VBox box = entry.getValue();
+            if (selectedObjects.contains(entry.getKey())) {
+                box.setStyle("-fx-background-color: #d4edda; -fx-background-radius: 4; -fx-border-color: #07c160; -fx-border-radius: 4;");
+            } else {
+                box.setStyle("");
+            }
         }
     }
 
-    /** 选中某个对象（图标视图）：更新 selectedObject、高亮、同步详细列表选中 */
-    private void selectObject(ObjectInfo obj, VBox iconBox) {
-        // 清除上一个高亮
-        if (selectedIconBox != null) {
-            selectedIconBox.setStyle("");
+    /** 橡皮筋拖动中实时选择命中项 */
+    private void updateRubberBandSelection(double x, double y, double w, double h, boolean ctrlDown) {
+        if (!ctrlDown) {
+            selectedObjects.clear();
         }
-        this.selectedObject = obj;
-        this.selectedIconBox = iconBox;
-        if (iconBox != null) {
-            iconBox.setStyle("-fx-background-color: #d4edda; -fx-background-radius: 4; -fx-border-color: #07c160; -fx-border-radius: 4;");
-        }
-        // 同步详细列表选中（使用 COL_KEY_NAME + COL_KEY_TYPE 双重匹配避免同名混淆）
-        if (obj != null) {
-            String expectedType = obj.type == ObjectType.TABLE ? "TABLE" : "VIEW";
-            for (ObservableList<String> row : detailTableView.getItems()) {
-                if (row.size() > COL_KEY_TYPE
-                        && obj.name.equals(row.get(COL_KEY_NAME))
-                        && expectedType.equals(row.get(COL_KEY_TYPE))) {
-                    detailTableView.getSelectionModel().select(row);
-                    break;
-                }
+        for (Map.Entry<ObjectInfo, VBox> entry : iconBoxMap.entrySet()) {
+            VBox box = entry.getValue();
+            double bx = box.getLayoutX();
+            double by = box.getLayoutY();
+            double bw = box.getWidth();
+            double bh = box.getHeight();
+            // 矩形相交检测
+            if (bx < x + w && bx + bw > x && by < y + h && by + bh > y) {
+                selectedObjects.add(entry.getKey());
             }
         }
+        if (!selectedObjects.isEmpty() && selectedObject == null) {
+            selectedObject = selectedObjects.iterator().next();
+        }
+        updateIconHighlights();
+        syncDetailSelection();
         updateButtonStates();
+    }
+
+    /** 同步图标视图选中状态到详细列表 */
+    private void syncDetailSelection() {
+        if (detailTableView == null) return;
+        syncingDetail = true;
+        try {
+            detailTableView.getSelectionModel().clearSelection();
+            for (ObjectInfo obj : selectedObjects) {
+                String expectedType = obj.type == ObjectType.TABLE ? "TABLE" : "VIEW";
+                for (ObservableList<String> row : detailTableView.getItems()) {
+                    if (row.size() > COL_KEY_TYPE
+                            && obj.name.equals(row.get(COL_KEY_NAME))
+                            && expectedType.equals(row.get(COL_KEY_TYPE))) {
+                        detailTableView.getSelectionModel().select(row);
+                        break;
+                    }
+                }
+            }
+        } finally {
+            syncingDetail = false;
+        }
     }
 
     // ==================== 详细列表视图 ====================
@@ -591,26 +805,42 @@ public class TableObjectsView extends BorderPane {
             detailTableView.getColumns().add(col);
         }
 
-        // 选中行时同步 selectedObject：使用隐藏列 COL_KEY_NAME / COL_KEY_TYPE
-        detailTableView.getSelectionModel().selectedItemProperty().addListener((obs, oldRow, newRow) -> {
-            if (newRow != null && newRow.size() > COL_KEY_TYPE) {
-                String name = newRow.get(COL_KEY_NAME);
-                String typeKey = newRow.get(COL_KEY_TYPE);
-                ObjectType type = "VIEW".equals(typeKey) ? ObjectType.VIEW : ObjectType.TABLE;
-                selectedObject = findObjectInfo(name, type);
-                if (selectedIconBox != null) {
-                    selectedIconBox.setStyle("");
-                    selectedIconBox = null;
-                }
-                updateButtonStates();
-            } else {
-                selectedObject = null;
-                updateButtonStates();
-            }
+        // 启用多选模式（支持 Ctrl+点击、Shift+点击、Ctrl+A、拖拽选择）
+        detailTableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+
+        // 选中行变化时同步到图标视图（仅在用户操作详细列表时触发，避免循环同步）
+        detailTableView.getSelectionModel().getSelectedItems().addListener((javafx.collections.ListChangeListener<ObservableList<String>>) change -> {
+            if (syncingDetail) return; // 程序化同步中，跳过
+            syncFromDetail();
         });
 
         detailTableView.setRowFactory(tv -> {
             TableRow<ObservableList<String>> row = new TableRow<>();
+            // 拖拽选择起始行
+            row.setOnMousePressed(e -> {
+                if (!row.isEmpty() && !e.isControlDown() && !e.isShiftDown()) {
+                    detailDragStartIndex = row.getIndex();
+                } else {
+                    detailDragStartIndex = -1;
+                }
+            });
+            // 鼠标拖拽经过其他行时，选中起始行到当前行的范围
+            row.setOnMouseDragEntered(e -> {
+                if (detailDragStartIndex >= 0 && !row.isEmpty()) {
+                    int from = Math.min(detailDragStartIndex, row.getIndex());
+                    int to = Math.max(detailDragStartIndex, row.getIndex());
+                    syncingDetail = true;
+                    try {
+                        detailTableView.getSelectionModel().clearSelection();
+                        detailTableView.getSelectionModel().selectRange(from, to + 1);
+                    } finally {
+                        syncingDetail = false;
+                    }
+                    syncFromDetail();
+                    e.consume();
+                }
+            });
+            row.setOnMouseReleased(e -> detailDragStartIndex = -1);
             row.setOnMouseClicked(e -> {
                 if (e.getClickCount() == 2 && !row.isEmpty()) {
                     ObservableList<String> rowData = row.getItem();
@@ -629,6 +859,25 @@ public class TableObjectsView extends BorderPane {
             return row;
         });
         return detailTableView;
+    }
+
+    /** 从详细列表选中行反向同步到图标视图 */
+    private void syncFromDetail() {
+        Set<ObjectInfo> newSelection = new LinkedHashSet<>();
+        for (ObservableList<String> row : detailTableView.getSelectionModel().getSelectedItems()) {
+            if (row != null && row.size() > COL_KEY_TYPE) {
+                String name = row.get(COL_KEY_NAME);
+                String typeKey = row.get(COL_KEY_TYPE);
+                ObjectType type = "VIEW".equals(typeKey) ? ObjectType.VIEW : ObjectType.TABLE;
+                ObjectInfo obj = findObjectInfo(name, type);
+                if (obj != null) newSelection.add(obj);
+            }
+        }
+        selectedObjects.clear();
+        selectedObjects.addAll(newSelection);
+        selectedObject = newSelection.isEmpty() ? null : newSelection.iterator().next();
+        updateIconHighlights();
+        updateButtonStates();
     }
 
     private ObjectInfo findObjectInfo(String name, ObjectType type) {
@@ -805,8 +1054,8 @@ public class TableObjectsView extends BorderPane {
         title.setMaxWidth(180);
         title.setCursor(Cursor.HAND);
         title.setOnMouseClicked(e -> {
-            selectedObject = obj;
-            updateButtonStates();
+            clearSelection();
+            addToSelection(obj);
             if (e.getClickCount() == 2) {
                 handleOpenTable();
             }
@@ -981,9 +1230,16 @@ public class TableObjectsView extends BorderPane {
                     if (selectedObject != null) {
                         ObjectInfo found = findObjectInfo(selectedObject.name, selectedObject.type);
                         if (found == null) {
-                            selectedObject = null;
-                            selectedIconBox = null;
+                            clearSelection();
                         } else {
+                            // 更新选中集合中的引用
+                            Set<ObjectInfo> updated = new LinkedHashSet<>();
+                            for (ObjectInfo sel : selectedObjects) {
+                                ObjectInfo f = findObjectInfo(sel.name, sel.type);
+                                if (f != null) updated.add(f);
+                            }
+                            selectedObjects.clear();
+                            selectedObjects.addAll(updated);
                             selectedObject = found;
                         }
                     }
