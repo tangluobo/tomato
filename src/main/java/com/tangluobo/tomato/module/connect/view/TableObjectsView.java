@@ -133,10 +133,6 @@ public class TableObjectsView extends BorderPane {
     private ObjectInfo anchorObject;
     /** 防止详细列表选择监听器与图标视图循环同步的标志 */
     private boolean syncingDetail = false;
-    /** 详细列表拖拽选择起始行索引 */
-    private int detailDragStartIndex = -1;
-    /** 详细列表拖拽进行中标志 */
-    private boolean detailDragging = false;
 
     // 橡皮筋选择框
     private Rectangle rubberBandRect;
@@ -818,20 +814,6 @@ public class TableObjectsView extends BorderPane {
 
         detailTableView.setRowFactory(tv -> {
             TableRow<ObservableList<String>> row = new TableRow<>();
-            // 拖拽选择起始行（空白区域按下时由 detailTableView.setOnMousePressed 设置）
-            row.setOnMousePressed(e -> {
-                if (!row.isEmpty() && !e.isControlDown() && !e.isShiftDown()) {
-                    detailDragStartIndex = row.getIndex();
-                    detailDragging = true;
-                } else {
-                    detailDragStartIndex = -1;
-                    detailDragging = false;
-                }
-            });
-            row.setOnMouseReleased(e -> {
-                detailDragStartIndex = -1;
-                detailDragging = false;
-            });
             row.setOnMouseClicked(e -> {
                 if (e.getClickCount() == 2 && !row.isEmpty()) {
                     ObservableList<String> rowData = row.getItem();
@@ -850,141 +832,85 @@ public class TableObjectsView extends BorderPane {
             return row;
         });
 
-        // 统一的拖拽范围选择（支持从行或空白区域开始拖动）
-        setupUnifiedDragSelection();
+        // 鼠标拖拽范围选择（参考 TableDataView.setupDragSelection）
+        setupDetailDragSelection();
 
         return detailTableView;
     }
 
     /**
-     * 统一的拖拽范围选择：从行或空白区域按下鼠标均可启动，
-     * 拖动时根据 Y 坐标实时计算范围并更新选中。
-     * 通过 setSelectedRange() 做范围 diff 检查避免重复 clearSelection+selectRange 引起的闪烁。
+     * 详细列表的鼠标拖拽范围选择。
+     * 参考 TableDataView 的实现：用 setOnMousePressed + setOnMouseDragged，
+     * 通过 PickResult 节点链遍历获取行索引，用 clearSelection + selectRange 更新选中。
      */
-    private void setupUnifiedDragSelection() {
+    private void setupDetailDragSelection() {
+        final int[] dragStart = {-1};
+
         detailTableView.setOnMousePressed(e -> {
             if (e.getButton() != javafx.scene.input.MouseButton.PRIMARY) return;
             if (e.isControlDown() || e.isShiftDown()) return;
-            // 查找是否点在某个行或单元格上
-            javafx.scene.Node target = e.getPickResult().getIntersectedNode();
-            boolean hitRow = false;
-            while (target != null && target != detailTableView) {
-                if (target instanceof TableRow<?> r && !r.isEmpty()) {
-                    hitRow = true;
-                    break;
-                }
-                if (target instanceof TableCell<?, ?> c
-                        && c.getTableRow() != null && !c.getTableRow().isEmpty()) {
-                    hitRow = true;
-                    break;
-                }
-                target = target.getParent();
-            }
-            if (!hitRow) {
-                // 点击在空白区域：以最后一行作为拖动起点
+            int rowIdx = getRowIndexOf(e);
+            if (rowIdx < 0) {
+                // 点击在空白区域：以最后一行为起点
                 int lastRowIdx = detailTableView.getItems().size() - 1;
                 if (lastRowIdx < 0) return;
-                detailDragStartIndex = lastRowIdx;
-                detailDragging = true;
-                // 初始选中起点行
-                setSelectedRange(lastRowIdx, lastRowIdx);
-                syncFromDetail();
-                e.consume();
+                rowIdx = lastRowIdx;
             }
-            // hitRow=true 时由 row.setOnMousePressed 处理 detailDragStartIndex
+            dragStart[0] = rowIdx;
+            // 选中起点行
+            syncingDetail = true;
+            try {
+                detailTableView.getSelectionModel().clearSelection();
+                detailTableView.getSelectionModel().select(rowIdx);
+            } finally {
+                syncingDetail = false;
+            }
+            syncFromDetail();
         });
 
         detailTableView.setOnMouseDragged(e -> {
-            if (!detailDragging || detailDragStartIndex < 0) return;
-            int lastItemIdx = detailTableView.getItems().size() - 1;
-            if (lastItemIdx < 0) return;
-            // 找到鼠标 Y 坐标命中的行；未命中（拖到空白下方）则用最后一行
-            int rowIdx = getRowIndexAt(detailTableView, e.getY());
-            int to = rowIdx >= 0 ? rowIdx : lastItemIdx;
-            int from = detailDragStartIndex;
-            int min = Math.min(from, to);
-            int max = Math.max(from, to);
-            if (max > lastItemIdx) max = lastItemIdx;
-            if (min < 0) min = 0;
-            // 仅在范围变化时更新选中，避免 clearSelection+selectRange 引起的闪烁
-            if (setSelectedRange(min, max)) {
-                syncFromDetail();
+            if (e.getButton() != javafx.scene.input.MouseButton.PRIMARY) return;
+            if (dragStart[0] < 0) return;
+            int rowIdx = getRowIndexOf(e);
+            if (rowIdx < 0) {
+                // 拖到空白区域：用最后一行
+                int lastRowIdx = detailTableView.getItems().size() - 1;
+                if (lastRowIdx < 0) return;
+                rowIdx = lastRowIdx;
             }
-            e.consume();
+            int min = Math.min(dragStart[0], rowIdx);
+            int max = Math.max(dragStart[0], rowIdx);
+            syncingDetail = true;
+            try {
+                detailTableView.getSelectionModel().clearSelection();
+                detailTableView.getSelectionModel().selectRange(min, max + 1);
+            } finally {
+                syncingDetail = false;
+            }
+            syncFromDetail();
         });
 
-        detailTableView.setOnMouseReleased(e -> {
-            detailDragStartIndex = -1;
-            detailDragging = false;
-        });
+        detailTableView.setOnMouseReleased(e -> dragStart[0] = -1);
     }
 
     /**
-     * 将详细列表的选中范围设置为 [min, max]（闭区间）。
-     * 若当前选中范围已经等于 [min, max]，则跳过 clearSelection+selectRange，避免 UI 闪烁。
-     * @return true 表示选中范围发生了变化
+     * 根据鼠标事件位置获取对应的行索引。
+     * 通过遍历 PickResult 节点链找到 TableRow/TableCell，直接获取行索引。
+     * 参考 TableDataView.getCellPositionAt 的实现方式。
      */
-    private boolean setSelectedRange(int min, int max) {
-        javafx.scene.control.TableView.TableViewSelectionModel<ObservableList<String>> sm =
-                detailTableView.getSelectionModel();
-        ObservableList<Integer> current = sm.getSelectedIndices();
-        // 检查当前选中是否已经等于目标范围
-        int expectedCount = max - min + 1;
-        if (current.size() == expectedCount) {
-            boolean same = true;
-            for (int i = 0; i < expectedCount; i++) {
-                if (current.get(i) != min + i) {
-                    same = false;
-                    break;
-                }
+    private int getRowIndexOf(javafx.scene.input.MouseEvent event) {
+        javafx.scene.Node target = event.getPickResult().getIntersectedNode();
+        while (target != null && target != detailTableView) {
+            if (target instanceof TableRow<?> row && !row.isEmpty()) {
+                return row.getIndex();
             }
-            if (same) return false; // 范围未变化，跳过更新
-        }
-        syncingDetail = true;
-        try {
-            sm.clearSelection();
-            sm.selectRange(min, max + 1);
-        } finally {
-            syncingDetail = false;
-        }
-        return true;
-    }
-
-    /** 根据 y（detailTableView 本地坐标系）查找命中的行 index，未命中则 -1 */
-    private int getRowIndexAt(TableView<ObservableList<String>> tv, double y) {
-        for (javafx.scene.Node n : lookupTableRows(tv)) {
-            if (n instanceof TableRow<?> row && !row.isEmpty()) {
-                javafx.geometry.Bounds b = row.getBoundsInParent();
-                // 转换到 detailTableView 坐标
-                javafx.geometry.Point2D p = tv.sceneToLocal(row.localToScene(b.getMinX(), b.getMinY()));
-                javafx.geometry.Point2D p2 = tv.sceneToLocal(row.localToScene(b.getMaxX(), b.getMaxY()));
-                if (y >= p.getY() && y <= p2.getY()) {
-                    return row.getIndex();
-                }
+            if (target instanceof TableCell<?, ?> cell
+                    && cell.getTableRow() != null && !cell.getTableRow().isEmpty()) {
+                return cell.getTableRow().getIndex();
             }
+            target = target.getParent();
         }
         return -1;
-    }
-
-    /** 递归收集 VirtualFlow 下的 TableRow 子节点 */
-    private java.util.List<javafx.scene.Node> lookupTableRows(TableView<ObservableList<String>> tv) {
-        java.util.List<javafx.scene.Node> rows = new java.util.ArrayList<>();
-        javafx.scene.Node vf = tv.lookup(".virtual-flow");
-        if (vf == null) return rows;
-        collectTableRows(vf, rows);
-        return rows;
-    }
-
-    private void collectTableRows(javafx.scene.Node node, java.util.List<javafx.scene.Node> rows) {
-        if (node instanceof TableRow) {
-            rows.add(node);
-            return;
-        }
-        if (node instanceof javafx.scene.Parent parent) {
-            for (javafx.scene.Node c : parent.getChildrenUnmodifiable()) {
-                collectTableRows(c, rows);
-            }
-        }
     }
 
     /** 从详细列表选中行反向同步到图标视图 */
