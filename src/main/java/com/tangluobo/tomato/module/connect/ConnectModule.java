@@ -66,6 +66,8 @@ public class ConnectModule implements Module {
     private TreeItem<String> editingItem;
     private TreeItem<String> selectedItemBeforeClick;
     private TreeItem<String> recentlyEditedItem;
+    /** 底部空白占位节点：始终作为 root 最后一个子节点，在滚动区域内保留空白方便右键创建根节点 */
+    private final TreeItem<String> bottomSpacer = new TreeItem<>("");
     private Timeline singleClickTimer;
     private Image folderIcon;
     private Image dbIcon;
@@ -277,6 +279,7 @@ public class ConnectModule implements Module {
         itemConfigMap.clear();
         dbNodeDataMap.clear();
         buildConnectionTree();
+        root.getChildren().add(bottomSpacer);
     }
 
     /**
@@ -317,12 +320,16 @@ public class ConnectModule implements Module {
         root.getChildren().clear();
         itemConfigMap.clear();
         buildConnectionTree();
+        root.getChildren().add(bottomSpacer);
 
         filterTreeItem(root, kw);
         expandAll(root);
     }
 
     private boolean filterTreeItem(TreeItem<String> item, String keyword) {
+        if (item == bottomSpacer) {
+            return true;
+        }
         boolean selfMatch = item.getValue() != null && item.getValue().toLowerCase().contains(keyword);
 
         if (selfMatch) {
@@ -471,7 +478,7 @@ public class ConnectModule implements Module {
 
             final TreeItem<String> targetItem = clickedItem;
 
-            if (targetItem == null) {
+            if (targetItem == null || targetItem == bottomSpacer) {
                 MenuItem addFolder = new MenuItem("新建目录");
                 addFolder.setOnAction(e -> handleAddFolder(root));
                 MenuItem addConnection = new MenuItem("新建连接");
@@ -880,6 +887,15 @@ public class ConnectModule implements Module {
                     currentTreeItem = null;
 
                     super.updateItem(item, empty);
+                    if (getTreeItem() == bottomSpacer) {
+                        setText(null);
+                        setGraphic(null);
+                        if (!getStyleClass().contains("bottom-spacer")) {
+                            getStyleClass().add("bottom-spacer");
+                        }
+                        return;
+                    }
+                    getStyleClass().remove("bottom-spacer");
                     if (empty || item == null) {
                         setText(null);
                         setGraphic(null);
@@ -911,7 +927,7 @@ public class ConnectModule implements Module {
                     return;
                 }
                 TreeItem<String> item = cell.getTreeItem();
-                if (item == null || item == root) {
+                if (item == null || item == root || item == bottomSpacer) {
                     event.consume();
                     return;
                 }
@@ -1129,10 +1145,22 @@ public class ConnectModule implements Module {
             }
         }
 
-        newParent.getChildren().add(item);
+        addChildToParent(newParent, item);
         newParent.setExpanded(true);
 
         saveConnectionsWithFeedback();
+    }
+
+    /** 向 parent 添加子节点；若 parent 为 root 则插入到 bottomSpacer 之前，确保空白占位始终在末尾 */
+    private void addChildToParent(TreeItem<String> parent, TreeItem<String> child) {
+        if (parent == root) {
+            int spacerIdx = root.getChildren().indexOf(bottomSpacer);
+            if (spacerIdx >= 0) {
+                root.getChildren().add(spacerIdx, child);
+                return;
+            }
+        }
+        parent.getChildren().add(child);
     }
 
     private void handleDbNodeDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
@@ -1729,7 +1757,7 @@ public class ConnectModule implements Module {
                 folderItem.setGraphic(icon);
             }
             itemConfigMap.put(folderItem, folderConfig);
-            parent.getChildren().add(folderItem);
+            addChildToParent(parent, folderItem);
         }
     }
 
@@ -1750,7 +1778,7 @@ public class ConnectModule implements Module {
             saveConnectionsWithFeedback();
 
             TreeItem<String> connectionItem = createTreeItem(config);
-            parent.getChildren().add(connectionItem);
+            addChildToParent(parent, connectionItem);
         }
     }
 
@@ -1799,7 +1827,7 @@ public class ConnectModule implements Module {
             parent.getChildren().add(index + 1, copiedItem);
         } else {
             // 理论上不会出现（item 必有 parent），兜底作为根节点子项
-            root.getChildren().add(copiedItem);
+            addChildToParent(root, copiedItem);
         }
     }
 

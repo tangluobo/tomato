@@ -92,6 +92,8 @@ public class TomatoController {
     private double dragStartY = 0;
 
     private static final int EDGE_THRESHOLD = 10;
+    /** 左右两侧边缘 resize 命中范围更小，避免覆盖内容区边缘的交互控件 */
+    private static final int HORIZONTAL_EDGE_THRESHOLD = 3;
     private static final int MAXIMIZE_THRESHOLD = 5;
 
     // 模块缓存：保留每个模块的实例及其侧边栏子节点/内容容器，切换模块时复用，保留原有窗口状态
@@ -359,8 +361,8 @@ public class TomatoController {
     }
 
     private Cursor determineCursor(double x, double y, double width, double height) {
-        boolean nearLeft = x <= EDGE_THRESHOLD;
-        boolean nearRight = x >= width - EDGE_THRESHOLD;
+        boolean nearLeft = x <= HORIZONTAL_EDGE_THRESHOLD;
+        boolean nearRight = x >= width - HORIZONTAL_EDGE_THRESHOLD;
         boolean nearTop = y <= EDGE_THRESHOLD;
         boolean nearBottom = y >= height - EDGE_THRESHOLD;
 
@@ -411,8 +413,8 @@ public class TomatoController {
         double width = stage.getWidth();
         double height = stage.getHeight();
 
-        resizingLeft = sceneX <= EDGE_THRESHOLD;
-        resizingRight = sceneX >= width - EDGE_THRESHOLD;
+        resizingLeft = sceneX <= HORIZONTAL_EDGE_THRESHOLD;
+        resizingRight = sceneX >= width - HORIZONTAL_EDGE_THRESHOLD;
         resizingTop = sceneY <= EDGE_THRESHOLD;
         resizingBottom = sceneY >= height - EDGE_THRESHOLD;
 

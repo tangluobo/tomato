@@ -35,6 +35,19 @@
     -fx-text-fill: black;
 }
 
+/* 底部空白占位节点：hover/selected 等所有状态均保持透明背景 */
+.tree-cell.bottom-spacer,
+.tree-cell.bottom-spacer:filled:hover,
+.tree-cell.bottom-spacer:selected,
+.tree-cell.bottom-spacer:focused,
+.tree-cell.bottom-spacer:selected:focused {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+    -fx-text-fill: black;
+}
+
 /* TreeView 根节点样式 - 去除默认边框和内边距 */
 .tree-view {
     -fx-background-color: transparent;
