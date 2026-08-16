@@ -15,6 +15,7 @@ import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.ScrollBar;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.Tooltip;
+import javafx.scene.Cursor;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.Clipboard;
@@ -85,7 +86,13 @@ public class SSHTerminalPane extends BorderPane {
     private final Pane terminalPane;
     private final SplitPane splitPane;
     private final ScrollBar scrollBar;
+    // 右侧面板：VBox 垂直排列，外层用 rightPanelScroll 整体滚动；面板内部不加单独滚动条。
+    // monitorPanel 固定高度；fileBrowser/portPanel 高度随 TableView 内容增长。面板间用 1px #E5E5E5 Region 分隔，可拖拽调整 monitorPanel 高度。
     private final javafx.scene.layout.VBox rightPanel;
+    private final javafx.scene.control.ScrollPane rightPanelScroll;
+    // 高度分隔条拖拽状态
+    private double heightDividerStartY;
+    private double heightDividerStartHeight;
 
     // SFTP文件浏览器
     private SFTPFileBrowser fileBrowser;
@@ -233,9 +240,19 @@ public class SSHTerminalPane extends BorderPane {
             });
         });
 
-        // 右侧面板：文件浏览器 + 监控面板（垂直排列）
+        // 右侧面板：文件浏览器 + 监控面板 + 端口面板（垂直排列）
+        // 外层用 rightPanelScroll 整体滚动；面板内部不加单独滚动条
+        // monitorPanel 固定高度；fileBrowser/portPanel 高度随 TableView 内容增长
         rightPanel = new javafx.scene.layout.VBox();
-        rightPanel.setStyle("-fx-background-color: #FFFFFF;");
+        rightPanel.setStyle("-fx-background-color: #FFFFFF; -fx-padding: 0; -fx-spacing: 0;");
+        rightPanel.setFillWidth(true);
+
+        rightPanelScroll = new javafx.scene.control.ScrollPane(rightPanel);
+        rightPanelScroll.setFitToWidth(true);
+        rightPanelScroll.setFitToHeight(false);
+        rightPanelScroll.setHbarPolicy(javafx.scene.control.ScrollPane.ScrollBarPolicy.NEVER);
+        rightPanelScroll.setVbarPolicy(javafx.scene.control.ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        rightPanelScroll.setStyle("-fx-background-color: #FFFFFF; -fx-background-insets: 0; -fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0;");
 
         // SplitPane: 终端 + 右侧面板，支持拖拽调整宽度
         splitPane = new SplitPane();
@@ -417,13 +434,10 @@ public class SSHTerminalPane extends BorderPane {
     private void toggleFileBrowser() {
         if (fileBrowserVisible) {
             // 关闭文件浏览器
-            if (fileBrowser != null && rightPanel.getChildren().contains(fileBrowser)) {
-                rightPanel.getChildren().remove(fileBrowser);
-            }
             fileBrowserVisible = false;
             folderBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
             folderBtn.setGraphic(createIcon("/images/connect/folder.png", false));
-            updateRightPanelVisibility();
+            rebuildRightPanel();
         } else {
             // 打开文件浏览器
             if (sshSession == null || !sshSession.isConnected()) return;
@@ -431,16 +445,11 @@ public class SSHTerminalPane extends BorderPane {
                 sftpClient = new SFTPClient();
                 fileBrowser = new SFTPFileBrowser(sshSession, sftpClient);
             }
-            // 让文件浏览器撑满右侧面板高度，表格随之填满，
-            // 文件较少时下方空白区域仍属于表格，滚动条也能到达面板底部
-            javafx.scene.layout.VBox.setVgrow(fileBrowser, javafx.scene.layout.Priority.ALWAYS);
-            ensureRightPanelVisible();
-            if (!rightPanel.getChildren().contains(fileBrowser)) {
-                rightPanel.getChildren().add(0, fileBrowser);
-            }
+            // fileBrowser 设 Vgrow 填满剩余高度，TableView 自带滚动条，不产生外层滚动条
+            fileBrowserVisible = true;
+            rebuildRightPanel();
             splitPane.setDividerPositions(0.7);
             fileBrowser.initConnection();
-            fileBrowserVisible = true;
             folderBtn.setStyle("-fx-background-color: #e0e0e0; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand; -fx-border-radius: 3;");
             folderBtn.setGraphic(createIcon("/images/connect/folder.png", true));
         }
@@ -454,26 +463,20 @@ public class SSHTerminalPane extends BorderPane {
             // 关闭监控视图
             if (monitorPanel != null) {
                 monitorPanel.stopMonitoring();
-                if (rightPanel.getChildren().contains(monitorPanel)) {
-                    rightPanel.getChildren().remove(monitorPanel);
-                }
             }
             monitorVisible = false;
             monitorBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
             monitorBtn.setGraphic(createIcon("/images/connect/monitor.png", false));
-            updateRightPanelVisibility();
+            rebuildRightPanel();
         } else {
             // 打开监控视图
             if (sshSession == null || !sshSession.isConnected()) return;
             if (monitorPanel == null) {
                 monitorPanel = new MonitorPanel(sshSession);
             }
-            ensureRightPanelVisible();
-            if (!rightPanel.getChildren().contains(monitorPanel)) {
-                rightPanel.getChildren().add(monitorPanel);
-            }
-            monitorPanel.startMonitoring();
             monitorVisible = true;
+            rebuildRightPanel();
+            monitorPanel.startMonitoring();
             monitorBtn.setStyle("-fx-background-color: #e0e0e0; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand; -fx-border-radius: 3;");
             monitorBtn.setGraphic(createIcon("/images/connect/monitor.png", true));
         }
@@ -485,67 +488,99 @@ public class SSHTerminalPane extends BorderPane {
     private void togglePort() {
         if (portVisible) {
             // 关闭端口视图
-            if (portPanel != null) {
-                if (rightPanel.getChildren().contains(portPanel)) {
-                    rightPanel.getChildren().remove(portPanel);
-                }
-            }
             portVisible = false;
             portBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
             portBtn.setGraphic(createPortIcon(false));
-            updateRightPanelVisibility();
+            rebuildRightPanel();
         } else {
             // 打开端口视图
             if (sshSession == null || !sshSession.isConnected()) return;
             if (portPanel == null) {
                 portPanel = new PortPanel(sshSession);
             }
-            javafx.scene.layout.VBox.setVgrow(portPanel, javafx.scene.layout.Priority.ALWAYS);
-            ensureRightPanelVisible();
-            if (!rightPanel.getChildren().contains(portPanel)) {
-                rightPanel.getChildren().add(portPanel);
-            }
-            portPanel.refresh();
+            // portPanel 设 Vgrow 填满剩余高度，TableView 自带滚动条，不产生外层滚动条
             portVisible = true;
+            rebuildRightPanel();
+            portPanel.refresh();
             portBtn.setStyle("-fx-background-color: #e0e0e0; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand; -fx-border-radius: 3;");
             portBtn.setGraphic(createPortIcon(true));
         }
     }
 
     /**
-     * 确保右侧面板在SplitPane中可见
+     * 重建右侧面板布局：按 fileBrowser → monitorPanel → portPanel 顺序排列。
+     * - 外层 rightPanelScroll 整体滚动；面板内部不加单独滚动条
+     * - monitorPanel 固定 prefHeight；fileBrowser/portPanel 高度随 TableView 内容增长
+     * - 仅在 monitorPanel 与相邻面板之间插入 1px #E5E5E5 Region 分隔条，拖拽调整 monitorPanel 高度
      */
-    private void ensureRightPanelVisible() {
-        if (!splitPane.getItems().contains(rightPanel)) {
-            splitPane.getItems().add(rightPanel);
-            int visibleCount = countVisiblePanels();
-            splitPane.setDividerPositions(visibleCount >= 2 ? 0.4 : 0.6);
-        }
-    }
+    private void rebuildRightPanel() {
+        rightPanel.getChildren().clear();
 
-    /**
-     * 更新右侧面板的可见性
-     */
-    private void updateRightPanelVisibility() {
-        if (!fileBrowserVisible && !monitorVisible && !portVisible) {
-            if (splitPane.getItems().contains(rightPanel)) {
-                splitPane.getItems().remove(rightPanel);
+        // 按 fileBrowser → monitorPanel → portPanel 顺序收集可见面板
+        java.util.List<javafx.scene.layout.Region> panels = new java.util.ArrayList<>();
+        if (fileBrowserVisible && fileBrowser != null) panels.add(fileBrowser);
+        if (monitorVisible && monitorPanel != null) panels.add(monitorPanel);
+        if (portVisible && portPanel != null) panels.add(portPanel);
+
+        for (int i = 0; i < panels.size(); i++) {
+            javafx.scene.layout.Region panel = panels.get(i);
+            // 面板不用 Vgrow，高度由内容决定；外层 rightPanelScroll 整体滚动
+            javafx.scene.layout.VBox.setVgrow(panel, null);
+
+            // 在 monitorPanel 前后插入可拖拽的高度分隔条
+            if (panel == monitorPanel) {
+                if (i > 0) {
+                    rightPanel.getChildren().add(createHeightDivider(monitorPanel, false));
+                }
+            } else if (i > 0 && panels.get(i - 1) == monitorPanel) {
+                rightPanel.getChildren().add(createHeightDivider(monitorPanel, true));
             }
-        } else if (!splitPane.getItems().contains(rightPanel)) {
-            splitPane.getItems().add(rightPanel);
-            splitPane.setDividerPositions(countVisiblePanels() >= 2 ? 0.4 : 0.6);
+
+            rightPanel.getChildren().add(panel);
+        }
+
+        // 更新 SplitPane 中右侧面板的可见性
+        if (panels.isEmpty()) {
+            if (splitPane.getItems().contains(rightPanelScroll)) {
+                splitPane.getItems().remove(rightPanelScroll);
+            }
+        } else if (!splitPane.getItems().contains(rightPanelScroll)) {
+            splitPane.getItems().add(rightPanelScroll);
+            splitPane.setDividerPositions(panels.size() >= 2 ? 0.4 : 0.6);
         }
     }
 
     /**
-     * 统计当前可见的右侧面板数量
+     * 创建高度分隔条：1px #E5E5E5，可垂直拖拽调整 panelToAdjust 的高度（200~800px）。
+     * 与项目内 JSON/Hosts 工具的水平分隔条样式一致，仅方向改为垂直。
+     *
+     * @param panelToAdjust 被调整高度的面板（monitorPanel）
+     * @param panelAbove    该面板是否在分隔条上方：
+     *                      true=面板在上方，拖拽下移→增大高度；false=面板在下方，拖拽下移→减小高度
      */
-    private int countVisiblePanels() {
-        int count = 0;
-        if (fileBrowserVisible) count++;
-        if (monitorVisible) count++;
-        if (portVisible) count++;
-        return count;
+    private Region createHeightDivider(javafx.scene.layout.Region panelToAdjust, boolean panelAbove) {
+        Region divider = new Region();
+        divider.setStyle("-fx-background-color: #E5E5E5;");
+        divider.setPrefHeight(1);
+        divider.setMaxHeight(1);
+        divider.setMinHeight(1);
+        divider.setCursor(Cursor.V_RESIZE);
+
+        divider.setOnMousePressed(e -> {
+            heightDividerStartY = e.getScreenY();
+            heightDividerStartHeight = panelToAdjust.getHeight();
+        });
+
+        divider.setOnMouseDragged(e -> {
+            double deltaY = e.getScreenY() - heightDividerStartY;
+            // 面板在上方：下移增大；面板在下方：下移减小
+            double newHeight = panelAbove ? heightDividerStartHeight + deltaY : heightDividerStartHeight - deltaY;
+            if (newHeight >= 200 && newHeight <= 800) {
+                panelToAdjust.setPrefHeight(newHeight);
+            }
+        });
+
+        return divider;
     }
 
     /**
@@ -730,9 +765,6 @@ public class SSHTerminalPane extends BorderPane {
             sshSession = null;
         }
         // 关闭文件浏览器
-        if (fileBrowser != null) {
-            splitPane.getItems().remove(fileBrowser);
-        }
         fileBrowserVisible = false;
         fileBrowser = null;
         sftpClient = null;
@@ -740,21 +772,16 @@ public class SSHTerminalPane extends BorderPane {
         // 关闭监控视图
         if (monitorPanel != null) {
             monitorPanel.stopMonitoring();
-            if (rightPanel.getChildren().contains(monitorPanel)) {
-                rightPanel.getChildren().remove(monitorPanel);
-            }
         }
         monitorVisible = false;
         monitorPanel = null;
 
         // 关闭端口视图
-        if (portPanel != null) {
-            if (rightPanel.getChildren().contains(portPanel)) {
-                rightPanel.getChildren().remove(portPanel);
-            }
-        }
         portVisible = false;
         portPanel = null;
+
+        // 清空右侧面板内容并从 SplitPane 移除
+        rebuildRightPanel();
 
         updateStatusBar("已断开");
     }
@@ -795,28 +822,34 @@ public class SSHTerminalPane extends BorderPane {
                         (int) terminalView.getCharHeight() * emulator.getRows());
 
                 // 如果文件浏览器打开，重新初始化SFTP
-                if (fileBrowserVisible && fileBrowser != null) {
+                if (fileBrowserVisible) {
                     sftpClient = new SFTPClient();
                     fileBrowser = new SFTPFileBrowser(sshSession, sftpClient);
                     Platform.runLater(() -> {
-                        if (!splitPane.getItems().contains(fileBrowser)) {
-                            splitPane.getItems().add(fileBrowser);
-                            splitPane.setDividerPositions(0.7);
-                        }
+                        rebuildRightPanel();
+                        splitPane.setDividerPositions(0.7);
                         fileBrowser.initConnection();
                     });
                 }
 
                 // 如果端口视图打开，重新绑定新会话
-                if (portVisible && portPanel != null) {
-                    PortPanel oldPanel = portPanel;
+                if (portVisible) {
                     portPanel = new PortPanel(sshSession);
                     Platform.runLater(() -> {
-                        if (rightPanel.getChildren().contains(oldPanel)) {
-                            int idx = rightPanel.getChildren().indexOf(oldPanel);
-                            rightPanel.getChildren().set(idx, portPanel);
-                        }
+                        rebuildRightPanel();
                         portPanel.refresh();
+                    });
+                }
+
+                // 如果监控视图打开，重新绑定新会话并重启监控
+                if (monitorVisible) {
+                    if (monitorPanel != null) {
+                        monitorPanel.stopMonitoring();
+                    }
+                    monitorPanel = new MonitorPanel(sshSession);
+                    Platform.runLater(() -> {
+                        rebuildRightPanel();
+                        monitorPanel.startMonitoring();
                     });
                 }
 

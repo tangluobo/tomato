@@ -63,7 +63,7 @@ public class PortPanel extends BorderPane {
         this.sshSession = sshSession;
 
         setStyle("-fx-background-color: #FFFFFF;");
-        setPrefHeight(350);
+        setMinHeight(200);
 
         HBox topBar = new HBox();
         topBar.setStyle("-fx-background-color: #f5f5f5; -fx-padding: 4 8; -fx-alignment: center-left;");
@@ -119,6 +119,10 @@ public class PortPanel extends BorderPane {
         portTable = new TableView<>();
         portTable.setItems(portList);
         portTable.setStyle("-fx-font-size: 11px; -fx-background-color: #FFFFFF;");
+        portTable.setFixedCellSize(24);
+        // 高度随内容增长，不产生内部滚动条，由外层 rightPanelScroll 整体滚动
+        portTable.prefHeightProperty().bind(javafx.beans.binding.Bindings.size(portList).multiply(24).add(30));
+        portTable.setMinHeight(80);
         // 使用与应用内其他表格相同的样式表（connect-tree.css），选中行样式一致且失焦不消失
         portTable.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         // 支持多选（行选择器可选中多行）

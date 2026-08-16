@@ -45,6 +45,7 @@ public class SFTPFileBrowser extends BorderPane {
     private CheckBox followTerminalCheck;
     private TableView<FileItem> fileTable;
     private Label statusLabel;
+    private final ObservableList<FileItem> fileList = FXCollections.observableArrayList();
 
     // 跟随终端目录
     private final BooleanProperty followTerminal = new SimpleBooleanProperty(true);
@@ -78,6 +79,7 @@ public class SFTPFileBrowser extends BorderPane {
 
         setPrefWidth(280);
         setMinWidth(200);
+        setMinHeight(200);
         setStyle("-fx-background-color: #FFFFFF;");
 
         createUI();
@@ -267,6 +269,11 @@ public class SFTPFileBrowser extends BorderPane {
         fileTable.setStyle("-fx-font-size: 11px; -fx-background-color: #fff;");
         fileTable.getStyleClass().add("sftp-file-table");
         fileTable.setPlaceholder(new Label("空目录"));
+        fileTable.setFixedCellSize(24);
+        // 高度随内容增长，不产生内部滚动条，由外层 rightPanelScroll 整体滚动
+        fileTable.prefHeightProperty().bind(javafx.beans.binding.Bindings.size(fileList).multiply(24).add(30));
+        fileTable.setMinHeight(80);
+        fileTable.setItems(fileList);
 
         TableColumn<FileItem, String> nameCol = new TableColumn<>("名称");
         nameCol.setCellValueFactory(new PropertyValueFactory<>("displayName"));
@@ -471,11 +478,10 @@ public class SFTPFileBrowser extends BorderPane {
     }
 
     private void populateTable(List<SFTPClient.FileEntry> entries) {
-        ObservableList<FileItem> items = FXCollections.observableArrayList();
+        fileList.clear();
         for (SFTPClient.FileEntry entry : entries) {
-            items.add(new FileItem(entry.getName(), entry.getPath(), entry.isDirectory(), entry.getSize(), entry.getModifyTime()));
+            fileList.add(new FileItem(entry.getName(), entry.getPath(), entry.isDirectory(), entry.getSize(), entry.getModifyTime()));
         }
-        fileTable.setItems(items);
     }
 
     /**
