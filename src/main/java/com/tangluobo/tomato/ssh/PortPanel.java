@@ -244,6 +244,15 @@ public class PortPanel extends BorderPane {
         });
 
         TableColumn<PortItem, String> pidCol = new TableColumn<>("PID");
+        pidCol.setCellValueFactory(c -> c.getValue().pidProperty());
+        // PID 按数字排序：非数字（如 "-"）排到末尾
+        pidCol.setComparator((a, b) -> {
+            try {
+                return Long.compare(Long.parseLong(a), Long.parseLong(b));
+            } catch (NumberFormatException e) {
+                return a.equals(b) ? 0 : (a.equals("-") ? 1 : (b.equals("-") ? -1 : a.compareTo(b)));
+            }
+        });
         pidCol.setMinWidth(40);
         pidCol.setPrefWidth(70);
 
@@ -324,11 +333,17 @@ public class PortPanel extends BorderPane {
         refreshItem.setOnAction(e -> new Thread(this::refresh, "Port-ManualRefresh").start());
 
         contextMenu.getItems().addAll(stopItem, firewallItem, new SeparatorMenuItem(), copyItem, refreshItem);
+        // 菜单显示后点击任意位置自动隐藏（含表格外部区域）
+        contextMenu.setAutoHide(true);
 
         portTable.setRowFactory(tv -> {
             TableRow<PortItem> row = new TableRow<>();
-            // 右键时保持已选中行不变：若右键点击的行已选中，不改变选择；否则只选中该行
             row.setOnMousePressed(event -> {
+                // 左键点击且菜单正在显示时，先隐藏菜单（再由右键逻辑决定是否重新弹出）
+                if (event.getButton() == MouseButton.PRIMARY && contextMenu.isShowing()) {
+                    contextMenu.hide();
+                }
+                // 右键时保持已选中行不变：若右键点击的行已选中，不改变选择；否则只选中该行
                 if (event.getButton() == MouseButton.SECONDARY && !row.isEmpty()) {
                     int index = row.getIndex();
                     if (!portTable.getSelectionModel().isSelected(index)) {
@@ -343,10 +358,12 @@ public class PortPanel extends BorderPane {
             return row;
         });
 
-        // 点击空白区域时隐藏右键菜单并清除选择
+        // 点击任意位置（含行、空白区域）时隐藏右键菜单
         portTable.setOnMousePressed(event -> {
-            if (isClickOnEmptyArea(event.getPickResult().getIntersectedNode())) {
+            if (contextMenu.isShowing()) {
                 contextMenu.hide();
+            }
+            if (isClickOnEmptyArea(event.getPickResult().getIntersectedNode())) {
                 portTable.getSelectionModel().clearSelection();
             }
         });
@@ -477,11 +494,12 @@ public class PortPanel extends BorderPane {
         }
         try {
             // 优先使用 ss（-H 去表头，-l 监听，-n 数字，-p 进程，TCP+UDP 均显示保留 Netid 列）
-            String output = executeCommand("ss -lnpH 2>/dev/null");
+            // sudo -n 非交互式：有免密则用 root 权限查看所有进程 PID，无免密则快速失败回退普通用户
+            String output = executeCommand("sudo -n ss -lnpH 2>/dev/null || ss -lnpH 2>/dev/null");
             List<PortItem> items = parsePorts(output);
             // ss 无输出则回退 netstat
             if (items.isEmpty()) {
-                output = executeCommand("netstat -tlnp 2>/dev/null");
+                output = executeCommand("sudo -n netstat -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null");
                 items = parsePorts(output);
             }
             // 查询防火墙已放行的端口（firewalld + iptables）
