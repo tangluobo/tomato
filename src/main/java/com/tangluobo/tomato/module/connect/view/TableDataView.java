@@ -527,10 +527,11 @@ public class TableDataView extends BorderPane {
                 (ObservableList<TablePosition<ObservableList<String>, ?>>) (ObservableList<?>) tableView.getSelectionModel().getSelectedCells();
         if (selectedCells.isEmpty()) return;
 
-        // 收集选中cell的行列范围
+        // 收集选中cell的行列范围（排除行选择器列，避免复制内容开头多出Tab导致粘贴错位）
         int minRow = Integer.MAX_VALUE, maxRow = -1;
         int minCol = Integer.MAX_VALUE, maxCol = -1;
         for (TablePosition<?, ?> pos : selectedCells) {
+            if (pos.getTableColumn() == null || ROW_SELECTOR_COL.equals(pos.getTableColumn().getUserData())) continue;
             int row = pos.getRow();
             int col = tableView.getColumns().indexOf(pos.getTableColumn());
             minRow = Math.min(minRow, row);
@@ -538,10 +539,12 @@ public class TableDataView extends BorderPane {
             minCol = Math.min(minCol, col);
             maxCol = Math.max(maxCol, col);
         }
+        if (maxRow < 0 || maxCol < 0) return;
 
         // 构建选中区域数据，用Set快速判断是否选中
         java.util.Set<String> selectedSet = new java.util.HashSet<>();
         for (TablePosition<?, ?> pos : selectedCells) {
+            if (pos.getTableColumn() == null || ROW_SELECTOR_COL.equals(pos.getTableColumn().getUserData())) continue;
             int col = tableView.getColumns().indexOf(pos.getTableColumn());
             selectedSet.add(pos.getRow() + "," + col);
         }
