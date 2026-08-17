@@ -153,6 +153,13 @@ public class TableDataView extends BorderPane {
             contextMenu.show(tableView, event.getScreenX(), event.getScreenY());
             event.consume();
         });
+
+        // 点击其他位置时隐藏右键菜单（捕获阶段，早于行选择器列等节点 handler 的 consume）
+        tableView.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, e -> {
+            if (contextMenu.isShowing()) {
+                contextMenu.hide();
+            }
+        });
     }
 
     // Shift选择锚点：记录最近一次普通点击的cell位置 [row, colIndex]
@@ -366,7 +373,7 @@ public class TableDataView extends BorderPane {
     }
 
     /**
-     * 粘贴剪贴板内容为新行：每行一条记录，Tab 分隔列值，插入到当前焦点行下方
+     * 粘贴剪贴板内容：行选择器整行选中时插入新行；选中数据单元格时从焦点单元格开始覆盖替换
      */
     private void handlePasteRows() {
         javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
@@ -376,19 +383,37 @@ public class TableDataView extends BorderPane {
         List<String> columns = getDataColumnNames();
         if (columns.isEmpty()) return;
 
-        // 解析剪贴板：按换行分割行，按 Tab 分割列
-        String[] lines = text.split("\n");
+        // 选中包含行选择器列 → 通过行选择器整行选中 → 插入新行模式
+        boolean rowSelectorSelected = false;
+        for (TablePosition<ObservableList<String>, ?> pos : tableView.getSelectionModel().getSelectedCells()) {
+            if (pos.getTableColumn() != null && ROW_SELECTOR_COL.equals(pos.getTableColumn().getUserData())) {
+                rowSelectorSelected = true;
+                break;
+            }
+        }
+
+        if (rowSelectorSelected) {
+            pasteAsNewRows(text, columns);
+        } else {
+            pasteIntoCells(text, columns);
+        }
+    }
+
+    /**
+     * 插入新行模式：每行一条记录，Tab 分隔列值，插入到当前焦点行下方
+     */
+    private void pasteAsNewRows(String text, List<String> columns) {
+        List<String[]> valueRows = parseClipboardRows(text);
+        if (valueRows.isEmpty()) return;
+
         List<ObservableList<String>> pastedRows = new ArrayList<>();
-        for (String line : lines) {
-            String cleanLine = line.endsWith("\r") ? line.substring(0, line.length() - 1) : line;
-            String[] values = cleanLine.split("\t", -1);
+        for (String[] values : valueRows) {
             ObservableList<String> row = FXCollections.observableArrayList();
             for (int i = 0; i < columns.size(); i++) {
                 row.add(i < values.length ? values[i] : "");
             }
             pastedRows.add(row);
         }
-        if (pastedRows.isEmpty()) return;
 
         // 插入位置：当前焦点行下方，否则追加到末尾
         int insertIndex = tableView.getItems().size();
@@ -405,6 +430,83 @@ public class TableDataView extends BorderPane {
 
         // 选中新粘贴的第一行
         selectRowAtColumn(insertIndex - pastedRows.size());
+    }
+
+    /**
+     * 单元格替换模式：从选中区域最左上角单元格开始，用剪贴板内容覆盖对应位置的单元格（Excel式粘贴）
+     * 修改由 originalValuesMap 快照追踪，保存时走 UPDATE；目标行不足时自动追加新行
+     */
+    private void pasteIntoCells(String text, List<String> columns) {
+        // 起点：选中数据单元格的最左上角（最小行+最小列，与焦点位置无关）
+        int startRow = -1, startCol = -1;
+        for (TablePosition<ObservableList<String>, ?> pos : tableView.getSelectionModel().getSelectedCells()) {
+            if (pos.getTableColumn() == null || ROW_SELECTOR_COL.equals(pos.getTableColumn().getUserData())) continue;
+            int dataCol = getDataColIndex(pos);
+            if (dataCol < 0 || dataCol >= columns.size() || pos.getRow() < 0) continue;
+            if (startRow < 0 || pos.getRow() < startRow) startRow = pos.getRow();
+            if (startCol < 0 || dataCol < startCol) startCol = dataCol;
+        }
+        if (startRow < 0) {
+            // 无选中数据单元格时用焦点数据单元格
+            TablePosition<ObservableList<String>, ?> focusedCell = tableView.getFocusModel().getFocusedCell();
+            if (focusedCell != null && focusedCell.getTableColumn() != null
+                    && !ROW_SELECTOR_COL.equals(focusedCell.getTableColumn().getUserData())
+                    && focusedCell.getRow() >= 0) {
+                startRow = focusedCell.getRow();
+                startCol = getDataColIndex(focusedCell);
+            }
+        }
+        if (startRow < 0 || startCol < 0) {
+            pasteAsNewRows(text, columns);
+            return;
+        }
+
+        List<String[]> valueRows = parseClipboardRows(text);
+        // 去掉末尾空行（兼容 Excel 等外部来源复制时的尾随换行）
+        while (valueRows.size() > 1
+                && valueRows.get(valueRows.size() - 1).length == 1
+                && valueRows.get(valueRows.size() - 1)[0].isEmpty()) {
+            valueRows.remove(valueRows.size() - 1);
+        }
+        if (valueRows.isEmpty()) return;
+
+        // 覆盖写入：目标行超出现有行数时自动追加新行
+        for (int r = 0; r < valueRows.size(); r++) {
+            int targetRowIdx = startRow + r;
+            while (targetRowIdx >= tableView.getItems().size()) {
+                addEmptyNewRow();
+            }
+            ObservableList<String> row = tableView.getItems().get(targetRowIdx);
+            String[] values = valueRows.get(r);
+            for (int c = 0; c < values.length && startCol + c < columns.size(); c++) {
+                row.set(startCol + c, values[c]);
+            }
+        }
+
+        // 重绘单元格状态（修改/新行标记）
+        tableView.refresh();
+
+        // 选中新粘贴的区域并滚动到起始行
+        tableView.getSelectionModel().clearSelection();
+        for (int r = 0; r < valueRows.size() && startRow + r < tableView.getItems().size(); r++) {
+            String[] values = valueRows.get(r);
+            for (int c = 0; c < values.length && startCol + c < columns.size(); c++) {
+                tableView.getSelectionModel().select(startRow + r, tableView.getColumns().get(startCol + c + 1));
+            }
+        }
+        tableView.scrollTo(startRow);
+    }
+
+    /**
+     * 解析剪贴板文本为二维数据：按换行分割行，按 Tab 分割列
+     */
+    private List<String[]> parseClipboardRows(String text) {
+        List<String[]> rows = new ArrayList<>();
+        for (String line : text.split("\n")) {
+            String cleanLine = line.endsWith("\r") ? line.substring(0, line.length() - 1) : line;
+            rows.add(cleanLine.split("\t", -1));
+        }
+        return rows;
     }
 
     /**
