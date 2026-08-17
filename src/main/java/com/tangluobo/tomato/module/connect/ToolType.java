@@ -12,7 +12,8 @@ public enum ToolType {
     DESKTOP_SHORTCUT("desktop_shortcut", "桌面快捷方式", "/images/connect/execute.png"),
     HOSTS_FILE("hosts_file", "Hosts文件管理", "/images/connect/server.png"),
     TRAE_SESSION("trae_session", "Trae会话管理", "/images/connect/user.png"),
-    RESOURCE_EXTRACTOR("resource_extractor", "资源图标提取", "/images/connect/monitor.png");
+    RESOURCE_EXTRACTOR("resource_extractor", "资源图标提取", "/images/connect/monitor.png"),
+    COLOR_TRANSPOSE_GAME("color_transpose_game", "颜色转置", "/images/connect/execute.png");
 
     private final String code;
     private final String displayName;

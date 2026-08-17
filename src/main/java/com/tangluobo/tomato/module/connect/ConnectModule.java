@@ -15,6 +15,7 @@ import com.tangluobo.tomato.module.connect.service.RocketmqService;
 import com.tangluobo.tomato.module.connect.view.RocketmqDataView;
 import com.tangluobo.tomato.module.connect.view.SqlEditorView;
 import com.tangluobo.tomato.module.connect.view.ToolPane;
+import com.tangluobo.tomato.module.connect.view.ColorTransposeGamePane;
 import com.tangluobo.tomato.module.tools.ServerManagerPane;
 import com.tangluobo.tomato.module.tools.server.ServerConfig;
 import com.tangluobo.tomato.ssh.LocalTerminalPane;
@@ -1628,8 +1629,13 @@ public class ConnectModule implements Module {
 
         Tab toolTab = new Tab(toolName);
         toolTab.setUserData(config.getId());
-        ToolPane toolPane = new ToolPane(toolType);
-        toolTab.setContent(toolPane);
+        if (toolType == ToolType.COLOR_TRANSPOSE_GAME) {
+            // 游戏：在右侧内容区打开游戏界面（配置维度并开始）
+            toolTab.setContent(new ColorTransposeGamePane());
+        } else {
+            ToolPane toolPane = new ToolPane(toolType);
+            toolTab.setContent(toolPane);
+        }
         terminalTabPane.getTabs().add(toolTab);
         terminalTabPane.getSelectionModel().select(toolTab);
     }

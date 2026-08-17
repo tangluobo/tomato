@@ -266,8 +266,11 @@ public class ConnectionConfigDialog {
         // 服务器标签
         Tab serverTab = new Tab("服务器");
         serverTab.setContent(buildServerTilePane());
+        // 游戏标签
+        Tab gameTab = new Tab("游戏");
+        gameTab.setContent(buildGameTilePane());
 
-        categoryTabPane.getTabs().addAll(dbTab, othersTab, toolTab, serverTab);
+        categoryTabPane.getTabs().addAll(dbTab, othersTab, toolTab, serverTab, gameTab);
 
         HBox typeButtons = new HBox(10);
         typeButtons.setAlignment(Pos.CENTER_RIGHT);
@@ -407,6 +410,20 @@ public class ConnectionConfigDialog {
                 tilePane.getChildren().add(createServerTile(type));
             }
         }
+        return tilePane;
+    }
+
+    /**
+     * 构建游戏标签页的方块面板：点击后直接创建连接节点添加到连接树（不走配置页），
+     * 双击连接树节点时在右侧内容区打开游戏界面（配置维度并开始）。
+     */
+    private FlowPane buildGameTilePane() {
+        FlowPane tilePane = new FlowPane();
+        tilePane.setHgap(10);
+        tilePane.setVgap(10);
+        tilePane.setPadding(new Insets(10, 5, 5, 5));
+        tilePane.setAlignment(Pos.CENTER);
+        tilePane.getChildren().add(createToolTile(ToolType.COLOR_TRANSPOSE_GAME));
         return tilePane;
     }
 
