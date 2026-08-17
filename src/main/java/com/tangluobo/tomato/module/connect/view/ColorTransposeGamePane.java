@@ -86,7 +86,8 @@ public class ColorTransposeGamePane extends VBox {
         getChildren().add(goalBox);
 
         // ===== 棋盘：容器水平排列，每个容器垂直堆叠珠子 =====
-        boardBox = new HBox(10);
+        // HBox spacing 与 VBox spacing 均为 4，珠径 28，使横竖单元一致呈正方形
+        boardBox = new HBox(4);
         boardBox.setAlignment(Pos.CENTER);
         // 不拉伸子节点高度，让柱子保持与维度一致的精确高度，并实现垂直居中
         boardBox.setFillHeight(false);
@@ -104,9 +105,45 @@ public class ColorTransposeGamePane extends VBox {
         startGame();
     }
 
-    /** 根据颜色索引生成稳定且可区分的颜色。 */
+    /**
+     * 根据 RGB 三通道独立分档计算颜色，使任意两色至少有一个通道差异明显。
+     * 把 0~255 分为 6 档 {0,51,102,153,204,255}，三通道笛卡尔积共 216 色。
+     * 排除纯白(255,255,255)后，用素数步长在 216 色空间中跳选，
+     * 使相邻索引颜色在多个通道上跳变，RGB 共同区分，20 维也清晰可辨。
+     */
+    private static final int[] RGB_LEVELS = {0, 51, 102, 153, 204, 255};
+    private static final Color[] COMPUTED_PALETTE = buildPalette();
+
+    private static Color[] buildPalette() {
+        // 先生成全部 216 色（排除纯白），按 r + g*6 + b*36 编号
+        java.util.List<Color> all = new java.util.ArrayList<>();
+        for (int b = 0; b < 6; b++) {
+            for (int g = 0; g < 6; g++) {
+                for (int r = 0; r < 6; r++) {
+                    if (r == 5 && g == 5 && b == 5) continue; // 跳过纯白
+                    all.add(Color.rgb(RGB_LEVELS[r], RGB_LEVELS[g], RGB_LEVELS[b]));
+                }
+            }
+        }
+        // 用与 215 互质的步长跳选，使相邻索引颜色分布均匀、差异大
+        // 215 = 5×43，47 是质数且不整除 215，故互质，可均匀覆盖
+        int total = all.size(); // 215
+        Color[] result = new Color[MAX_N];
+        int step = 47;
+        for (int i = 0; i < MAX_N; i++) {
+            int idx = (int) (((long) i * step) % total);
+            result[i] = all.get(idx);
+        }
+        return result;
+    }
+
+    /** 根据颜色索引取计算调色板颜色，超过范围则回退到索引取模。 */
     private Color colorFor(int idx) {
-        return Color.hsb((idx * 360.0 / Math.max(n, 1)) % 360, 0.62, 0.92);
+        if (idx < 0) idx = 0;
+        if (idx < COMPUTED_PALETTE.length) {
+            return COMPUTED_PALETTE[idx];
+        }
+        return COMPUTED_PALETTE[idx % COMPUTED_PALETTE.length];
     }
 
     private void startGame() {
@@ -160,10 +197,11 @@ public class ColorTransposeGamePane extends VBox {
         for (int c = 0; c < columns.size(); c++) {
             VBox tube = new VBox(4);
             tube.setAlignment(Pos.BOTTOM_CENTER);
-            tube.setPrefWidth(44);
+            // 柱宽 = 珠径 28，与垂直珠子间距一致，整体呈正方形网格
+            tube.setPrefWidth(28);
             // 柱高 = n 个珠子高度：每珠 28px + spacing 4px（末珠无 spacing）
-            tube.setPrefHeight(n * 32 - 4 + 8); // 8 = padding(4*2)
-            tube.setStyle("-fx-background-color: #fafafa; -fx-background-radius: 8; -fx-border-color: #eeeeee; -fx-border-radius: 8; -fx-padding: 4;");
+            tube.setPrefHeight(n * 32 - 4);
+            tube.setStyle("-fx-background-color: #fafafa; -fx-background-radius: 6; -fx-border-color: #eeeeee; -fx-border-radius: 6;");
             tube.setUserData(c);
             int finalC = c;
             tube.setOnMouseClicked(e -> onColumnClick(finalC));
@@ -181,8 +219,11 @@ public class ColorTransposeGamePane extends VBox {
             // 从栈顶到栈底（倒序），栈顶在最上、栈底在最下
             for (int i = col.size() - 1; i >= 0; i--) {
                 int color = col.get(i);
-                Circle bead = new Circle(14, colorFor(color));
-                bead.setStroke(Color.WHITE);
+                Color fillColor = colorFor(color);
+                Circle bead = new Circle(14, fillColor);
+                // 浅色珠子用深色描边，深色珠子用白色描边，保证可见性
+                double brightness = fillColor.getBrightness();
+                bead.setStroke(brightness > 0.7 ? Color.web("#333333") : Color.WHITE);
                 bead.setStrokeWidth(1.5);
                 // 高亮选中容器的顶部珠子
                 if (c == selectedCol && i == col.size() - 1) {
