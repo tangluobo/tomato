@@ -19,11 +19,13 @@
         <!-- jpackage 相关属性 -->
         <!-- agent.exec.skip=true 时跳过 test 阶段启动 UI 的 exec（java-agent），jpackage profile 中自动置为 true -->
         <agent.exec.skip>false</agent.exec.skip>
-        <!-- jpackage 打包类型：exe（安装向导，需 WiX 3.x）/ msi / app-image（绿色目录） -->
+        <!-- jpackage 打包类型：exe（Win 安装向导，需 WiX 3.x）/ rpm（Linux）/ msi / app-image（绿色目录） -->
         <jpackage.type>exe</jpackage.type>
         <!-- WiX 3.x binaries 目录（jpackage 生成 exe/msi 时查找 candle.exe/light.exe），
              指向项目内置的 packaging/wix314；也可用 WIX 环境变量或 PATH 覆盖 -->
         <jpackage.wixdir>${project.basedir}/packaging/wix314</jpackage.wixdir>
+        <!-- 平台相关 jpackage 参数串（图标 + 安装向导选项），由 os-activated profile 自动注入 -->
+        <jpackage.platform.args></jpackage.platform.args>
     </properties>
 
     <description>
@@ -499,13 +501,15 @@
         </profile>
         <!-- jpackage 打包 profile：mvn clean package -Pjpackage
              思路：复用 maven-assembly-plugin 产出的 fat jar（classpath 运行方式，与开发期一致），
-                  用 JDK 自带的 jpackage 生成自带运行时的安装包（exe 安装向导，需 WiX 3.x）或绿色目录（app-image）。
+                  用 JDK 自带的 jpackage 生成自带运行时的安装包或绿色目录。
+             平台：Windows 默认 exe 安装向导（需 WiX 3.x，项目内置 packaging/wix314）；
+                  Linux 自动覆盖为 rpm（需 rpmbuild，见 README 打包说明）；
+                  macOS 可用 -Djpackage.type=app-image 或 dmg。
              说明：1. profile 激活时会自动跳过 test 阶段启动 UI 的 java-agent exec，打包过程无需人工干预。
-                  2. 默认 type=exe 生成安装向导 exe（target/jpackage/tomato-0.0.1.exe），双击走安装向导流程。
-                  3. 需 WiX Toolset 3.x：项目内置 packaging/wix314（绿色版），通过 jpackage.wixdir 属性指向；
-                     也可设置 WIX 环境变量或把 candle/light 加入 PATH。
-                  4. 如需绿色目录：mvn clean package -Pjpackage -Djpackage.type=app-image
-                     （app-image 时 win 系列安装选项会被 jpackage 忽略，不影响）。 -->
+                  2. 产物在 target/jpackage/：Windows 为 tomato-0.0.1.exe，Linux 为 tomato-0.0.1-1.x86_64.rpm。
+                  3. 如需绿色目录：mvn clean package -Pjpackage -Djpackage.type=app-image。
+                  4. 平台相关参数（图标 + 安装向导选项）由 jpackage-os-win / jpackage-os-linux 两个
+                     按 OS 自动激活的 profile 注入到 jpackage.platform.args，无需手动指定。 -->
         <profile>
             <id>jpackage</id>
             <properties>
@@ -556,53 +560,50 @@
                                 </goals>
                                 <configuration>
                                     <executable>${java.home}/bin/jpackage</executable>
-                                    <!-- 把 WiX binaries 目录注入 PATH（jpackage 通过 PATH 查找 candle.exe/light.exe），
-                                         同时设 WIX 变量兼容旧版查找逻辑，无需全局安装 WiX -->
+                                    <!-- Windows 下把 WiX binaries 注入 PATH（jpackage 通过 PATH 查找 candle/light），
+                                         Linux 下 WIX 变量被 jpackage 忽略，PATH 追加无效路径也无害 -->
                                     <environmentVariables>
                                         <WIX>${jpackage.wixdir}</WIX>
                                         <PATH>${jpackage.wixdir}${path.separator}${env.PATH}</PATH>
                                     </environmentVariables>
-                                    <arguments>
-                                        <!-- 打包类型，默认 exe 安装向导，可用 -Djpackage.type=app-image 生成绿色目录 -->
-                                        <argument>--type</argument>
-                                        <argument>${jpackage.type}</argument>
-                                        <argument>--name</argument>
-                                        <argument>${project.name}</argument>
-                                        <argument>--dest</argument>
-                                        <argument>${project.build.directory}/jpackage</argument>
-                                        <argument>--input</argument>
-                                        <argument>${project.build.directory}/jpackage-input</argument>
-                                        <argument>--main-jar</argument>
-                                        <argument>${project.build.finalName}-jar-with-dependencies.jar</argument>
-                                        <argument>--main-class</argument>
-                                        <argument>${mainClass}</argument>
-                                        <argument>--app-version</argument>
-                                        <argument>${project.version}</argument>
-                                        <argument>--vendor</argument>
-                                        <argument>tangluobo</argument>
-                                        <argument>--description</argument>
-                                        <argument>Tomato - 数据库与服务器连接管理工具</argument>
-                                        <argument>--icon</argument>
-                                        <argument>${project.basedir}/packaging/tomato.ico</argument>
-                                        <!-- 下面为 exe/msi 安装向导选项（app-image 类型时 jpackage 会自动忽略） -->
-                                        <!-- 开始菜单快捷方式 -->
-                                        <argument>--win-menu</argument>
-                                        <argument>--win-menu-group</argument>
-                                        <argument>Tomato</argument>
-                                        <!-- 桌面快捷方式 -->
-                                        <argument>--win-shortcut</argument>
-                                        <!-- 安装向导允许用户选择安装目录 -->
-                                        <argument>--win-dir-chooser</argument>
-                                        <!-- 固定升级 UUID：同 UUID 的新版本安装会覆盖旧版本，而非重复安装 -->
-                                        <argument>--win-upgrade-uuid</argument>
-                                        <argument>9EDBE186-C9AB-44DC-BA36-5E69BFD9F4A1</argument>
-                                    </arguments>
+                                    <!-- 用 commandlineArgs 拼接通用参数 + ${jpackage.platform.args}（平台参数由 os-activated profile 注入），
+                                         避免 Linux 上传入 win 系列选项导致 jpackage 报错 -->
+                                    <commandlineArgs>--type ${jpackage.type} --name ${project.name} --dest "${project.build.directory}/jpackage" --input "${project.build.directory}/jpackage-input" --main-jar ${project.build.finalName}-jar-with-dependencies.jar --main-class ${mainClass} --app-version ${project.version} --vendor tangluobo --description "Tomato database and server connection tool" ${jpackage.platform.args}</commandlineArgs>
                                 </configuration>
                             </execution>
                         </executions>
                     </plugin>
                 </plugins>
             </build>
+        </profile>
+
+        <!-- Windows 平台：自动注入 ico 图标 + win 安装向导选项（开始菜单、桌面快捷方式、目录选择、升级 UUID） -->
+        <profile>
+            <id>jpackage-os-win</id>
+            <activation>
+                <os>
+                    <family>windows</family>
+                </os>
+            </activation>
+            <properties>
+                <jpackage.platform.args>--icon "${project.basedir}/packaging/tomato.ico" --win-menu --win-menu-group Tomato --win-shortcut --win-dir-chooser --win-upgrade-uuid 9EDBE186-C9AB-44DC-BA36-5E69BFD9F4A1</jpackage.platform.args>
+            </properties>
+        </profile>
+
+        <!-- Linux 平台：自动把打包类型覆盖为 rpm，注入 png 图标 + linux 安装选项（菜单分组、桌面快捷方式）。
+             前置条件：已安装 rpm-build（rpmbuild 命令）和 JDK 25（JavaFX 27-ea 的 class 版本需要）。 -->
+        <profile>
+            <id>jpackage-os-linux</id>
+            <activation>
+                <os>
+                    <family>unix</family>
+                    <name>linux</name>
+                </os>
+            </activation>
+            <properties>
+                <jpackage.type>rpm</jpackage.type>
+                <jpackage.platform.args>--icon "${project.basedir}/src/main/resources/images/logo.png" --linux-menu-group Utility --linux-shortcut --linux-app-release 1</jpackage.platform.args>
+            </properties>
         </profile>
     </profiles>
 </project>
