@@ -9,6 +9,7 @@ import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
+import javafx.geometry.Point2D;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Parent;
@@ -165,6 +166,15 @@ public class TableDataView extends BorderPane {
     // Shift选择锚点：记录最近一次普通点击的cell位置 [row, colIndex]
     private int[] anchorCell = {-1, -1};
 
+    // ---- 拖拽范围选择矩形（Windows资源管理器风格） ----
+    /** 范围选择矩形，从表格下方空白区域按下拖拽时显示 */
+    private final Rectangle dragSelectRect = new Rectangle();
+    /** 矩形起点（centerPane坐标） */
+    private double dragSelectStartX = 0;
+    private double dragSelectStartY = 0;
+    /** 当前拖拽是否显示范围选择矩形（仅从表格下方空白区域开始时） */
+    private boolean marqueeActive = false;
+
     /**
      * 鼠标拖拽选中多个cell + Shift点击范围选中
      */
@@ -185,6 +195,8 @@ public class TableDataView extends BorderPane {
 
             if (event.isShiftDown() && anchorCell[0] >= 0) {
                 // Shift+点击：从锚点到当前cell的矩形范围选中
+                marqueeActive = false;
+                dragSelectRect.setVisible(false);
                 int minRow = Math.min(anchorCell[0], cellPos[0]);
                 int maxRow = Math.max(anchorCell[0], cellPos[0]);
                 int minCol = Math.min(anchorCell[1], cellPos[1]);
@@ -210,11 +222,25 @@ public class TableDataView extends BorderPane {
             tableView.getSelectionModel().clearSelection();
             TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(cellPos[1]);
             tableView.getSelectionModel().select(cellPos[0], col);
+
+            // 表格下方空白区域按下时，启用拖拽范围选择矩形（Windows资源管理器风格）
+            marqueeActive = cellPos[0] >= tableView.getItems().size();
+            Point2D start = centerPane.sceneToLocal(event.getSceneX(), event.getSceneY());
+            dragSelectStartX = start.getX();
+            dragSelectStartY = start.getY();
+            if (marqueeActive) {
+                updateDragSelectRect(start.getX(), start.getY());
+            }
         });
 
         tableView.setOnMouseDragged(event -> {
             if (event.getButton() != MouseButton.PRIMARY) return;
             if (dragStart[0] < 0) return;
+            // 矩形框跟随鼠标（即使经过表头等无cell区域也持续更新）
+            if (marqueeActive) {
+                Point2D p = centerPane.sceneToLocal(event.getSceneX(), event.getSceneY());
+                updateDragSelectRect(p.getX(), p.getY());
+            }
             int[] cellPos = getCellPositionAt(event);
             if (cellPos == null) return;
             dragging[0] = true;
@@ -237,7 +263,24 @@ public class TableDataView extends BorderPane {
         tableView.setOnMouseReleased(event -> {
             dragStart[0] = -1;
             dragging[0] = false;
+            marqueeActive = false;
+            dragSelectRect.setVisible(false);
         });
+    }
+
+    /**
+     * 更新拖拽范围选择矩形：从按下起点到当前鼠标位置（clamp在视口范围内）
+     */
+    private void updateDragSelectRect(double x, double y) {
+        double viewW = centerPane.getWidth();
+        double viewH = centerPane.getHeight();
+        x = Math.max(0, Math.min(x, viewW));
+        y = Math.max(0, Math.min(y, viewH));
+        dragSelectRect.setX(Math.min(x, dragSelectStartX));
+        dragSelectRect.setY(Math.min(y, dragSelectStartY));
+        dragSelectRect.setWidth(Math.abs(x - dragSelectStartX));
+        dragSelectRect.setHeight(Math.abs(y - dragSelectStartY));
+        dragSelectRect.setVisible(true);
     }
 
     /**
@@ -884,7 +927,15 @@ public class TableDataView extends BorderPane {
         // TableView宽度跟随视口（让垂直滚动条位于面板最右，右侧空白属于表格）
         tableView.minWidthProperty().bind(tableScrollPane.widthProperty());
 
-        centerPane = new StackPane(tableScrollPane, loadingIndicator);
+        // 拖拽范围选择矩形：半透明蓝色（与选中色#3592CB一致），鼠标透明，置于最上层
+        dragSelectRect.setFill(Color.rgb(53, 146, 203, 0.15));
+        dragSelectRect.setStroke(Color.rgb(53, 146, 203, 0.7));
+        dragSelectRect.setStrokeWidth(1);
+        dragSelectRect.setMouseTransparent(true);
+        dragSelectRect.setManaged(false);
+        dragSelectRect.setVisible(false);
+
+        centerPane = new StackPane(tableScrollPane, loadingIndicator, dragSelectRect);
         centerPane.setPadding(Insets.EMPTY);
         centerPane.setStyle("-fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
 
@@ -1451,7 +1502,11 @@ public class TableDataView extends BorderPane {
                             break;
                         }
                     }
-                    if (matchedCol != null && !ROW_SELECTOR_COL.equals(matchedCol.getUserData())) {
+                    if (matchedCol == null) return;
+                    if (ROW_SELECTOR_COL.equals(matchedCol.getUserData())) {
+                        // 行选择器列表头：与下方选择器单元格一致的网格线（左右及底部）
+                        header.setStyle("-fx-border-color: transparent #BEBEBC #BEBEBC #BEBEBC; -fx-border-width: 0 1 1 1;");
+                    } else {
                         updateSortArrow(header, matchedCol.getText());
                     }
                 }
