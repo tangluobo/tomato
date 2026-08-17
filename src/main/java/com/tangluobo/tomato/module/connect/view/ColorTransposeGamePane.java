@@ -41,7 +41,7 @@ public class ColorTransposeGamePane extends VBox {
     private HBox boardBox;
     private HBox goalPreview;
 
-    private static final int MAX_N = 12;
+    private static final int MAX_N = 20;
 
     public ColorTransposeGamePane() {
         setSpacing(12);
