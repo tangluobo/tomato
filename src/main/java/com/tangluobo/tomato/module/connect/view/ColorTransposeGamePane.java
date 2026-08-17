@@ -8,6 +8,7 @@ import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
+import javafx.scene.layout.StackPane;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
 
@@ -213,6 +214,7 @@ public class ColorTransposeGamePane extends VBox {
                 Circle slot = new Circle(14, Color.TRANSPARENT);
                 slot.setStroke(Color.web("#e0e0e0"));
                 slot.setStrokeWidth(1);
+                slot.setStrokeType(javafx.scene.shape.StrokeType.INSIDE);
                 slot.getStrokeDashArray().addAll(2d, 3d);
                 tube.getChildren().add(slot);
             }
@@ -221,17 +223,21 @@ public class ColorTransposeGamePane extends VBox {
                 int color = col.get(i);
                 Color fillColor = colorFor(color);
                 Circle bead = new Circle(14, fillColor);
-                // 浅色珠子用深色描边，深色珠子用白色描边，保证可见性
-                double brightness = fillColor.getBrightness();
-                bead.setStroke(brightness > 0.7 ? Color.web("#333333") : Color.WHITE);
-                bead.setStrokeWidth(1.5);
-                // 高亮选中容器的顶部珠子
-                if (c == selectedCol && i == col.size() - 1) {
-                    bead.setStroke(Color.web("#f1c40f"));
-                    bead.setStrokeWidth(3);
-                    bead.setTranslateY(-6);
+                // 高亮选中容器的顶部珠子：上浮提示
+                boolean isSelected = (c == selectedCol && i == col.size() - 1);
+                // 反色数字标签：文字颜色 = 填充色按位取反 (255-r, 255-g, 255-b)
+                int invR = 255 - (int) Math.round(fillColor.getRed() * 255);
+                int invG = 255 - (int) Math.round(fillColor.getGreen() * 255);
+                int invB = 255 - (int) Math.round(fillColor.getBlue() * 255);
+                Label numLabel = new Label(String.valueOf(color + 1));
+                numLabel.setStyle("-fx-font-size: 11px; -fx-font-weight: bold;"
+                        + "-fx-text-fill: rgb(" + invR + "," + invG + "," + invB + ");");
+                numLabel.setMouseTransparent(true);
+                StackPane beadStack = new StackPane(bead, numLabel);
+                if (isSelected) {
+                    beadStack.setTranslateY(-6);
                 }
-                tube.getChildren().add(bead);
+                tube.getChildren().add(beadStack);
             }
             boardBox.getChildren().add(tube);
         }
