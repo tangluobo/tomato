@@ -12,8 +12,13 @@ import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.SnapshotParameters;
+import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.DataFormat;
 import javafx.scene.input.Dragboard;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyCodeCombination;
+import javafx.scene.input.KeyCombination;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.ScrollEvent;
 import javafx.scene.input.TransferMode;
@@ -35,6 +40,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * S3/OSS文件浏览器面板
@@ -138,6 +144,16 @@ public class S3FileBrowserPane extends BorderPane {
     private Image imageFileIcon;
     private Image imageFileLargeIcon;
 
+    // 剪贴板数据格式（用于S3文件复制粘贴）
+    private static final DataFormat S3_COPY_FORMAT = new DataFormat("application/x-s3-file-copy");
+
+    // 复制粘贴状态
+    private Stage copyProgressStage;
+    private ProgressBar copyProgressBar;
+    private Label copyProgressLabel;
+    private Label copyProgressDetailLabel;
+    private AtomicBoolean copyCancelled = new AtomicBoolean(false);
+
     public S3FileBrowserPane(ConnectionConfig config) {
         this.config = config;
         this.isAliyunOSS = config.getType() == ConnectType.ALIYUN_OSS;
@@ -146,6 +162,25 @@ public class S3FileBrowserPane extends BorderPane {
         initializeUI();
         switchViewMode(currentViewMode);
         loadBuckets();
+
+        // 添加全局快捷键支持（Ctrl+C 复制、Ctrl+V 粘贴）
+        setupKeyboardShortcuts();
+    }
+
+    /**
+     * 设置全局键盘快捷键
+     */
+    private void setupKeyboardShortcuts() {
+        KeyCodeCombination copyCombo = new KeyCodeCombination(KeyCode.C, KeyCombination.SHORTCUT_DOWN);
+        KeyCodeCombination pasteCombo = new KeyCodeCombination(KeyCode.V, KeyCombination.SHORTCUT_DOWN);
+
+        // 在场景中注册快捷键
+        this.sceneProperty().addListener((obs, oldScene, newScene) -> {
+            if (newScene != null) {
+                newScene.getAccelerators().put(copyCombo, this::handleCopy);
+                newScene.getAccelerators().put(pasteCombo, this::handlePaste);
+            }
+        });
     }
 
     private void loadIcons() {
@@ -1241,6 +1276,14 @@ public class S3FileBrowserPane extends BorderPane {
             if (selected != null && !selected.isDirectory()) handleDownload(selected);
         });
 
+        // 复制菜单项
+        MenuItem copyItem = new MenuItem("复制");
+        copyItem.setOnAction(e -> handleCopy());
+
+        // 粘贴菜单项
+        MenuItem pasteItem = new MenuItem("粘贴");
+        pasteItem.setOnAction(e -> handlePaste());
+
         // 创建目录（仅 Bucket 内可用）
         MenuItem mkdirItem = new MenuItem("新建目录");
         mkdirItem.setOnAction(e -> handleCreateDirectory());
@@ -1268,7 +1311,7 @@ public class S3FileBrowserPane extends BorderPane {
         columnViewItem.setOnAction(e -> switchViewMode(ViewMode.COLUMN));
         viewMenu.getItems().addAll(iconViewItem, listViewItem, columnViewItem);
 
-        menu.getItems().addAll(openItem, previewItem, editMdItem, downloadItem, new SeparatorMenuItem(),
+        menu.getItems().addAll(openItem, previewItem, editMdItem, downloadItem, copyItem, pasteItem, new SeparatorMenuItem(),
                 mkdirItem, uploadItem, createFileItem, deleteItem, new SeparatorMenuItem(), viewMenu, new SeparatorMenuItem(), refreshItem);
 
         // 右键菜单显示时动态控制各项可见性
@@ -1281,6 +1324,14 @@ public class S3FileBrowserPane extends BorderPane {
             previewItem.setVisible(single && first != null && !first.isDirectory() && isImageFile(first.getDisplayName()));
             editMdItem.setVisible(single && first != null && !first.isDirectory() && isMarkdownFile(first.getDisplayName()));
             downloadItem.setVisible(single && first != null && !first.isDirectory());
+
+            // 复制菜单项：选中的文件不为空时可用
+            copyItem.setVisible(!selected.isEmpty() && currentBucket != null);
+            copyItem.setText(selected.size() > 1 ? "复制(" + selected.size() + "项)" : "复制");
+
+            // 粘贴菜单项：剪贴板有S3复制数据且当前在Bucket内时可用（不需要选中项）
+            boolean hasClipboard = hasS3CopyData();
+            pasteItem.setVisible(hasClipboard && currentBucket != null);
             deleteItem.setVisible(!selected.isEmpty());
             deleteItem.setText(selected.size() > 1 ? "删除(" + selected.size() + "项)" : "删除");
             mkdirItem.setVisible(currentBucket != null);
@@ -2405,6 +2456,826 @@ public class S3FileBrowserPane extends BorderPane {
             }, "S3-Delete").start();
         });
     }
+
+    // ============ 文件复制/粘贴功能 ============
+
+    /**
+     * 复制文件/目录信息到系统剪贴板（只记录元信息，不读取文件内容）
+     */
+    private void handleCopy() {
+        List<FileItem> selected = getSelectedItems();
+        if (selected.isEmpty()) return;
+
+        // 过滤掉Bucket级别，支持文件和目录
+        List<FileItem> items = new ArrayList<>();
+        for (FileItem item : selected) {
+            if (!item.isBucket()) {
+                items.add(item);
+            }
+        }
+        if (items.isEmpty()) {
+            stateLabel.setText("无法复制Bucket");
+            return;
+        }
+
+        // 构建剪贴板数据：每行一条记录，格式为 "TYPE|KEY"
+        // TYPE: F=文件, D=目录
+        StringBuilder sb = new StringBuilder();
+        sb.append(config.getId()).append("\n");
+        sb.append(config.getType().name()).append("\n");
+        sb.append(currentBucket).append("\n");
+
+        for (FileItem item : items) {
+            String type = item.isDirectory() ? "D" : "F";
+            sb.append(type).append("|").append(item.getKey()).append("\n");
+        }
+
+        ClipboardContent content = new ClipboardContent();
+        content.put(S3_COPY_FORMAT, sb.toString());
+        int fileCount = 0;
+        int dirCount = 0;
+        for (FileItem item : items) {
+            if (item.isDirectory()) dirCount++;
+            else fileCount++;
+        }
+        String desc = fileCount + " 个文件" + (dirCount > 0 ? ", " + dirCount + " 个目录" : "");
+        content.putString(desc);
+        Clipboard.getSystemClipboard().setContent(content);
+
+        stateLabel.setText("已复制 " + desc + " 到剪贴板");
+    }
+
+    /**
+     * 从剪贴板粘贴文件/目录到当前位置
+     */
+    private void handlePaste() {
+        if (currentBucket == null) {
+            Alert alert = new Alert(Alert.AlertType.WARNING);
+            alert.setTitle("提示");
+            alert.setHeaderText(null);
+            alert.setContentText("请先进入一个 Bucket 再粘贴");
+            alert.showAndWait();
+            return;
+        }
+
+        Clipboard clipboard = Clipboard.getSystemClipboard();
+        if (!clipboard.hasContent(S3_COPY_FORMAT)) {
+            return;
+        }
+
+        String data = (String) clipboard.getContent(S3_COPY_FORMAT);
+        if (data == null || data.isEmpty()) return;
+
+        try {
+            parseAndExecuteCopy(data);
+        } catch (Exception e) {
+            Platform.runLater(() -> {
+                Alert alert = new Alert(Alert.AlertType.ERROR);
+                alert.setTitle("粘贴失败");
+                alert.setHeaderText(null);
+                alert.setContentText("解析剪贴板数据失败: " + e.getMessage());
+                alert.showAndWait();
+            });
+        }
+    }
+
+    /**
+     * 检查剪贴板是否有S3复制数据
+     */
+    private boolean hasS3CopyData() {
+        Clipboard clipboard = Clipboard.getSystemClipboard();
+        return clipboard.hasContent(S3_COPY_FORMAT);
+    }
+
+    /**
+     * 复制项数据模型（记录元信息）
+     */
+    private static class CopyItem {
+        String key;
+        boolean isDirectory;
+
+        CopyItem(String key, boolean isDirectory) {
+            this.key = key;
+            this.isDirectory = isDirectory;
+        }
+
+        /**
+         * 获取显示名称（去掉路径前缀的最后一部分）
+         */
+        String getDisplayName() {
+            if (key == null) return "";
+            String displayKey = key;
+            if (displayKey.endsWith("/")) {
+                displayKey = displayKey.substring(0, displayKey.length() - 1);
+            }
+            int lastSlash = displayKey.lastIndexOf('/');
+            if (lastSlash >= 0) {
+                return displayKey.substring(lastSlash + 1);
+            }
+            return displayKey;
+        }
+    }
+
+    /**
+     * 解析剪贴板数据并执行复制
+     */
+    private void parseAndExecuteCopy(String data) throws Exception {
+        String[] lines = data.split("\n");
+        if (lines.length < 3) {
+            throw new Exception("无效的复制数据");
+        }
+
+        String sourceConfigId = lines[0];
+        String sourceTypeName = lines[1];
+        String sourceBucket = lines[2];
+
+        // 查找源连接配置
+        ConnectionConfig sourceConfig = findConfigById(sourceConfigId);
+        if (sourceConfig == null) {
+            throw new Exception("找不到源连接配置: " + sourceConfigId);
+        }
+
+        // 解析复制项列表
+        List<CopyItem> copyItems = new ArrayList<>();
+        for (int i = 3; i < lines.length; i++) {
+            if (lines[i].isEmpty()) continue;
+            String[] parts = lines[i].split("\\|", 2);
+            if (parts.length == 2) {
+                boolean isDir = "D".equals(parts[0]);
+                copyItems.add(new CopyItem(parts[1], isDir));
+            }
+        }
+
+        if (copyItems.isEmpty()) {
+            throw new Exception("没有要复制的项");
+        }
+
+        // 检查是否为相同连接
+        boolean sameConnection = config.getId().equals(sourceConfigId);
+        boolean sameType = config.getType().name().equals(sourceTypeName);
+
+        System.out.println("[S3-Paste] 解析剪贴板: 源=" + sourceConfig.getName()
+                + ", 类型=" + sourceTypeName + ", bucket=" + sourceBucket
+                + ", 项数=" + copyItems.size()
+                + ", sameConnection=" + sameConnection + ", sameType=" + sameType);
+
+        // 先显示进度对话框（初始状态）
+        showCopyProgressDialog(0);
+
+        if (sameConnection && sameType) {
+            // 相同连接同类型：使用服务端复制
+            executeServerSideCopy(sourceConfig, sourceBucket, copyItems);
+        } else {
+            // 跨连接或跨类型复制
+            executeCrossConnectionCopy(sourceConfig, sourceBucket, copyItems);
+        }
+    }
+
+    /**
+     * 展开复制项：递归遍历目录，生成最终的文件复制任务列表
+     * 只在粘贴执行时才读取目录内容，符合"记录元信息，执行时再读取"的设计
+     */
+    private List<CopyTask> expandCopyItems(ConnectionConfig sourceConfig, String sourceBucket,
+                                            List<CopyItem> copyItems, ProgressTracker tracker) throws Exception {
+        List<CopyTask> tasks = new ArrayList<>();
+        boolean sourceIsOSS = sourceConfig.getType() == ConnectType.ALIYUN_OSS;
+
+        for (CopyItem item : copyItems) {
+            if (copyCancelled.get()) break;
+
+            if (!item.isDirectory) {
+                // 文件：直接生成复制任务
+                String destKey = buildDestKey(item.key);
+                tasks.add(new CopyTask(item.key, destKey, item.getDisplayName(), false));
+
+                // 更新进度（枚举阶段）
+                if (tracker != null) {
+                    tracker.onEnumerate(item.getDisplayName(), tasks.size());
+                }
+            } else {
+                // 目录：递归列出所有文件
+                String dirPrefix = item.key.endsWith("/") ? item.key : item.key + "/";
+                String dirName = item.getDisplayName();
+                String destDirPrefix = buildDestKey(dirPrefix);
+
+                // 更新进度：正在扫描目录
+                if (tracker != null) {
+                    tracker.onEnumerate("扫描目录: " + dirName + "/...", tasks.size());
+                }
+
+                List<? extends Object> objects;
+                System.out.println("[S3-Paste] 递归列出目录: " + dirPrefix + (sourceIsOSS ? " (OSS)" : " (S3)"));
+                if (sourceIsOSS) {
+                    objects = OssService.listObjectsRecursive(sourceConfig, sourceBucket, dirPrefix);
+                } else {
+                    objects = S3Service.listObjectsRecursive(sourceConfig, sourceBucket, dirPrefix);
+                }
+                System.out.println("[S3-Paste] 目录列出完成: " + dirPrefix + ", 对象数=" + objects.size());
+
+                for (Object obj : objects) {
+                    if (copyCancelled.get()) break;
+
+                    String srcKey;
+                    long size;
+                    if (sourceIsOSS) {
+                        OssService.OssObjectInfo o = (OssService.OssObjectInfo) obj;
+                        srcKey = o.getKey();
+                        size = o.getSize();
+                    } else {
+                        S3Service.S3ObjectInfo o = (S3Service.S3ObjectInfo) obj;
+                        srcKey = o.getKey();
+                        size = o.getSize();
+                    }
+
+                    // 计算目标key：将源路径中的目录前缀替换为目标路径前缀
+                    String relativeKey = srcKey.substring(dirPrefix.length());
+                    String destKey = destDirPrefix + relativeKey;
+
+                    // 获取文件名用于进度显示
+                    String fileName = relativeKey;
+                    int lastSlash = relativeKey.lastIndexOf('/');
+                    if (lastSlash >= 0) {
+                        fileName = relativeKey.substring(lastSlash + 1);
+                    }
+
+                    tasks.add(new CopyTask(srcKey, destKey, dirName + "/" + fileName, true));
+
+                    // 更新进度（枚举阶段）
+                    if (tracker != null) {
+                        tracker.onEnumerate(dirName + "/" + fileName, tasks.size());
+                    }
+                }
+            }
+        }
+
+        return tasks;
+    }
+
+    /**
+     * 构建目标key：将源项放到当前前缀下
+     */
+    private String buildDestKey(String sourceKey) {
+        String base = currentPrefix != null ? currentPrefix : "";
+        String displayKey = sourceKey;
+        if (displayKey.endsWith("/")) {
+            displayKey = displayKey.substring(0, displayKey.length() - 1);
+        }
+        int lastSlash = displayKey.lastIndexOf('/');
+        String name = lastSlash >= 0 ? displayKey.substring(lastSlash + 1) : displayKey;
+
+        if (sourceKey.endsWith("/")) {
+            return base + name + "/";
+        }
+        return base + name;
+    }
+
+    /**
+     * 复制任务数据模型
+     */
+    private static class CopyTask {
+        String sourceKey;
+        String destKey;
+        String displayName;
+        boolean fromDirectory;
+
+        CopyTask(String sourceKey, String destKey, String displayName, boolean fromDirectory) {
+            this.sourceKey = sourceKey;
+            this.destKey = destKey;
+            this.displayName = displayName;
+            this.fromDirectory = fromDirectory;
+        }
+    }
+
+    /**
+     * 进度追踪接口
+     */
+    private interface ProgressTracker {
+        void onEnumerate(String currentItem, int totalFound);
+    }
+
+    /**
+     * 服务端复制（同连接同类型）
+     */
+    private void executeServerSideCopy(ConnectionConfig sourceConfig, String sourceBucket, List<CopyItem> copyItems) {
+        copyCancelled.set(false);
+
+        new Thread(() -> {
+            // 第1阶段：递归展开目录，生成文件复制任务列表
+            final List<CopyTask>[] taskHolder = new List[1];
+            try {
+                taskHolder[0] = expandCopyItems(sourceConfig, sourceBucket, copyItems, (item, total) -> {
+                    Platform.runLater(() -> {
+                        if (copyProgressLabel != null) {
+                            copyProgressLabel.setText("正在扫描: " + item);
+                        }
+                        if (copyProgressDetailLabel != null) {
+                            copyProgressDetailLabel.setText("已发现 " + total + " 个文件");
+                        }
+                    });
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    hideCopyProgressDialog();
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("扫描失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("扫描目录失败: " + e.getMessage());
+                    alert.showAndWait();
+                });
+                return;
+            }
+
+            final List<CopyTask> tasks = taskHolder[0];
+            if (tasks.isEmpty()) {
+                Platform.runLater(() -> {
+                    hideCopyProgressDialog();
+                    stateLabel.setText("没有文件可复制");
+                });
+                return;
+            }
+
+            // 更新进度对话框：进入复制阶段
+            Platform.runLater(() -> {
+                if (copyProgressLabel != null) {
+                    copyProgressLabel.setText("准备复制 " + tasks.size() + " 个文件...");
+                }
+                if (copyProgressBar != null) {
+                    copyProgressBar.setProgress(0);
+                }
+            });
+
+            // 第2阶段：逐个复制文件
+            int success = 0;
+            int failed = 0;
+            String lastError = null;
+
+            for (int i = 0; i < tasks.size(); i++) {
+                if (copyCancelled.get()) break;
+
+                final int index = i;
+                CopyTask task = tasks.get(i);
+
+                try {
+                    if (isAliyunOSS) {
+                        OssService.copyAcrossOSS(sourceConfig, sourceBucket, task.sourceKey,
+                                config, currentBucket, task.destKey, null);
+                    } else {
+                        // 服务端复制：目标Bucket使用当前Bucket（支持跨Bucket）
+                        S3Service.copyObjectAcrossBucket(sourceConfig, sourceBucket, task.sourceKey,
+                                currentBucket, task.destKey);
+                    }
+                    success++;
+                } catch (Throwable e) {
+                    System.out.println("[S3-Paste] 服务端复制失败: " + task.sourceKey + " -> " + e);
+                    e.printStackTrace();
+                    failed++;
+                    lastError = String.valueOf(e.getMessage());
+                    if (lastError == null || lastError.isEmpty()) {
+                        lastError = e.getClass().getSimpleName();
+                    }
+                }
+
+                final int done = success + failed;
+                Platform.runLater(() -> updateCopyProgress(index, task.displayName, done, tasks.size()));
+            }
+
+            final int okCount = success;
+            final int failCount = failed;
+            final String err = lastError;
+
+            Platform.runLater(() -> {
+                hideCopyProgressDialog();
+                if (failCount == 0) {
+                    stateLabel.setText("粘贴完成: 成功 " + okCount + " 个");
+                } else {
+                    stateLabel.setText("粘贴结束: 成功 " + okCount + " 个, 失败 " + failCount + " 个");
+                    Alert alert = new Alert(Alert.AlertType.WARNING);
+                    alert.setTitle("部分粘贴失败");
+                    alert.setHeaderText("成功 " + okCount + " 个, 失败 " + failCount + " 个");
+                    alert.setContentText(err != null ? err : "");
+                    alert.showAndWait();
+                }
+                refresh();
+            });
+        }, "S3-Paste-Server").start();
+    }
+
+    /**
+     * 跨连接/跨类型复制
+     */
+    private void executeCrossConnectionCopy(ConnectionConfig sourceConfig, String sourceBucket, List<CopyItem> copyItems) {
+        copyCancelled.set(false);
+
+        new Thread(() -> {
+            System.out.println("[S3-Paste] 跨连接复制开始: 源=" + sourceConfig.getName()
+                    + ", bucket=" + sourceBucket + ", 项数=" + copyItems.size());
+            // 第1阶段：递归展开目录，生成文件复制任务列表
+            final List<CopyTask>[] taskHolder = new List[1];
+            try {
+                taskHolder[0] = expandCopyItems(sourceConfig, sourceBucket, copyItems, (item, total) -> {
+                    System.out.println("[S3-Paste] 扫描发现: " + item + " (共" + total + ")");
+                    Platform.runLater(() -> {
+                        if (copyProgressLabel != null) {
+                            copyProgressLabel.setText("正在扫描: " + item);
+                        }
+                        if (copyProgressDetailLabel != null) {
+                            copyProgressDetailLabel.setText("已发现 " + total + " 个文件");
+                        }
+                    });
+                });
+            } catch (Throwable e) {
+                System.out.println("[S3-Paste] 扫描异常: " + e);
+                e.printStackTrace();
+                Platform.runLater(() -> {
+                    hideCopyProgressDialog();
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("扫描失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("扫描目录失败: " + e);
+                    alert.showAndWait();
+                });
+                return;
+            }
+
+            final List<CopyTask> tasks = taskHolder[0];
+            if (tasks.isEmpty()) {
+                Platform.runLater(() -> {
+                    hideCopyProgressDialog();
+                    stateLabel.setText("没有文件可复制");
+                });
+                return;
+            }
+
+            // 更新进度对话框：进入复制阶段
+            Platform.runLater(() -> {
+                if (copyProgressLabel != null) {
+                    copyProgressLabel.setText("准备复制 " + tasks.size() + " 个文件...");
+                }
+                if (copyProgressBar != null) {
+                    copyProgressBar.setProgress(0);
+                }
+            });
+
+            // 目标连接预检：确认目标可达且Bucket存在（把"网络/凭证问题"从卡死变成明确报错）
+            try {
+                System.out.println("[S3-Paste] 预检目标连接...");
+                if (isAliyunOSS) {
+                    OssService.listBuckets(config);
+                } else {
+                    S3Service.listBuckets(config);
+                }
+                System.out.println("[S3-Paste] 目标连接预检通过");
+            } catch (Throwable t) {
+                System.out.println("[S3-Paste] 目标连接预检失败: " + t);
+                t.printStackTrace();
+                Platform.runLater(() -> {
+                    hideCopyProgressDialog();
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("目标连接不可用");
+                    alert.setHeaderText("无法连接目标 " + config.getName());
+                    alert.setContentText(String.valueOf(t.getMessage()));
+                    alert.showAndWait();
+                });
+                return;
+            }
+
+            // 看门狗：60秒无字节级进展则dump相关线程堆栈（定位挂起的唯一手段）
+            final java.util.concurrent.atomic.AtomicLong lastActivity = new java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis());
+            final java.util.concurrent.atomic.AtomicBoolean copyFinished = new java.util.concurrent.atomic.AtomicBoolean(false);
+            Thread watchdog = new Thread(() -> {
+                int dumped = 0;
+                while (!copyFinished.get() && dumped < 3) {
+                    try { Thread.sleep(10000); } catch (InterruptedException e) { return; }
+                    if (copyFinished.get()) return;
+                    long idle = System.currentTimeMillis() - lastActivity.get();
+                    if (idle > 60000) {
+                        dumped++;
+                        System.out.println("======== [S3-Paste-Watchdog] " + (idle / 1000) + "秒无进展，dump线程堆栈 (第" + dumped + "次) ========");
+                        for (java.util.Map.Entry<Thread, StackTraceElement[]> e : Thread.getAllStackTraces().entrySet()) {
+                            Thread t = e.getKey();
+                            String n = t.getName();
+                            if (n.contains("S3") || n.contains("OkHttp") || n.contains("MINIO")
+                                    || n.contains("Paste") || n.contains("Copy") || n.contains("OSS")) {
+                                System.out.println("--- 线程[" + n + "] 状态: " + t.getState());
+                                for (StackTraceElement el : e.getValue()) {
+                                    System.out.println("    at " + el);
+                                }
+                            }
+                        }
+                    }
+                }
+            }, "S3-Paste-Watchdog");
+            watchdog.setDaemon(true);
+            watchdog.start();
+
+            // 第2阶段：逐个复制文件（支持进度回调）
+            int success = 0;
+            int failed = 0;
+            String lastError = null;
+            // 错误聚合：记录每种错误出现的次数，结果弹窗展示全部错误类型
+            java.util.LinkedHashMap<String, Integer> errorCounts = new java.util.LinkedHashMap<>();
+
+            for (int i = 0; i < tasks.size(); i++) {
+                if (copyCancelled.get()) break;
+
+                final int index = i;
+                CopyTask task = tasks.get(i);
+
+                try {
+                    boolean sourceIsOSS = sourceConfig.getType() == ConnectType.ALIYUN_OSS;
+                    boolean destIsOSS = isAliyunOSS;
+
+                    S3Service.ProgressCallback progressCallback = new S3Service.ProgressCallback() {
+                        private volatile String currentPhase = "";
+
+                        @Override
+                        public void onPhase(String phase) {
+                            currentPhase = phase;
+                            lastActivity.set(System.currentTimeMillis());
+                            Platform.runLater(() -> {
+                                if (copyProgressDetailLabel != null) {
+                                    copyProgressDetailLabel.setText(phase + "中...");
+                                }
+                            });
+                        }
+
+                        @Override
+                        public void onProgress(long transferred, long totalSize) {
+                            lastActivity.set(System.currentTimeMillis());
+                            String phase = currentPhase;
+                            Platform.runLater(() -> updateCopyTransferProgress(index, task.displayName, phase, transferred, totalSize));
+                        }
+                    };
+
+                    System.out.println("[S3-Paste] 复制文件 " + (i + 1) + "/" + tasks.size() + ": " + task.sourceKey
+                            + " -> " + task.destKey + (sourceIsOSS ? " (OSS源)" : "") + (destIsOSS ? " (OSS目标)" : ""));
+                    long fileStart = System.currentTimeMillis();
+
+                    if (sourceIsOSS && destIsOSS) {
+                        OssService.copyAcrossOSS(sourceConfig, sourceBucket, task.sourceKey,
+                                config, currentBucket, task.destKey, progressCallback);
+                    } else if (sourceIsOSS) {
+                        copyFromOSStoS3(sourceConfig, sourceBucket, task.sourceKey,
+                                config, currentBucket, task.destKey, progressCallback);
+                    } else if (destIsOSS) {
+                        copyFromS3toOSS(sourceConfig, sourceBucket, task.sourceKey,
+                                config, currentBucket, task.destKey, progressCallback);
+                    } else {
+                        S3Service.copyAcrossS3(sourceConfig, sourceBucket, task.sourceKey,
+                                config, currentBucket, task.destKey, progressCallback);
+                    }
+                    success++;
+                    System.out.println("[S3-Paste] 文件完成 " + (i + 1) + "/" + tasks.size() + ", 耗时 "
+                            + (System.currentTimeMillis() - fileStart) + "ms");
+                } catch (Throwable e) {
+                    // 用Throwable而非Exception：捕获NoClassDefFoundError等Error，避免线程被静默杀死导致弹窗卡死
+                    System.out.println("[S3-Paste] 文件失败: " + task.sourceKey + " -> " + e);
+                    e.printStackTrace();
+                    failed++;
+                    String msg = String.valueOf(e.getMessage());
+                    if (msg == null || msg.isEmpty() || "null".equals(msg)) {
+                        msg = e.getClass().getSimpleName();
+                    }
+                    lastError = msg;
+                    errorCounts.merge(msg, 1, Integer::sum);
+                }
+
+                lastActivity.set(System.currentTimeMillis());
+                final int done = success + failed;
+                Platform.runLater(() -> updateCopyProgress(index, task.displayName, done, tasks.size()));
+            }
+
+            copyFinished.set(true);
+            final int okCount = success;
+            final int failCount = failed;
+            final java.util.LinkedHashMap<String, Integer> errs = errorCounts;
+
+            Platform.runLater(() -> {
+                hideCopyProgressDialog();
+                if (failCount == 0) {
+                    stateLabel.setText("粘贴完成: 成功 " + okCount + " 个");
+                } else {
+                    stateLabel.setText("粘贴结束: 成功 " + okCount + " 个, 失败 " + failCount + " 个");
+                    // 聚合展示错误类型（最多5种），便于定位根因
+                    StringBuilder sb = new StringBuilder();
+                    int shown = 0;
+                    for (java.util.Map.Entry<String, Integer> en : errs.entrySet()) {
+                        if (shown >= 5) { sb.append("...等共 ").append(errs.size()).append(" 种错误"); break; }
+                        if (shown > 0) sb.append("\n");
+                        sb.append("[").append(en.getValue()).append("次] ").append(en.getKey());
+                        shown++;
+                    }
+                    Alert alert = new Alert(Alert.AlertType.WARNING);
+                    alert.setTitle("部分粘贴失败");
+                    alert.setHeaderText("成功 " + okCount + " 个, 失败 " + failCount + " 个");
+                    alert.setContentText(sb.toString());
+                    alert.showAndWait();
+                }
+                refresh();
+            });
+        }, "S3-Paste-Cross").start();
+    }
+
+    /**
+     * 从OSS复制到S3（临时文件两阶段）
+     */
+    private void copyFromOSStoS3(ConnectionConfig sourceConfig, String sourceBucket, String sourceKey,
+                                  ConnectionConfig destConfig, String destBucket, String destKey,
+                                  S3Service.ProgressCallback callback) throws Exception {
+        java.nio.file.Path tempFile = java.nio.file.Files.createTempFile("o2s-", ".part");
+        try {
+            // 第1阶段：下载OSS对象到临时文件
+            java.io.InputStream sourceStream = OssService.getObjectStream(sourceConfig, sourceBucket, sourceKey);
+            if (callback != null) callback.onPhase("下载");
+            try (java.io.OutputStream out = java.nio.file.Files.newOutputStream(tempFile)) {
+                byte[] buffer = new byte[8192];
+                int len;
+                long transferred = 0;
+                long lastReportTime = 0;
+                while ((len = sourceStream.read(buffer)) != -1) {
+                    out.write(buffer, 0, len);
+                    transferred += len;
+                    long now = System.currentTimeMillis();
+                    if (callback != null && now - lastReportTime > 200) {
+                        lastReportTime = now;
+                        callback.onProgress(transferred, -1);
+                    }
+                }
+            } finally {
+                try { sourceStream.close(); } catch (Exception e) { /* ignore */ }
+            }
+
+            // 第2阶段：从临时文件上传到S3（用OkHttp直传，绕开MinIO反射问题）
+            long fileSize = java.nio.file.Files.size(tempFile);
+            if (callback != null) {
+                callback.onPhase("上传");
+                callback.onProgress(0, fileSize);
+            }
+            S3Service.uploadFileDirect(destConfig, destBucket, destKey, tempFile.toFile(), fileSize, "application/octet-stream", callback);
+        } finally {
+            try { java.nio.file.Files.deleteIfExists(tempFile); } catch (Exception e) { /* ignore */ }
+        }
+
+        if (callback != null) callback.onComplete();
+    }
+
+    /**
+     * 从S3复制到OSS（临时文件两阶段）
+     */
+    private void copyFromS3toOSS(ConnectionConfig sourceConfig, String sourceBucket, String sourceKey,
+                                  ConnectionConfig destConfig, String destBucket, String destKey,
+                                  S3Service.ProgressCallback callback) throws Exception {
+        java.nio.file.Path tempFile = java.nio.file.Files.createTempFile("s2o-", ".part");
+        try {
+            // 第1阶段：下载S3对象到临时文件
+            java.io.InputStream sourceStream = S3Service.getObjectStream(sourceConfig, sourceBucket, sourceKey);
+            if (callback != null) callback.onPhase("下载");
+            try (java.io.OutputStream out = java.nio.file.Files.newOutputStream(tempFile)) {
+                byte[] buffer = new byte[8192];
+                int len;
+                long transferred = 0;
+                long lastReportTime = 0;
+                while ((len = sourceStream.read(buffer)) != -1) {
+                    out.write(buffer, 0, len);
+                    transferred += len;
+                    long now = System.currentTimeMillis();
+                    if (callback != null && now - lastReportTime > 200) {
+                        lastReportTime = now;
+                        callback.onProgress(transferred, -1);
+                    }
+                }
+            } finally {
+                try { sourceStream.close(); } catch (Exception e) { /* ignore */ }
+            }
+
+            // 第2阶段：从临时文件上传到OSS
+            long fileSize = java.nio.file.Files.size(tempFile);
+            if (callback != null) {
+                callback.onPhase("上传");
+                callback.onProgress(0, fileSize);
+            }
+            try (java.io.InputStream upStream = new java.io.FileInputStream(tempFile.toFile())) {
+                OssService.uploadFile(destConfig, destBucket, destKey, upStream, fileSize, "application/octet-stream");
+            }
+        } finally {
+            try { java.nio.file.Files.deleteIfExists(tempFile); } catch (Exception e) { /* ignore */ }
+        }
+
+        if (callback != null) callback.onComplete();
+    }
+
+    /**
+     * 显示复制进度对话框
+     */
+    private void showCopyProgressDialog(int totalFiles) {
+        copyProgressStage = new Stage();
+        copyProgressStage.setTitle("粘贴文件...");
+        copyProgressStage.setWidth(500);
+        copyProgressStage.setHeight(200);
+        copyProgressStage.setResizable(false);
+        copyProgressStage.initOwner(getScene().getWindow());
+
+        VBox vbox = new VBox(10);
+        vbox.setPadding(new Insets(15));
+        vbox.setAlignment(Pos.CENTER_LEFT);
+
+        Label titleLabel = new Label("正在粘贴...");
+        titleLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold;");
+
+        copyProgressLabel = new Label("正在扫描目录结构...");
+        copyProgressLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #333;");
+        copyProgressLabel.setMaxWidth(470);
+        copyProgressLabel.setTextOverrun(javafx.scene.control.OverrunStyle.ELLIPSIS);
+
+        copyProgressBar = new ProgressBar(0);
+        copyProgressBar.setMaxWidth(Double.MAX_VALUE);
+        copyProgressBar.setStyle("-fx-accent: #3592CB;");
+
+        copyProgressDetailLabel = new Label("");
+        copyProgressDetailLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+        copyProgressDetailLabel.setMaxWidth(470);
+        copyProgressDetailLabel.setTextOverrun(javafx.scene.control.OverrunStyle.ELLIPSIS);
+
+        Button cancelBtn = new Button("取消");
+        cancelBtn.setStyle("-fx-background-color: #f5f5f5; -fx-border-color: #ddd;");
+        cancelBtn.setOnAction(e -> copyCancelled.set(true));
+
+        HBox buttonBox = new HBox();
+        buttonBox.setAlignment(Pos.CENTER_RIGHT);
+        buttonBox.getChildren().add(cancelBtn);
+
+        vbox.getChildren().addAll(titleLabel, copyProgressLabel, copyProgressBar,
+                copyProgressDetailLabel, buttonBox);
+
+        Scene scene = new Scene(vbox);
+        copyProgressStage.setScene(scene);
+        copyProgressStage.show();
+    }
+
+    /**
+     * 隐藏复制进度对话框
+     */
+    private void hideCopyProgressDialog() {
+        if (copyProgressStage != null) {
+            copyProgressStage.close();
+            copyProgressStage = null;
+        }
+    }
+
+    /**
+     * 更新复制进度（文件级）
+     */
+    private void updateCopyProgress(int currentIndex, String fileName, int done, int total) {
+        if (copyProgressBar == null || copyProgressLabel == null) return;
+
+        double progress = (double) done / total;
+        copyProgressBar.setProgress(progress);
+        copyProgressLabel.setText(String.format("正在复制: %s (%d/%d)", fileName, done, total));
+    }
+
+    /**
+     * 更新传输进度（字节级，含下载/上传阶段）
+     */
+    private void updateCopyTransferProgress(int currentIndex, String fileName, String phase, long transferred, long totalSize) {
+        if (copyProgressDetailLabel == null) return;
+
+        String phaseStr = (phase == null || phase.isEmpty()) ? "传输" : phase;
+        String transferredStr = formatFileSize(transferred);
+        if (totalSize > 0) {
+            String totalStr = formatFileSize(totalSize);
+            double percent = (double) transferred / totalSize * 100;
+            copyProgressDetailLabel.setText(String.format("%s中: %s / %s (%.0f%%)", phaseStr, transferredStr, totalStr, percent));
+        } else {
+            copyProgressDetailLabel.setText(String.format("%s中: %s", phaseStr, transferredStr));
+        }
+    }
+
+    /**
+     * 格式化文件大小
+     */
+    private String formatFileSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024));
+        return String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024));
+    }
+
+    /**
+     * 根据ID查找连接配置
+     */
+    private ConnectionConfig findConfigById(String id) {
+        try {
+            List<ConnectionConfig> all = ConfigManager.loadConnections();
+            for (ConnectionConfig c : all) {
+                if (id.equals(c.getId())) return c;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    // ============ 文件复制/粘贴功能结束 ============
 
     /**
      * 文件项数据模型
