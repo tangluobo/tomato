@@ -16,6 +16,14 @@
         <native.maven.plugin.version>0.11.3</native.maven.plugin.version>
         <mainClass>com.tangluobo.tomato.Launcher</mainClass>
         <javafx.version>27-ea+24</javafx.version>
+        <!-- jpackage 相关属性 -->
+        <!-- agent.exec.skip=true 时跳过 test 阶段启动 UI 的 exec（java-agent），jpackage profile 中自动置为 true -->
+        <agent.exec.skip>false</agent.exec.skip>
+        <!-- jpackage 打包类型：exe（安装向导，需 WiX 3.x）/ msi / app-image（绿色目录） -->
+        <jpackage.type>exe</jpackage.type>
+        <!-- WiX 3.x binaries 目录（jpackage 生成 exe/msi 时查找 candle.exe/light.exe），
+             指向项目内置的 packaging/wix314；也可用 WIX 环境变量或 PATH 覆盖 -->
+        <jpackage.wixdir>${project.basedir}/packaging/wix314</jpackage.wixdir>
     </properties>
 
     <description>
@@ -413,6 +421,7 @@
                         </goals>
                         <phase>test</phase>
                         <configuration>
+                            <skip>${agent.exec.skip}</skip>
                             <executable>java</executable>
                             <workingDirectory>${project.build.directory}</workingDirectory>
                             <arguments>
@@ -484,6 +493,113 @@
 <!--                               可以用这个参数看到更多辅助信息 native-image - -expert-options 两个-之间没有空格   -->
                             </buildArgs>
                         </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <!-- jpackage 打包 profile：mvn clean package -Pjpackage
+             思路：复用 maven-assembly-plugin 产出的 fat jar（classpath 运行方式，与开发期一致），
+                  用 JDK 自带的 jpackage 生成自带运行时的安装包（exe 安装向导，需 WiX 3.x）或绿色目录（app-image）。
+             说明：1. profile 激活时会自动跳过 test 阶段启动 UI 的 java-agent exec，打包过程无需人工干预。
+                  2. 默认 type=exe 生成安装向导 exe（target/jpackage/tomato-0.0.1.exe），双击走安装向导流程。
+                  3. 需 WiX Toolset 3.x：项目内置 packaging/wix314（绿色版），通过 jpackage.wixdir 属性指向；
+                     也可设置 WIX 环境变量或把 candle/light 加入 PATH。
+                  4. 如需绿色目录：mvn clean package -Pjpackage -Djpackage.type=app-image
+                     （app-image 时 win 系列安装选项会被 jpackage 忽略，不影响）。 -->
+        <profile>
+            <id>jpackage</id>
+            <properties>
+                <!-- 打包时跳过 test 阶段的 UI 启动（覆盖全局默认值 false） -->
+                <agent.exec.skip>true</agent.exec.skip>
+            </properties>
+            <build>
+                <plugins>
+                    <!-- 把 fat jar 复制到 target/jpackage-input，作为 jpackage 的 input 目录，
+                         避免 input 直接指向 target 把 classes、modules 等全部拷进应用目录 -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-resources-plugin</artifactId>
+                        <version>3.3.1</version>
+                        <executions>
+                            <execution>
+                                <id>stage-jpackage-input</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>copy-resources</goal>
+                                </goals>
+                                <configuration>
+                                    <outputDirectory>${project.build.directory}/jpackage-input</outputDirectory>
+                                    <resources>
+                                        <resource>
+                                            <directory>${project.build.directory}</directory>
+                                            <includes>
+                                                <include>${project.build.finalName}-jar-with-dependencies.jar</include>
+                                            </includes>
+                                        </resource>
+                                    </resources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+
+                    <!-- 调用 JDK 自带的 jpackage 完成打包 -->
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <version>3.1.1</version>
+                        <executions>
+                            <execution>
+                                <id>jpackage</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <executable>${java.home}/bin/jpackage</executable>
+                                    <!-- 把 WiX binaries 目录注入 PATH（jpackage 通过 PATH 查找 candle.exe/light.exe），
+                                         同时设 WIX 变量兼容旧版查找逻辑，无需全局安装 WiX -->
+                                    <environmentVariables>
+                                        <WIX>${jpackage.wixdir}</WIX>
+                                        <PATH>${jpackage.wixdir}${path.separator}${env.PATH}</PATH>
+                                    </environmentVariables>
+                                    <arguments>
+                                        <!-- 打包类型，默认 exe 安装向导，可用 -Djpackage.type=app-image 生成绿色目录 -->
+                                        <argument>--type</argument>
+                                        <argument>${jpackage.type}</argument>
+                                        <argument>--name</argument>
+                                        <argument>${project.name}</argument>
+                                        <argument>--dest</argument>
+                                        <argument>${project.build.directory}/jpackage</argument>
+                                        <argument>--input</argument>
+                                        <argument>${project.build.directory}/jpackage-input</argument>
+                                        <argument>--main-jar</argument>
+                                        <argument>${project.build.finalName}-jar-with-dependencies.jar</argument>
+                                        <argument>--main-class</argument>
+                                        <argument>${mainClass}</argument>
+                                        <argument>--app-version</argument>
+                                        <argument>${project.version}</argument>
+                                        <argument>--vendor</argument>
+                                        <argument>tangluobo</argument>
+                                        <argument>--description</argument>
+                                        <argument>Tomato - 数据库与服务器连接管理工具</argument>
+                                        <argument>--icon</argument>
+                                        <argument>${project.basedir}/packaging/tomato.ico</argument>
+                                        <!-- 下面为 exe/msi 安装向导选项（app-image 类型时 jpackage 会自动忽略） -->
+                                        <!-- 开始菜单快捷方式 -->
+                                        <argument>--win-menu</argument>
+                                        <argument>--win-menu-group</argument>
+                                        <argument>Tomato</argument>
+                                        <!-- 桌面快捷方式 -->
+                                        <argument>--win-shortcut</argument>
+                                        <!-- 安装向导允许用户选择安装目录 -->
+                                        <argument>--win-dir-chooser</argument>
+                                        <!-- 固定升级 UUID：同 UUID 的新版本安装会覆盖旧版本，而非重复安装 -->
+                                        <argument>--win-upgrade-uuid</argument>
+                                        <argument>9EDBE186-C9AB-44DC-BA36-5E69BFD9F4A1</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                        </executions>
                     </plugin>
                 </plugins>
             </build>
