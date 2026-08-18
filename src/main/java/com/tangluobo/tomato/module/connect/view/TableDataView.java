@@ -6,6 +6,7 @@ import com.tangluobo.tomato.module.connect.RowState;
 import com.tangluobo.tomato.module.connect.TableRowData;
 import com.tangluobo.tomato.module.connect.service.DatabaseService;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
+import com.tangluobo.tomato.utils.RowSelectorDragSelection;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -1343,17 +1344,21 @@ public class TableDataView extends BorderPane {
                 arrow.setVisible(false);
                 // 左右两侧均加网格线
                 setStyle("-fx-border-color: transparent #BEBEBC transparent #BEBEBC; -fx-border-width: 0 1 0 1; -fx-alignment: center;");
+                // 行选择器列拖拽多行选中的起始行（-1 表示未从行选择器发起拖拽）
+                final int[] dragStart = RowSelectorDragSelection.install(tableView, this);
                 // 点击行选择器列时选中整行（使用addEventFilter在捕获阶段处理，避免被TableView的拖拽选择处理器覆盖）
                 addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
                     if (getTableRow() != null && getTableRow().getItem() != null) {
                         int row = getTableRow().getIndex();
                         if (event.isControlDown()) {
+                            dragStart[0] = -1;
                             if (isRowSelected(row)) {
                                 tableView.getSelectionModel().clearSelection(row);
                             } else {
                                 tableView.getSelectionModel().select(row);
                             }
                         } else if (event.isShiftDown()) {
+                            dragStart[0] = -1;
                             int anchor = tableView.getSelectionModel().getFocusedIndex();
                             if (anchor >= 0) {
                                 int start = Math.min(row, anchor);
@@ -1367,6 +1372,7 @@ public class TableDataView extends BorderPane {
                         } else {
                             tableView.getSelectionModel().clearSelection();
                             tableView.getSelectionModel().select(row);
+                            dragStart[0] = row;
                         }
                         event.consume();
                     }

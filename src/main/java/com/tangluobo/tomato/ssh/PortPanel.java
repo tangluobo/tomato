@@ -1,5 +1,6 @@
 package com.tangluobo.tomato.ssh;
 
+import com.tangluobo.tomato.utils.RowSelectorDragSelection;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
@@ -150,16 +151,19 @@ public class PortPanel extends BorderPane {
                 arrow.setVisible(false);
                 setStyle("-fx-border-color: transparent #e0e0e0 transparent #e0e0e0; -fx-border-width: 0 1 0 1;");
                 // 点击行选择器列时选中整行（Ctrl/Shift 支持多选）
+                final int[] dragStart = RowSelectorDragSelection.install(portTable, this);
                 addEventFilter(MouseEvent.MOUSE_PRESSED, event -> {
                     if (getTableRow() != null && getTableRow().getItem() != null) {
                         int row = getTableRow().getIndex();
                         if (event.isControlDown()) {
+                            dragStart[0] = -1;
                             if (isRowSelected(row)) {
                                 portTable.getSelectionModel().clearSelection(row);
                             } else {
                                 portTable.getSelectionModel().select(row);
                             }
                         } else if (event.isShiftDown()) {
+                            dragStart[0] = -1;
                             int anchor = portTable.getSelectionModel().getFocusedIndex();
                             if (anchor >= 0) {
                                 int start = Math.min(row, anchor);
@@ -173,6 +177,7 @@ public class PortPanel extends BorderPane {
                         } else {
                             portTable.getSelectionModel().clearSelection();
                             portTable.getSelectionModel().select(row);
+                            dragStart[0] = row;
                         }
                         event.consume();
                     }
