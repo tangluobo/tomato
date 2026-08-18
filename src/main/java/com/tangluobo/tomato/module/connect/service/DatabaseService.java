@@ -2842,7 +2842,10 @@ public class DatabaseService {
                 // MySQL: 任何列属性变化都用 MODIFY COLUMN（需完整列定义）
                 if (typeChanged || nullableChanged || defaultChanged || commentChanged
                         || !getValue(currentRow, columnTitles, "无符号").equals(getValue(originalRow, columnTitles, "无符号"))
-                        || !getValue(currentRow, columnTitles, "填充零").equals(getValue(originalRow, columnTitles, "填充零"))) {
+                        || !getValue(currentRow, columnTitles, "填充零").equals(getValue(originalRow, columnTitles, "填充零"))
+                        || !getValue(currentRow, columnTitles, "自增").equals(getValue(originalRow, columnTitles, "自增"))
+                        || !getValue(currentRow, columnTitles, "字符集").equals(getValue(originalRow, columnTitles, "字符集"))
+                        || !getValue(currentRow, columnTitles, "排序规则").equals(getValue(originalRow, columnTitles, "排序规则"))) {
                     StringBuilder sql = new StringBuilder();
                     sql.append("ALTER TABLE `").append(databaseName).append("`.`").append(tableName).append("` ");
                     sql.append("MODIFY COLUMN `").append(columnName).append("` ").append(type).append(typeSize);
