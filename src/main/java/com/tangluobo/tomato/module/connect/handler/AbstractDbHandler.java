@@ -885,16 +885,17 @@ public abstract class AbstractDbHandler implements ConnectHandler {
 
     // ==================== 文件夹双击：加载表/视图列表 ====================
 
-    /** 双击表文件夹：打开对象视图 Tab，若已加载则切换展开状态，否则加载表列表 */
+    /** 双击表文件夹：打开对象视图 Tab，并展开节点显示表列表（未加载则先加载） */
     public void handleTablesFolderDoubleClick(TreeItem<String> folderItem, DatabaseNodeData data) {
         // 打开对象视图 Tab（已存在则激活）
         openObjectsView(folderItem, data);
 
-        if (!folderItem.getChildren().isEmpty()) {
-            folderItem.setExpanded(!folderItem.isExpanded());
-            return;
+        if (folderItem.getChildren().isEmpty()) {
+            loadTablesForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(), true);
+        } else {
+            // 已加载则展开节点，方便查看表列表
+            folderItem.setExpanded(true);
         }
-        loadTablesForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName(), data.getSchemaName(), true);
     }
 
     /**
@@ -1301,11 +1302,38 @@ public abstract class AbstractDbHandler implements ConnectHandler {
 
     /** 关闭数据库节点：清理子节点数据并恢复未打开状态 */
     public void closeDatabase(TreeItem<String> dbItem, DatabaseNodeData data) {
-        module.removeDbNodeDataRecursive(dbItem);
+        // 仅清理子节点的映射，保留 dbItem 自身的 dbNodeDataMap 映射，
+        // 否则关闭后双击该节点时 dbNodeDataMap.get(dbItem) 返回 null，无法触发 openDatabase 重新打开
+        for (TreeItem<String> child : dbItem.getChildren()) {
+            module.removeDbNodeDataRecursive(child);
+        }
         dbItem.getChildren().clear();
         data.setOpened(false);
         dbItem.setGraphic(module.getDbNodeIcon(data));
         dbItem.setExpanded(false);
+
+        // 关闭该数据库对应的"对象"标签（该标签 setClosable(false) 不可手动关闭，关闭数据库时需一并清理）
+        if (module.getTerminalTabPane() != null
+                && data.getConnectionConfig() != null
+                && data.getDatabaseName() != null) {
+            String configId = data.getConnectionConfig().getId();
+            String dbName = data.getDatabaseName();
+            // tabId 格式: "objects_" + configId + "_" + dbName (+ "_" + schemaName)
+            String mysqlObjectsTabId = "objects_" + configId + "_" + dbName;
+            String schemaPrefix = mysqlObjectsTabId + "_";
+            ObservableList<Tab> tabs = module.getTerminalTabPane().getTabs();
+            tabs.removeIf(t -> {
+                Object ud = t.getUserData();
+                if (ud instanceof String tabId) {
+                    // 精确匹配 MySQL（无 schema）或前缀匹配 PostgreSQL/Oracle（带 schema）
+                    return tabId.equals(mysqlObjectsTabId) || tabId.startsWith(schemaPrefix);
+                }
+                return false;
+            });
+            if (tabs.isEmpty()) {
+                module.showWelcomeView();
+            }
+        }
     }
 
     /**
