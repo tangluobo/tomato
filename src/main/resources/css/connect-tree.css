@@ -124,9 +124,10 @@
     -fx-background-insets: 0 !important;
 }
 
-.tab-pane > .tab-header-background {
+.tab-pane > .tab-header-area > .tab-header-background {
     -fx-background-color: #ececea !important;
     -fx-background-insets: 0 !important;
+    -fx-background-radius: 0 !important;
     -fx-border-color: transparent !important;
     -fx-border-width: 0 !important;
 }
@@ -141,19 +142,20 @@
 }
 
 .tab-pane .tab {
-    -fx-background-color: #ececea;
-    -fx-background-insets: 0;
-    -fx-background-radius: 0;
+    -fx-background-color: #e0e0e0 !important;
+    -fx-background-insets: 0 !important;
+    -fx-background-radius: 0 !important;
     -fx-padding: 5 12;
-    -fx-border-color: transparent;
-    -fx-border-width: 0;
+    -fx-border-color: transparent #c0c0c0 #c0c0c0 transparent;
+    -fx-border-width: 0 1px 1px 0;
+    -fx-border-radius: 0;
 }
 
 .tab-pane .tab:selected {
-    -fx-background-color: #FCFFFF;
-    -fx-background-insets: 0;
-    -fx-border-color: transparent transparent #000000 transparent;
-    -fx-border-width: 0 0 1 0;
+    -fx-background-color: #FCFFFF !important;
+    -fx-background-insets: 0 !important;
+    -fx-border-color: transparent #c0c0c0 #000000 transparent;
+    -fx-border-width: 0 1px 1px 0;
     -fx-border-radius: 0;
 }
 
@@ -171,7 +173,7 @@
 }
 
 .tab-pane .tab:hover {
-    -fx-background-color: #dedede;
+    -fx-background-color: #d8d8d8;
 }
 
 .tab-pane .tab:selected:hover {
@@ -181,8 +183,11 @@
 .tab-pane .tab:focused {
     -fx-focus-color: transparent;
     -fx-faint-focus-color: transparent;
-    -fx-background-color: #ececea;
+    -fx-background-color: #e0e0e0;
     -fx-background-insets: 0;
+    -fx-border-color: transparent #c0c0c0 #c0c0c0 transparent;
+    -fx-border-width: 0 1px 1px 0;
+    -fx-border-radius: 0;
 }
 
 .tab-pane .tab:selected:focused {
@@ -190,8 +195,8 @@
     -fx-faint-focus-color: transparent;
     -fx-background-color: #FCFFFF;
     -fx-background-insets: 0;
-    -fx-border-color: transparent transparent #000000 transparent;
-    -fx-border-width: 0 0 1 0;
+    -fx-border-color: transparent #c0c0c0 #000000 transparent;
+    -fx-border-width: 0 1px 1px 0;
     -fx-border-radius: 0;
 }
 
