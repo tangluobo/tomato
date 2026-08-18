@@ -1036,8 +1036,13 @@ public abstract class AbstractDbHandler implements ConnectHandler {
 
         // 新建表保存成功后：更新 tab 标题/userData（切换为设计表标识）并刷新表树
         final Tab finalTab = tab;
+        // 字段脏状态：未保存时Tab标题前加*，保存后去除
+        final String[] baseTitle = {tabTitle};
+        structView.setOnDirtyChange(dirty -> finalTab.setText((dirty ? "*" : "") + baseTitle[0]));
+
         structView.setOnTableCreated(newTableName -> {
-            finalTab.setText(newTableName + "@" + data.getDatabaseName() + "(" + config.getHost() + ":" + config.getPort() + ")-表结构");
+            baseTitle[0] = newTableName + "@" + data.getDatabaseName() + "(" + config.getHost() + ":" + config.getPort() + ")-表结构";
+            finalTab.setText(baseTitle[0]);
             finalTab.setUserData("struct_" + config.getId() + "_" + data.getDatabaseName() + "_" + newTableName);
             refreshDbNode(item, data);
         });
@@ -1096,6 +1101,10 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         }
         tab.setContent(structView);
         tab.setUserData(tabId);
+
+        // 字段脏状态：未保存时Tab标题前加*，保存后去除
+        final String[] baseTitle = {tabTitle};
+        structView.setOnDirtyChange(dirty -> tab.setText((dirty ? "*" : "") + baseTitle[0]));
 
         ContextMenu structTabContextMenu = new ContextMenu();
         MenuItem structConfigItem = new MenuItem("表格配置");
@@ -1247,15 +1256,15 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 contextMenu.getItems().addAll(newBackupItem, new SeparatorMenuItem(), refreshItem);
             }
             case TABLE, VIEW -> {
+                MenuItem openTableItem = new MenuItem("打开表");
+                openTableItem.setOnAction(e -> handleTableDataDoubleClick(item, data));
                 MenuItem designItem = new MenuItem("设计表");
                 designItem.setOnAction(e -> handleTableStructureDoubleClick(item, data));
-                MenuItem openDataItem = new MenuItem("打开数据");
-                openDataItem.setOnAction(e -> handleTableDataDoubleClick(item, data));
                 MenuItem copyTableItem = new MenuItem("复制表");
                 copyTableItem.setOnAction(e -> handleCopyTable(item, data));
                 MenuItem deleteItem = new MenuItem("删除");
                 deleteItem.setOnAction(e -> module.deleteDbNodes());
-                contextMenu.getItems().addAll(designItem, openDataItem, new SeparatorMenuItem(), copyTableItem, new SeparatorMenuItem(), deleteItem);
+                contextMenu.getItems().addAll(openTableItem, designItem, new SeparatorMenuItem(), copyTableItem, new SeparatorMenuItem(), deleteItem);
             }
             case QUERY -> {
                 MenuItem openQueryItem = new MenuItem("打开");

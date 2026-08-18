@@ -48,6 +48,8 @@ public class TableStructureView extends BorderPane {
     private boolean isNewTable;
     /** 新建表保存成功回调，参数为新建的表名 */
     private java.util.function.Consumer<String> onTableCreated;
+    /** 字段脏状态回调，参数为 dirty 状态（true=有未保存变更，false=已保存） */
+    private java.util.function.Consumer<Boolean> onDirtyChange;
 
     private TableView<ObservableList<String>> tableView;
     private ProgressIndicator loadingIndicator;
@@ -126,6 +128,11 @@ public class TableStructureView extends BorderPane {
     /** 表注释原始值，用于检测变更 */
     private String originalTableComment = null;
 
+    /** 字段表原始数据快照（深拷贝），用于检测字段增删改并生成ALTER SQL */
+    private List<ObservableList<String>> originalColumnsSnapshot = new ArrayList<>();
+    /** 是否有未保存的字段变更（增/删/改/移动），控制Tab标题星号 */
+    private boolean dirty = false;
+
     /** 缓存的数据类型列表（基于当前连接的数据库类型和版本） */
     private List<String> cachedDataTypes;
     /** 缓存的数据库版本字符串 */
@@ -153,6 +160,45 @@ public class TableStructureView extends BorderPane {
     /** 设置新建表保存成功回调（由 ConnectModule 设置，用于更新 tab 标题/userData 并刷新表树） */
     public void setOnTableCreated(java.util.function.Consumer<String> callback) {
         this.onTableCreated = callback;
+    }
+
+    /** 设置字段脏状态回调（由 AbstractDbHandler 设置，用于在Tab标题前加/去 *） */
+    public void setOnDirtyChange(java.util.function.Consumer<Boolean> callback) {
+        this.onDirtyChange = callback;
+    }
+
+    /** 标记字段已修改：设置dirty=true并通知回调，若SQL预览已加载则刷新预览 */
+    private void markDirty() {
+        if (!dirty) {
+            dirty = true;
+            notifyDirtyChange();
+        }
+        // SQL预览面板已加载时实时刷新ALTER预览
+        if (sqlPreviewLoaded && !isNewTable) {
+            loadSqlPreview();
+        }
+    }
+
+    /** 清除脏状态：重建原始快照并通知回调 */
+    private void clearDirty() {
+        if (dirty) {
+            dirty = false;
+            notifyDirtyChange();
+        }
+        snapshotColumns();
+    }
+
+    private void notifyDirtyChange() {
+        if (onDirtyChange != null) onDirtyChange.accept(dirty);
+    }
+
+    /** 对当前字段表数据做深拷贝快照（作为"已保存"基准） */
+    private void snapshotColumns() {
+        originalColumnsSnapshot = new ArrayList<>();
+        if (tableView.getItems() == null) return;
+        for (ObservableList<String> row : tableView.getItems()) {
+            originalColumnsSnapshot.add(FXCollections.observableArrayList(row));
+        }
     }
 
     private void initializeUI() {
@@ -229,6 +275,25 @@ public class TableStructureView extends BorderPane {
         tableContextMenu.getItems().addAll(copyItem, pasteItem, new SeparatorMenuItem(),
                 addFieldItem, insertFieldItem, deleteFieldItem, new SeparatorMenuItem(), primaryKeyItem);
         tableView.setContextMenu(tableContextMenu);
+
+        // 非编辑状态下，光标在最后一行时按向下箭头键自动追加一行空行
+        tableView.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
+            if (event.getCode() != KeyCode.DOWN) return;
+            // 正在编辑单元格时（TextField/ComboBox 内）走默认行为，不自动追加
+            if (tableView.getEditingCell() != null) return;
+            ObservableList<ObservableList<String>> items = tableView.getItems();
+            if (items == null || items.isEmpty()) return;
+            int lastIndex = items.size() - 1;
+            int focusedIndex = tableView.getFocusModel().getFocusedIndex();
+            if (focusedIndex < 0) {
+                // 无焦点行时回退到选中行
+                focusedIndex = tableView.getSelectionModel().getSelectedIndex();
+            }
+            if (focusedIndex == lastIndex) {
+                event.consume();
+                handleAddField();
+            }
+        });
 
         // 加载指示器
         loadingIndicator = new ProgressIndicator();
@@ -458,6 +523,7 @@ public class TableStructureView extends BorderPane {
                 if (!val.equals(current != null ? current : "")) {
                     selected.set(dvIdx, val);
                     tableView.refresh();
+                    markDirty();
                 }
             }
         });
@@ -500,6 +566,7 @@ public class TableStructureView extends BorderPane {
                         }
                     }
                     tableView.refresh();
+                    markDirty();
                 }
             }
         });
@@ -525,6 +592,7 @@ public class TableStructureView extends BorderPane {
                 if (!val.equals(current != null ? current : "")) {
                     selected.set(coIdx, val);
                     tableView.refresh();
+                    markDirty();
                 }
             }
         });
@@ -548,6 +616,7 @@ public class TableStructureView extends BorderPane {
                     if (!newVal.equals(selected.get(idx))) {
                         selected.set(idx, newVal);
                         tableView.refresh();
+                        markDirty();
                     }
                 }
             }
@@ -566,6 +635,7 @@ public class TableStructureView extends BorderPane {
             int idx = columnTitles.indexOf("二进制");
             if (idx >= 0 && idx < selected.size()) {
                 selected.set(idx, binaryCheckBox.isSelected() ? "是" : "否");
+                markDirty();
             }
         });
 
@@ -577,6 +647,7 @@ public class TableStructureView extends BorderPane {
             int aiIdx = columnTitles.indexOf("自增");
             if (aiIdx >= 0 && aiIdx < selected.size()) {
                 selected.set(aiIdx, autoIncrementCheckBox.isSelected() ? "是" : "否");
+                markDirty();
             }
         });
 
@@ -588,6 +659,7 @@ public class TableStructureView extends BorderPane {
             int idx = columnTitles.indexOf("无符号");
             if (idx >= 0 && idx < selected.size()) {
                 selected.set(idx, unsignedCheckBox.isSelected() ? "是" : "否");
+                markDirty();
             }
         });
 
@@ -599,6 +671,7 @@ public class TableStructureView extends BorderPane {
             int idx = columnTitles.indexOf("填充零");
             if (idx >= 0 && idx < selected.size()) {
                 selected.set(idx, zeroFillCheckBox.isSelected() ? "是" : "否");
+                markDirty();
             }
         });
 
@@ -1207,10 +1280,144 @@ public class TableStructureView extends BorderPane {
     /**
      * 加载SQL预览（SHOW CREATE TABLE）
      */
+    /**
+     * 对比字段表原始快照与当前数据，生成ALTER SQL列表（字段增删改 + 主键变更）。
+     * 纯数据计算，不访问JavaFX UI，可在任意线程执行。
+     * @param titles 列标题
+     * @param originalRows 原始行快照
+     * @param currentRows 当前行数据
+     * @return ALTER SQL列表（每条不带末尾分号）
+     */
+    private List<String> collectAlterStatements(List<String> titles,
+                                                 List<ObservableList<String>> originalRows,
+                                                 List<ObservableList<String>> currentRows) {
+        List<String> sqlList = new ArrayList<>();
+        if (titles == null || tableName == null || tableName.isEmpty()) return sqlList;
+        int nameIdx = titles.indexOf("字段名");
+        int pkIdx = titles.indexOf("主键");
+        if (nameIdx < 0) return sqlList;
+
+        // 按字段名建立 original 索引（同名取第一个）
+        java.util.Map<String, ObservableList<String>> originalByName = new java.util.LinkedHashMap<>();
+        for (ObservableList<String> row : originalRows) {
+            String n = nameIdx < row.size() ? row.get(nameIdx) : "";
+            if (n != null && !n.isEmpty() && !originalByName.containsKey(n)) {
+                originalByName.put(n, row);
+            }
+        }
+        java.util.Map<String, ObservableList<String>> currentByName = new java.util.LinkedHashMap<>();
+        for (ObservableList<String> row : currentRows) {
+            String n = nameIdx < row.size() ? row.get(nameIdx) : "";
+            if (n != null && !n.isEmpty() && !currentByName.containsKey(n)) {
+                currentByName.put(n, row);
+            }
+        }
+
+        // 1) 删除：原快照中存在但当前不存在
+        for (java.util.Map.Entry<String, ObservableList<String>> e : originalByName.entrySet()) {
+            if (!currentByName.containsKey(e.getKey())) {
+                try {
+                    sqlList.add(DatabaseService.generateDropColumnSql(config, databaseName, schemaName, tableName, e.getKey()));
+                } catch (Exception ex) {
+                    sqlList.add("-- 生成删除列SQL失败(" + e.getKey() + "): " + ex.getMessage());
+                }
+            }
+        }
+
+        // 2) 新增 + 修改：按当前行顺序处理
+        for (ObservableList<String> cur : currentRows) {
+            String colName = nameIdx < cur.size() ? cur.get(nameIdx) : "";
+            if (colName == null || colName.isEmpty()) continue;
+            if (!originalByName.containsKey(colName)) {
+                // 新增列
+                try {
+                    sqlList.add(DatabaseService.generateAddColumnSql(config, databaseName, schemaName, tableName, titles, cur));
+                } catch (Exception ex) {
+                    sqlList.add("-- 生成新增列SQL失败(" + colName + "): " + ex.getMessage());
+                }
+            } else {
+                // 修改列（字段名相同但属性变化）
+                ObservableList<String> orig = originalByName.get(colName);
+                try {
+                    sqlList.addAll(DatabaseService.generateModifyColumnSql(config, databaseName, schemaName, tableName, titles, orig, cur));
+                } catch (Exception ex) {
+                    sqlList.add("-- 生成修改列SQL失败(" + colName + "): " + ex.getMessage());
+                }
+            }
+        }
+
+        // 3) 主键变更：对比原始主键集合与当前主键集合
+        if (pkIdx >= 0) {
+            java.util.List<String> origPk = new java.util.ArrayList<>();
+            for (ObservableList<String> row : originalRows) {
+                String n = nameIdx < row.size() ? row.get(nameIdx) : "";
+                String isPk = pkIdx < row.size() ? row.get(pkIdx) : "";
+                if ("是".equals(isPk) && n != null && !n.isEmpty()) origPk.add(n);
+            }
+            java.util.List<String> curPk = new java.util.ArrayList<>();
+            for (ObservableList<String> row : currentRows) {
+                String n = nameIdx < row.size() ? row.get(nameIdx) : "";
+                String isPk = pkIdx < row.size() ? row.get(pkIdx) : "";
+                if ("是".equals(isPk) && n != null && !n.isEmpty()) curPk.add(n);
+            }
+            boolean pkChanged = !origPk.equals(curPk);
+            if (pkChanged) {
+                String tableRef = buildTableRef();
+                if (!origPk.isEmpty()) {
+                    sqlList.add("ALTER TABLE " + tableRef + " DROP PRIMARY KEY");
+                }
+                if (!curPk.isEmpty()) {
+                    StringBuilder pkSql = new StringBuilder("ALTER TABLE ").append(tableRef).append(" ADD PRIMARY KEY (");
+                    for (int i = 0; i < curPk.size(); i++) {
+                        if (i > 0) pkSql.append(", ");
+                        if (config.getType() == com.tangluobo.tomato.module.connect.ConnectType.MYSQL) {
+                            pkSql.append("`").append(curPk.get(i)).append("`");
+                        } else {
+                            pkSql.append("\"").append(curPk.get(i)).append("\"");
+                        }
+                    }
+                    pkSql.append(")");
+                    sqlList.add(pkSql.toString());
+                }
+            }
+        }
+        return sqlList;
+    }
+
+    /**
+     * 构造表引用字符串（MySQL用`db`.`table`，PG/Oracle用"schema"."table"）
+     */
+    private String buildTableRef() {
+        String schema = schemaName != null ? schemaName : databaseName;
+        return switch (config.getType()) {
+            case MYSQL -> "`" + databaseName + "`.`" + tableName + "`";
+            case POSTGRESQL -> "\"" + schema + "\".\"" + tableName + "\"";
+            case ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
+            default -> tableName;
+        };
+    }
+
     private void loadSqlPreview() {
         sqlPreviewViewer.setText("-- 加载中...");
         // 新建表模式始终生成CREATE TABLE预览
         boolean isSaveAs = isNewTable || "另存为".equals(sqlPreviewModeBox.getSelectionModel().getSelectedItem());
+
+        // 在FX线程采集当前字段表数据快照（避免后台线程访问JavaFX集合）
+        List<String> titles = columnTitles != null ? new ArrayList<>(columnTitles) : new ArrayList<>();
+        List<ObservableList<String>> currentRows = new ArrayList<>();
+        if (tableView.getItems() != null) {
+            for (ObservableList<String> r : tableView.getItems()) {
+                currentRows.add(FXCollections.observableArrayList(r));
+            }
+        }
+        List<ObservableList<String>> originalRows = new ArrayList<>();
+        for (ObservableList<String> r : originalColumnsSnapshot) {
+            originalRows.add(FXCollections.observableArrayList(r));
+        }
+        int fieldCount = currentRows.size();
+        String tableComment = commentLoaded ? commentTextArea.getText() : null;
+        String originalTc = originalTableComment;
+
         new Thread(() -> {
             java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
             connLock.lock();
@@ -1233,7 +1440,7 @@ public class TableStructureView extends BorderPane {
                                 result = sb.toString();
                             } else {
                                 Map<String, String> opts = collectOptionsForCreate();
-                                String cmt = commentLoaded ? commentTextArea.getText() : null;
+                                String cmt = commentLoaded ? tableComment : null;
                                 result = DatabaseService.generateCreateTableSql(config, databaseName, schemaName, "新表名", cols, opts, cmt);
                             }
                         }
@@ -1241,57 +1448,41 @@ public class TableStructureView extends BorderPane {
                         String ddl = DatabaseService.getTableDdl(config, databaseName, schemaName, tableName);
                         result = ddl != null && !ddl.isEmpty() ? ddl : "-- 无法获取CREATE TABLE DDL";
                     }
-                    int fieldCount = tableView.getItems() != null ? tableView.getItems().size() : 0;
+                    final String r = result;
                     Platform.runLater(() -> {
-                        sqlPreviewViewer.setText(result);
+                        sqlPreviewViewer.setText(r);
                         sqlPreviewLoaded = true;
                         statusLabel.setText("共 " + fieldCount + " 个字段");
                     });
                     return;
                 }
 
-                // 保存模式：显示ALTER语句
-                List<ObservableList<String>> changedColumns = new ArrayList<>();
+                // 保存模式：显示ALTER语句（字段增删改 + 主键 + 表注释）
                 List<String> alterStatements = new ArrayList<>();
-
-                if (columnTitles != null && tableView.getItems() != null) {
-                    int commentIdx = columnTitles.indexOf("注释");
-                    int nameIdx = columnTitles.indexOf("字段名");
-                    if (commentIdx >= 0 && nameIdx >= 0) {
-                        for (ObservableList<String> row : tableView.getItems()) {
-                            String colName = nameIdx < row.size() ? row.get(nameIdx) : "";
-                            String comment = commentIdx < row.size() ? row.get(commentIdx) : "";
-                            String original = originalColumnComments.getOrDefault(colName, "");
-                            if (!original.equals(comment != null ? comment : "")) {
-                                changedColumns.add(row);
-                            }
-                        }
-                    }
+                try {
+                    alterStatements.addAll(collectAlterStatements(titles, originalRows, currentRows));
+                } catch (Exception e) {
+                    alterStatements.add("-- 生成字段变更SQL失败: " + e.getMessage());
                 }
 
-                for (ObservableList<String> row : changedColumns) {
-                    try {
-                        alterStatements.add(DatabaseService.generateUpdateColumnCommentSql(config, databaseName, schemaName, tableName, columnTitles, row) + ";");
-                    } catch (Exception e) {
-                        alterStatements.add("-- 生成列注释SQL失败: " + e.getMessage());
-                    }
-                }
-
+                // 表注释变更
                 if (commentLoaded) {
-                    String tableComment = commentTextArea.getText();
-                    String original = originalTableComment != null ? originalTableComment : "";
+                    String original = originalTc != null ? originalTc : "";
                     if (!original.equals(tableComment != null ? tableComment : "")) {
-                        alterStatements.add(DatabaseService.generateUpdateTableCommentSql(config, databaseName, schemaName, tableName, tableComment) + ";");
+                        try {
+                            alterStatements.add(DatabaseService.generateUpdateTableCommentSql(config, databaseName, schemaName, tableName, tableComment));
+                        } catch (Exception e) {
+                            alterStatements.add("-- 生成表注释SQL失败: " + e.getMessage());
+                        }
                     }
                 }
 
                 StringBuilder preview = new StringBuilder();
                 for (String sql : alterStatements) {
-                    preview.append(sql).append("\n");
+                    preview.append(sql).append(";\n");
                 }
 
-                String result = preview.length() > 0 ? preview.toString() : "";
-                int fieldCount = tableView.getItems() != null ? tableView.getItems().size() : 0;
+                String result = preview.length() > 0 ? preview.toString() : "-- 无变更";
                 Platform.runLater(() -> {
                     sqlPreviewViewer.setText(result);
                     sqlPreviewLoaded = true;
@@ -1368,65 +1559,77 @@ public class TableStructureView extends BorderPane {
             handleCreateNewTable();
             return;
         }
-        // 收集变更的列注释
-        List<ObservableList<String>> changedColumns = new ArrayList<>();
-        if (columnTitles != null && tableView.getItems() != null) {
-            int commentIdx = columnTitles.indexOf("注释");
-            int nameIdx = columnTitles.indexOf("字段名");
-            if (commentIdx >= 0 && nameIdx >= 0) {
-                for (ObservableList<String> row : tableView.getItems()) {
-                    String colName = nameIdx < row.size() ? row.get(nameIdx) : "";
-                    String comment = commentIdx < row.size() ? row.get(commentIdx) : "";
-                    String original = originalColumnComments.getOrDefault(colName, "");
-                    if (!original.equals(comment != null ? comment : "")) {
-                        changedColumns.add(row);
-                    }
-                }
+
+        // 在FX线程采集当前字段表数据快照
+        List<String> titles = columnTitles != null ? new ArrayList<>(columnTitles) : new ArrayList<>();
+        List<ObservableList<String>> currentRows = new ArrayList<>();
+        if (tableView.getItems() != null) {
+            for (ObservableList<String> r : tableView.getItems()) {
+                currentRows.add(FXCollections.observableArrayList(r));
             }
         }
-
-        // 表注释（仅当注释标签页已加载且有变更时才保存）
+        List<ObservableList<String>> originalRows = new ArrayList<>();
+        for (ObservableList<String> r : originalColumnsSnapshot) {
+            originalRows.add(FXCollections.observableArrayList(r));
+        }
         String tableComment = commentLoaded ? commentTextArea.getText() : null;
         String originalTc = originalTableComment != null ? originalTableComment : "";
         boolean tableCommentChanged = commentLoaded && !originalTc.equals(tableComment != null ? tableComment : "");
 
-        if (changedColumns.isEmpty() && !tableCommentChanged) {
-            statusLabel.setText("没有需要保存的注释变更");
+        // 生成ALTER语句（字段增删改 + 主键）
+        List<String> alterStatements = new ArrayList<>();
+        try {
+            alterStatements.addAll(collectAlterStatements(titles, originalRows, currentRows));
+        } catch (Exception e) {
+            statusLabel.setText("生成变更SQL失败: " + e.getMessage());
+            return;
+        }
+        // 表注释SQL
+        String tableCommentSql = null;
+        if (tableCommentChanged) {
+            try {
+                tableCommentSql = DatabaseService.generateUpdateTableCommentSql(config, databaseName, schemaName, tableName, tableComment);
+            } catch (Exception e) {
+                statusLabel.setText("生成表注释SQL失败: " + e.getMessage());
+                return;
+            }
+        }
+
+        if (alterStatements.isEmpty() && tableCommentSql == null) {
+            statusLabel.setText("没有需要保存的变更");
             return;
         }
 
-        statusLabel.setText("正在保存注释...");
+        statusLabel.setText("正在保存变更（" + (alterStatements.size() + (tableCommentSql != null ? 1 : 0)) + " 条SQL）...");
+        String finalTableCommentSql = tableCommentSql;
         new Thread(() -> {
             java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
             connLock.lock();
             try {
                 List<String> errors = new ArrayList<>();
-                int nameIdx = columnTitles != null ? columnTitles.indexOf("字段名") : -1;
-
-                // 保存表注释
-                if (tableCommentChanged) {
+                // 执行字段/主键ALTER
+                for (String sql : alterStatements) {
                     try {
-                        DatabaseService.updateTableComment(config, databaseName, schemaName, tableName, tableComment);
+                        DatabaseService.executeDdl(config, databaseName, sql);
+                    } catch (Exception e) {
+                        errors.add(sql + " => " + e.getMessage());
+                    }
+                }
+                // 执行表注释
+                if (finalTableCommentSql != null) {
+                    try {
+                        DatabaseService.executeDdl(config, databaseName, finalTableCommentSql);
                     } catch (Exception e) {
                         errors.add("表注释: " + e.getMessage());
                     }
                 }
 
-                // 保存列注释
-                for (ObservableList<String> row : changedColumns) {
-                    try {
-                        DatabaseService.updateColumnComment(config, databaseName, schemaName, tableName, columnTitles, row);
-                    } catch (Exception e) {
-                        String colName = nameIdx >= 0 && nameIdx < row.size() ? row.get(nameIdx) : "?";
-                        errors.add(colName + ": " + e.getMessage());
-                    }
-                }
-
                 Platform.runLater(() -> {
                     if (errors.isEmpty()) {
-                        // 更新原始注释缓存
+                        // 更新原始注释缓存（兼容旧逻辑）
                         int commentIdx = columnTitles != null ? columnTitles.indexOf("注释") : -1;
-                        if (commentIdx >= 0 && nameIdx >= 0) {
+                        int nameIdx = columnTitles != null ? columnTitles.indexOf("字段名") : -1;
+                        if (commentIdx >= 0 && nameIdx >= 0 && tableView.getItems() != null) {
                             for (ObservableList<String> row : tableView.getItems()) {
                                 String colName = nameIdx < row.size() ? row.get(nameIdx) : "";
                                 String comment = commentIdx < row.size() ? row.get(commentIdx) : "";
@@ -1436,7 +1639,10 @@ public class TableStructureView extends BorderPane {
                         if (tableCommentChanged) {
                             originalTableComment = tableComment != null ? tableComment : "";
                         }
-                        statusLabel.setText("注释已保存");
+                        // 清除脏状态（重建快照、去星号、刷新预览）
+                        clearDirty();
+                        if (sqlPreviewLoaded) loadSqlPreview();
+                        statusLabel.setText("变更已保存");
                     } else {
                         statusLabel.setText("保存部分失败: " + String.join("; ", errors));
                     }
@@ -1444,7 +1650,7 @@ public class TableStructureView extends BorderPane {
             } finally {
                 connLock.unlock();
             }
-        }, "DB-SaveComments").start();
+        }, "DB-SaveAlter").start();
     }
 
     /**
@@ -1629,6 +1835,7 @@ public class TableStructureView extends BorderPane {
         tableView.getSelectionModel().clearSelection();
         tableView.getSelectionModel().select(newIndex);
         statusLabel.setText("已添加字段行（未保存）");
+        markDirty();
     }
 
     private void handleInsertField() {
@@ -1648,6 +1855,7 @@ public class TableStructureView extends BorderPane {
         tableView.getSelectionModel().clearSelection();
         tableView.getSelectionModel().select(insertIndex);
         statusLabel.setText("已插入字段行（未保存）");
+        markDirty();
     }
 
     private void handleTogglePrimaryKey() {
@@ -1670,6 +1878,7 @@ public class TableStructureView extends BorderPane {
         tableView.refresh();
         updateFieldPropertiesPane();
         statusLabel.setText("已切换主键（未保存）");
+        markDirty();
     }
 
     private void handleMoveUp() {
@@ -1689,6 +1898,7 @@ public class TableStructureView extends BorderPane {
         tableView.getSelectionModel().clearSelection();
         tableView.getSelectionModel().select(index - 1);
         statusLabel.setText("已上移字段（未保存）");
+        markDirty();
     }
 
     private void handleMoveDown() {
@@ -1708,6 +1918,7 @@ public class TableStructureView extends BorderPane {
         tableView.getSelectionModel().clearSelection();
         tableView.getSelectionModel().select(index + 1);
         statusLabel.setText("已下移字段（未保存）");
+        markDirty();
     }
 
     private void handleDeleteField() {
@@ -1728,6 +1939,7 @@ public class TableStructureView extends BorderPane {
         int count = selectedIndices.size();
         tableView.getSelectionModel().clearSelection();
         statusLabel.setText("已删除 " + count + " 个字段（未保存）");
+        markDirty();
     }
 
     /**
@@ -1932,6 +2144,7 @@ public class TableStructureView extends BorderPane {
             }
             tableView.refresh();
             statusLabel.setText("已粘贴 " + pastedCount + " 个字段（未保存）");
+            markDirty();
         } catch (Exception e) {
             e.printStackTrace();
             statusLabel.setText("粘贴失败: " + e.getMessage());
@@ -2208,6 +2421,7 @@ public class TableStructureView extends BorderPane {
                     String newValue = event.getNewValue();
                     if (!oldValue.equals(newValue)) {
                         row.set(dataColIndex, newValue);
+                        markDirty();
                     }
                 });
             } else if ("主键".equals(title)) {
@@ -2225,6 +2439,7 @@ public class TableStructureView extends BorderPane {
                     String newValue = event.getNewValue();
                     if (!oldValue.equals(newValue)) {
                         row.set(dataColIndex, newValue);
+                        markDirty();
                     }
                 });
             } else {
@@ -2280,6 +2495,10 @@ public class TableStructureView extends BorderPane {
                 originalColumnComments.put(colName, comment != null ? comment : "");
             }
         }
+        // 建立字段表数据快照作为"已保存"基准（用于检测增删改并生成ALTER SQL）
+        snapshotColumns();
+        dirty = false;
+        notifyDirtyChange();
     }
 
     /**
@@ -2323,6 +2542,7 @@ public class TableStructureView extends BorderPane {
                 if (dataColIndex != null && dataColIndex >= 0 && dataColIndex < row.size()) {
                     row.set(dataColIndex, checkBox.isSelected() ? "是" : "否");
                     updateFieldPropertiesPane();
+                    markDirty();
                 }
             });
         }

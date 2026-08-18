@@ -2479,6 +2479,18 @@ public class DatabaseService {
     }
 
     /**
+     * 执行DDL语句（按数据库类型选连接：PostgreSQL绑定到具体数据库，其他用主连接）
+     */
+    public static void executeDdl(ConnectionConfig config, String databaseName, String sql) throws Exception {
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
+        try (Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(sql);
+        }
+    }
+
+    /**
      * 创建新表：根据字段列表、选项和注释生成 CREATE TABLE 并执行
      * @param columns 字段列表，每个Map包含：字段名、类型、长度、非空、主键、自增、默认值、注释、
      *                无符号、填充零、字符集、排序规则、键长度、二进制（后几项可选，MySQL专用）
@@ -2707,6 +2719,221 @@ public class DatabaseService {
             return "COMMENT ON COLUMN \"" + databaseName + "\".\"" + tableName + "\".\"" + columnName + "\" IS '" + escapedComment + "'";
         }
         throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+    }
+
+    /**
+     * 生成新增列的ALTER SQL（支持MySQL/PostgreSQL/Oracle）。
+     * @param columnTitles 字段表列标题列表
+     * @param row 当前行数据
+     */
+    public static String generateAddColumnSql(ConnectionConfig config, String databaseName, String schemaName,
+                                              String tableName, List<String> columnTitles, ObservableList<String> row) {
+        String pgSchema = schemaName != null ? schemaName : databaseName;
+        String columnName = getValue(row, columnTitles, "字段名");
+        String type = getValue(row, columnTitles, "类型");
+        String length = getValue(row, columnTitles, "长度");
+        String decimal = getValue(row, columnTitles, "小数点");
+        String nullable = getValue(row, columnTitles, "非空");
+        String autoInc = getValue(row, columnTitles, "自增");
+        String defaultValue = getValue(row, columnTitles, "默认值");
+        String colComment = getValue(row, columnTitles, "注释");
+        String typeSize = buildTypeSize(type, length, decimal);
+
+        StringBuilder sql = new StringBuilder();
+        switch (config.getType()) {
+            case MYSQL -> {
+                sql.append("ALTER TABLE `").append(databaseName).append("`.`").append(tableName).append("` ");
+                sql.append("ADD COLUMN `").append(columnName).append("` ").append(type).append(typeSize);
+                if ("是".equals(getValue(row, columnTitles, "无符号"))) sql.append(" UNSIGNED");
+                if ("是".equals(getValue(row, columnTitles, "填充零"))) sql.append(" ZEROFILL");
+                String cs = getValue(row, columnTitles, "字符集");
+                if (cs != null && !cs.isEmpty()) sql.append(" CHARACTER SET ").append(cs);
+                String co = getValue(row, columnTitles, "排序规则");
+                if (co != null && !co.isEmpty()) sql.append(" COLLATE ").append(co);
+                if ("是".equals(nullable)) sql.append(" NOT NULL");
+                if ("是".equals(autoInc)) sql.append(" AUTO_INCREMENT");
+                appendDefaultClause(sql, defaultValue);
+                if (colComment != null && !colComment.isEmpty()) {
+                    sql.append(" COMMENT '").append(colComment.replace("'", "''")).append("'");
+                }
+            }
+            case POSTGRESQL -> {
+                sql.append("ALTER TABLE \"").append(pgSchema).append("\".\"").append(tableName).append("\" ");
+                sql.append("ADD COLUMN \"").append(columnName).append("\" ").append(type).append(typeSize);
+                if ("是".equals(nullable)) sql.append(" NOT NULL");
+                appendDefaultClause(sql, defaultValue);
+            }
+            case ORACLE -> {
+                sql.append("ALTER TABLE \"").append(databaseName).append("\".\"").append(tableName).append("\" ");
+                sql.append("ADD (\"").append(columnName).append("\" ").append(type).append(typeSize);
+                if ("是".equals(nullable)) sql.append(" NOT NULL");
+                appendDefaultClause(sql, defaultValue);
+                sql.append(")");
+            }
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        }
+        // PostgreSQL/Oracle 列注释使用单独语句
+        if (colComment != null && !colComment.isEmpty() && config.getType() != ConnectType.MYSQL) {
+            String commentSchema = config.getType() == ConnectType.POSTGRESQL ? pgSchema : databaseName;
+            sql.append(";\nCOMMENT ON COLUMN \"").append(commentSchema).append("\".\"").append(tableName)
+               .append("\".\"").append(columnName).append("\" IS '").append(colComment.replace("'", "''")).append("'");
+        }
+        return sql.toString();
+    }
+
+    /**
+     * 生成删除列的ALTER SQL（支持MySQL/PostgreSQL/Oracle）。
+     */
+    public static String generateDropColumnSql(ConnectionConfig config, String databaseName, String schemaName,
+                                               String tableName, String columnName) {
+        String pgSchema = schemaName != null ? schemaName : databaseName;
+        switch (config.getType()) {
+            case MYSQL -> {
+                return "ALTER TABLE `" + databaseName + "`.`" + tableName + "` DROP COLUMN `" + columnName + "`";
+            }
+            case POSTGRESQL -> {
+                return "ALTER TABLE \"" + pgSchema + "\".\"" + tableName + "\" DROP COLUMN \"" + columnName + "\"";
+            }
+            case ORACLE -> {
+                return "ALTER TABLE \"" + databaseName + "\".\"" + tableName + "\" DROP COLUMN \"" + columnName + "\"";
+            }
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        }
+    }
+
+    /**
+     * 生成修改列的ALTER SQL（字段名相同但属性变化）。
+     * MySQL用单条MODIFY COLUMN；PostgreSQL/Oracle可能生成多条语句（类型/非空/默认值/注释）。
+     * @param originalRow 原始行数据快照
+     * @param currentRow 当前行数据
+     * @return 变更SQL列表，无变更时返回空列表
+     */
+    public static List<String> generateModifyColumnSql(ConnectionConfig config, String databaseName, String schemaName,
+                                                       String tableName, List<String> columnTitles,
+                                                       ObservableList<String> originalRow, ObservableList<String> currentRow) {
+        String pgSchema = schemaName != null ? schemaName : databaseName;
+        String columnName = getValue(currentRow, columnTitles, "字段名");
+        List<String> sqlList = new ArrayList<>();
+
+        String type = getValue(currentRow, columnTitles, "类型");
+        String length = getValue(currentRow, columnTitles, "长度");
+        String decimal = getValue(currentRow, columnTitles, "小数点");
+        String typeSize = buildTypeSize(type, length, decimal);
+
+        String oldType = getValue(originalRow, columnTitles, "类型");
+        String oldLength = getValue(originalRow, columnTitles, "长度");
+        String oldDecimal = getValue(originalRow, columnTitles, "小数点");
+        String oldTypeSize = buildTypeSize(oldType, oldLength, oldDecimal);
+
+        String nullable = getValue(currentRow, columnTitles, "非空");
+        String oldNullable = getValue(originalRow, columnTitles, "非空");
+        String defaultValue = getValue(currentRow, columnTitles, "默认值");
+        String oldDefault = getValue(originalRow, columnTitles, "默认值");
+        String comment = getValue(currentRow, columnTitles, "注释");
+        String oldComment = getValue(originalRow, columnTitles, "注释");
+
+        boolean typeChanged = !type.equals(oldType) || !typeSize.equals(oldTypeSize);
+        boolean nullableChanged = !nullable.equals(oldNullable);
+        boolean defaultChanged = !defaultValue.equals(oldDefault);
+        boolean commentChanged = !comment.equals(oldComment);
+
+        switch (config.getType()) {
+            case MYSQL -> {
+                // MySQL: 任何列属性变化都用 MODIFY COLUMN（需完整列定义）
+                if (typeChanged || nullableChanged || defaultChanged || commentChanged
+                        || !getValue(currentRow, columnTitles, "无符号").equals(getValue(originalRow, columnTitles, "无符号"))
+                        || !getValue(currentRow, columnTitles, "填充零").equals(getValue(originalRow, columnTitles, "填充零"))) {
+                    StringBuilder sql = new StringBuilder();
+                    sql.append("ALTER TABLE `").append(databaseName).append("`.`").append(tableName).append("` ");
+                    sql.append("MODIFY COLUMN `").append(columnName).append("` ").append(type).append(typeSize);
+                    if ("是".equals(getValue(currentRow, columnTitles, "无符号"))) sql.append(" UNSIGNED");
+                    if ("是".equals(getValue(currentRow, columnTitles, "填充零"))) sql.append(" ZEROFILL");
+                    String cs = getValue(currentRow, columnTitles, "字符集");
+                    if (cs != null && !cs.isEmpty()) sql.append(" CHARACTER SET ").append(cs);
+                    String co = getValue(currentRow, columnTitles, "排序规则");
+                    if (co != null && !co.isEmpty()) sql.append(" COLLATE ").append(co);
+                    if ("是".equals(nullable)) sql.append(" NOT NULL");
+                    else sql.append(" NULL");
+                    String autoInc = getValue(currentRow, columnTitles, "自增");
+                    if ("是".equals(autoInc)) sql.append(" AUTO_INCREMENT");
+                    appendDefaultClause(sql, defaultValue);
+                    if (comment != null && !comment.isEmpty()) {
+                        sql.append(" COMMENT '").append(comment.replace("'", "''")).append("'");
+                    }
+                    sqlList.add(sql.toString());
+                }
+            }
+            case POSTGRESQL -> {
+                if (typeChanged) {
+                    sqlList.add("ALTER TABLE \"" + pgSchema + "\".\"" + tableName + "\" ALTER COLUMN \"" + columnName
+                            + "\" TYPE " + type + typeSize + " USING \"" + columnName + "\"::" + type);
+                }
+                if (nullableChanged) {
+                    if ("是".equals(nullable)) {
+                        sqlList.add("ALTER TABLE \"" + pgSchema + "\".\"" + tableName + "\" ALTER COLUMN \"" + columnName + "\" SET NOT NULL");
+                    } else {
+                        sqlList.add("ALTER TABLE \"" + pgSchema + "\".\"" + tableName + "\" ALTER COLUMN \"" + columnName + "\" DROP NOT NULL");
+                    }
+                }
+                if (defaultChanged) {
+                    if (defaultValue == null || defaultValue.isEmpty()) {
+                        sqlList.add("ALTER TABLE \"" + pgSchema + "\".\"" + tableName + "\" ALTER COLUMN \"" + columnName + "\" DROP DEFAULT");
+                    } else {
+                        sqlList.add("ALTER TABLE \"" + pgSchema + "\".\"" + tableName + "\" ALTER COLUMN \"" + columnName + "\" SET " + buildDefaultClause(defaultValue));
+                    }
+                }
+                if (commentChanged) {
+                    String escaped = comment != null ? comment.replace("'", "''") : "";
+                    sqlList.add("COMMENT ON COLUMN \"" + pgSchema + "\".\"" + tableName + "\".\"" + columnName + "\" IS '" + escaped + "'");
+                }
+            }
+            case ORACLE -> {
+                if (typeChanged || nullableChanged || defaultChanged) {
+                    StringBuilder sql = new StringBuilder();
+                    sql.append("ALTER TABLE \"").append(databaseName).append("\".\"").append(tableName).append("\" ");
+                    sql.append("MODIFY (\"").append(columnName).append("\" ").append(type).append(typeSize);
+                    if ("是".equals(nullable)) sql.append(" NOT NULL");
+                    else sql.append(" NULL");
+                    appendDefaultClause(sql, defaultValue);
+                    sql.append(")");
+                    sqlList.add(sql.toString());
+                }
+                if (commentChanged) {
+                    String escaped = comment != null ? comment.replace("'", "''") : "";
+                    sqlList.add("COMMENT ON COLUMN \"" + databaseName + "\".\"" + tableName + "\".\"" + columnName + "\" IS '" + escaped + "'");
+                }
+            }
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        }
+        return sqlList;
+    }
+
+    /**
+     * 构造类型长度部分：(length) 或 (length,decimal)
+     */
+    private static String buildTypeSize(String type, String length, String decimal) {
+        if (length == null || length.isEmpty()) return "";
+        if (needsDecimalPlaces(type) && decimal != null && !decimal.isEmpty()) {
+            return "(" + length + "," + decimal + ")";
+        }
+        return "(" + length + ")";
+    }
+
+    /**
+     * 向StringBuilder追加DEFAULT子句（处理NULL/CURRENT_TIMESTAMP等特殊值）
+     */
+    private static void appendDefaultClause(StringBuilder sql, String defaultValue) {
+        if (defaultValue == null || defaultValue.isEmpty()) return;
+        sql.append(" DEFAULT ").append(buildDefaultClause(defaultValue));
+    }
+
+    /**
+     * 构造DEFAULT子句内容（特殊值不加引号，其他用单引号包裹）
+     */
+    private static String buildDefaultClause(String defaultValue) {
+        if ("NULL".equalsIgnoreCase(defaultValue)) return "NULL";
+        if ("CURRENT_TIMESTAMP".equalsIgnoreCase(defaultValue)) return "CURRENT_TIMESTAMP";
+        return "'" + defaultValue.replace("'", "''") + "'";
     }
 
     /**

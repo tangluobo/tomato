@@ -692,16 +692,24 @@ public class TableObjectsView extends BorderPane {
     /** 注册右键菜单：图标视图 + 详细列表 */
     private void setupContextMenu() {
         contextMenu = new ContextMenu();
+        MenuItem openTableItem = new MenuItem("打开表");
+        openTableItem.setOnAction(e -> handleOpenTable());
+        MenuItem designItem = new MenuItem("设计表");
+        designItem.setOnAction(e -> handleDesignTable());
         MenuItem copyItem = new MenuItem("复制表");
         copyItem.setOnAction(e -> copySelectedTablesToClipboard());
         MenuItem deleteItem = new MenuItem("删除表");
         deleteItem.setOnAction(e -> handleDeleteTable());
         MenuItem refreshItem = new MenuItem("刷新");
         refreshItem.setOnAction(e -> loadData());
-        contextMenu.getItems().addAll(copyItem, new SeparatorMenuItem(), deleteItem, new SeparatorMenuItem(), refreshItem);
+        contextMenu.getItems().addAll(openTableItem, designItem, new SeparatorMenuItem(),
+                copyItem, new SeparatorMenuItem(), deleteItem, new SeparatorMenuItem(), refreshItem);
 
         iconScroll.setOnContextMenuRequested(e -> {
             boolean empty = selectedObjects.isEmpty();
+            boolean noSingle = selectedObject == null;
+            openTableItem.setDisable(noSingle);
+            designItem.setDisable(noSingle);
             copyItem.setDisable(empty);
             deleteItem.setDisable(empty);
             contextMenu.show(this, e.getScreenX(), e.getScreenY());
@@ -709,6 +717,9 @@ public class TableObjectsView extends BorderPane {
         });
         detailTableView.setOnContextMenuRequested(e -> {
             boolean empty = selectedObjects.isEmpty();
+            boolean noSingle = selectedObject == null;
+            openTableItem.setDisable(noSingle);
+            designItem.setDisable(noSingle);
             copyItem.setDisable(empty);
             deleteItem.setDisable(empty);
             contextMenu.show(this, e.getScreenX(), e.getScreenY());
