@@ -2129,5 +2129,42 @@ public class ConnectModule implements Module {
                 pane.requestTerminalFocus();
             }
         });
+
+        // 为 tab 的 graphic 锁定尺寸：TabPane 下拉菜单 popup 中 ImageView 的 fitWidth 可能不生效，
+        // 额外设置 maxWidth/maxHeight 确保图标在 popup 中也保持固定尺寸而非原始图片大小
+        terminalTabPane.getTabs().addListener((javafx.collections.ListChangeListener<Tab>) c -> {
+            while (c.next()) {
+                if (c.wasAdded()) {
+                    for (Tab tab : c.getAddedSubList()) {
+                        lockTabGraphicSize(tab);
+                    }
+                }
+            }
+        });
+    }
+
+    /** 锁定 tab 图标尺寸：用 StackPane 包装 ImageView（Region 有 maxWidth/maxHeight），确保下拉菜单 popup 中也保持固定尺寸 */
+    private void lockTabGraphicSize(Tab tab) {
+        Node graphic = tab.getGraphic();
+        if (graphic instanceof ImageView) {
+            wrapGraphicInFixedSizePane(tab, (ImageView) graphic);
+        }
+        tab.graphicProperty().addListener((obs, oldVal, newVal) -> {
+            if (newVal instanceof ImageView) {
+                wrapGraphicInFixedSizePane(tab, (ImageView) newVal);
+            }
+        });
+    }
+
+    private void wrapGraphicInFixedSizePane(Tab tab, ImageView iv) {
+        double w = iv.getFitWidth() > 0 ? iv.getFitWidth() : 18;
+        double h = iv.getFitHeight() > 0 ? iv.getFitHeight() : 18;
+        iv.setPreserveRatio(true);
+        StackPane pane = new StackPane(iv);
+        pane.setMaxSize(w, h);
+        pane.setMinSize(w, h);
+        pane.setPrefSize(w, h);
+        pane.setStyle("-fx-background-color: transparent; -fx-padding: 0;");
+        tab.setGraphic(pane);
     }
 }
