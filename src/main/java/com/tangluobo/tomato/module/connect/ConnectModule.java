@@ -506,46 +506,34 @@ public class ConnectModule implements Module {
                                 || targetConfig.getType() == ConnectType.ORACLE;
                         boolean isRedis = targetConfig.getType() == ConnectType.REDIS;
                         boolean isRocketmq = targetConfig.getType() == ConnectType.ROCKETMQ;
-                        boolean isAliyun = targetConfig.getType() == ConnectType.ALIYUN;
                         boolean isLocalDirectory = targetConfig.getType() == ConnectType.LOCAL_DIRECTORY;
                         if (isDatabase) {
                             MenuItem createDbItem = new MenuItem("新建数据库");
+                            boolean connOpened = !targetItem.getChildren().isEmpty();
+                            createDbItem.setDisable(!connOpened);
                             createDbItem.setOnAction(e -> {
                                 AbstractDbHandler h = createDbHandler(targetConfig);
                                 if (h != null) h.handleCreateDatabase(targetItem, targetConfig);
                             });
                             contextMenu.getItems().add(createDbItem);
-                            if (!targetItem.getChildren().isEmpty()) {
-                                MenuItem refreshItem = new MenuItem("刷新");
-                                refreshItem.setOnAction(e -> refreshDbHost(targetItem, targetConfig));
+                            if (connOpened) {
                                 MenuItem closeConnItem = new MenuItem("关闭连接");
                                 closeConnItem.setOnAction(e -> closeHostConnection(targetItem, targetConfig));
-                                contextMenu.getItems().addAll(refreshItem, closeConnItem);
+                                contextMenu.getItems().addAll(closeConnItem, new SeparatorMenuItem());
                             }
                         }
                         if (isRedis) {
                             if (!targetItem.getChildren().isEmpty()) {
-                                MenuItem refreshItem = new MenuItem("刷新");
-                                refreshItem.setOnAction(e -> refreshDbHost(targetItem, targetConfig));
                                 MenuItem closeConnItem = new MenuItem("关闭连接");
                                 closeConnItem.setOnAction(e -> closeHostConnection(targetItem, targetConfig));
-                                contextMenu.getItems().addAll(refreshItem, closeConnItem);
+                                contextMenu.getItems().addAll(closeConnItem, new SeparatorMenuItem());
                             }
                         }
                         if (isRocketmq) {
                             if (!targetItem.getChildren().isEmpty()) {
-                                MenuItem refreshItem = new MenuItem("刷新");
-                                refreshItem.setOnAction(e -> refreshDbHost(targetItem, targetConfig));
                                 MenuItem closeConnItem = new MenuItem("关闭连接");
                                 closeConnItem.setOnAction(e -> closeHostConnection(targetItem, targetConfig));
-                                contextMenu.getItems().addAll(refreshItem, closeConnItem);
-                            }
-                        }
-                        if (isAliyun) {
-                            if (!targetItem.getChildren().isEmpty()) {
-                                MenuItem refreshItem = new MenuItem("刷新");
-                                refreshItem.setOnAction(e -> refreshDbHost(targetItem, targetConfig));
-                                contextMenu.getItems().add(refreshItem);
+                                contextMenu.getItems().addAll(closeConnItem, new SeparatorMenuItem());
                             }
                         }
                         if (isLocalDirectory) {
@@ -568,11 +556,6 @@ public class ConnectModule implements Module {
                                 }
                             });
                             contextMenu.getItems().add(createMdItem);
-                            if (!targetItem.getChildren().isEmpty()) {
-                                MenuItem refreshItem = new MenuItem("刷新");
-                                refreshItem.setOnAction(e -> refreshDbHost(targetItem, targetConfig));
-                                contextMenu.getItems().add(refreshItem);
-                            }
                         }
                         MenuItem renameItem = new MenuItem("重命名");
                         renameItem.setOnAction(e -> {
@@ -597,6 +580,12 @@ public class ConnectModule implements Module {
                             MenuItem editItem = new MenuItem("编辑");
                             editItem.setOnAction(e -> handleEdit(targetItem));
                             contextMenu.getItems().addAll(connectItem, new SeparatorMenuItem(), editItem, renameItem, copyItem, new SeparatorMenuItem(), deleteItem);
+                        }
+                        // 刷新统一放在菜单最底部（连接已打开时）
+                        if (!targetItem.getChildren().isEmpty() && !isTool) {
+                            MenuItem refreshItem = new MenuItem("刷新");
+                            refreshItem.setOnAction(e -> refreshDbHost(targetItem, targetConfig));
+                            contextMenu.getItems().addAll(new SeparatorMenuItem(), refreshItem);
                         }
                     } else {
                         MenuItem addFolder = new MenuItem("新建目录");
