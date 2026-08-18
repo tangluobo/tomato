@@ -418,6 +418,94 @@ public class TableDataView extends BorderPane {
     }
 
     /**
+     * 方向键在单元格间切换（选中单元格而非行）。
+     * 捕获阶段拦截，消费事件防止默认行选择行为。
+     * 批量输入状态下先提交批量编辑再导航；最后一行按 DOWN 新增空行。
+     */
+    private void setupArrowKeyNavigation() {
+        tableView.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
+            if (tableView.getEditingCell() != null) return;
+            javafx.scene.input.KeyCode code = event.getCode();
+            if (code != javafx.scene.input.KeyCode.UP && code != javafx.scene.input.KeyCode.DOWN
+                    && code != javafx.scene.input.KeyCode.LEFT && code != javafx.scene.input.KeyCode.RIGHT) return;
+            if (event.isControlDown() || event.isShiftDown() || event.isAltDown()) return;
+
+            // 批量输入状态下，先提交批量编辑再导航
+            if (batchEditing) {
+                commitBatchEdit();
+            }
+
+            ObservableList<ObservableList<String>> items = tableView.getItems();
+            if (items == null || items.isEmpty()) return;
+            int rowCount = items.size();
+
+            // 获取当前焦点单元格位置
+            TablePosition<ObservableList<String>, ?> focusedCell = tableView.getFocusModel().getFocusedCell();
+            int curRow = focusedCell != null && focusedCell.getRow() >= 0 ? focusedCell.getRow() : 0;
+            int curCol = focusedCell != null && focusedCell.getColumn() >= 0
+                    ? focusedCell.getColumn() : findFirstNavigableColumn();
+
+            int newRow = curRow;
+            int newCol = curCol;
+            if (code == javafx.scene.input.KeyCode.UP) newRow = curRow - 1;
+            else if (code == javafx.scene.input.KeyCode.DOWN) newRow = curRow + 1;
+            else if (code == javafx.scene.input.KeyCode.LEFT) newCol = findNavigableColumn(curCol, -1);
+            else if (code == javafx.scene.input.KeyCode.RIGHT) newCol = findNavigableColumn(curCol, 1);
+
+            // 最后一行按 DOWN 新增空行
+            if (code == javafx.scene.input.KeyCode.DOWN && newRow >= rowCount) {
+                event.consume();
+                addEmptyNewRow();
+                selectRowAtColumn(tableView.getItems().size() - 1);
+                return;
+            }
+
+            // 边界检查
+            if (newRow < 0) newRow = 0;
+            if (newRow >= rowCount) newRow = rowCount - 1;
+
+            // 消费事件防止默认行选择行为
+            event.consume();
+            if (newRow != curRow || newCol != curCol) {
+                tableView.getSelectionModel().clearSelection();
+                TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(newCol);
+                tableView.getSelectionModel().select(newRow, col);
+                tableView.getFocusModel().focus(newRow, col);
+                tableView.scrollTo(newRow);
+            }
+        });
+    }
+
+    /**
+     * 查找指定方向上的下一个可导航列（跳过行选择器列和不可见列）
+     * @param startCol 起始列索引
+     * @param direction 方向（-1 向左，1 向右）
+     * @return 下一个可导航列索引，未找到则返回 startCol
+     */
+    private int findNavigableColumn(int startCol, int direction) {
+        for (int i = startCol + direction; i >= 0 && i < tableView.getColumns().size(); i += direction) {
+            TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(i);
+            if (col.isVisible() && !ROW_SELECTOR_COL.equals(col.getUserData())) {
+                return i;
+            }
+        }
+        return startCol;
+    }
+
+    /**
+     * 查找第一个可导航列（跳过行选择器列和不可见列）
+     */
+    private int findFirstNavigableColumn() {
+        for (int i = 0; i < tableView.getColumns().size(); i++) {
+            TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(i);
+            if (col.isVisible() && !ROW_SELECTOR_COL.equals(col.getUserData())) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    /**
      * 粘贴剪贴板内容：行选择器整行选中时插入新行；选中数据单元格时从焦点单元格开始覆盖替换
      */
     private void handlePasteRows() {
@@ -895,6 +983,8 @@ public class TableDataView extends BorderPane {
         setupDragSelection();
         // Ctrl+C 复制选中cell
         setupKeyboardShortcuts();
+        // 方向键在单元格间切换（选中单元格而非行）
+        setupArrowKeyNavigation();
         // 布局后移除内部节点的默认padding/border，消除左侧间隔
         tableView.skinProperty().addListener((obs, oldSkin, newSkin) -> {
             if (newSkin != null) {

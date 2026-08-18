@@ -285,22 +285,50 @@ public class TableStructureView extends BorderPane {
                 addFieldItem, insertFieldItem, deleteFieldItem, new SeparatorMenuItem(), primaryKeyItem);
         tableView.setContextMenu(tableContextMenu);
 
-        // 非编辑状态下，光标在最后一行时按向下箭头键自动追加一行空行
+        // 非编辑状态下，方向键在单元格间切换（选中单元格而非行）
         tableView.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
-            if (event.getCode() != KeyCode.DOWN) return;
-            // 正在编辑单元格时（TextField/ComboBox 内）走默认行为，不自动追加
             if (tableView.getEditingCell() != null) return;
+            KeyCode code = event.getCode();
+            if (code != KeyCode.UP && code != KeyCode.DOWN
+                    && code != KeyCode.LEFT && code != KeyCode.RIGHT) return;
+            if (event.isControlDown() || event.isShiftDown() || event.isAltDown()) return;
+
             ObservableList<ObservableList<String>> items = tableView.getItems();
             if (items == null || items.isEmpty()) return;
-            int lastIndex = items.size() - 1;
-            int focusedIndex = tableView.getFocusModel().getFocusedIndex();
-            if (focusedIndex < 0) {
-                // 无焦点行时回退到选中行
-                focusedIndex = tableView.getSelectionModel().getSelectedIndex();
-            }
-            if (focusedIndex == lastIndex) {
+            int rowCount = items.size();
+
+            // 获取当前焦点单元格位置
+            TablePosition<?, ?> focusedCell = tableView.getFocusModel().getFocusedCell();
+            int curRow = focusedCell != null && focusedCell.getRow() >= 0 ? focusedCell.getRow() : 0;
+            int curCol = focusedCell != null && focusedCell.getColumn() >= 0
+                    ? focusedCell.getColumn() : findFirstNavigableColumn();
+
+            int newRow = curRow;
+            int newCol = curCol;
+            if (code == KeyCode.UP) newRow = curRow - 1;
+            else if (code == KeyCode.DOWN) newRow = curRow + 1;
+            else if (code == KeyCode.LEFT) newCol = findNavigableColumn(curCol, -1);
+            else if (code == KeyCode.RIGHT) newCol = findNavigableColumn(curCol, 1);
+
+            // 最后一行按 DOWN 自动追加空行
+            if (code == KeyCode.DOWN && newRow >= rowCount) {
                 event.consume();
                 handleAddField();
+                return;
+            }
+
+            // 边界检查
+            if (newRow < 0) newRow = 0;
+            if (newRow >= rowCount) newRow = rowCount - 1;
+
+            // 消费事件防止默认行选择行为
+            event.consume();
+            if (newRow != curRow || newCol != curCol) {
+                tableView.getSelectionModel().clearSelection();
+                TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(newCol);
+                tableView.getSelectionModel().select(newRow, col);
+                tableView.getFocusModel().focus(newRow, col);
+                tableView.scrollTo(newRow);
             }
         });
 
@@ -843,6 +871,35 @@ public class TableStructureView extends BorderPane {
             }
         }
         return -1;
+    }
+
+    /**
+     * 查找指定方向上的下一个可导航列（跳过行选择器列和不可见列）
+     * @param startCol 起始列索引
+     * @param direction 方向（-1 向左，1 向右）
+     * @return 下一个可导航列索引，未找到则返回 startCol
+     */
+    private int findNavigableColumn(int startCol, int direction) {
+        for (int i = startCol + direction; i >= 0 && i < tableView.getColumns().size(); i += direction) {
+            TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(i);
+            if (col.isVisible() && !ROW_SELECTOR_COL.equals(col.getUserData())) {
+                return i;
+            }
+        }
+        return startCol;
+    }
+
+    /**
+     * 查找第一个可导航列（跳过行选择器列和不可见列）
+     */
+    private int findFirstNavigableColumn() {
+        for (int i = 0; i < tableView.getColumns().size(); i++) {
+            TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(i);
+            if (col.isVisible() && !ROW_SELECTOR_COL.equals(col.getUserData())) {
+                return i;
+            }
+        }
+        return 0;
     }
 
     /**
