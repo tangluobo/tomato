@@ -797,7 +797,7 @@ public class TableObjectsView extends BorderPane {
         updateIconHighlights();
     }
 
-    /** 取消图标视图编辑：隐藏并移除 Popup */
+    /** 取消图标视图编辑：隐藏并移除 Popup，并清除选中状态 */
     private void cancelIconEdit() {
         if (editingObject == null) return;
         editingObject = null;
@@ -807,8 +807,8 @@ public class TableObjectsView extends BorderPane {
             iconEditPopup = null;
             iconEditField = null;
         }
-        // 退出编辑后刷新高亮，恢复选中背景样式
-        updateIconHighlights();
+        // 编辑结束清除选中，避免表仍显示选中效果
+        clearSelection();
     }
 
     // ==================== 重命名编辑（详细列表视图） ====================
