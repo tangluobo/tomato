@@ -1968,6 +1968,15 @@ public class TableStructureView extends BorderPane {
         if (scene != null) {
             registerOnScene.accept(scene);
         }
+
+        // Ctrl+S 保存表结构（事件过滤器，仅在本视图子树内触发，不影响SQL编辑器等其他Tab的Ctrl+S）
+        final KeyCombination saveCombo = KeyCombination.keyCombination("Ctrl+S");
+        addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
+            if (saveCombo.match(event)) {
+                event.consume();
+                handleSave();
+            }
+        });
     }
 
     /** Ctrl+C加速器处理：优先复制TextInputControl选中文本，否则复制当前选中Tab中表格的选中行 */
@@ -2753,8 +2762,13 @@ public class TableStructureView extends BorderPane {
         @Override
         public void commitEdit(String newValue) {
             // 提交编辑时同步更新数据模型，避免refresh()后丢失输入值
+            String oldValue = getCellData();
             updateCellData(newValue);
             super.commitEdit(newValue);
+            // 值真正变化时标记脏状态（updateCellData已改row，setOnEditCommit里读到的新值==旧值，无法判断，故在此判断）
+            if (oldValue == null ? newValue != null : !oldValue.equals(newValue)) {
+                markDirty();
+            }
         }
 
         @Override
@@ -3015,8 +3029,13 @@ public class TableStructureView extends BorderPane {
         @Override
         public void commitEdit(String newValue) {
             // 提交编辑时同步更新数据模型，避免refresh()后丢失输入值
+            String oldValue = getCellData();
             updateCellData(newValue);
             super.commitEdit(newValue);
+            // 值真正变化时标记脏状态（updateCellData已改row，setOnEditCommit里读到的新值==旧值，无法判断，故在此判断）
+            if (oldValue == null ? newValue != null : !oldValue.equals(newValue)) {
+                markDirty();
+            }
         }
 
         @Override
