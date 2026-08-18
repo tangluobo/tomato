@@ -139,6 +139,8 @@ public class TableStructureView extends BorderPane {
     private List<ObservableList<String>> originalColumnsSnapshot = new ArrayList<>();
     /** 是否有未保存的字段变更（增/删/改/移动），控制Tab标题星号 */
     private boolean dirty = false;
+    /** Shift+点击范围选择的锚点单元格 {row, col} */
+    private final int[] anchorCell = {-1, -1};
 
     /** 缓存的数据类型列表（基于当前连接的数据库类型和版本） */
     private List<String> cachedDataTypes;
@@ -254,7 +256,7 @@ public class TableStructureView extends BorderPane {
         int rowHeight = globalConfig.getTableFontSize() + 18;
         tableView.setFixedCellSize(rowHeight);
         tableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
-        tableView.getSelectionModel().setCellSelectionEnabled(false);
+        tableView.getSelectionModel().setCellSelectionEnabled(true);
         String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
                 globalConfig.getTableFontName(), globalConfig.getTableFontSize());
         tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0; -fx-table-header-height: " + rowHeight + ";");
@@ -340,6 +342,9 @@ public class TableStructureView extends BorderPane {
         fieldsSplitPane.getItems().addAll(tablePane, fieldPropsPane);
         fieldsSplitPane.setDividerPositions(0.72);
         fieldsSplitPane.setStyle("-fx-background-color: white; -fx-padding: 0; -fx-background-insets: 0;");
+
+        // 鼠标拖拽范围选择（与打开表一致的交互）
+        setupDragSelection();
 
         // 监听选中行变化，更新字段属性面板
         tableView.getSelectionModel().selectedItemProperty().addListener(
@@ -724,6 +729,120 @@ public class TableStructureView extends BorderPane {
         fieldPropsBox.setVisible(false);
         fieldPropsPlaceholder.setVisible(true);
         return box;
+    }
+
+    /**
+     * 字段表格的鼠标拖拽范围选择（单元格级，与打开表交互一致）。
+     * 在数据单元格上按下左键并拖动，实现矩形范围多单元格选中；
+     * 行选择器列按下则选中整行；Shift+点击从锚点到当前单元格矩形选中；
+     * Ctrl+点击交给默认行为处理（非连续选择）。
+     */
+    private void setupDragSelection() {
+        final int[] dragStart = {-1, -1}; // [row, col]
+
+        tableView.setOnMousePressed(event -> {
+            if (event.getButton() != javafx.scene.input.MouseButton.PRIMARY) return;
+            int[] cellPos = getCellPositionAt(event);
+            if (cellPos == null) return;
+
+            if (event.isShiftDown() && anchorCell[0] >= 0) {
+                // Shift+点击：从锚点到当前cell的矩形范围选中
+                dragStart[0] = -1;
+                int minRow = Math.min(anchorCell[0], cellPos[0]);
+                int maxRow = Math.max(anchorCell[0], cellPos[0]);
+                int minCol = Math.min(anchorCell[1], cellPos[1]);
+                int maxCol = Math.max(anchorCell[1], cellPos[1]);
+                tableView.getSelectionModel().clearSelection();
+                for (int r = minRow; r <= maxRow; r++) {
+                    for (int c = minCol; c <= maxCol; c++) {
+                        TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(c);
+                        tableView.getSelectionModel().select(r, col);
+                    }
+                }
+                event.consume();
+                return;
+            }
+
+            dragStart[0] = cellPos[0];
+            dragStart[1] = cellPos[1];
+            // 更新锚点
+            anchorCell[0] = cellPos[0];
+            anchorCell[1] = cellPos[1];
+            // 清除已有选中，选中起始cell
+            tableView.getSelectionModel().clearSelection();
+            TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(cellPos[1]);
+            tableView.getSelectionModel().select(cellPos[0], col);
+        });
+
+        tableView.setOnMouseDragged(event -> {
+            if (event.getButton() != javafx.scene.input.MouseButton.PRIMARY) return;
+            if (dragStart[0] < 0) return;
+            int[] cellPos = getCellPositionAt(event);
+            if (cellPos == null) return;
+            int endRow = cellPos[0];
+            int endCol = cellPos[1];
+            // 范围选中
+            int minRow = Math.min(dragStart[0], endRow);
+            int maxRow = Math.max(dragStart[0], endRow);
+            int minCol = Math.min(dragStart[1], endCol);
+            int maxCol = Math.max(dragStart[1], endCol);
+            tableView.getSelectionModel().clearSelection();
+            for (int r = minRow; r <= maxRow; r++) {
+                for (int c = minCol; c <= maxCol; c++) {
+                    TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(c);
+                    tableView.getSelectionModel().select(r, col);
+                }
+            }
+        });
+
+        tableView.setOnMouseReleased(event -> dragStart[0] = -1);
+    }
+
+    /**
+     * 根据鼠标事件位置获取对应的单元格位置 [row, col]。
+     * 通过遍历 PickResult 节点链找到 TableCell，直接获取行列索引。
+     * 点击非TableCell区域（如行右侧空白）时回退到该行最后一个可见数据列。
+     */
+    private int[] getCellPositionAt(javafx.scene.input.MouseEvent event) {
+        Node target = event.getPickResult().getIntersectedNode();
+        TableRow<?> clickedRow = null;
+        while (target != null && target != tableView) {
+            if (clickedRow == null && target instanceof TableRow<?> row) {
+                clickedRow = row;
+            }
+            if (target instanceof TableCell<?, ?> cell) {
+                if (cell.getTableColumn() != null && cell.getTableRow() != null) {
+                    int row = cell.getTableRow().getIndex();
+                    int col = tableView.getColumns().indexOf(cell.getTableColumn());
+                    if (col >= 0) {
+                        return new int[]{row, col};
+                    }
+                }
+            }
+            target = target.getParent();
+        }
+        // 点击的不是TableCell（如右侧空白区域），但命中了TableRow
+        if (clickedRow != null) {
+            int rowIndex = clickedRow.getIndex();
+            int lastCol = getLastVisibleDataColumnIndex();
+            if (lastCol >= 0) {
+                return new int[]{rowIndex, lastCol};
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 获取最后一个可见数据列在 tableView.getColumns() 中的索引（排除行选择器列）
+     */
+    private int getLastVisibleDataColumnIndex() {
+        for (int i = tableView.getColumns().size() - 1; i >= 0; i--) {
+            TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(i);
+            if (col.isVisible() && !ROW_SELECTOR_COL.equals(col.getUserData())) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**
