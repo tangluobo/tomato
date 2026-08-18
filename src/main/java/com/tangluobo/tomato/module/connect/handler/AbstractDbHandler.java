@@ -1350,19 +1350,22 @@ public abstract class AbstractDbHandler implements ConnectHandler {
     }
 
     /**
-     * MySQL 专用主机图标更新：展开时使用 mysql_open.png，收起时使用 mysql.png，
-     * 已连接时叠加绿色光晕。
+     * MySQL 专用主机图标更新：
+     * 已连接时使用 mysql_open.png（彩色图标），无论展开还是折叠；
+     * 未连接时使用 mysql.png（灰色图标）。
      */
     protected void updateMysqlHostIcon(TreeItem<String> hostItem, ConnectionConfig config) {
         ImageView imageView = new ImageView();
         imageView.setFitWidth(16);
         imageView.setFitHeight(16);
         try {
-            String iconPath = hostItem.isExpanded() ? "/images/connect/mysql_open.png" : "/images/connect/mysql.png";
+            boolean connected = module.isHostConnected(hostItem);
+            // 根据连接状态选择图标：已连接用彩色图标，未连接用灰色图标
+            String iconPath = connected ? "/images/connect/mysql_open.png" : "/images/connect/mysql.png";
             Image icon = new Image(getClass().getResourceAsStream(iconPath));
             if (icon != null) {
                 imageView.setImage(icon);
-                if (module.isHostConnected(hostItem)) {
+                if (connected) {
                     imageView.setStyle("-fx-effect: dropshadow(gaussian, #4CAF50, 2, 0.5, 0, 0);");
                 }
             }
