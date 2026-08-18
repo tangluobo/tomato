@@ -8,11 +8,13 @@ import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
+import javafx.geometry.Bounds;
 import javafx.geometry.Insets;
 import javafx.geometry.Point2D;
 import javafx.geometry.Pos;
 import javafx.scene.Cursor;
 import javafx.scene.Node;
+import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
@@ -27,6 +29,7 @@ import javafx.scene.shape.SVGPath;
 import javafx.scene.text.Font;
 import javafx.scene.text.Text;
 import javafx.scene.text.TextAlignment;
+import javafx.stage.Window;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -165,6 +168,10 @@ public class TableObjectsView extends BorderPane {
     private ObjectInfo clickedBeforeObject;
     /** 正在编辑的对象（null = 未编辑） */
     private ObjectInfo editingObject;
+    /** 图标视图悬浮编辑浮窗（Popup，不参与布局且不受裁剪） */
+    private javafx.stage.Popup iconEditPopup;
+    /** 浮窗内的 TextField */
+    private TextField iconEditField;
 
     // 橡皮筋选择框（图标视图，位于 iconScroll 内部）
     private Rectangle rubberBandRect;
@@ -719,76 +726,86 @@ public class TableObjectsView extends BorderPane {
 
     // ==================== 重命名编辑（图标视图） ====================
 
-    /** 开始图标视图编辑：将 VBox 中的 Label 替换为 TextField */
+    /** 开始图标视图编辑：用 Popup 浮窗悬浮在 Label 上方，完全不参与布局且不受裁剪 */
     private void startIconEdit(ObjectInfo obj) {
         VBox box = iconBoxMap.get(obj);
         if (box == null) return;
         editingObject = obj;
 
         // 找到 Label（第2个子节点，第1个是 ImageView）
-        int labelIdx = -1;
+        Label nameLabel = null;
         for (int i = 0; i < box.getChildren().size(); i++) {
             if (box.getChildren().get(i) instanceof Label) {
-                labelIdx = i;
+                nameLabel = (Label) box.getChildren().get(i);
                 break;
             }
         }
-        if (labelIdx < 0) return;
+        if (nameLabel == null) return;
 
-        Label nameLabel = (Label) box.getChildren().get(labelIdx);
-        // 保留 Label 高度，避免替换为 TextField 后 VBox 整体高度变化
-        double labelHeight = nameLabel.getHeight();
-        if (labelHeight <= 0) {
-            labelHeight = nameLabel.prefHeight(-1);
-        }
-        TextField editField = new TextField(obj.name);
-        editField.setStyle("-fx-padding: 0 4; -fx-font-size: 12px; -fx-background-color: white; -fx-border-color: #07c160; -fx-border-radius: 3; -fx-background-radius: 3;");
-        editField.setMaxWidth(76);
-        editField.setPrefHeight(labelHeight);
-        editField.setMinHeight(labelHeight);
-        editField.setMaxHeight(labelHeight);
-        editField.setAlignment(Pos.CENTER);
-        editField.setOnAction(e -> commitRename(obj, editField.getText(), () -> cancelIconEdit()));
-        editField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
+        // 计算 Label 在屏幕上的位置（Popup 用屏幕坐标）
+        Bounds labelSceneBounds = nameLabel.localToScene(nameLabel.getBoundsInLocal());
+        Scene scene = nameLabel.getScene();
+        if (scene == null || scene.getWindow() == null) return;
+        Window window = scene.getWindow();
+        double screenX = window.getX() + scene.getX() + labelSceneBounds.getMinX();
+        double screenY = window.getY() + scene.getY() + labelSceneBounds.getMinY();
+
+        // 创建 TextField
+        iconEditField = new TextField(obj.name);
+        iconEditField.setStyle("-fx-padding: 2 6; -fx-font-size: 12px; -fx-background-color: white; -fx-border-color: #07c160; -fx-border-radius: 0; -fx-background-radius: 0; -fx-effect: dropshadow(gaussian, #00000055, 6, 0, 0, 2);");
+        // 宽度根据内容计算，允许比 Label 宽（覆盖其他表名）
+        Text measureText = new Text(obj.name);
+        measureText.setFont(Font.font(12));
+        double contentWidth = measureText.getLayoutBounds().getWidth() + 20;
+        double labelW = nameLabel.getWidth();
+        if (labelW <= 0) labelW = nameLabel.prefWidth(-1);
+        double fieldWidth = Math.max(contentWidth, labelW);
+        double labelH = nameLabel.getHeight();
+        if (labelH <= 0) labelH = nameLabel.prefHeight(-1);
+        double fieldHeight = labelH + 8;
+        iconEditField.setPrefWidth(fieldWidth);
+        iconEditField.setPrefHeight(fieldHeight);
+        iconEditField.setMinWidth(fieldWidth);
+        iconEditField.setMinHeight(fieldHeight);
+        iconEditField.setAlignment(Pos.CENTER);
+
+        iconEditField.setOnAction(e -> commitRename(obj, iconEditField.getText(), () -> cancelIconEdit()));
+        iconEditField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
             if (!isNowFocused && editingObject == obj) {
-                commitRename(obj, editField.getText(), () -> cancelIconEdit());
+                commitRename(obj, iconEditField.getText(), () -> cancelIconEdit());
             }
         });
-        editField.setOnKeyReleased(e -> {
+        iconEditField.setOnKeyReleased(e -> {
             if (e.getCode() == javafx.scene.input.KeyCode.ESCAPE) {
                 cancelIconEdit();
             }
         });
 
-        box.getChildren().set(labelIdx, editField);
-        editField.selectAll();
-        Platform.runLater(() -> editField.requestFocus());
+        // 用 Popup 悬浮显示，不受父容器裁剪
+        iconEditPopup = new javafx.stage.Popup();
+        iconEditPopup.setAutoFix(false);
+        iconEditPopup.setAutoHide(true);
+        iconEditPopup.setHideOnEscape(false);
+        // 居中对齐 Label
+        double offsetX = (fieldWidth - labelW) / 2.0;
+        iconEditPopup.getContent().add(iconEditField);
+        // Popup.show 需要在下一帧定位后才准确，先 show 再 relocate
+        iconEditPopup.show(window, screenX - offsetX, screenY - 4);
+        iconEditField.selectAll();
+        Platform.runLater(() -> iconEditField.requestFocus());
         // 编辑开始后刷新高亮，去除选中背景样式
         updateIconHighlights();
     }
 
-    /** 取消图标视图编辑：将 TextField 恢复为 Label */
+    /** 取消图标视图编辑：隐藏并移除 Popup */
     private void cancelIconEdit() {
         if (editingObject == null) return;
-        ObjectInfo obj = editingObject;
         editingObject = null;
-        VBox box = iconBoxMap.get(obj);
-        if (box == null) return;
 
-        // 找到 TextField 并替换回 Label
-        for (int i = 0; i < box.getChildren().size(); i++) {
-            if (box.getChildren().get(i) instanceof TextField) {
-                Label name = new Label(obj.name);
-                name.setStyle("-fx-font-size: 12px;");
-                name.setWrapText(false);
-                name.setEllipsisString("...");
-                name.setMaxWidth(76);
-                name.setAlignment(Pos.CENTER);
-                name.setTextAlignment(TextAlignment.CENTER);
-                Tooltip.install(name, new Tooltip(obj.name));
-                box.getChildren().set(i, name);
-                break;
-            }
+        if (iconEditPopup != null) {
+            iconEditPopup.hide();
+            iconEditPopup = null;
+            iconEditField = null;
         }
         // 退出编辑后刷新高亮，恢复选中背景样式
         updateIconHighlights();
@@ -1120,7 +1137,7 @@ public class TableObjectsView extends BorderPane {
                     if (isEmpty()) return;
                     String currentName = getItem();
                     editField = new TextField(currentName);
-                    editField.setStyle("-fx-padding: 1 4; -fx-font-size: 12px; -fx-background-color: white; -fx-border-color: #07c160; -fx-border-radius: 3; -fx-background-radius: 3;");
+                    editField.setStyle("-fx-padding: 0 4; -fx-font-size: 12px; -fx-background-color: white; -fx-border-color: #07c160; -fx-border-radius: 0; -fx-background-radius: 0;");
 
                     editField.setOnAction(e -> commitRenameFromField(editField.getText()));
                     editField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
