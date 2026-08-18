@@ -127,6 +127,11 @@ public class TableStructureView extends BorderPane {
     /** 复制字段的JSON缓存（避免被JavaFX默认复制行为覆盖剪贴板导致粘贴失败） */
     private String copiedFieldsJson = null;
 
+    /** 当前编辑单元格的提交回调（由可编辑单元格在 startEdit 时注入，供方向键导航时提交当前编辑值） */
+    private Runnable currentEditCommit;
+    /** 当前编辑单元格是否应跳过方向键导航（例如 ComboBox 下拉打开时，方向键用于选择下拉项） */
+    private java.util.function.Supplier<Boolean> skipArrowNavigation;
+
     /** 表注释原始值，用于检测变更 */
     private String originalTableComment = null;
 
@@ -294,6 +299,28 @@ public class TableStructureView extends BorderPane {
             if (focusedIndex == lastIndex) {
                 event.consume();
                 handleAddField();
+            }
+        });
+
+        // 编辑状态下，按方向键在单元格间切换；最后一行按向下键追加新行
+        // 在 TableView 上拦截（捕获阶段早于 TextField 内的行为过滤器，避免 caret 移动消费事件）
+        tableView.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
+            if (tableView.getEditingCell() == null) return;
+            KeyCode code = event.getCode();
+            if (code != KeyCode.UP && code != KeyCode.DOWN
+                    && code != KeyCode.LEFT && code != KeyCode.RIGHT) {
+                return;
+            }
+            // ComboBox 下拉打开时方向键用于选择下拉项，不导航
+            if (skipArrowNavigation != null && skipArrowNavigation.get()) return;
+            event.consume();
+            int deltaRow = (code == KeyCode.UP) ? -1 : (code == KeyCode.DOWN) ? 1 : 0;
+            int deltaCol = (code == KeyCode.LEFT) ? -1 : (code == KeyCode.RIGHT) ? 1 : 0;
+            // 先计算目标（含最后一行追加），再提交当前编辑，最后通过 runLater 进入目标单元格编辑
+            Runnable commit = currentEditCommit;
+            navigateFromEditCell(deltaRow, deltaCol);
+            if (commit != null) {
+                commit.run();
             }
         });
 
@@ -1847,6 +1874,91 @@ public class TableStructureView extends BorderPane {
         markDirty();
     }
 
+    /**
+     * 编辑状态下按方向键在单元格间切换：
+     * - UP/DOWN：同列上下移动；DOWN 到最后一行时追加新行并切入新行同列
+     * - LEFT/RIGHT：同行左右移动，跳过非可编辑列（行选择器、主键、非空、只读列）
+     * 必须在提交当前编辑之前计算目标（提交后 tableView.getEditingCell() 为 null），
+     * 通过 runLater 在提交完成后再进入目标单元格编辑。
+     */
+    private void navigateFromEditCell(int deltaRow, int deltaCol) {
+        TablePosition<?, ?> editPos = tableView.getEditingCell();
+        if (editPos == null) return;
+        int curRow = editPos.getRow();
+        int curCol = editPos.getColumn();
+        ObservableList<ObservableList<String>> items = tableView.getItems();
+        if (items == null || items.isEmpty()) return;
+
+        // 计算目标列
+        TableColumn<ObservableList<String>, String> targetCol;
+        if (deltaCol != 0) {
+            targetCol = findNavigableColumn(curCol, deltaCol > 0);
+            if (targetCol == null) return; // 该方向无更多可编辑列
+        } else {
+            @SuppressWarnings("unchecked")
+            TableColumn<ObservableList<String>, String> c =
+                    (TableColumn<ObservableList<String>, String>) tableView.getColumns().get(curCol);
+            targetCol = c;
+        }
+
+        // 计算目标行
+        int targetRow = curRow;
+        if (deltaRow > 0) {
+            int lastRow = items.size() - 1;
+            if (curRow >= lastRow) {
+                // 最后一行按向下：追加新行
+                handleAddField();
+                targetRow = items.size() - 1;
+            } else {
+                targetRow = curRow + 1;
+            }
+        } else if (deltaRow < 0) {
+            if (curRow <= 0) return; // 第一行无法上移
+            targetRow = curRow - 1;
+        }
+
+        final int finalTargetRow = targetRow;
+        final TableColumn<ObservableList<String>, String> finalTargetCol = targetCol;
+        Platform.runLater(() -> {
+            tableView.getSelectionModel().clearAndSelect(finalTargetRow);
+            tableView.edit(finalTargetRow, finalTargetCol);
+        });
+    }
+
+    /**
+     * 从 fromIndex 起（不含）向前/向后查找下一个可编辑列（字段名、类型、长度、小数点、注释），
+     * 跳过行选择器列（userData 为 String）及其他只读列。
+     */
+    private TableColumn<ObservableList<String>, String> findNavigableColumn(int fromIndex, boolean forward) {
+        ObservableList<TableColumn<ObservableList<String>, ?>> columns = tableView.getColumns();
+        int size = columns.size();
+        int step = forward ? 1 : -1;
+        for (int i = fromIndex + step; i >= 0 && i < size; i += step) {
+            TableColumn<ObservableList<String>, ?> col = columns.get(i);
+            if (isNavigableColumn(col)) {
+                @SuppressWarnings("unchecked")
+                TableColumn<ObservableList<String>, String> typed =
+                        (TableColumn<ObservableList<String>, String>) col;
+                return typed;
+            }
+        }
+        return null;
+    }
+
+    private boolean isNavigableColumn(TableColumn<?, ?> col) {
+        // 行选择器列的 userData 为 String（ROW_SELECTOR_COL），跳过
+        if (!(col.getUserData() instanceof Integer)) return false;
+        String title = col.getText();
+        return "字段名".equals(title) || "类型".equals(title) || "长度".equals(title)
+                || "小数点".equals(title) || "注释".equals(title);
+    }
+
+    /** 清除当前编辑回调（在编辑结束/取消时调用，避免后续误用） */
+    private void clearEditCommitCallback() {
+        currentEditCommit = null;
+        skipArrowNavigation = null;
+    }
+
     private void handleInsertField() {
         // 在选中行之前插入一个空字段行
         ObservableList<ObservableList<String>> items = tableView.getItems();
@@ -2628,10 +2740,19 @@ public class TableStructureView extends BorderPane {
                 Integer dataColIndex = (Integer) getTableColumn().getUserData();
                 if (dataColIndex == null || dataColIndex < 0 || dataColIndex >= row.size()) return;
                 String current = row.get(dataColIndex);
-                row.set(dataColIndex, "是".equals(current) ? "否" : "是");
+                boolean becomePk = !"是".equals(current);
+                row.set(dataColIndex, becomePk ? "是" : "否");
+                // 设置为主键时自动将列设为 NOT NULL（主键列不允许 NULL）
+                if (becomePk && columnTitles != null) {
+                    int nullableIdx = columnTitles.indexOf("非空");
+                    if (nullableIdx >= 0 && nullableIdx < row.size() && !"是".equals(row.get(nullableIdx))) {
+                        row.set(nullableIdx, "是");
+                    }
+                }
                 // 刷新整表以重新编号所有主键
                 tableView.refresh();
                 updateFieldPropertiesPane();
+                markDirty();
                 e.consume();
             });
         }
@@ -2743,6 +2864,9 @@ public class TableStructureView extends BorderPane {
                 "-fx-pref-height: 24px;"
             );
             setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 1; -fx-padding: 0; -fx-text-fill: black;");
+            // 注入提交回调供方向键导航使用；下拉打开时方向键不导航（用于选择下拉项）
+            currentEditCommit = () -> commitEdit(comboBox.getValue() != null ? comboBox.getValue() : "");
+            skipArrowNavigation = () -> comboBox.isShowing();
             // 延迟聚焦编辑器并自动展开下拉
             Platform.runLater(() -> {
                 comboBox.getEditor().requestFocus();
@@ -2771,6 +2895,7 @@ public class TableStructureView extends BorderPane {
             setText(null);
             setGraphic(comboBox);
             applyRowStateStyle();
+            clearEditCommitCallback();
         }
 
         @Override
@@ -2783,6 +2908,7 @@ public class TableStructureView extends BorderPane {
             if (oldValue == null ? newValue != null : !oldValue.equals(newValue)) {
                 markDirty();
             }
+            clearEditCommitCallback();
         }
 
         @Override
@@ -3016,6 +3142,9 @@ public class TableStructureView extends BorderPane {
             textField.setText(getItem() != null ? getItem() : "");
             // 编辑状态：白色背景+蓝色边框，内容垂直居中、水平左对齐
             setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 1; -fx-padding: 0; -fx-text-fill: black; -fx-alignment: CENTER_LEFT;");
+            // 注入提交回调供方向键导航使用
+            currentEditCommit = () -> commitEdit(textField.getText());
+            skipArrowNavigation = () -> false;
             Platform.runLater(() -> {
                 textField.requestFocus();
                 textField.selectAll();
@@ -3038,6 +3167,7 @@ public class TableStructureView extends BorderPane {
             setText(displayValue != null ? displayValue : "");
             setGraphic(null);
             applyRowStateStyle();
+            clearEditCommitCallback();
         }
 
         @Override
@@ -3050,6 +3180,7 @@ public class TableStructureView extends BorderPane {
             if (oldValue == null ? newValue != null : !oldValue.equals(newValue)) {
                 markDirty();
             }
+            clearEditCommitCallback();
         }
 
         @Override
