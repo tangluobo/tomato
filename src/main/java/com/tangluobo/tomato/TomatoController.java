@@ -236,7 +236,8 @@ public class TomatoController {
         savedWidth = stage.getWidth();
         savedHeight = stage.getHeight();
 
-        Screen screen = Screen.getPrimary();
+        // 使用窗口中心点所在的屏幕（而非主屏），这样双屏时在副屏最大化不会跳到主屏
+        Screen screen = getScreenForStage(stage);
         Rectangle2D visualBounds = screen.getVisualBounds();
 
         stage.setX(visualBounds.getMinX());
@@ -246,6 +247,22 @@ public class TomatoController {
 
         customMaximized = true;
         rootPane.setStyle("-fx-border-color: transparent; -fx-border-width: 0;");
+    }
+
+    /**
+     * 根据窗口中心点定位窗口当前所在的屏幕。
+     * 用于多屏环境下：在副屏点击最大化按钮或拖到顶部时，
+     * 应在副屏上最大化，而不是强制弹回主屏。
+     */
+    private Screen getScreenForStage(Stage stage) {
+        double centerX = stage.getX() + stage.getWidth() / 2.0;
+        double centerY = stage.getY() + stage.getHeight() / 2.0;
+        for (Screen screen : Screen.getScreens()) {
+            if (screen.getBounds().contains(centerX, centerY)) {
+                return screen;
+            }
+        }
+        return Screen.getPrimary();
     }
 
     private void restoreWindow(Stage stage) {
@@ -511,11 +528,13 @@ public class TomatoController {
             double newX = event.getScreenX() - xOffset;
             double newY = event.getScreenY() - yOffset;
 
-            Screen screen = Screen.getPrimary();
-            double screenTop = screen.getVisualBounds().getMinY();
+            // 按窗口中心点定位当前屏幕，副屏顶部（minY!=0）也能触发最大化
+            Screen screen = getScreenForStage(stage);
+            Rectangle2D visualBounds = screen.getVisualBounds();
+            double screenTop = visualBounds.getMinY();
 
-            if (newY <= MAXIMIZE_THRESHOLD && newX >= screen.getVisualBounds().getMinX()
-                && newX + stage.getWidth() <= screen.getVisualBounds().getMaxX()) {
+            if (newY <= screenTop + MAXIMIZE_THRESHOLD && newX >= visualBounds.getMinX()
+                && newX + stage.getWidth() <= visualBounds.getMaxX()) {
                 maximizeWindow(stage);
                 windowManagementActive = false;
             } else {
