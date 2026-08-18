@@ -736,9 +736,17 @@ public class TableObjectsView extends BorderPane {
         if (labelIdx < 0) return;
 
         Label nameLabel = (Label) box.getChildren().get(labelIdx);
+        // 保留 Label 高度，避免替换为 TextField 后 VBox 整体高度变化
+        double labelHeight = nameLabel.getHeight();
+        if (labelHeight <= 0) {
+            labelHeight = nameLabel.prefHeight(-1);
+        }
         TextField editField = new TextField(obj.name);
-        editField.setStyle("-fx-padding: 1 4; -fx-font-size: 12px; -fx-background-color: white; -fx-border-color: #07c160; -fx-border-radius: 3; -fx-background-radius: 3;");
+        editField.setStyle("-fx-padding: 0 4; -fx-font-size: 12px; -fx-background-color: white; -fx-border-color: #07c160; -fx-border-radius: 3; -fx-background-radius: 3;");
         editField.setMaxWidth(76);
+        editField.setPrefHeight(labelHeight);
+        editField.setMinHeight(labelHeight);
+        editField.setMaxHeight(labelHeight);
         editField.setAlignment(Pos.CENTER);
         editField.setOnAction(e -> commitRename(obj, editField.getText(), () -> cancelIconEdit()));
         editField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
@@ -755,6 +763,8 @@ public class TableObjectsView extends BorderPane {
         box.getChildren().set(labelIdx, editField);
         editField.selectAll();
         Platform.runLater(() -> editField.requestFocus());
+        // 编辑开始后刷新高亮，去除选中背景样式
+        updateIconHighlights();
     }
 
     /** 取消图标视图编辑：将 TextField 恢复为 Label */
@@ -780,6 +790,8 @@ public class TableObjectsView extends BorderPane {
                 break;
             }
         }
+        // 退出编辑后刷新高亮，恢复选中背景样式
+        updateIconHighlights();
     }
 
     // ==================== 重命名编辑（详细列表视图） ====================
@@ -1007,7 +1019,10 @@ public class TableObjectsView extends BorderPane {
     private void updateIconHighlights() {
         for (Map.Entry<ObjectInfo, VBox> entry : iconBoxMap.entrySet()) {
             VBox box = entry.getValue();
-            if (selectedObjects.contains(entry.getKey())) {
+            // 编辑中的对象不显示选中背景样式
+            if (editingObject == entry.getKey()) {
+                box.setStyle("-fx-background-color: transparent; -fx-background-radius: 4; -fx-border-color: transparent; -fx-border-radius: 4; -fx-border-width: 1px;");
+            } else if (selectedObjects.contains(entry.getKey())) {
                 box.setStyle("-fx-background-color: #d4edda; -fx-background-radius: 4; -fx-border-color: #07c160; -fx-border-radius: 4; -fx-border-width: 1px;");
             } else {
                 box.setStyle("-fx-background-color: transparent; -fx-background-radius: 4; -fx-border-color: transparent; -fx-border-radius: 4; -fx-border-width: 1px;");
