@@ -790,7 +790,7 @@ public class TableObjectsView extends BorderPane {
         double offsetX = (fieldWidth - labelW) / 2.0;
         iconEditPopup.getContent().add(iconEditField);
         // Popup.show 需要在下一帧定位后才准确，先 show 再 relocate
-        iconEditPopup.show(window, screenX - offsetX, screenY - 4);
+        iconEditPopup.show(window, screenX - offsetX, screenY - 8);
         iconEditField.selectAll();
         Platform.runLater(() -> iconEditField.requestFocus());
         // 编辑开始后刷新高亮，去除选中背景样式
