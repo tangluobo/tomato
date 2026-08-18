@@ -487,13 +487,17 @@ public class TableObjectsView extends BorderPane {
     // ==================== 工具栏按钮动作 ====================
 
     private void handleOpenTable() {
-        if (selectedObject == null || operations == null) return;
-        operations.openObject(buildNodeData(selectedObject));
+        if (selectedObjects.isEmpty() || operations == null) return;
+        for (ObjectInfo obj : selectedObjects) {
+            operations.openObject(buildNodeData(obj));
+        }
     }
 
     private void handleDesignTable() {
-        if (selectedObject == null || operations == null) return;
-        operations.designObject(buildNodeData(selectedObject));
+        if (selectedObjects.isEmpty() || operations == null) return;
+        for (ObjectInfo obj : selectedObjects) {
+            operations.designObject(buildNodeData(obj));
+        }
     }
 
     private void handleDeleteTable() {
@@ -513,7 +517,7 @@ public class TableObjectsView extends BorderPane {
 
     /** 选中对象变化时更新按钮启用状态和状态栏计数 */
     private void updateButtonStates() {
-        boolean hasSelection = selectedObject != null;
+        boolean hasSelection = !selectedObjects.isEmpty();
         if (openTableBtn != null) openTableBtn.setDisable(!hasSelection);
         if (designTableBtn != null) designTableBtn.setDisable(!hasSelection);
         if (deleteTableBtn != null) deleteTableBtn.setDisable(!hasSelection);
@@ -693,24 +697,23 @@ public class TableObjectsView extends BorderPane {
     /** 注册右键菜单：图标视图 + 详细列表 */
     private void setupContextMenu() {
         contextMenu = new ContextMenu();
-        MenuItem openTableItem = new MenuItem("打开表");
+        MenuItem openTableItem = new MenuItem("打开表", createImageIcon("/images/connect/table_open.png", 16));
         openTableItem.setOnAction(e -> handleOpenTable());
-        MenuItem designItem = new MenuItem("设计表");
+        MenuItem designItem = new MenuItem("设计表", createImageIcon("/images/connect/table_edit.png", 16));
         designItem.setOnAction(e -> handleDesignTable());
-        MenuItem copyItem = new MenuItem("复制表");
+        MenuItem copyItem = new MenuItem("复制表", createImageIcon("/images/connect/copy_tables.png", 16));
         copyItem.setOnAction(e -> copySelectedTablesToClipboard());
-        MenuItem deleteItem = new MenuItem("删除表");
+        MenuItem deleteItem = new MenuItem("删除表", createImageIcon("/images/connect/table_drop.png", 16));
         deleteItem.setOnAction(e -> handleDeleteTable());
-        MenuItem refreshItem = new MenuItem("刷新");
+        MenuItem refreshItem = new MenuItem("刷新", createImageIcon("/images/connect/refresh.png", 16));
         refreshItem.setOnAction(e -> loadData());
         contextMenu.getItems().addAll(openTableItem, designItem, new SeparatorMenuItem(),
                 copyItem, new SeparatorMenuItem(), deleteItem, new SeparatorMenuItem(), refreshItem);
 
         iconScroll.setOnContextMenuRequested(e -> {
             boolean empty = selectedObjects.isEmpty();
-            boolean noSingle = selectedObject == null;
-            openTableItem.setDisable(noSingle);
-            designItem.setDisable(noSingle);
+            openTableItem.setDisable(empty);
+            designItem.setDisable(empty);
             copyItem.setDisable(empty);
             deleteItem.setDisable(empty);
             contextMenu.show(this, e.getScreenX(), e.getScreenY());
@@ -718,9 +721,8 @@ public class TableObjectsView extends BorderPane {
         });
         detailTableView.setOnContextMenuRequested(e -> {
             boolean empty = selectedObjects.isEmpty();
-            boolean noSingle = selectedObject == null;
-            openTableItem.setDisable(noSingle);
-            designItem.setDisable(noSingle);
+            openTableItem.setDisable(empty);
+            designItem.setDisable(empty);
             copyItem.setDisable(empty);
             deleteItem.setDisable(empty);
             contextMenu.show(this, e.getScreenX(), e.getScreenY());
