@@ -128,7 +128,7 @@ public class RedisConnectHandler implements ConnectHandler {
             ImageView tabIconView = new ImageView(redisIcon);
             tabIconView.setFitWidth(18);
             tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
+            tab.setGraphic(ConnectModule.createFixedSizeGraphic(tabIconView));
         } catch (Exception ignored) {}
 
         tab.setContent(dataView);

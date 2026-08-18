@@ -9,6 +9,7 @@ import com.tangluobo.tomato.module.connect.dialog.GlobalConfigDialog;
 import com.tangluobo.tomato.module.connect.dialog.RestoreDialog;
 import com.tangluobo.tomato.module.connect.service.BackupService;
 import com.tangluobo.tomato.module.connect.service.DatabaseService;
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import com.tangluobo.tomato.module.connect.view.SqlEditorView;
 import com.tangluobo.tomato.module.connect.view.TableDataView;
 import com.tangluobo.tomato.module.connect.view.TableStructureView;
@@ -945,6 +946,11 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                     }
 
                     @Override
+                    public void renameObject(DatabaseNodeData objData, String newName, Runnable onSuccess) {
+                        handleRenameObject(folderItem, data, objData, newName, onSuccess);
+                    }
+
+                    @Override
                     public void importWizard() {
                         handleRestoreBackup(null, data);
                     }
@@ -975,7 +981,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 ImageView tabIconView = new ImageView(folderIcon);
                 tabIconView.setFitWidth(18);
                 tabIconView.setFitHeight(18);
-                tab.setGraphic(tabIconView);
+                tab.setGraphic(ConnectModule.createFixedSizeGraphic(tabIconView));
             }
         } catch (Exception ignored) {}
         tab.setContent(objectsView);
@@ -992,6 +998,67 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         module.getTerminalTabPane().getTabs().add(tab);
         module.getTerminalTabPane().getSelectionModel().select(tab);
         module.showDataView();
+    }
+
+    /**
+     * 重命名表/视图：调用 DatabaseService 执行重命名，更新树节点，刷新对象视图。
+     */
+    public void handleRenameObject(TreeItem<String> folderItem, DatabaseNodeData folderData,
+                                    DatabaseNodeData objData, String newName, Runnable onSuccess) {
+        ConnectionConfig config = objData.getConnectionConfig();
+        String dbName = objData.getDatabaseName();
+        String schemaName = objData.getSchemaName();
+        String oldName = objData.getName();
+        boolean isTable = objData.getType() == DatabaseNodeData.NodeType.TABLE;
+
+        new Thread(() -> {
+            try {
+                if (isTable) {
+                    DatabaseService.renameTable(config, dbName, schemaName, oldName, newName);
+                } else {
+                    DatabaseService.renameView(config, dbName, schemaName, oldName, newName);
+                }
+                Platform.runLater(() -> {
+                    // 更新树节点：查找并更新表/视图节点的名称
+                    updateTreeNodeName(folderItem, oldName, newName, config, dbName, schemaName);
+                    // 回调刷新对象视图
+                    if (onSuccess != null) onSuccess.run();
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("重命名失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("重命名失败: " + e.getMessage());
+                    DialogPositionUtil.centerOnOwner(alert, module.getStage());
+                    alert.showAndWait();
+                });
+                e.printStackTrace();
+            }
+        }, "DB-RenameFromObjects").start();
+    }
+
+    /**
+     * 查找树中表/视图节点并更新名称。
+     * 在 folderItem 的子节点中查找名称匹配的节点，更新其值和 dbNodeDataMap。
+     */
+    private void updateTreeNodeName(TreeItem<String> folderItem, String oldName, String newName,
+                                     ConnectionConfig config, String dbName, String schemaName) {
+        // folderItem 是"表"或"视图"文件夹，遍历其子节点查找匹配的表/视图
+        for (TreeItem<String> child : folderItem.getChildren()) {
+            if (oldName.equals(child.getValue())) {
+                child.setValue(newName);
+                DatabaseNodeData oldData = module.getDbNodeDataMap().get(child);
+                if (oldData != null) {
+                    DatabaseNodeData newData = new DatabaseNodeData(
+                            oldData.getType(), newName, config, dbName,
+                            schemaName != null ? schemaName : null);
+                    module.getDbNodeDataMap().put(child, newData);
+                }
+                child.getChildren().clear();
+                return;
+            }
+        }
     }
 
     /** 双击视图文件夹：若已加载则切换展开状态，否则加载视图列表 */
@@ -1030,7 +1097,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             ImageView tabIconView = new ImageView(tableIcon);
             tabIconView.setFitWidth(18);
             tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
+            tab.setGraphic(ConnectModule.createFixedSizeGraphic(tabIconView));
         }
         tab.setContent(structView);
         tab.setUserData(tabId);
@@ -1098,7 +1165,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             ImageView tabIconView = new ImageView(tabIcon);
             tabIconView.setFitWidth(18);
             tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
+            tab.setGraphic(ConnectModule.createFixedSizeGraphic(tabIconView));
         }
         tab.setContent(structView);
         tab.setUserData(tabId);
@@ -1157,7 +1224,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             ImageView tabIconView = new ImageView(tabIcon);
             tabIconView.setFitWidth(18);
             tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
+            tab.setGraphic(ConnectModule.createFixedSizeGraphic(tabIconView));
         }
         tab.setContent(dataView);
         tab.setUserData(tabId);
@@ -1652,7 +1719,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             ImageView tabIconView = new ImageView(tabIcon);
             tabIconView.setFitWidth(14);
             tabIconView.setFitHeight(14);
-            tab.setGraphic(tabIconView);
+            tab.setGraphic(ConnectModule.createFixedSizeGraphic(tabIconView));
         }
 
         String tabId = "query_new_" + System.currentTimeMillis();
@@ -1725,7 +1792,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             ImageView tabIconView = new ImageView(tabIcon);
             tabIconView.setFitWidth(14);
             tabIconView.setFitHeight(14);
-            tab.setGraphic(tabIconView);
+            tab.setGraphic(ConnectModule.createFixedSizeGraphic(tabIconView));
         }
         tab.setContent(editorView);
         tab.setUserData(tabId);

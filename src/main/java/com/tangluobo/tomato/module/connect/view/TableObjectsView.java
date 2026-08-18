@@ -106,6 +106,8 @@ public class TableObjectsView extends BorderPane {
         void createTable();
         /** 删除表/视图（批量，视图内部已刷新，无需再刷新） */
         void deleteObjects(List<DatabaseNodeData> dataList);
+        /** 重命名表/视图，成功后回调 onSuccess */
+        void renameObject(DatabaseNodeData data, String newName, Runnable onSuccess);
         /** 导入向导 */
         void importWizard();
         /** 导出向导 */
@@ -155,6 +157,14 @@ public class TableObjectsView extends BorderPane {
     private ObjectInfo anchorObject;
     /** 防止详细列表选择监听器与图标视图循环同步的标志 */
     private boolean syncingDetail = false;
+
+    // 重命名编辑状态
+    /** 单点击定时器（用于区分单击编辑 vs 双击打开） */
+    private javafx.animation.Timeline singleClickTimer;
+    /** 上一次点击前已选中的对象（用于判断"已选中再点击"进入编辑） */
+    private ObjectInfo clickedBeforeObject;
+    /** 正在编辑的对象（null = 未编辑） */
+    private ObjectInfo editingObject;
 
     // 橡皮筋选择框（图标视图，位于 iconScroll 内部）
     private Rectangle rubberBandRect;
@@ -634,6 +644,8 @@ public class TableObjectsView extends BorderPane {
 
             item.setOnMousePressed(e -> {
                 iconScroll.requestFocus(); // 转移焦点到对象视图，防止 Ctrl+A 传到左侧树
+                // 记录本次点击前已选中的对象（用于判断"已选中再点击"进入编辑）
+                clickedBeforeObject = (selectedObjects.size() == 1) ? selectedObjects.iterator().next() : null;
             });
             item.setOnMouseClicked(e -> {
                 if (isRubberBanding) return; // 橡皮筋拖动中忽略点击
@@ -648,19 +660,54 @@ public class TableObjectsView extends BorderPane {
                 }
                 boolean ctrl = e.isControlDown();
                 boolean shift = e.isShiftDown();
+
+                // 双击：取消编辑定时器，执行打开
+                if (e.getClickCount() == 2) {
+                    if (singleClickTimer != null) {
+                        singleClickTimer.stop();
+                        singleClickTimer = null;
+                    }
+                    if (editingObject != null) {
+                        cancelIconEdit();
+                    }
+                    handleOpenTable();
+                    e.consume();
+                    return;
+                }
+
+                // 单击：判断是否"已选中再点击"以进入重命名编辑
+                boolean wasAlreadySelected = !ctrl && !shift
+                        && clickedBeforeObject == obj
+                        && selectedObjects.size() == 1
+                        && selectedObjects.contains(obj)
+                        && editingObject == null;
+                if (wasAlreadySelected) {
+                    final ObjectInfo objToEdit = obj;
+                    if (singleClickTimer != null) {
+                        singleClickTimer.stop();
+                    }
+                    singleClickTimer = new javafx.animation.Timeline(
+                            new javafx.animation.KeyFrame(javafx.util.Duration.millis(300), ae -> {
+                                if (editingObject == null
+                                        && selectedObjects.size() == 1
+                                        && selectedObjects.contains(objToEdit)) {
+                                    startIconEdit(objToEdit);
+                                }
+                                singleClickTimer = null;
+                            }));
+                    singleClickTimer.play();
+                    e.consume();
+                    return;
+                }
+
+                // 正常选择逻辑
                 if (shift && anchorObject != null) {
-                    // Shift 范围选择：从锚点到当前
                     selectRange(anchorObject, obj);
                 } else if (ctrl) {
-                    // Ctrl 切换选择
                     toggleSelection(obj);
                 } else {
-                    // 普通点击：仅选此对象
                     clearSelection();
                     addToSelection(obj);
-                }
-                if (e.getClickCount() == 2) {
-                    handleOpenTable();
                 }
                 e.consume();
             });
@@ -668,6 +715,120 @@ public class TableObjectsView extends BorderPane {
             iconFlowPane.getChildren().add(item);
         }
         updateIconHighlights();
+    }
+
+    // ==================== 重命名编辑（图标视图） ====================
+
+    /** 开始图标视图编辑：将 VBox 中的 Label 替换为 TextField */
+    private void startIconEdit(ObjectInfo obj) {
+        VBox box = iconBoxMap.get(obj);
+        if (box == null) return;
+        editingObject = obj;
+
+        // 找到 Label（第2个子节点，第1个是 ImageView）
+        int labelIdx = -1;
+        for (int i = 0; i < box.getChildren().size(); i++) {
+            if (box.getChildren().get(i) instanceof Label) {
+                labelIdx = i;
+                break;
+            }
+        }
+        if (labelIdx < 0) return;
+
+        Label nameLabel = (Label) box.getChildren().get(labelIdx);
+        TextField editField = new TextField(obj.name);
+        editField.setStyle("-fx-padding: 1 4; -fx-font-size: 12px; -fx-background-color: white; -fx-border-color: #07c160; -fx-border-radius: 3; -fx-background-radius: 3;");
+        editField.setMaxWidth(76);
+        editField.setAlignment(Pos.CENTER);
+        editField.setOnAction(e -> commitRename(obj, editField.getText(), () -> cancelIconEdit()));
+        editField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
+            if (!isNowFocused && editingObject == obj) {
+                commitRename(obj, editField.getText(), () -> cancelIconEdit());
+            }
+        });
+        editField.setOnKeyReleased(e -> {
+            if (e.getCode() == javafx.scene.input.KeyCode.ESCAPE) {
+                cancelIconEdit();
+            }
+        });
+
+        box.getChildren().set(labelIdx, editField);
+        editField.selectAll();
+        Platform.runLater(() -> editField.requestFocus());
+    }
+
+    /** 取消图标视图编辑：将 TextField 恢复为 Label */
+    private void cancelIconEdit() {
+        if (editingObject == null) return;
+        ObjectInfo obj = editingObject;
+        editingObject = null;
+        VBox box = iconBoxMap.get(obj);
+        if (box == null) return;
+
+        // 找到 TextField 并替换回 Label
+        for (int i = 0; i < box.getChildren().size(); i++) {
+            if (box.getChildren().get(i) instanceof TextField) {
+                Label name = new Label(obj.name);
+                name.setStyle("-fx-font-size: 12px;");
+                name.setWrapText(false);
+                name.setEllipsisString("...");
+                name.setMaxWidth(76);
+                name.setAlignment(Pos.CENTER);
+                name.setTextAlignment(TextAlignment.CENTER);
+                Tooltip.install(name, new Tooltip(obj.name));
+                box.getChildren().set(i, name);
+                break;
+            }
+        }
+    }
+
+    // ==================== 重命名编辑（详细列表视图） ====================
+
+    /** 开始详细列表编辑：在指定行号上启动名称列编辑 */
+    private void startDetailEdit(int row) {
+        if (editingObject != null) return;
+        detailTableView.setEditable(true);
+
+        // 找到行对应的 ObjectInfo
+        ObservableList<String> rowData = detailTableView.getItems().get(row);
+        if (rowData == null || rowData.size() <= COL_KEY_TYPE) return;
+        String name = rowData.get(COL_KEY_NAME);
+        String typeKey = rowData.get(COL_KEY_TYPE);
+        ObjectType type = "VIEW".equals(typeKey) ? ObjectType.VIEW : ObjectType.TABLE;
+        editingObject = findObjectInfo(name, type);
+
+        detailTableView.edit(row, detailTableView.getColumns().get(0));
+    }
+
+    /** 取消详细列表编辑 */
+    private void cancelDetailEdit() {
+        editingObject = null;
+        detailTableView.setEditable(false);
+        detailTableView.edit(-1, null);
+    }
+
+    // ==================== 重命名通用逻辑 ====================
+
+    /** 提交重命名：校验名称后通过回调执行。先恢复 UI 再调用异步重命名。 */
+    private void commitRename(ObjectInfo obj, String newName, Runnable onCancel) {
+        String name = newName.trim();
+        if (editingObject == null) return;
+        if (name.isEmpty() || name.equals(obj.name)) {
+            onCancel.run();
+            return;
+        }
+        final ObjectInfo editObj = obj;
+        // 先恢复 UI（onCancel 即 cancelIconEdit：设置 editingObject=null，恢复 Label）
+        onCancel.run();
+        // 异步重命名：成功后 loadData 刷新；失败时 handler 弹框，UI 已恢复
+        if (operations != null) {
+            operations.renameObject(buildNodeData(editObj), name, () -> loadData());
+        }
+    }
+
+    /** 重命名成功后由 handler 调用，刷新视图 */
+    public void notifyObjectRenamed() {
+        loadData();
     }
 
     // ==================== 复制表到剪贴板 ====================
@@ -927,7 +1088,7 @@ public class TableObjectsView extends BorderPane {
         final double colMin = 60;
         final double colMax = 400;
 
-        // 0. 名列（图标 + 名，自定义单元格）
+        // 0. 名列（图标 + 名，自定义单元格，支持内联编辑）
         {
             TableColumn<ObservableList<String>, String> col = new TableColumn<>(titles[0]);
             col.setMinWidth(colMin);
@@ -935,6 +1096,83 @@ public class TableObjectsView extends BorderPane {
             col.setPrefWidth(160); // 初始值，autoFitColumns 会覆盖
             col.setCellValueFactory(param -> new SimpleStringProperty(param.getValue().get(COL_NAME)));
             col.setCellFactory(tc -> new TableCell<ObservableList<String>, String>() {
+                private TextField editField;
+                private HBox editBox;
+
+                @Override
+                public void startEdit() {
+                    super.startEdit();
+                    if (isEmpty()) return;
+                    String currentName = getItem();
+                    editField = new TextField(currentName);
+                    editField.setStyle("-fx-padding: 1 4; -fx-font-size: 12px; -fx-background-color: white; -fx-border-color: #07c160; -fx-border-radius: 3; -fx-background-radius: 3;");
+
+                    editField.setOnAction(e -> commitRenameFromField(editField.getText()));
+                    editField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
+                        if (!isNowFocused && editingObject != null) {
+                            commitRenameFromField(editField.getText());
+                        }
+                    });
+                    editField.setOnKeyReleased(e -> {
+                        if (e.getCode() == javafx.scene.input.KeyCode.ESCAPE) {
+                            cancelDetailEdit();
+                        }
+                    });
+
+                    // 保留图标 + TextField
+                    ObservableList<String> row = getTableView().getItems().get(getIndex());
+                    String typeKey = row.size() > COL_KEY_TYPE ? row.get(COL_KEY_TYPE) : "TABLE";
+                    boolean isView = "VIEW".equals(typeKey);
+                    Image img = isView ? viewImg : tableImg;
+                    editBox = new HBox(6);
+                    editBox.setAlignment(Pos.CENTER_LEFT);
+                    if (img != null) {
+                        ImageView iv = new ImageView(img);
+                        iv.setFitWidth(16);
+                        iv.setFitHeight(16);
+                        iv.setPreserveRatio(true);
+                        editBox.getChildren().add(iv);
+                    }
+                    editBox.getChildren().add(editField);
+                    setText(null);
+                    setGraphic(editBox);
+                    editField.selectAll();
+                    Platform.runLater(() -> editField.requestFocus());
+                }
+
+                @Override
+                public void commitEdit(String newValue) {
+                    // 实际提交由 commitRenameFromField 处理，这里不调用 super 以避免数据模型冲突
+                }
+
+                @Override
+                public void cancelEdit() {
+                    super.cancelEdit();
+                    editingObject = null;
+                    detailTableView.setEditable(false);
+                    updateItem(getItem(), false);
+                }
+
+                private void commitRenameFromField(String newName) {
+                    if (editingObject == null) {
+                        cancelDetailEdit();
+                        return;
+                    }
+                    ObjectInfo obj = editingObject;
+                    String name = newName.trim();
+                    if (name.isEmpty() || name.equals(obj.name)) {
+                        cancelDetailEdit();
+                        return;
+                    }
+                    // 先退出编辑模式恢复 UI，再异步重命名
+                    editingObject = null;
+                    detailTableView.setEditable(false);
+                    detailTableView.edit(-1, null); // 触发 cell.cancelEdit() 恢复显示
+                    if (operations != null) {
+                        operations.renameObject(buildNodeData(obj), name, () -> loadData());
+                    }
+                }
+
                 @Override
                 protected void updateItem(String item, boolean empty) {
                     super.updateItem(item, empty);
@@ -943,8 +1181,10 @@ public class TableObjectsView extends BorderPane {
                         setText(null);
                         return;
                     }
-                    ObservableList<String> row = getTableView().getItems().get(getIndex());
-                    String typeKey = row.size() > COL_KEY_TYPE ? row.get(COL_KEY_TYPE) : "TABLE";
+                    // 编辑中不重绘
+                    if (isEditing()) return;
+                    ObservableList<String> rowData = getTableView().getItems().get(getIndex());
+                    String typeKey = rowData.size() > COL_KEY_TYPE ? rowData.get(COL_KEY_TYPE) : "TABLE";
                     boolean isView = "VIEW".equals(typeKey);
                     Image img = isView ? viewImg : tableImg;
                     HBox box = new HBox(6);
@@ -958,7 +1198,6 @@ public class TableObjectsView extends BorderPane {
                     }
                     Label nameLbl = new Label(item);
                     nameLbl.setStyle("-fx-font-size: 12px;");
-                    // 鼠标悬停时显示完整表名，避免列宽不足时被截断
                     Tooltip.install(nameLbl, new Tooltip(item));
                     box.getChildren().add(nameLbl);
                     setGraphic(box);
@@ -991,7 +1230,18 @@ public class TableObjectsView extends BorderPane {
         detailTableView.setRowFactory(tv -> {
             TableRow<ObservableList<String>> row = new TableRow<>();
             row.setOnMouseClicked(e -> {
-                if (e.getClickCount() == 2 && !row.isEmpty()) {
+                if (row.isEmpty()) return;
+                if (e.getButton() == javafx.scene.input.MouseButton.SECONDARY) return;
+
+                // 双击：取消编辑定时器，打开表
+                if (e.getClickCount() == 2) {
+                    if (singleClickTimer != null) {
+                        singleClickTimer.stop();
+                        singleClickTimer = null;
+                    }
+                    if (editingObject != null) {
+                        cancelDetailEdit();
+                    }
                     ObservableList<String> rowData = row.getItem();
                     if (rowData.size() > COL_KEY_TYPE) {
                         String name = rowData.get(COL_KEY_NAME);
@@ -1003,9 +1253,53 @@ public class TableObjectsView extends BorderPane {
                             if (operations != null) operations.openObject(buildNodeData(obj));
                         }
                     }
+                    e.consume();
+                    return;
+                }
+
+                // 单击：判断是否"已选中再点击"以进入重命名编辑
+                if (e.getClickCount() == 1 && !e.isControlDown() && !e.isShiftDown()) {
+                    int rowIdx = row.getIndex();
+                    boolean wasAlreadySelected = clickedBeforeObject != null
+                            && editingObject == null
+                            && detailTableView.getSelectionModel().getSelectedIndices().size() == 1
+                            && detailTableView.getSelectionModel().isSelected(rowIdx);
+                    if (wasAlreadySelected) {
+                        final int editRow = rowIdx;
+                        if (singleClickTimer != null) {
+                            singleClickTimer.stop();
+                        }
+                        singleClickTimer = new javafx.animation.Timeline(
+                                new javafx.animation.KeyFrame(javafx.util.Duration.millis(300), ae -> {
+                                    if (editingObject == null
+                                            && detailTableView.getSelectionModel().getSelectedIndices().size() == 1
+                                            && detailTableView.getSelectionModel().isSelected(editRow)) {
+                                        startDetailEdit(editRow);
+                                    }
+                                    singleClickTimer = null;
+                                }));
+                        singleClickTimer.play();
+                        e.consume();
+                        return;
+                    }
                 }
             });
             return row;
+        });
+
+        // 记录点击前已选中的对象（用于判断"已选中再点击"进入编辑）
+        detailTableView.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
+            if (event.getButton() == javafx.scene.input.MouseButton.PRIMARY && event.getClickCount() == 1) {
+                var selItems = detailTableView.getSelectionModel().getSelectedItems();
+                if (selItems.size() == 1 && selItems.get(0) != null && selItems.get(0).size() > COL_KEY_TYPE) {
+                    String name = selItems.get(0).get(COL_KEY_NAME);
+                    String typeKey = selItems.get(0).get(COL_KEY_TYPE);
+                    ObjectType type = "VIEW".equals(typeKey) ? ObjectType.VIEW : ObjectType.TABLE;
+                    clickedBeforeObject = findObjectInfo(name, type);
+                } else {
+                    clickedBeforeObject = null;
+                }
+            }
         });
 
         // 鼠标拖拽范围选择（参考 TableDataView.setupDragSelection）

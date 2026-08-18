@@ -204,7 +204,7 @@ public class AliyunConnectHandler implements ConnectHandler {
             javafx.scene.image.ImageView tabIconView = new javafx.scene.image.ImageView(aliyunIcon);
             tabIconView.setFitWidth(18);
             tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
+            tab.setGraphic(ConnectModule.createFixedSizeGraphic(tabIconView));
         } catch (Exception ignored) {}
 
         tab.setContent(domainView);

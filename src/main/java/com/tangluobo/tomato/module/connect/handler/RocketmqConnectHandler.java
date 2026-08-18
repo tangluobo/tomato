@@ -297,7 +297,7 @@ public class RocketmqConnectHandler implements ConnectHandler {
             ImageView tabIconView = new ImageView(rocketmqIcon);
             tabIconView.setFitWidth(18);
             tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
+            tab.setGraphic(ConnectModule.createFixedSizeGraphic(tabIconView));
         } catch (Exception ignored) {}
 
         tab.setContent(consumerContent);
@@ -561,7 +561,7 @@ public class RocketmqConnectHandler implements ConnectHandler {
             ImageView tabIconView = new ImageView(rocketmqIcon);
             tabIconView.setFitWidth(18);
             tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
+            tab.setGraphic(ConnectModule.createFixedSizeGraphic(tabIconView));
         } catch (Exception ignored) {}
 
         tab.setContent(clusterContent);
@@ -623,7 +623,7 @@ public class RocketmqConnectHandler implements ConnectHandler {
             ImageView tabIconView = new ImageView(rocketmqIcon);
             tabIconView.setFitWidth(18);
             tabIconView.setFitHeight(18);
-            tab.setGraphic(tabIconView);
+            tab.setGraphic(ConnectModule.createFixedSizeGraphic(tabIconView));
         } catch (Exception ignored) {}
 
         tab.setContent(dataView);

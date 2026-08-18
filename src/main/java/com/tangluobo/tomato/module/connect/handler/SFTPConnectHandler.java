@@ -60,7 +60,7 @@ public class SFTPConnectHandler implements ConnectHandler {
                 ImageView tabIconView = new ImageView(tabIcon);
                 tabIconView.setFitWidth(16);
                 tabIconView.setFitHeight(16);
-                tab.setGraphic(tabIconView);
+                tab.setGraphic(ConnectModule.createFixedSizeGraphic(tabIconView));
             }
         } catch (Exception e) {}
 
