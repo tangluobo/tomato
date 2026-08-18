@@ -747,6 +747,12 @@
     -fx-size: -fx-table-header-height;
 }
 
+/* 行选择器列头：补齐左侧网格线（与单元格边框色 #BEBEBC 一致），右下沿用通用规则 */
+.table-view .column-header.row-selector-col {
+    -fx-border-color: #BEBEBC #BEBEBC #cccccc #BEBEBC;
+    -fx-border-width: 0 1 1 1;
+}
+
 /* filler：白色背景，无无边框，与数据行背景一致 */
 .table-view .column-header-background .filler {
     -fx-padding: 0;

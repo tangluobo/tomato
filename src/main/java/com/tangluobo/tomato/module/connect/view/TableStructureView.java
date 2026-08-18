@@ -2307,6 +2307,7 @@ public class TableStructureView extends BorderPane {
         selectorCol.setSortable(false);
         selectorCol.setReorderable(false);
         selectorCol.setStyle("-fx-alignment: CENTER;");
+        selectorCol.getStyleClass().add("row-selector-col");
         selectorCol.setUserData(ROW_SELECTOR_COL);
         selectorCol.setCellFactory(col -> new TableCell<>() {
             private final Polygon arrow = new Polygon(0, -0.5, 5, 4.5, 0, 9.5);
