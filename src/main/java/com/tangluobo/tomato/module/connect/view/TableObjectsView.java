@@ -629,6 +629,9 @@ public class TableObjectsView extends BorderPane {
             name.setTextAlignment(TextAlignment.CENTER);
             item.getChildren().add(name);
 
+            // 鼠标悬停时显示完整表名，避免过长被截断
+            Tooltip.install(item, new Tooltip(obj.name));
+
             item.setOnMousePressed(e -> {
                 iconScroll.requestFocus(); // 转移焦点到对象视图，防止 Ctrl+A 传到左侧树
             });
@@ -955,6 +958,8 @@ public class TableObjectsView extends BorderPane {
                     }
                     Label nameLbl = new Label(item);
                     nameLbl.setStyle("-fx-font-size: 12px;");
+                    // 鼠标悬停时显示完整表名，避免列宽不足时被截断
+                    Tooltip.install(nameLbl, new Tooltip(item));
                     box.getChildren().add(nameLbl);
                     setGraphic(box);
                     setText(null);
