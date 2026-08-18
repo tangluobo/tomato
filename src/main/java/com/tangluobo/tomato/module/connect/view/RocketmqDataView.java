@@ -1,5 +1,6 @@
 package com.tangluobo.tomato.module.connect.view;
 
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import com.tangluobo.tomato.module.connect.service.RocketmqService;
 import javafx.application.Platform;
@@ -295,6 +296,7 @@ public class RocketmqDataView extends VBox {
                     alert.setTitle("错误");
                     alert.setHeaderText(null);
                     alert.setContentText("获取主题统计信息失败: " + e.getMessage());
+                    DialogPositionUtil.centerOnOwner(alert, this);
                     alert.showAndWait();
                 });
             }
@@ -345,6 +347,7 @@ public class RocketmqDataView extends VBox {
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
 
         dialog.setResultConverter(btn -> btn == ButtonType.OK ? topicField.getText() + "|" + queueField.getText() : null);
+        DialogPositionUtil.centerOnOwner(dialog, this);
         dialog.showAndWait().ifPresent(result -> {
             String[] parts = result.split("\\|");
             String topic = parts[0].trim();
@@ -684,6 +687,7 @@ public class RocketmqDataView extends VBox {
                         dialog.setTitle("消费异常");
                         dialog.setHeaderText("消费者组: " + rowData.get(0));
                         dialog.getDialogPane().setContent(area);
+                        DialogPositionUtil.centerOnOwner(dialog, this);
                         dialog.showAndWait();
                     }
                 });
@@ -1056,6 +1060,7 @@ public class RocketmqDataView extends VBox {
         confirm.setTitle("确认重新消费");
         confirm.setHeaderText("让消费者组 " + group + " 重新消费此消息");
         confirm.setContentText("消息ID: " + msgId + "\n此操作不产生新的消息ID，确定吗？");
+        DialogPositionUtil.centerOnOwner(confirm, this);
         confirm.showAndWait().ifPresent(btn -> {
             if (btn == ButtonType.OK) {
                 new Thread(() -> {
@@ -1224,6 +1229,7 @@ public class RocketmqDataView extends VBox {
         alert.setTitle("成功");
         alert.setHeaderText(null);
         alert.setContentText(msg);
+        DialogPositionUtil.centerOnOwner(alert, this);
         alert.showAndWait();
     }
 

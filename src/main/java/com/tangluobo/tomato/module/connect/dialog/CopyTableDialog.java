@@ -3,6 +3,7 @@ package com.tangluobo.tomato.module.connect.dialog;
 import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import com.tangluobo.tomato.module.connect.service.DatabaseService;
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
@@ -359,6 +360,7 @@ public class CopyTableDialog {
         Scene scene = new Scene(root);
         scene.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         dialogStage.setScene(scene);
+        DialogPositionUtil.centerOnOwner(dialogStage, parent);
 
         Platform.runLater(() -> onTargetConnChange(targetConnCombo.getValue()));
     }
@@ -532,6 +534,7 @@ public class CopyTableDialog {
         Scene scene = new Scene(root);
         scene.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         optStage.setScene(scene);
+        DialogPositionUtil.centerOnOwner(optStage, dialogStage);
         optStage.showAndWait();
     }
 

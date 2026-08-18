@@ -2,6 +2,7 @@ package com.tangluobo.tomato.module.connect;
 
 import com.tangluobo.tomato.module.connect.service.OssService;
 import com.tangluobo.tomato.module.connect.service.S3Service;
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
@@ -1933,6 +1934,7 @@ public class S3FileBrowserPane extends BorderPane {
 
         // 首次加载
         loadImage.run();
+        DialogPositionUtil.centerOnOwner(previewStage, this);
         previewStage.show();
     }
 
@@ -3209,6 +3211,7 @@ public class S3FileBrowserPane extends BorderPane {
 
         Scene scene = new Scene(vbox);
         copyProgressStage.setScene(scene);
+        DialogPositionUtil.centerOnOwner(copyProgressStage, this);
         copyProgressStage.show();
     }
 

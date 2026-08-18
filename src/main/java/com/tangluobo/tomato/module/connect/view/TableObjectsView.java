@@ -3,6 +3,7 @@ package com.tangluobo.tomato.module.connect.view;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import com.tangluobo.tomato.module.connect.DatabaseNodeData;
 import com.tangluobo.tomato.module.connect.service.DatabaseService;
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
@@ -1561,6 +1562,7 @@ public class TableObjectsView extends BorderPane {
                     alert.setTitle("加载失败");
                     alert.setHeaderText(null);
                     alert.setContentText("加载对象列表失败: " + e.getMessage());
+                    DialogPositionUtil.centerOnOwner(alert, this);
                     alert.showAndWait();
                 });
             } finally {

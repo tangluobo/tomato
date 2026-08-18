@@ -4,6 +4,7 @@ import com.tangluobo.tomato.module.connect.ConfigManager;
 import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import com.tangluobo.tomato.module.connect.ToolType;
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -352,6 +353,7 @@ public class ConnectionConfigDialog {
 
         Scene scene = new Scene(root);
         dialogStage.setScene(scene);
+        DialogPositionUtil.centerOnOwner(dialogStage, parent);
     }
 
     /**

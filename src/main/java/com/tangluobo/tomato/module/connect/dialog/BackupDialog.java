@@ -3,6 +3,7 @@ package com.tangluobo.tomato.module.connect.dialog;
 import com.tangluobo.tomato.module.connect.service.BackupService;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import com.tangluobo.tomato.module.connect.service.DatabaseService;
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.geometry.Insets;
@@ -71,6 +72,7 @@ public class BackupDialog {
 
         Scene scene = new Scene(root, 720, 580);
         dialogStage.setScene(scene);
+        DialogPositionUtil.centerOnOwner(dialogStage, parent);
     }
 
     private TabPane createTabPane() {
@@ -570,6 +572,7 @@ public class BackupDialog {
         alert.setTitle("保存模板");
         alert.setHeaderText(null);
         alert.setContentText("模板已保存");
+        DialogPositionUtil.centerOnOwner(alert, dialogStage);
         alert.showAndWait();
     }
 
@@ -578,6 +581,7 @@ public class BackupDialog {
         alert.setTitle("加载模板");
         alert.setHeaderText(null);
         alert.setContentText("暂无已保存的模板");
+        DialogPositionUtil.centerOnOwner(alert, dialogStage);
         alert.showAndWait();
     }
 
@@ -586,6 +590,7 @@ public class BackupDialog {
         alert.setTitle("清除模板");
         alert.setHeaderText(null);
         alert.setContentText("模板已清除");
+        DialogPositionUtil.centerOnOwner(alert, dialogStage);
         alert.showAndWait();
     }
 
@@ -596,7 +601,8 @@ public class BackupDialog {
             alert.setTitle("备份");
             alert.setHeaderText(null);
             alert.setContentText("请至少选择一个备份对象");
-            alert.showAndWait();
+            DialogPositionUtil.centerOnOwner(alert, dialogStage);
+        alert.showAndWait();
             return;
         }
 
@@ -636,7 +642,8 @@ public class BackupDialog {
                 alert.setHeaderText(null);
                 String result = currentTask.getValue();
                 alert.setContentText("备份文件已保存:\n" + result);
-                alert.showAndWait();
+                DialogPositionUtil.centerOnOwner(alert, dialogStage);
+        alert.showAndWait();
                 dialogStage.close();
             });
         });
@@ -648,7 +655,8 @@ public class BackupDialog {
                 alert.setTitle("备份失败");
                 alert.setHeaderText(null);
                 alert.setContentText("错误: " + currentTask.getException().getMessage());
-                alert.showAndWait();
+                DialogPositionUtil.centerOnOwner(alert, dialogStage);
+        alert.showAndWait();
             });
         });
 

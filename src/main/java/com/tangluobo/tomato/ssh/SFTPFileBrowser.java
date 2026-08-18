@@ -1,5 +1,6 @@
 package com.tangluobo.tomato.ssh;
 
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.BooleanProperty;
@@ -674,6 +675,7 @@ public class SFTPFileBrowser extends BorderPane {
         Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
         alert.setTitle("删除确认");
         alert.setHeaderText("确定要删除 \"" + item.getName() + "\" 吗？");
+        DialogPositionUtil.centerOnOwner(alert, this);
         alert.showAndWait().ifPresent(btn -> {
             if (btn == ButtonType.OK) {
                 new Thread(() -> {
@@ -696,6 +698,7 @@ public class SFTPFileBrowser extends BorderPane {
         TextInputDialog dialog = new TextInputDialog();
         dialog.setTitle("新建目录");
         dialog.setHeaderText("输入目录名称:");
+        DialogPositionUtil.centerOnOwner(dialog, this);
         dialog.showAndWait().ifPresent(name -> {
             if (!name.trim().isEmpty()) {
                 new Thread(() -> {

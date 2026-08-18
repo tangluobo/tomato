@@ -1312,21 +1312,34 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         dbItem.setGraphic(module.getDbNodeIcon(data));
         dbItem.setExpanded(false);
 
-        // 关闭该数据库对应的"对象"标签（该标签 setClosable(false) 不可手动关闭，关闭数据库时需一并清理）
+        // 关闭该数据库对应的所有标签：
+        //   - 对象标签（setClosable(false) 不可手动关闭，必须程序清理）
+        //   - 表数据标签（tabId 无前缀: configId_dbName[_schemaName]_tableName）
+        //   - 表结构/设计标签（tabId: struct_configId_dbName[_schemaName]_tableName）
+        //   - 新建表标签（tabId: newtable_configId_dbName[_schemaName]）
+        // 注意：查询标签（query_*）独立于数据库打开状态，不在此处关闭
         if (module.getTerminalTabPane() != null
                 && data.getConnectionConfig() != null
                 && data.getDatabaseName() != null) {
             String configId = data.getConnectionConfig().getId();
             String dbName = data.getDatabaseName();
-            // tabId 格式: "objects_" + configId + "_" + dbName (+ "_" + schemaName)
+            // 4 种基础前缀（MySQL 无 schema 直接匹配；PostgreSQL/Oracle 带 schema 也会以此开头）
+            String basePrefix = configId + "_" + dbName + "_";           // 表数据
+            String objectsPrefix = "objects_" + configId + "_" + dbName; // 对象（精确 + 带 schema 前缀）
+            String structPrefix = "struct_" + basePrefix;                // 表结构
+            String newtablePrefix = "newtable_" + basePrefix;            // 新建表
+            // MySQL 对象标签无 schema：精确匹配
             String mysqlObjectsTabId = "objects_" + configId + "_" + dbName;
-            String schemaPrefix = mysqlObjectsTabId + "_";
+
             ObservableList<Tab> tabs = module.getTerminalTabPane().getTabs();
             tabs.removeIf(t -> {
                 Object ud = t.getUserData();
                 if (ud instanceof String tabId) {
-                    // 精确匹配 MySQL（无 schema）或前缀匹配 PostgreSQL/Oracle（带 schema）
-                    return tabId.equals(mysqlObjectsTabId) || tabId.startsWith(schemaPrefix);
+                    return tabId.equals(mysqlObjectsTabId)        // MySQL 对象标签
+                            || tabId.startsWith(objectsPrefix + "_") // PostgreSQL/Oracle 对象标签（带 schema）
+                            || tabId.startsWith(basePrefix)          // 表数据标签
+                            || tabId.startsWith(structPrefix)        // 表结构/设计标签
+                            || tabId.startsWith(newtablePrefix);     // 新建表标签
                 }
                 return false;
             });

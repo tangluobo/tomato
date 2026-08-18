@@ -1,6 +1,7 @@
 package com.tangluobo.tomato.module.connect.dialog;
 
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -113,6 +114,7 @@ public class ExportConnectionDialog {
 
         Scene scene = new Scene(root, 500, 450);
         dialogStage.setScene(scene);
+        DialogPositionUtil.centerOnOwner(dialogStage, parent);
     }
 
     private void buildTree() {

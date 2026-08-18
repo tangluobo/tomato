@@ -3,6 +3,7 @@ package com.tangluobo.tomato.module.connect;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
 import com.tangluobo.tomato.ssh.SFTPClient;
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
@@ -1515,6 +1516,7 @@ public class SFTPFileBrowserPane extends BorderPane {
         };
 
         loadImage.run();
+        DialogPositionUtil.centerOnOwner(previewStage, this);
         previewStage.show();
     }
 

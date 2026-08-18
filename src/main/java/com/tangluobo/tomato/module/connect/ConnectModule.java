@@ -20,6 +20,7 @@ import com.tangluobo.tomato.module.tools.ServerManagerPane;
 import com.tangluobo.tomato.module.tools.server.ServerConfig;
 import com.tangluobo.tomato.ssh.LocalTerminalPane;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import com.tangluobo.tomato.utils.SecurityUtils;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
@@ -1325,6 +1326,7 @@ public class ConnectModule implements Module {
                     alert.setTitle("重命名失败");
                     alert.setHeaderText(null);
                     alert.setContentText("重命名失败: " + e.getMessage());
+                    DialogPositionUtil.centerOnOwner(alert, getStage());
                     alert.showAndWait();
                 });
             }
@@ -1504,6 +1506,7 @@ public class ConnectModule implements Module {
                 alert.setTitle("保存失败");
                 alert.setHeaderText("连接配置未保存");
                 alert.setContentText("原因: " + e.getMessage() + "\n\n配置文件路径: " + ConfigManager.getConfigFilePath());
+                DialogPositionUtil.centerOnOwner(alert, getStage());
                 alert.showAndWait();
             } catch (Exception uiEx) {
                 uiEx.printStackTrace();
@@ -1856,6 +1859,7 @@ public class ConnectModule implements Module {
 
             alert.getButtonTypes().setAll(keepChildrenBtn, deleteAllBtn, cancelBtn);
 
+            DialogPositionUtil.centerOnOwner(alert, getStage());
             Optional<ButtonType> result = alert.showAndWait();
             if (result.isPresent()) {
                 if (result.get() == keepChildrenBtn) {
@@ -1880,6 +1884,7 @@ public class ConnectModule implements Module {
             alert.setTitle("删除确认");
             alert.setHeaderText("确定要删除 \"" + config.getName() + "\" 吗？");
 
+            DialogPositionUtil.centerOnOwner(alert, getStage());
             Optional<ButtonType> result = alert.showAndWait();
             if (result.isPresent() && result.get() == ButtonType.OK) {
                 removeConfigAndChildren(config.getId());
@@ -1926,6 +1931,7 @@ public class ConnectModule implements Module {
             alert.setTitle("提示");
             alert.setHeaderText(null);
             alert.setContentText("没有可导出的连接");
+            DialogPositionUtil.centerOnOwner(alert, getStage());
             alert.showAndWait();
             return;
         }
@@ -1975,6 +1981,7 @@ public class ConnectModule implements Module {
             alert.setTitle("导出成功");
             alert.setHeaderText(null);
             alert.setContentText("已导出 " + exportConfigs.size() + " 个连接到:\n" + file.getAbsolutePath());
+            DialogPositionUtil.centerOnOwner(alert, getStage());
             alert.showAndWait();
         } catch (Exception e) {
             e.printStackTrace();
@@ -1982,6 +1989,7 @@ public class ConnectModule implements Module {
             alert.setTitle("导出失败");
             alert.setHeaderText(null);
             alert.setContentText("导出失败: " + e.getMessage());
+            DialogPositionUtil.centerOnOwner(alert, getStage());
             alert.showAndWait();
         }
     }
@@ -2036,6 +2044,7 @@ public class ConnectModule implements Module {
                 alert.setTitle("导入");
                 alert.setHeaderText(null);
                 alert.setContentText("文件中没有可导入的连接");
+                DialogPositionUtil.centerOnOwner(alert, getStage());
                 alert.showAndWait();
                 return;
             }
@@ -2088,6 +2097,7 @@ public class ConnectModule implements Module {
             alert.setTitle("导入成功");
             alert.setHeaderText(null);
             alert.setContentText("已成功导入 " + importConfigs.size() + " 个连接");
+            DialogPositionUtil.centerOnOwner(alert, getStage());
             alert.showAndWait();
         } catch (Exception e) {
             e.printStackTrace();
@@ -2095,6 +2105,7 @@ public class ConnectModule implements Module {
             alert.setTitle("导入失败");
             alert.setHeaderText(null);
             alert.setContentText("导入失败: " + e.getMessage());
+            DialogPositionUtil.centerOnOwner(alert, getStage());
             alert.showAndWait();
         }
     }

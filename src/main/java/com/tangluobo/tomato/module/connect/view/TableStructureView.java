@@ -4,6 +4,7 @@ import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import com.tangluobo.tomato.module.connect.DataTypeProvider;
 import com.tangluobo.tomato.module.connect.GlobalConfig;
 import com.tangluobo.tomato.module.connect.service.DatabaseService;
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
@@ -1671,6 +1672,7 @@ public class TableStructureView extends BorderPane {
             alert.setTitle("新建表");
             alert.setHeaderText("字段设置不完整，请检查以下问题");
             alert.setContentText(String.join("\n", validationErrors));
+            DialogPositionUtil.centerOnOwner(alert, this);
             alert.showAndWait();
             return;
         }
@@ -1680,6 +1682,7 @@ public class TableStructureView extends BorderPane {
         dialog.setTitle("新建表");
         dialog.setHeaderText("请输入表名");
         dialog.setContentText("表名:");
+        DialogPositionUtil.centerOnOwner(dialog, this);
         Optional<String> result = dialog.showAndWait();
         if (result.isEmpty()) return;
 
@@ -1720,6 +1723,7 @@ public class TableStructureView extends BorderPane {
                         alert.setTitle("新建表");
                         alert.setHeaderText(null);
                         alert.setContentText("表 " + finalNewTableName + " 创建成功");
+                        DialogPositionUtil.centerOnOwner(alert, this);
                         alert.showAndWait();
                     });
                 } catch (Exception e) {
@@ -1729,6 +1733,7 @@ public class TableStructureView extends BorderPane {
                         alert.setTitle("新建表");
                         alert.setHeaderText("创建表失败");
                         alert.setContentText(e.getMessage());
+                        DialogPositionUtil.centerOnOwner(alert, this);
                         alert.showAndWait();
                     });
                 }

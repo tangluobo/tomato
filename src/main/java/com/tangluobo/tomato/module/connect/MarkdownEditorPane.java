@@ -2,6 +2,7 @@ package com.tangluobo.tomato.module.connect;
 
 import com.tangluobo.tomato.module.connect.service.OssService;
 import com.tangluobo.tomato.module.connect.service.S3Service;
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.collections.ObservableList;
@@ -2299,6 +2300,8 @@ public class MarkdownEditorPane extends BorderPane {
         editor.textProperty().addListener((o, a, b) -> {
             if (findReplaceStage.isShowing()) updateMatches();
         });
+
+        DialogPositionUtil.centerOnOwner(findReplaceStage, this);
     }
 
     /** 当前选中标签对应的查找框 */

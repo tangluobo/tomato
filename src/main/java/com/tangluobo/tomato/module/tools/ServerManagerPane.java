@@ -1,6 +1,7 @@
 package com.tangluobo.tomato.module.tools;
 
 import com.tangluobo.tomato.module.tools.server.*;
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleStringProperty;
@@ -323,6 +324,7 @@ public class ServerManagerPane extends VBox {
                 a.setHeaderText(null);
                 a.initOwner(this.getScene() != null ? (Stage) this.getScene().getWindow() : null);
                 a.initModality(Modality.WINDOW_MODAL);
+                DialogPositionUtil.centerOnOwner(a, this);
                 if (a.showAndWait().orElse(ButtonType.NO) == ButtonType.YES) {
                     directoryList.removeAll(sel);
                     log("删除共享目录：" + sel.stream().map(SharedDirectory::getAlias).toList());
@@ -442,7 +444,9 @@ public class ServerManagerPane extends VBox {
             String alias = aliasF.getText().trim();
             String path = pathF.getText().trim();
             if (alias.isEmpty() || path.isEmpty()) {
-                new Alert(Alert.AlertType.WARNING, "别名和路径都不能空", ButtonType.OK).showAndWait();
+                Alert a = new Alert(Alert.AlertType.WARNING, "别名和路径都不能空", ButtonType.OK);
+                DialogPositionUtil.centerOnOwner(a, this);
+                a.showAndWait();
                 return;
             }
             List<String> users = new ArrayList<>();
@@ -474,6 +478,7 @@ public class ServerManagerPane extends VBox {
 
         root.getChildren().addAll(g, btns);
         dlg.setScene(new Scene(root));
+        DialogPositionUtil.centerOnOwner(dlg, this);
         dlg.showAndWait();
     }
 
@@ -508,6 +513,7 @@ public class ServerManagerPane extends VBox {
                 a.setHeaderText(null);
                 a.initOwner(this.getScene() != null ? (Stage) this.getScene().getWindow() : null);
                 a.initModality(Modality.WINDOW_MODAL);
+                DialogPositionUtil.centerOnOwner(a, this);
                 if (a.showAndWait().orElse(ButtonType.NO) == ButtonType.YES) {
                     accountList.removeAll(sel);
                     log("删除账号：" + sel.stream().map(ServerAccount::getUsername).toList());
@@ -624,7 +630,9 @@ public class ServerManagerPane extends VBox {
             String name = nameF.getText().trim();
             String pwd = pwdF.getText();
             if (name.isEmpty()) {
-                new Alert(Alert.AlertType.WARNING, "用户名不能为空", ButtonType.OK).showAndWait();
+                Alert a = new Alert(Alert.AlertType.WARNING, "用户名不能为空", ButtonType.OK);
+                DialogPositionUtil.centerOnOwner(a, this);
+                a.showAndWait();
                 return;
             }
             if (editing == null) {
@@ -648,6 +656,7 @@ public class ServerManagerPane extends VBox {
 
         root.getChildren().addAll(g, btns);
         dlg.setScene(new Scene(root));
+        DialogPositionUtil.centerOnOwner(dlg, this);
         dlg.showAndWait();
     }
 
@@ -737,7 +746,9 @@ public class ServerManagerPane extends VBox {
         try {
             collectConfigFromUI();
         } catch (Exception e) {
-            new Alert(Alert.AlertType.ERROR, "配置错误：" + e.getMessage(), ButtonType.OK).showAndWait();
+            Alert a = new Alert(Alert.AlertType.ERROR, "配置错误：" + e.getMessage(), ButtonType.OK);
+            DialogPositionUtil.centerOnOwner(a, this);
+            a.showAndWait();
             return;
         }
 
@@ -750,6 +761,7 @@ public class ServerManagerPane extends VBox {
                     ButtonType.YES, ButtonType.NO);
             a.setHeaderText(null);
             if (this.getScene() != null) { a.initOwner((Stage) this.getScene().getWindow()); a.initModality(Modality.WINDOW_MODAL); }
+            DialogPositionUtil.centerOnOwner(a, this);
             if (a.showAndWait().orElse(ButtonType.NO) != ButtonType.YES) return;
         }
 
@@ -772,7 +784,9 @@ public class ServerManagerPane extends VBox {
             }
         } catch (Exception e) {
             log("启动失败：" + e.getMessage());
-            new Alert(Alert.AlertType.ERROR, "启动失败：" + e.getMessage(), ButtonType.OK).showAndWait();
+            Alert a = new Alert(Alert.AlertType.ERROR, "启动失败：" + e.getMessage(), ButtonType.OK);
+            DialogPositionUtil.centerOnOwner(a, this);
+            a.showAndWait();
             runningProperty.set(false);
             listenAddrLabel.setText("");
         }

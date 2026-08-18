@@ -1,5 +1,6 @@
 package com.tangluobo.tomato.module.tools;
 
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.animation.KeyFrame;
 import javafx.animation.KeyValue;
 import javafx.animation.PauseTransition;
@@ -490,6 +491,7 @@ public class HostsFilePane extends VBox {
         dialog.setHeaderText("修改分组名称");
         dialog.setContentText("分组名称:");
 
+        DialogPositionUtil.centerOnOwner(dialog, this);
         dialog.showAndWait().ifPresent(name -> {
             String trimmedName = name.trim();
             if (!trimmedName.isEmpty()) {
@@ -712,6 +714,7 @@ public class HostsFilePane extends VBox {
             return null;
         });
 
+        DialogPositionUtil.centerOnOwner(dialog, this);
         return dialog.showAndWait().map(password -> {
             try {
                 // 写入临时文件
@@ -1099,6 +1102,7 @@ public class HostsFilePane extends VBox {
         alert.setTitle(title);
         alert.setHeaderText(null);
         alert.setContentText(message);
+        DialogPositionUtil.centerOnOwner(alert, this);
         return alert.showAndWait().filter(response -> response == ButtonType.OK).isPresent();
     }
 

@@ -2,6 +2,7 @@ package com.tangluobo.tomato.module.connect.dialog;
 
 import com.tangluobo.tomato.module.connect.service.BackupService;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -62,6 +63,7 @@ public class RestoreDialog {
 
         Scene scene = new Scene(root, 620, 480);
         dialogStage.setScene(scene);
+        DialogPositionUtil.centerOnOwner(dialogStage, parent);
     }
 
     private TabPane createTabPane() {
@@ -215,6 +217,7 @@ public class RestoreDialog {
         confirm.setHeaderText("确定要还原备份 \"" + backupName + "\" 吗？");
         confirm.setContentText("此操作将覆盖数据库 \"" + databaseName + "\" 中已存在的同名对象！");
         confirm.getButtonTypes().setAll(ButtonType.YES, ButtonType.NO);
+        DialogPositionUtil.centerOnOwner(confirm, dialogStage);
         confirm.showAndWait().ifPresent(response -> {
             if (response != ButtonType.YES) return;
 
@@ -253,6 +256,7 @@ public class RestoreDialog {
                     alert.setTitle("还原完成");
                     alert.setHeaderText(null);
                     alert.setContentText("备份 \"" + backupName + "\" 已成功还原到数据库 \"" + databaseName + "\"");
+                    DialogPositionUtil.centerOnOwner(alert, dialogStage);
                     alert.showAndWait();
                     dialogStage.close();
                 });
@@ -265,6 +269,7 @@ public class RestoreDialog {
                     alert.setTitle("还原失败");
                     alert.setHeaderText(null);
                     alert.setContentText("错误: " + currentTask.getException().getMessage());
+                    DialogPositionUtil.centerOnOwner(alert, dialogStage);
                     alert.showAndWait();
                 });
             });

@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import com.tangluobo.tomato.utils.SqliteReader;
 
 import javafx.animation.KeyFrame;
@@ -768,6 +769,7 @@ public class TraeSessionPane extends VBox {
             return Optional.empty();
         });
 
+        DialogPositionUtil.centerOnOwner(dialog, this);
         dialog.showAndWait().ifPresent(result -> {
             if (result.isPresent()) {
                 archiveAndAdd(result.get()[0], result.get()[1]);
@@ -969,6 +971,7 @@ public class TraeSessionPane extends VBox {
         dialog.setHeaderText("修改会话名称");
         dialog.setContentText("名称:");
 
+        DialogPositionUtil.centerOnOwner(dialog, this);
         dialog.showAndWait().ifPresent(name -> {
             String trimmed = name.trim();
             if (!trimmed.isEmpty()) {
@@ -1564,6 +1567,7 @@ public class TraeSessionPane extends VBox {
         alert.setTitle(title);
         alert.setHeaderText(null);
         alert.setContentText(message);
+        DialogPositionUtil.centerOnOwner(alert, this);
         return alert.showAndWait().filter(r -> r == ButtonType.OK).isPresent();
     }
 

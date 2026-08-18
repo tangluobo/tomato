@@ -2,6 +2,7 @@ package com.tangluobo.tomato.module.connect.view;
 
 import com.tangluobo.tomato.module.connect.*;
 import com.tangluobo.tomato.module.connect.service.DatabaseService;
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.application.Platform;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
@@ -253,6 +254,7 @@ public class SqlEditorView extends BorderPane {
             dialog.setTitle("保存查询");
             dialog.setHeaderText(null);
             dialog.setContentText("查询名称：");
+            DialogPositionUtil.centerOnOwner(dialog, this);
             dialog.showAndWait().ifPresent(name -> {
                 if (!name.trim().isEmpty()) doSave(name.trim());
             });
@@ -876,6 +878,7 @@ public class SqlEditorView extends BorderPane {
         confirm.setTitle("删除行");
         confirm.setHeaderText(null);
         confirm.setContentText("确定要从表 " + tableName + " 中删除选中的 " + count + " 行吗？此操作不可撤销！");
+        DialogPositionUtil.centerOnOwner(confirm, this);
         confirm.showAndWait().ifPresent(response -> {
             if (response != ButtonType.OK) return;
 
@@ -898,6 +901,7 @@ public class SqlEditorView extends BorderPane {
                             err.setTitle("删除失败");
                             err.setHeaderText(null);
                             err.setContentText("删除行失败: " + e.getMessage());
+                            DialogPositionUtil.centerOnOwner(err, this);
                             err.showAndWait();
                         });
                     }

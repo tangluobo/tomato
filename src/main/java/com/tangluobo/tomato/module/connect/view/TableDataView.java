@@ -5,6 +5,7 @@ import com.tangluobo.tomato.module.connect.GlobalConfig;
 import com.tangluobo.tomato.module.connect.RowState;
 import com.tangluobo.tomato.module.connect.TableRowData;
 import com.tangluobo.tomato.module.connect.service.DatabaseService;
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -742,6 +743,7 @@ public class TableDataView extends BorderPane {
         confirm.setTitle("删除行");
         confirm.setHeaderText(null);
         confirm.setContentText("确定删除" + count + "条数据？此操作不可撤销！");
+        DialogPositionUtil.centerOnOwner(confirm, this);
         confirm.showAndWait().ifPresent(response -> {
             if (response != ButtonType.OK) return;
 
@@ -761,6 +763,7 @@ public class TableDataView extends BorderPane {
                     warn.setTitle("无法删除");
                     warn.setHeaderText(null);
                     warn.setContentText("该表无主键，无法从数据库删除行");
+                    DialogPositionUtil.centerOnOwner(warn, this);
                     warn.showAndWait();
                     return;
                 }
@@ -794,6 +797,7 @@ public class TableDataView extends BorderPane {
                                 err.setTitle("删除失败");
                                 err.setHeaderText(null);
                                 err.setContentText("删除行失败: " + e.getMessage());
+                                DialogPositionUtil.centerOnOwner(err, this);
                                 err.showAndWait();
                             });
                         }
@@ -1179,6 +1183,7 @@ public class TableDataView extends BorderPane {
             warn.setTitle("无法更新");
             warn.setHeaderText(null);
             warn.setContentText("该表无主键，无法更新现有行。只有新行会被插入。");
+            DialogPositionUtil.centerOnOwner(warn, this);
             warn.showAndWait();
             // 继续插入新行，跳过更新
             rowsToUpdate.clear();
@@ -1219,6 +1224,7 @@ public class TableDataView extends BorderPane {
                         err.setTitle("保存失败");
                         err.setHeaderText(null);
                         err.setContentText("保存失败: " + e.getMessage());
+                        DialogPositionUtil.centerOnOwner(err, this);
                         err.showAndWait();
                     });
                 }
@@ -1258,6 +1264,7 @@ public class TableDataView extends BorderPane {
             confirm.setTitle("切换页面");
             confirm.setHeaderText(null);
             confirm.setContentText("有未保存的更改，切换页面将丢失这些更改。确定切换？");
+            DialogPositionUtil.centerOnOwner(confirm, this);
             Optional<ButtonType> result = confirm.showAndWait();
             if (result.isEmpty() || result.get() != ButtonType.OK) {
                 isLoading = false;
@@ -1630,6 +1637,7 @@ public class TableDataView extends BorderPane {
             confirm.setTitle("刷新");
             confirm.setHeaderText(null);
             confirm.setContentText("有未保存的更改，刷新将丢失这些更改。确定刷新？");
+            DialogPositionUtil.centerOnOwner(confirm, this);
             Optional<ButtonType> result = confirm.showAndWait();
             if (result.isEmpty() || result.get() != ButtonType.OK) return;
         }
