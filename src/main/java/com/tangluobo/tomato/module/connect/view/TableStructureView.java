@@ -642,6 +642,8 @@ public class TableStructureView extends BorderPane {
 
         autoIncrementCheckBox = new CheckBox("自动递增");
         autoIncrementCheckBox.setStyle("-fx-font-size: 12px; -fx-padding: 0;");
+        // 减小与上方元素间距（VBox spacing 6 + margin -2 = 4）
+        VBox.setMargin(autoIncrementCheckBox, new Insets(-2, 0, 0, 0));
         autoIncrementCheckBox.setOnAction(e -> {
             ObservableList<String> selected = tableView.getSelectionModel().getSelectedItem();
             if (selected == null || columnTitles == null) return;
@@ -785,8 +787,9 @@ public class TableStructureView extends BorderPane {
             }
         }
 
-        // 自增复选框：仅主键显示
+        // 自增复选框：仅主键显示（setManaged 让隐藏后不占位，下方项目自动上移）
         autoIncrementCheckBox.setVisible(isPk);
+        autoIncrementCheckBox.setManaged(isPk);
         if (isPk && aiIdx >= 0 && aiIdx < selected.size()) {
             autoIncrementCheckBox.setSelected("是".equals(selected.get(aiIdx)));
         } else {
