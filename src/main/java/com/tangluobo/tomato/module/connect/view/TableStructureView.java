@@ -25,6 +25,7 @@ import javafx.scene.input.KeyCombination;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
@@ -55,7 +56,7 @@ public class TableStructureView extends BorderPane {
 
     private TableView<ObservableList<String>> tableView;
     private ProgressIndicator loadingIndicator;
-    private Label statusLabel;
+    private TextField statusLabel;
 
     /** 索引/外键/触发器/SQL预览 各标签页的组件 */
     private TableView<ObservableList<String>> indexesTableView;
@@ -425,9 +426,12 @@ public class TableStructureView extends BorderPane {
             }
         });
 
-        // 状态栏
-        statusLabel = new Label();
-        statusLabel.setStyle("-fx-font-size: 12px;");
+        // 状态栏（使用 TextField 支持选择复制错误信息，外观保持与 Label 一致）
+        statusLabel = new TextField();
+        statusLabel.setEditable(false);
+        statusLabel.setFocusTraversable(false);
+        statusLabel.setStyle("-fx-font-size: 12px; -fx-background-color: transparent; -fx-background-insets: 0; -fx-border-color: transparent; -fx-border-insets: 0; -fx-padding: 0;");
+        HBox.setHgrow(statusLabel, Priority.ALWAYS);
         HBox statusBar = new HBox(statusLabel);
         statusBar.setPadding(new Insets(6, 12, 6, 12));
         statusBar.setStyle("-fx-background-color: #f5f5f5; -fx-border-color: #ddd; -fx-border-width: 1 0 0 0;");

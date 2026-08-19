@@ -2555,12 +2555,7 @@ public class DatabaseService {
             String defaultValue = col.getOrDefault("默认值", "");
             String colComment = col.getOrDefault("注释", "");
             // 构造类型长度部分：需要小数位的类型生成 (length,decimal)，其他生成 (length)
-            String typeSize = "";
-            if (length != null && !length.isEmpty()) {
-                typeSize = needsDecimalPlaces(type) && decimal != null && !decimal.isEmpty()
-                        ? "(" + length + "," + decimal + ")"
-                        : "(" + length + ")";
-            }
+            String typeSize = buildTypeSize(type, length, decimal);
 
             switch (config.getType()) {
                 case MYSQL -> {
@@ -2913,8 +2908,19 @@ public class DatabaseService {
 
     /**
      * 构造类型长度部分：(length) 或 (length,decimal)
+     * 注意：日期时间类型（timestamp/datetime/date/time/year）的精度为小数秒（DECIMAL_DIGITS，0-6），
+     * 不能使用 JDBC 的 COLUMN_SIZE（字符显示宽度，如 TIMESTAMP 返回 19），否则会生成无效的 TIMESTAMP(19) 导致保存失败。
      */
     private static String buildTypeSize(String type, String length, String decimal) {
+        if (type != null) {
+            String t = type.toLowerCase();
+            if (t.contains("date") || (t.contains("time") && !t.contains("interval")) || t.contains("year")) {
+                if (decimal != null && !decimal.isEmpty() && !"0".equals(decimal)) {
+                    return "(" + decimal + ")";
+                }
+                return "";
+            }
+        }
         if (length == null || length.isEmpty()) return "";
         if (needsDecimalPlaces(type) && decimal != null && !decimal.isEmpty()) {
             return "(" + length + "," + decimal + ")";
