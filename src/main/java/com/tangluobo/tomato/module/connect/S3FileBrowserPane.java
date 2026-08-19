@@ -1617,6 +1617,8 @@ public class S3FileBrowserPane extends BorderPane {
         }
         if (box == null) return;
         editingItem = item;
+        // 编辑时图标不显示选中样式（恢复为默认透明样式）
+        box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand; -fx-border-color: transparent; -fx-border-width: 1; -fx-border-radius: 6; -fx-border-insets: 0;");
 
         // 找到 Label（图标 ImageView 之后的第一个 Label）
         Label nameLabel = null;
@@ -1670,8 +1672,10 @@ public class S3FileBrowserPane extends BorderPane {
         iconEditPopup.setAutoHide(true);
         iconEditPopup.setHideOnEscape(false);
         double offsetX = (fieldWidth - labelW) / 2.0;
+        // 垂直居中到名称 Label 上，使其与非编辑时文件名同位置
+        double offsetY = (labelH - fieldHeight) / 2.0;
         iconEditPopup.getContent().add(iconEditField);
-        iconEditPopup.show(window, screenX - offsetX, screenY - 6);
+        iconEditPopup.show(window, screenX - offsetX, screenY + offsetY);
         iconEditField.selectAll();
         Platform.runLater(() -> iconEditField.requestFocus());
     }
@@ -1767,8 +1771,9 @@ public class S3FileBrowserPane extends BorderPane {
         iconEditPopup.setAutoFix(false);
         iconEditPopup.setAutoHide(true);
         iconEditPopup.setHideOnEscape(false);
+        // 垂直居中到单元格上，使其与非编辑时文件名同位置
         iconEditPopup.getContent().add(iconEditField);
-        iconEditPopup.show(window, screenX + 4, screenY);
+        iconEditPopup.show(window, screenX + 4, screenY + (cellH - cellH * 0.6) / 2.0);
         iconEditField.selectAll();
         Platform.runLater(() -> iconEditField.requestFocus());
     }
