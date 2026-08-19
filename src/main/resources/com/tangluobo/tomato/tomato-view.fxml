@@ -85,7 +85,7 @@
                 <Button fx:id="maximizeBtn" style="-fx-background-color: transparent; -fx-background-radius: 0; -fx-pref-width: 30px; -fx-pref-height: 26px; -fx-padding: 0 0px 0 0;"
                         onAction="#onMaximize">
                   <graphic>
-                    <SVGPath content="M3 3h18v18H3V3zm2 2v14h14V5H5z" fill="#131313"/>
+                    <SVGPath content="M5 6h14v12H5V6zm2 2v8h10V8H7z" fill="#131313"/>
                   </graphic>
                 </Button>
                 <Button fx:id="closeBtn" style="-fx-background-color: transparent; -fx-pref-width: 30px; -fx-pref-height: 26px; -fx-padding: 0 0px 0 0;"
