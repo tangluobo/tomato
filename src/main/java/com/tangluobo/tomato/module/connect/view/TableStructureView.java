@@ -3037,7 +3037,7 @@ public class TableStructureView extends BorderPane {
         public DataTypeComboBoxTableCell(List<String> dataTypes, List<String> columnTitles) {
             this.dataTypes = dataTypes;
             this.columnTitles = columnTitles;
-            setStyle("-fx-padding: 0; -fx-border-color: transparent;");
+            setStyle("-fx-padding: 0; -fx-border-color: transparent; -fx-alignment: CENTER;");
         }
 
         @Override
@@ -3127,7 +3127,7 @@ public class TableStructureView extends BorderPane {
             if (empty) {
                 setText(null);
                 setGraphic(null);
-                setStyle("-fx-border-color: transparent; -fx-padding: 0;");
+                setStyle("-fx-border-color: transparent; -fx-padding: 0; -fx-alignment: CENTER;");
             } else {
                 if (comboBox == null) {
                     createComboBox();
@@ -3137,7 +3137,7 @@ public class TableStructureView extends BorderPane {
                 setText(null);
                 setGraphic(comboBox);
                 if (isEditing()) {
-                    setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 1; -fx-padding: 0; -fx-text-fill: black; -fx-alignment: CENTER_LEFT;");
+                    setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 1; -fx-padding: 0; -fx-text-fill: black; -fx-alignment: CENTER;");
                 } else {
                     // 非编辑状态：ComboBox看起来像普通文本
                     comboBox.setStyle(
@@ -3292,7 +3292,7 @@ public class TableStructureView extends BorderPane {
                     String isPk = pkColIndex < row.size() ? (String) row.get(pkColIndex) : "";
                     if ("是".equals(isPk)) {
                         if (selected) {
-                            setStyle("-fx-background-color: #3592CB; -fx-text-fill: white; -fx-font-weight: bold;");
+                            setStyle("-fx-background-color: #3592CB; -fx-text-fill: white; -fx-font-weight: bold; -fx-alignment: CENTER;");
                             if (comboBox != null) {
                                 comboBox.setStyle(
                                     "-fx-background-radius: 0; -fx-border-radius: 0; " +
@@ -3302,7 +3302,7 @@ public class TableStructureView extends BorderPane {
                                 comboBox.getEditor().setStyle("-fx-text-fill: white; -fx-background-color: #3592CB; -fx-padding: 0 4; -fx-border-color: transparent;");
                             }
                         } else {
-                            setStyle("-fx-font-weight: bold;");
+                            setStyle("-fx-font-weight: bold; -fx-alignment: CENTER;");
                             if (comboBox != null) {
                                 comboBox.setStyle(
                                     "-fx-background-radius: 0; -fx-border-radius: 0; " +
@@ -3318,7 +3318,7 @@ public class TableStructureView extends BorderPane {
             }
             // 非主键行：检查是否选中
             if (selected) {
-                setStyle("-fx-background-color: #3592CB; -fx-text-fill: white;");
+                setStyle("-fx-background-color: #3592CB; -fx-text-fill: white; -fx-alignment: CENTER;");
                 if (comboBox != null) {
                     comboBox.setStyle(
                         "-fx-background-radius: 0; -fx-border-radius: 0; " +
@@ -3328,7 +3328,7 @@ public class TableStructureView extends BorderPane {
                     comboBox.getEditor().setStyle("-fx-text-fill: white; -fx-background-color: #3592CB; -fx-padding: 0 4; -fx-border-color: transparent;");
                 }
             } else {
-                setStyle("");
+                setStyle("-fx-alignment: CENTER;");
                 if (comboBox != null) {
                     comboBox.setStyle(
                         "-fx-background-radius: 0; -fx-border-radius: 0; " +

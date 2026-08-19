@@ -843,6 +843,7 @@
     -fx-border-color: transparent #e0e0e0 #e0e0e0 transparent;
     -fx-border-width: 0 1 1 0;
     -fx-padding: 4 6;
+    -fx-alignment: CENTER_LEFT;
 }
 
 /* TableRow背景白色且无边框，与cell背景一致；
