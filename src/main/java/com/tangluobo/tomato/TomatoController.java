@@ -273,7 +273,7 @@ public class TomatoController {
         stage.setWidth(savedWidth);
         stage.setHeight(savedHeight);
         customMaximized = false;
-        rootPane.setStyle("-fx-border-color: #D9D9D7; -fx-border-width: 1px;");
+        rootPane.setStyle("-fx-border-color: #D9D9D7; -fx-border-width: 0 0 1 1;");
     }
 
     @FXML
