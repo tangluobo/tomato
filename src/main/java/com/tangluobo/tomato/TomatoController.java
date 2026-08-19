@@ -323,7 +323,7 @@ public class TomatoController {
             }
             closeBtn.setStyle("-fx-background-color: transparent; -fx-background-radius: 0; -fx-pref-width: 30px; -fx-pref-height: 26px; -fx-padding: 0 0px 0 0;");
             if (closeBtn.getGraphic() instanceof javafx.scene.shape.SVGPath) {
-                ((javafx.scene.shape.SVGPath) closeBtn.getGraphic()).fillProperty().set(javafx.scene.paint.Color.BLACK);
+                ((javafx.scene.shape.SVGPath) closeBtn.getGraphic()).fillProperty().set(javafx.scene.paint.Color.web("#131313"));
             }
         });
         closeBtn.setOnMousePressed(e -> {
@@ -344,10 +344,18 @@ public class TomatoController {
             } else {
                 closeBtn.setStyle("-fx-background-color: transparent; -fx-background-radius: 0; -fx-pref-width: 30px; -fx-pref-height: 26px; -fx-padding: 0 0px 0 0;");
                 if (closeBtn.getGraphic() instanceof javafx.scene.shape.SVGPath) {
-                    ((javafx.scene.shape.SVGPath) closeBtn.getGraphic()).fillProperty().set(javafx.scene.paint.Color.BLACK);
+                    ((javafx.scene.shape.SVGPath) closeBtn.getGraphic()).fillProperty().set(javafx.scene.paint.Color.web("#131313"));
                 }
             }
         });
+
+        // 最小化/最大化按钮 hover 背景色：#E1E7F5；鼠标移出恢复透明。图标颜色保持原样。
+        final String minMaxHoverStyle = "-fx-background-color: #E1E7F5; -fx-background-radius: 0; -fx-pref-width: 30px; -fx-pref-height: 26px; -fx-padding: 0 0px 0 0;";
+        final String minMaxNormalStyle = "-fx-background-color: transparent; -fx-background-radius: 0; -fx-pref-width: 30px; -fx-pref-height: 26px; -fx-padding: 0 0px 0 0;";
+        minimizeBtn.setOnMouseEntered(e -> minimizeBtn.setStyle(minMaxHoverStyle));
+        minimizeBtn.setOnMouseExited(e -> minimizeBtn.setStyle(minMaxNormalStyle));
+        maximizeBtn.setOnMouseEntered(e -> maximizeBtn.setStyle(minMaxHoverStyle));
+        maximizeBtn.setOnMouseExited(e -> maximizeBtn.setStyle(minMaxNormalStyle));
 
         titleBar.setOnMouseClicked(event -> {
             if (event.getClickCount() == 2) {
