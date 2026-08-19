@@ -6,6 +6,8 @@ import java.io.PrintStream;
 
 public class Launcher {
     public static void main(String[] args) {
+        // 关闭 HiDPI 自动缩放：让 1 逻辑像素 = 1 物理像素，避免 Windows 显示缩放（如 150%）把界面整体放大
+        System.setProperty("prism.allowhidpi", "false");
         // 启用LCD文字渲染，消除模糊
         System.setProperty("prism.lcdtext", "true");
         System.setProperty("prism.text", "lcd");

@@ -301,6 +301,20 @@ public class TomatoController {
 
         setupDivider(divider2);
 
+        // 关闭按钮悬停效果：背景红色，图标白色
+        closeBtn.setOnMouseEntered(e -> {
+            closeBtn.setStyle("-fx-background-color: #e81123; -fx-pref-width: 30px; -fx-pref-height: 26px; -fx-padding: 0 0px 0 0;");
+            if (closeBtn.getGraphic() instanceof javafx.scene.shape.SVGPath) {
+                ((javafx.scene.shape.SVGPath) closeBtn.getGraphic()).fillProperty().set(javafx.scene.paint.Color.WHITE);
+            }
+        });
+        closeBtn.setOnMouseExited(e -> {
+            closeBtn.setStyle("-fx-background-color: transparent; -fx-pref-width: 30px; -fx-pref-height: 26px; -fx-padding: 0 0px 0 0;");
+            if (closeBtn.getGraphic() instanceof javafx.scene.shape.SVGPath) {
+                ((javafx.scene.shape.SVGPath) closeBtn.getGraphic()).fillProperty().set(javafx.scene.paint.Color.BLACK);
+            }
+        });
+
         titleBar.setOnMouseClicked(event -> {
             if (event.getClickCount() == 2) {
                 Stage stage = (Stage) titleBar.getScene().getWindow();
