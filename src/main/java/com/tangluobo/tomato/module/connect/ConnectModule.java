@@ -1799,6 +1799,18 @@ public class ConnectModule implements Module {
             itemConfigMap.put(item, updatedConfig);
 
             item.setValue(updatedConfig.getName());
+
+            // 更新已打开的 S3/OSS 标签页持有的配置引用，使编辑立即生效
+            // （如修改了访问URL后无需重开标签页即可复制访问地址）
+            if (terminalTabPane != null) {
+                for (Tab t : terminalTabPane.getTabs()) {
+                    if (existingConfig.getId().equals(t.getUserData())
+                            && t.getContent() instanceof S3FileBrowserPane) {
+                        ((S3FileBrowserPane) t.getContent()).updateConfig(updatedConfig);
+                        break;
+                    }
+                }
+            }
         }
     }
 

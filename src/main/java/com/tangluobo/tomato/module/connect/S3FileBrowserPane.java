@@ -52,7 +52,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class S3FileBrowserPane extends BorderPane {
 
-    private final ConnectionConfig config;
+    private ConnectionConfig config;
     private final boolean isAliyunOSS;
 
     // 图片扩展名集合
@@ -166,6 +166,14 @@ public class S3FileBrowserPane extends BorderPane {
 
         // 添加全局快捷键支持（Ctrl+C 复制、Ctrl+V 粘贴）
         setupKeyboardShortcuts();
+    }
+
+    /**
+     * 更新连接配置引用（编辑保存后调用，使已打开的标签页立即生效新配置）。
+     * type 不会改变（S3 还是 S3、OSS 还是 OSS），因此 isAliyunOSS 无需重新计算。
+     */
+    public void updateConfig(ConnectionConfig newConfig) {
+        this.config = newConfig;
     }
 
     /**
@@ -1277,6 +1285,13 @@ public class S3FileBrowserPane extends BorderPane {
             if (selected != null && !selected.isDirectory()) handleDownload(selected);
         });
 
+        // 复制访问地址（仅文件可用，需配置访问URL）
+        MenuItem copyUrlItem = new MenuItem("复制访问地址");
+        copyUrlItem.setOnAction(e -> {
+            FileItem selected = getSelectedItem();
+            if (selected != null && !selected.isDirectory()) handleCopyAccessUrl(selected);
+        });
+
         // 复制菜单项
         MenuItem copyItem = new MenuItem("复制");
         copyItem.setOnAction(e -> handleCopy());
@@ -1312,7 +1327,7 @@ public class S3FileBrowserPane extends BorderPane {
         columnViewItem.setOnAction(e -> switchViewMode(ViewMode.COLUMN));
         viewMenu.getItems().addAll(iconViewItem, listViewItem, columnViewItem);
 
-        menu.getItems().addAll(openItem, previewItem, editMdItem, downloadItem, copyItem, pasteItem, new SeparatorMenuItem(),
+        menu.getItems().addAll(openItem, previewItem, editMdItem, downloadItem, copyUrlItem, copyItem, pasteItem, new SeparatorMenuItem(),
                 mkdirItem, uploadItem, createFileItem, deleteItem, new SeparatorMenuItem(), viewMenu, new SeparatorMenuItem(), refreshItem);
 
         // 右键菜单显示时动态控制各项可见性
@@ -1325,6 +1340,7 @@ public class S3FileBrowserPane extends BorderPane {
             previewItem.setVisible(single && first != null && !first.isDirectory() && isImageFile(first.getDisplayName()));
             editMdItem.setVisible(single && first != null && !first.isDirectory() && isMarkdownFile(first.getDisplayName()));
             downloadItem.setVisible(single && first != null && !first.isDirectory());
+            copyUrlItem.setVisible(single && first != null && !first.isDirectory());
 
             // 复制菜单项：选中的文件不为空时可用
             copyItem.setVisible(!selected.isEmpty() && currentBucket != null);
@@ -1798,6 +1814,36 @@ public class S3FileBrowserPane extends BorderPane {
                 });
             }
         }, "S3-Download").start();
+    }
+
+    /**
+     * 复制访问地址到剪贴板。若未配置访问URL，提示用户先配置。
+     */
+    private void handleCopyAccessUrl(FileItem item) {
+        String baseUrl = config.getPublicAccessUrl();
+        if (baseUrl == null || baseUrl.trim().isEmpty()) {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION);
+            alert.setTitle("提示");
+            alert.setHeaderText(null);
+            alert.setContentText("尚未配置访问URL，请在连接配置中设置访问URL字段");
+            alert.showAndWait();
+            return;
+        }
+        String trimmedBase = baseUrl.trim();
+        while (trimmedBase.endsWith("/")) {
+            trimmedBase = trimmedBase.substring(0, trimmedBase.length() - 1);
+        }
+        String key = item.getKey();
+        while (key.startsWith("/")) {
+            key = key.substring(1);
+        }
+        String fullUrl = trimmedBase + "/" + currentBucket + "/" + key;
+
+        ClipboardContent content = new ClipboardContent();
+        content.putString(fullUrl);
+        Clipboard.getSystemClipboard().setContent(content);
+
+        stateLabel.setText("已复制访问地址: " + fullUrl);
     }
 
     /**

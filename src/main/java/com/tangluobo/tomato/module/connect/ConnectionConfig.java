@@ -52,6 +52,7 @@ public class ConnectionConfig {
     private String region;
     private boolean pathStyleAccess = false; // S3路径风格访问（MinIO需要）
     private String endpoint; // 自定义端点URL（MinIO等S3兼容服务）
+    private String publicAccessUrl; // S3/OSS 公共访问URL前缀（如 CDN 域名）
 
     // Redis专属配置
     private boolean redisCluster = false; // 是否集群模式
@@ -171,6 +172,9 @@ public class ConnectionConfig {
 
     public String getEndpoint() { return endpoint; }
     public void setEndpoint(String endpoint) { this.endpoint = endpoint; }
+
+    public String getPublicAccessUrl() { return publicAccessUrl; }
+    public void setPublicAccessUrl(String publicAccessUrl) { this.publicAccessUrl = publicAccessUrl; }
 
     public boolean isRedisCluster() { return redisCluster; }
     public void setRedisCluster(boolean redisCluster) { this.redisCluster = redisCluster; }
