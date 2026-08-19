@@ -16,6 +16,7 @@ import com.tangluobo.tomato.module.connect.view.TableStructureView;
 import com.tangluobo.tomato.module.connect.view.TableObjectsView;
 import javafx.application.Platform;
 import javafx.collections.ObservableList;
+import javafx.event.Event;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ContextMenu;
@@ -23,6 +24,7 @@ import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.Tab;
+import javafx.scene.control.TabPane;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.TreeItem;
 import javafx.scene.image.Image;
@@ -993,6 +995,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         MenuItem refreshItem = new MenuItem("刷新对象");
         refreshItem.setOnAction(e -> objectsView.refreshData());
         ctxMenu.getItems().add(refreshItem);
+        appendCloseMenuItems(tab, ctxMenu);
         tab.setContextMenu(ctxMenu);
 
         module.getTerminalTabPane().getTabs().add(tab);
@@ -1126,6 +1129,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         MenuItem structRefreshItem = new MenuItem("刷新结构");
         structRefreshItem.setOnAction(e -> structView.loadStructure());
         structTabContextMenu.getItems().addAll(structConfigItem, structRefreshItem);
+        appendCloseMenuItems(tab, structTabContextMenu);
         tab.setContextMenu(structTabContextMenu);
 
         tab.setOnClosed(e -> {
@@ -1185,6 +1189,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         MenuItem structRefreshItem = new MenuItem("刷新结构");
         structRefreshItem.setOnAction(e -> structView.loadStructure());
         structTabContextMenu.getItems().addAll(structConfigItem, structRefreshItem);
+        appendCloseMenuItems(tab, structTabContextMenu);
         tab.setContextMenu(structTabContextMenu);
 
         tab.setOnClosed(e -> {
@@ -1240,6 +1245,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         MenuItem tableRefreshItem = new MenuItem("刷新数据");
         tableRefreshItem.setOnAction(e -> dataView.refreshData());
         tableTabContextMenu.getItems().addAll(tableConfigItem, tableRefreshItem);
+        appendCloseMenuItems(tab, tableTabContextMenu);
         tab.setContextMenu(tableTabContextMenu);
 
         tab.setOnClosed(e -> {
@@ -1251,6 +1257,68 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         module.getTerminalTabPane().getTabs().add(tab);
         module.getTerminalTabPane().getSelectionModel().select(tab);
         module.showDataView();
+    }
+
+    // ==================== Tab 批量关闭 ====================
+
+    /** 向 Tab 右键菜单追加"关闭左侧/关闭右侧/关闭全部"菜单项 */
+    protected void appendCloseMenuItems(Tab currentTab, ContextMenu contextMenu) {
+        MenuItem closeLeftItem = new MenuItem("关闭左侧");
+        MenuItem closeRightItem = new MenuItem("关闭右侧");
+        MenuItem closeAllItem = new MenuItem("关闭全部");
+
+        closeLeftItem.setOnAction(e -> closeTabsBySide(currentTab, true));
+        closeRightItem.setOnAction(e -> closeTabsBySide(currentTab, false));
+        closeAllItem.setOnAction(e -> closeAllClosableTabs());
+
+        contextMenu.getItems().addAll(new SeparatorMenuItem(), closeLeftItem, closeRightItem, closeAllItem);
+
+        // 菜单显示前更新禁用状态
+        contextMenu.setOnShowing(e -> {
+            TabPane pane = module.getTerminalTabPane();
+            if (pane == null) return;
+            int idx = pane.getTabs().indexOf(currentTab);
+            closeLeftItem.setDisable(idx <= 0);
+            closeRightItem.setDisable(idx < 0 || idx >= pane.getTabs().size() - 1);
+        });
+    }
+
+    /** 关闭 currentTab 左侧或右侧的全部可关闭 Tab */
+    private void closeTabsBySide(Tab currentTab, boolean left) {
+        TabPane pane = module.getTerminalTabPane();
+        if (pane == null) return;
+        int idx = pane.getTabs().indexOf(currentTab);
+        if (idx < 0) return;
+        List<Tab> toClose;
+        if (left) {
+            if (idx == 0) return;
+            toClose = new ArrayList<>(pane.getTabs().subList(0, idx));
+        } else {
+            if (idx >= pane.getTabs().size() - 1) return;
+            toClose = new ArrayList<>(pane.getTabs().subList(idx + 1, pane.getTabs().size()));
+        }
+        for (Tab t : toClose) closeTabProgrammatically(t);
+    }
+
+    /** 关闭全部可关闭 Tab */
+    private void closeAllClosableTabs() {
+        TabPane pane = module.getTerminalTabPane();
+        if (pane == null) return;
+        List<Tab> toClose = new ArrayList<>(pane.getTabs());
+        for (Tab t : toClose) closeTabProgrammatically(t);
+    }
+
+    /**
+     * 程序化关闭单个 Tab：触发 onCloseRequest（可被消费阻止），移除 Tab，触发 onClosed（释放连接/隧道等资源）。
+     * 跳过不可关闭的 Tab（setClosable(false)）。
+     */
+    private void closeTabProgrammatically(Tab tab) {
+        if (!tab.isClosable()) return;
+        Event closeRequestEvent = new Event(tab, tab, Tab.TAB_CLOSE_REQUEST_EVENT);
+        Event.fireEvent(tab, closeRequestEvent);
+        if (closeRequestEvent.isConsumed()) return;
+        module.getTerminalTabPane().getTabs().remove(tab);
+        Event.fireEvent(tab, new Event(tab, tab, Tab.CLOSED_EVENT));
     }
 
     // ==================== 右键菜单 ====================
