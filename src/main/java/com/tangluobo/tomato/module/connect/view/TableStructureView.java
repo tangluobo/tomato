@@ -14,6 +14,7 @@ import javafx.collections.transformation.FilteredList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
+import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.control.skin.ComboBoxListViewSkin;
@@ -375,6 +376,8 @@ public class TableStructureView extends BorderPane {
 
         // 鼠标拖拽范围选择（与打开表一致的交互）
         setupDragSelection();
+        // 点击表头选中整列（替代默认的排序行为）
+        setupHeaderClickSelection();
 
         // 监听选中行变化，更新字段属性面板
         tableView.getSelectionModel().selectedItemProperty().addListener(
@@ -830,6 +833,60 @@ public class TableStructureView extends BorderPane {
         });
 
         tableView.setOnMouseReleased(event -> dragStart[0] = -1);
+    }
+
+    /**
+     * 点击表头选中整列（替代默认的排序行为，已通过 col.setSortable(false) 禁用排序）。
+     * 检测点击命中的 column-header 节点，通过表头文本匹配对应的 TableColumn，
+     * 然后用 selectRange(0, col, lastRow, col) 选中整列。
+     */
+    private void setupHeaderClickSelection() {
+        tableView.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
+            if (event.getButton() != javafx.scene.input.MouseButton.PRIMARY) return;
+            Node target = event.getPickResult().getIntersectedNode();
+            while (target != null && target != tableView) {
+                if (target.getStyleClass().contains("column-header")) {
+                    String headerText = findHeaderText(target);
+                    if (headerText == null || headerText.isEmpty()) return; // 行选择器列等无文本表头
+                    for (TableColumn<ObservableList<String>, ?> col : tableView.getColumns()) {
+                        if (headerText.equals(col.getText())) {
+                            selectEntireColumn(col);
+                            event.consume();
+                            return;
+                        }
+                    }
+                    return;
+                }
+                target = target.getParent();
+            }
+        });
+    }
+
+    /**
+     * 递归查找 column-header 节点中的文本（LabeledText 继承自 Text）。
+     */
+    private String findHeaderText(Node node) {
+        if (node instanceof javafx.scene.text.Text text) {
+            String t = text.getText();
+            if (t != null && !t.isEmpty()) return t;
+        }
+        if (node instanceof Parent parent) {
+            for (Node child : parent.getChildrenUnmodifiable()) {
+                String t = findHeaderText(child);
+                if (t != null && !t.isEmpty()) return t;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 选中指定列的所有数据单元格。
+     */
+    private void selectEntireColumn(TableColumn<ObservableList<String>, ?> col) {
+        int lastRow = tableView.getItems().size() - 1;
+        if (lastRow < 0) return;
+        tableView.getSelectionModel().clearSelection();
+        tableView.getSelectionModel().selectRange(0, col, lastRow, col);
     }
 
     /**
@@ -2734,6 +2791,8 @@ public class TableStructureView extends BorderPane {
             };
             col.setPrefWidth(prefWidth);
             col.setMinWidth(50);
+            // 禁用排序，点击表头改为选中整列（见 setupHeaderClickSelection）
+            col.setSortable(false);
 
             col.setCellValueFactory(param -> {
                 ObservableList<String> row = param.getValue();
