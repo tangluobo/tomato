@@ -2105,23 +2105,31 @@ public class TableStructureView extends BorderPane {
                 || t.contains("bit");
     }
 
-    private void handleAddField() {
-        // 在表格末尾追加一个空字段行
+    /**
+     * 在表格末尾追加一个空字段行，返回新行索引。
+     * 不改变 selection（供方向键导航使用，避免 select(整行) 干扰目标单元格选中）。
+     * @return 新行索引；若无法追加返回 -1
+     */
+    private int appendEmptyRow() {
         ObservableList<ObservableList<String>> items = tableView.getItems();
         if (items.isEmpty() && !isNewTable) {
             statusLabel.setText("请先加载表结构");
-            return;
+            return -1;
         }
         ObservableList<String> newRow = FXCollections.observableArrayList();
         for (int i = 0; i < dataColumnCount; i++) {
             newRow.add("");
         }
         items.add(newRow);
-        int newIndex = items.size() - 1;
-        tableView.getSelectionModel().clearSelection();
-        tableView.getSelectionModel().select(newIndex);
         statusLabel.setText("已添加字段行（未保存）");
         markDirty();
+        return items.size() - 1;
+    }
+
+    private void handleAddField() {
+        int newIndex = appendEmptyRow();
+        if (newIndex < 0) return;
+        selectNewRowCell(newIndex);
     }
 
     /**
@@ -2156,9 +2164,11 @@ public class TableStructureView extends BorderPane {
         if (deltaRow > 0) {
             int lastRow = items.size() - 1;
             if (curRow >= lastRow) {
-                // 最后一行按向下：追加新行
-                handleAddField();
-                targetRow = items.size() - 1;
+                // 最后一行按向下：追加新行（不在此处选中整行，由后续 runLater 统一选中目标单元格，
+                // 否则在 cellSelectionEnabled 模式下 select(整行) 会瞬间高亮整行所有 cell，
+                // 视觉上表现为"光标跳到右下角/右上角"的乱跑现象）
+                targetRow = appendEmptyRow();
+                if (targetRow < 0) return;
             } else {
                 targetRow = curRow + 1;
             }
@@ -2174,6 +2184,8 @@ public class TableStructureView extends BorderPane {
             tableView.getSelectionModel().clearSelection();
             tableView.getSelectionModel().select(finalTargetRow, finalTargetCol);
             tableView.getFocusModel().focus(finalTargetRow, finalTargetCol);
+            // 滚动到目标行，确保新行（尤其追加的末尾行）可见，避免目标行在视口外
+            tableView.scrollTo(finalTargetRow);
             tableView.edit(finalTargetRow, finalTargetCol);
         });
     }
@@ -2206,6 +2218,38 @@ public class TableStructureView extends BorderPane {
                 || "小数点".equals(title) || "注释".equals(title);
     }
 
+    /** 返回第一个可编辑列（字段名/类型/长度/小数点/注释）的 TableColumn 对象，未找到返回 null */
+    private TableColumn<ObservableList<String>, String> getFirstEditableColumn() {
+        for (TableColumn<ObservableList<String>, ?> col : tableView.getColumns()) {
+            if (isNavigableColumn(col)) {
+                @SuppressWarnings("unchecked")
+                TableColumn<ObservableList<String>, String> typed =
+                        (TableColumn<ObservableList<String>, String>) col;
+                return typed;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 选中新行（添加/插入）的第一个可编辑单元格并聚焦。
+     * 必须使用 select(row, col) 选中单个单元格：cellSelectionEnabled 模式下 select(int) 会
+     * 选中整行所有 cell 且使 focusModel.focusedCell.column 变为 -1，
+     * 随后按方向键时 eventFilter 会读到 column=-1 走 findFirstNavigableColumn() 兜底，
+     * 导致目标列错位（视觉上"光标乱跑"）。
+     */
+    private void selectNewRowCell(int rowIndex) {
+        TableColumn<ObservableList<String>, String> col = getFirstEditableColumn();
+        tableView.getSelectionModel().clearSelection();
+        if (col != null) {
+            tableView.getSelectionModel().select(rowIndex, col);
+            tableView.getFocusModel().focus(rowIndex, col);
+        } else {
+            tableView.getSelectionModel().select(rowIndex);
+        }
+        tableView.scrollTo(rowIndex);
+    }
+
     /** 清除当前编辑回调（在编辑结束/取消时调用，避免后续误用） */
     private void clearEditCommitCallback() {
         currentEditCommit = null;
@@ -2226,10 +2270,9 @@ public class TableStructureView extends BorderPane {
             newRow.add("");
         }
         items.add(insertIndex, newRow);
-        tableView.getSelectionModel().clearSelection();
-        tableView.getSelectionModel().select(insertIndex);
         statusLabel.setText("已插入字段行（未保存）");
         markDirty();
+        selectNewRowCell(insertIndex);
     }
 
     private void handleTogglePrimaryKey() {

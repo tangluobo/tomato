@@ -554,6 +554,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         confirm.setContentText(msg.toString());
         ButtonType deleteBtn = new ButtonType("确认删除");
         confirm.getButtonTypes().setAll(deleteBtn, ButtonType.CANCEL);
+        DialogPositionUtil.centerOnOwner(confirm, module.getStage());
         Optional<ButtonType> result = confirm.showAndWait();
         if (result.isEmpty() || result.get() != deleteBtn) {
             if (onComplete != null) onComplete.run();
@@ -578,6 +579,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                     err.setTitle("删除失败");
                     err.setHeaderText(null);
                     err.setContentText(e.getMessage());
+                    DialogPositionUtil.centerOnOwner(err, module.getStage());
                     err.showAndWait();
                 });
             } finally {
@@ -1116,6 +1118,8 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             finalTab.setText(baseTitle[0]);
             finalTab.setUserData("struct_" + config.getId() + "_" + data.getDatabaseName() + "_" + newTableName);
             refreshDbNode(item, data);
+            // 同步刷新已打开的对象视图列表，使新建的表立即出现
+            refreshObjectsView(data);
         });
 
         ContextMenu structTabContextMenu = new ContextMenu();
@@ -1141,6 +1145,23 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         module.getTerminalTabPane().getTabs().add(tab);
         module.getTerminalTabPane().getSelectionModel().select(tab);
         module.showDataView();
+    }
+
+    /**
+     * 刷新与指定连接/数据库/Schema 对应的对象视图 Tab（若已打开）。
+     * 用于新建表等操作成功后，使对象列表自动同步。
+     */
+    private void refreshObjectsView(DatabaseNodeData data) {
+        if (module.getTerminalTabPane() == null) return;
+        ConnectionConfig config = data.getConnectionConfig();
+        String tabId = "objects_" + config.getId() + "_" + data.getDatabaseName()
+                + (data.getSchemaName() != null ? "_" + data.getSchemaName() : "");
+        for (Tab tab : module.getTerminalTabPane().getTabs()) {
+            if (tabId.equals(tab.getUserData()) && tab.getContent() instanceof TableObjectsView objectsView) {
+                objectsView.refreshData();
+                return;
+            }
+        }
     }
 
     /** 设计表：打开表/视图结构 Tab */
