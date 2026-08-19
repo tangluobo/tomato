@@ -244,6 +244,46 @@ public class OssService {
     }
 
     /**
+     * 服务端复制对象（用于 OSS 重命名/移动）。同 bucket 内复制。
+     */
+    public static void copyObject(ConnectionConfig config, String bucketName, String sourceKey, String destKey) throws Exception {
+        OSS client = createClient(config);
+        try {
+            client.copyObject(bucketName, destKey, bucketName, sourceKey);
+        } finally {
+            client.shutdown();
+        }
+    }
+
+    /**
+     * 重命名对象（同 bucket 内：复制到新 key 后删除原对象）。仅适用于文件。
+     */
+    public static void renameObject(ConnectionConfig config, String bucketName, String sourceKey, String destKey) throws Exception {
+        copyObject(config, bucketName, sourceKey, destKey);
+        deleteObject(config, bucketName, sourceKey);
+    }
+
+    /**
+     * 重命名目录（递归复制 prefix 下所有对象到新 prefix，再删除原对象及原目录占位）。
+     * @param sourcePrefix 原 prefix（含末尾 /）
+     * @param destPrefix 目标 prefix（含末尾 /）
+     */
+    public static void renameDirectory(ConnectionConfig config, String bucketName, String sourcePrefix, String destPrefix) throws Exception {
+        List<OssObjectInfo> objects = listObjectsRecursive(config, bucketName, sourcePrefix);
+        for (OssObjectInfo obj : objects) {
+            String oldKey = obj.getKey();
+            String relPath = oldKey.substring(sourcePrefix.length());
+            String newKey = destPrefix + relPath;
+            copyObject(config, bucketName, oldKey, newKey);
+            deleteObject(config, bucketName, oldKey);
+        }
+        // 删除原目录占位对象（0 字节，以 / 结尾），不存在则无影响
+        deleteObject(config, bucketName, sourcePrefix);
+        // 创建新目录占位
+        createDirectory(config, bucketName, destPrefix);
+    }
+
+    /**
      * 跨OSS实例复制文件（临时文件两阶段：先下载到本地临时文件，再从文件上传）
      * 无管道/无线程同步问题，进度回调可靠触发
      * @param sourceConfig 源连接配置

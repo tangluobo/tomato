@@ -441,6 +441,34 @@ public class S3Service {
     }
 
     /**
+     * 重命名对象（同 bucket 内：复制到新 key 后删除原对象）。仅适用于文件。
+     */
+    public static void renameObject(ConnectionConfig config, String bucketName, String sourceKey, String destKey) throws Exception {
+        copyObject(config, bucketName, sourceKey, destKey);
+        deleteObject(config, bucketName, sourceKey);
+    }
+
+    /**
+     * 重命名目录（递归复制 prefix 下所有对象到新 prefix，再删除原对象及原目录占位）。
+     * @param sourcePrefix 原 prefix（含末尾 /）
+     * @param destPrefix 目标 prefix（含末尾 /）
+     */
+    public static void renameDirectory(ConnectionConfig config, String bucketName, String sourcePrefix, String destPrefix) throws Exception {
+        List<S3ObjectInfo> objects = listObjectsRecursive(config, bucketName, sourcePrefix);
+        for (S3ObjectInfo obj : objects) {
+            String oldKey = obj.getKey();
+            String relPath = oldKey.substring(sourcePrefix.length());
+            String newKey = destPrefix + relPath;
+            copyObject(config, bucketName, oldKey, newKey);
+            deleteObject(config, bucketName, oldKey);
+        }
+        // 删除原目录占位对象（0 字节，以 / 结尾），不存在则无影响
+        deleteObject(config, bucketName, sourcePrefix);
+        // 创建新目录占位
+        createDirectory(config, bucketName, destPrefix);
+    }
+
+    /**
      * 跨S3实例复制文件（临时文件两阶段：MinIO下载 + OkHttp上传）
      * MinIO 的 getObject 能用（GET请求不触发Headers反射），
      * 但 putObject 在 Java 24 下触发 okhttp3.Headers 反射访问被拦截，
