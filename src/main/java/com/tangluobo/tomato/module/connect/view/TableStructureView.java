@@ -16,6 +16,7 @@ import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.control.skin.ComboBoxListViewSkin;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.Clipboard;
@@ -382,6 +383,7 @@ public class TableStructureView extends BorderPane {
         // 多标签页：字段、索引、外键、触发器、选项、注释、SQL预览
         TabPane tabPane = new TabPane();
         tabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        tabPane.getStyleClass().add("design-tab-pane");
         tabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
 
         Tab fieldsTab = new Tab("字段");
@@ -1856,7 +1858,18 @@ public class TableStructureView extends BorderPane {
                         if (sqlPreviewLoaded) loadSqlPreview();
                         statusLabel.setText("变更已保存");
                     } else {
-                        statusLabel.setText("保存部分失败: " + String.join("; ", errors));
+                        // 部分失败：已成功执行的ALTER已修改DB，但 originalColumnsSnapshot 未刷新。
+                        // 必须重新加载表结构以同步快照，否则下次保存会重复执行已应用的变更
+                        // （如重复ADD COLUMN导致"Duplicate column name"）。
+                        statusLabel.setText("保存部分失败，正在刷新表结构...");
+                        Alert alert = new Alert(Alert.AlertType.WARNING);
+                        alert.setTitle("保存表结构");
+                        alert.setHeaderText("部分变更保存失败（已成功执行的变更已生效）");
+                        alert.setContentText(String.join("\n", errors));
+                        DialogPositionUtil.centerOnOwner(alert, this);
+                        alert.showAndWait();
+                        // 重新加载表结构，使 originalColumnsSnapshot 与DB实际状态一致
+                        loadStructure();
                     }
                 });
             } finally {
@@ -3047,11 +3060,20 @@ public class TableStructureView extends BorderPane {
             // 注入提交回调供方向键导航使用；下拉打开时方向键不导航（用于选择下拉项）
             currentEditCommit = () -> commitEdit(comboBox.getValue() != null ? comboBox.getValue() : "");
             skipArrowNavigation = () -> comboBox.isShowing();
-            // 延迟聚焦编辑器并自动展开下拉
+            // 延迟展开下拉，并预选当前值对应项、让下拉 ListView 获得焦点
             Platform.runLater(() -> {
-                comboBox.getEditor().requestFocus();
-                comboBox.getEditor().selectAll();
                 comboBox.show();
+                // 预选当前值对应的下拉项，让用户看到当前选中位置
+                String currentValue = comboBox.getValue();
+                if (currentValue != null) {
+                    int idx = comboBox.getItems().indexOf(currentValue);
+                    if (idx >= 0) {
+                        comboBox.getSelectionModel().select(idx);
+                        comboBox.getEditor().deselect();
+                    }
+                }
+                // 让下拉 ListView 获得焦点，便于上下箭头切换选中项
+                requestPopupListViewFocus();
             });
         }
 
@@ -3152,12 +3174,13 @@ public class TableStructureView extends BorderPane {
                 "-fx-pref-height: 24px;"
             );
 
-            // 点击ComboBox时先选中行，再进入编辑模式并展开下拉
+            // 点击ComboBox时先选中单元格（而非整行），再进入编辑模式并展开下拉
             comboBox.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, e -> {
                 if (!isEditing()) {
                     TableView<ObservableList<String>> tv = getTableView();
                     if (tv != null) {
-                        tv.getSelectionModel().select(getIndex());
+                        tv.getSelectionModel().clearSelection();
+                        tv.getSelectionModel().select(getIndex(), getTableColumn());
                         tv.edit(getIndex(), getTableColumn());
                         e.consume();
                     }
@@ -3182,12 +3205,31 @@ public class TableStructureView extends BorderPane {
                 });
             });
 
-            // 记录Escape按键，用于区分用户主动取消和失焦导致的取消
-            comboBox.setOnKeyPressed(event -> {
-                escapePressed = (event.getCode() == KeyCode.ESCAPE);
+            // 键盘交互：上下箭头只移动下拉 popup 的 focus 高亮（不修改类型值），
+            // 回车提交 focus 项的值，Escape 取消编辑
+            // 用 eventFilter 在捕获阶段处理，consume 阻止 ComboBox 默认行为（默认会改 value）
+            comboBox.getEditor().addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
+                KeyCode code = event.getCode();
+                if (code == KeyCode.ESCAPE) {
+                    escapePressed = true;
+                    return; // 让默认行为 cancelEdit
+                }
+                if (code == KeyCode.ENTER) {
+                    commitPopupFocusedValue();
+                    event.consume();
+                    return;
+                }
+                if (!comboBox.isShowing()) return;
+                if (code == KeyCode.UP) {
+                    movePopupFocus(-1);
+                    event.consume();
+                } else if (code == KeyCode.DOWN) {
+                    movePopupFocus(1);
+                    event.consume();
+                }
             });
 
-            // 选择下拉项或回车时提交编辑
+            // 鼠标点击下拉项时提交编辑（ENTER 已在 eventFilter 中处理）
             comboBox.setOnAction(e -> {
                 if (comboBox.getValue() != null) {
                     commitEdit(comboBox.getValue());
@@ -3235,15 +3277,18 @@ public class TableStructureView extends BorderPane {
 
         /**
          * 根据行状态应用视觉样式（主键行高亮、选中行蓝色背景白色文字）
+         * 注意：单元格选择模式下，仅选中本单元格时 TableRow.isSelected() 返回 false，
+         * 需额外通过 isSelected(row, col) 检查当前单元格的选中状态。
          */
         private void applyRowStateStyle() {
+            boolean selected = isCurrentCellSelected();
             int pkColIndex = columnTitles.indexOf("主键");
             if (pkColIndex >= 0) {
                 TableRow<?> currentRow = getTableRow();
                 if (currentRow != null && currentRow.getItem() instanceof ObservableList row) {
                     String isPk = pkColIndex < row.size() ? (String) row.get(pkColIndex) : "";
                     if ("是".equals(isPk)) {
-                        if (currentRow.isSelected()) {
+                        if (selected) {
                             setStyle("-fx-background-color: #3592CB; -fx-text-fill: white; -fx-font-weight: bold;");
                             if (comboBox != null) {
                                 comboBox.setStyle(
@@ -3269,8 +3314,7 @@ public class TableStructureView extends BorderPane {
                 }
             }
             // 非主键行：检查是否选中
-            TableRow<?> currentRow = getTableRow();
-            if (currentRow != null && currentRow.isSelected()) {
+            if (selected) {
                 setStyle("-fx-background-color: #3592CB; -fx-text-fill: white;");
                 if (comboBox != null) {
                     comboBox.setStyle(
@@ -3291,6 +3335,125 @@ public class TableStructureView extends BorderPane {
                     comboBox.getEditor().setStyle("-fx-padding: 0 4; -fx-border-color: transparent; -fx-background-color: transparent;");
                 }
             }
+        }
+
+        /**
+         * 判断当前单元格是否处于选中状态：
+         * 行选中（整行选中）或本单元格被选中（单元格选择模式下仅选中本单元格）均视为选中。
+         */
+        private boolean isCurrentCellSelected() {
+            TableView.TableViewSelectionModel<ObservableList<String>> sm = tableView.getSelectionModel();
+            if (sm == null) return false;
+            // 单元格选择模式：精确检查当前 (row, col) 是否被选中
+            if (sm.isCellSelectionEnabled()) {
+                return sm.isSelected(getIndex(), getTableColumn());
+            }
+            // 行选择模式：依赖 TableRow 选中状态
+            TableRow<?> currentRow = getTableRow();
+            return currentRow != null && currentRow.isSelected();
+        }
+
+        /**
+         * 让 ComboBox 下拉弹出的 ListView 获得键盘焦点，便于直接用上下箭头切换选中项。
+         * 通过 ComboBoxListViewSkin.getPopupContent() 获取 popup 的 ListView。
+         * ListView 获得焦点后，UP/DOWN 只移动 focus 高亮（不改 selection/类型值），
+         * ENTER 提交 focus 项、ESCAPE 取消编辑在此监听。
+         * 事件过滤器仅安装一次（用 properties 标记），避免重复添加。
+         */
+        private void requestPopupListViewFocus() {
+            if (!(comboBox.getSkin() instanceof ComboBoxListViewSkin)) return;
+            @SuppressWarnings("unchecked")
+            ComboBoxListViewSkin<String> skin = (ComboBoxListViewSkin<String>) comboBox.getSkin();
+            Node popupContent = skin.getPopupContent();
+            if (!(popupContent instanceof ListView)) return;
+            @SuppressWarnings("unchecked")
+            ListView<String> listView = (ListView<String>) popupContent;
+            // 聚焦当前值对应的项（若已 select 过），否则聚焦第 0 项
+            int focusIdx = listView.getSelectionModel().getSelectedIndex();
+            if (focusIdx < 0) focusIdx = 0;
+            listView.getFocusModel().focus(focusIdx);
+            listView.scrollTo(focusIdx);
+            listView.requestFocus();
+            // 仅安装一次键盘事件过滤器（ComboBox 复用同一个 popup ListView）
+            if (listView.getProperties().get("tomatoKeyFilterInstalled") != null) return;
+            listView.getProperties().put("tomatoKeyFilterInstalled", true);
+            listView.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, event -> {
+                KeyCode code = event.getCode();
+                if (code == KeyCode.UP) {
+                    movePopupFocus(-1);
+                    event.consume();
+                } else if (code == KeyCode.DOWN) {
+                    movePopupFocus(1);
+                    event.consume();
+                } else if (code == KeyCode.ENTER) {
+                    commitPopupFocusedValue();
+                    event.consume();
+                } else if (code == KeyCode.ESCAPE) {
+                    escapePressed = true;
+                    if (comboBox.isShowing()) comboBox.hide();
+                    event.consume();
+                }
+            });
+        }
+
+        /**
+         * 移动下拉 popup 的 focus 高亮（不改变 selection/类型值）。
+         * delta 为 -1（上）或 +1（下）。
+         */
+        private void movePopupFocus(int delta) {
+            ListView<String> listView = getPopupListView();
+            if (listView == null) return;
+            int size = listView.getItems().size();
+            if (size == 0) return;
+            int cur = listView.getFocusModel().getFocusedIndex();
+            int newIdx;
+            if (delta < 0) {
+                newIdx = (cur <= 0) ? 0 : cur - 1;
+            } else {
+                newIdx = (cur < 0) ? 0 : Math.min(cur + 1, size - 1);
+            }
+            if (newIdx != cur) {
+                listView.getFocusModel().focus(newIdx);
+                listView.scrollTo(newIdx);
+            }
+        }
+
+        /**
+         * 提交下拉 popup 中当前 focus 项的值。
+         * 若无法获取 popup ListView，回退到 comboBox.getValue()。
+         * 提交后隐藏下拉框。
+         */
+        private void commitPopupFocusedValue() {
+            String value = null;
+            ListView<String> listView = getPopupListView();
+            if (listView != null) {
+                int fIdx = listView.getFocusModel().getFocusedIndex();
+                if (fIdx >= 0 && fIdx < listView.getItems().size()) {
+                    value = listView.getItems().get(fIdx);
+                }
+            }
+            if (value == null || value.isEmpty()) {
+                value = comboBox.getValue();
+            }
+            // 先隐藏下拉，再提交（避免提交过程中下拉残留）
+            if (comboBox.isShowing()) comboBox.hide();
+            if (value != null && !value.isEmpty()) {
+                commitEdit(value);
+            }
+        }
+
+        /**
+         * 获取 ComboBox 下拉弹出的 ListView（通过 ComboBoxListViewSkin.getPopupContent）。
+         */
+        @SuppressWarnings("unchecked")
+        private ListView<String> getPopupListView() {
+            if (!(comboBox.getSkin() instanceof ComboBoxListViewSkin)) return null;
+            ComboBoxListViewSkin<String> skin = (ComboBoxListViewSkin<String>) comboBox.getSkin();
+            Node popupContent = skin.getPopupContent();
+            if (popupContent instanceof ListView) {
+                return (ListView<String>) popupContent;
+            }
+            return null;
         }
     }
 

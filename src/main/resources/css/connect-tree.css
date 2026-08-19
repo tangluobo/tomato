@@ -368,6 +368,18 @@
     -fx-padding: 0 !important;
 }
 
+/* 设计表标签页：高度调低至约3/4 (26px→20px) */
+.design-tab-pane {
+    -fx-tab-min-height: 20px !important;
+    -fx-tab-max-height: 20px !important;
+}
+.design-tab-pane > .tab-header-area > .headers-region > .tab {
+    -fx-padding: 2 12 !important;
+}
+.design-tab-pane .tab {
+    -fx-padding: 2 12 !important;
+}
+
 /* SplitPane: 去除默认立体背景和边框 */
 .split-pane {
     -fx-background-color: transparent;
@@ -516,6 +528,12 @@
 .combo-box-popup .list-cell:selected {
     -fx-background-color: #C0DCF3;
     -fx-text-fill: #333333;
+}
+
+/* 键盘 focus 高亮：上下箭头移动的"待选"项（不修改类型值，回车才提交） */
+.combo-box-popup .list-cell:focused {
+    -fx-background-color: #3592CB;
+    -fx-text-fill: white;
 }
 
 .combo-box-connection .text-field {
