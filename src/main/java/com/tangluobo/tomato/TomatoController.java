@@ -82,6 +82,8 @@ public class TomatoController {
     private boolean windowManagementActive = false;
     private boolean customMaximized = false;
     private boolean draggingFromMaximized = false;
+    /** 关闭按钮按下状态标志：按下期间忽略 hover/exit 对样式的修改，直到松开才恢复 */
+    private boolean closeBtnPressed = false;
 
     private double savedX = 0;
     private double savedY = 0;
@@ -301,17 +303,49 @@ public class TomatoController {
 
         setupDivider(divider2);
 
-        // 关闭按钮悬停效果：背景红色，图标白色
+        // 关闭按钮交互效果：
+        // - 鼠标划过(hover)：背景色 #C42B1C，图标白色
+        // - 鼠标按下(pressed)：背景色 #C42B1C，图标颜色 #EDBFBB；按下期间保持该态，忽略 hover/exit
+        // - 鼠标松开(released)：根据是否仍在按钮内恢复为 hover 态或默认态
+        // - 鼠标移出：背景透明，图标黑色
         closeBtn.setOnMouseEntered(e -> {
-            closeBtn.setStyle("-fx-background-color: #e81123; -fx-pref-width: 30px; -fx-pref-height: 26px; -fx-padding: 0 0px 0 0;");
+            if (closeBtnPressed) {
+                return;
+            }
+            closeBtn.setStyle("-fx-background-color: #C42B1C; -fx-background-radius: 0; -fx-pref-width: 30px; -fx-pref-height: 26px; -fx-padding: 0 0px 0 0;");
             if (closeBtn.getGraphic() instanceof javafx.scene.shape.SVGPath) {
                 ((javafx.scene.shape.SVGPath) closeBtn.getGraphic()).fillProperty().set(javafx.scene.paint.Color.WHITE);
             }
         });
         closeBtn.setOnMouseExited(e -> {
-            closeBtn.setStyle("-fx-background-color: transparent; -fx-pref-width: 30px; -fx-pref-height: 26px; -fx-padding: 0 0px 0 0;");
+            if (closeBtnPressed) {
+                return;
+            }
+            closeBtn.setStyle("-fx-background-color: transparent; -fx-background-radius: 0; -fx-pref-width: 30px; -fx-pref-height: 26px; -fx-padding: 0 0px 0 0;");
             if (closeBtn.getGraphic() instanceof javafx.scene.shape.SVGPath) {
                 ((javafx.scene.shape.SVGPath) closeBtn.getGraphic()).fillProperty().set(javafx.scene.paint.Color.BLACK);
+            }
+        });
+        closeBtn.setOnMousePressed(e -> {
+            closeBtnPressed = true;
+            closeBtn.setStyle("-fx-background-color: #C42B1C; -fx-background-radius: 0; -fx-pref-width: 30px; -fx-pref-height: 26px; -fx-padding: 0 0px 0 0;");
+            if (closeBtn.getGraphic() instanceof javafx.scene.shape.SVGPath) {
+                ((javafx.scene.shape.SVGPath) closeBtn.getGraphic()).fillProperty().set(javafx.scene.paint.Color.web("#EDBFBB"));
+            }
+        });
+        closeBtn.setOnMouseReleased(e -> {
+            closeBtnPressed = false;
+            // 鼠标松开时根据是否仍在按钮内恢复正常态
+            if (closeBtn.isHover()) {
+                closeBtn.setStyle("-fx-background-color: #C42B1C; -fx-background-radius: 0; -fx-pref-width: 30px; -fx-pref-height: 26px; -fx-padding: 0 0px 0 0;");
+                if (closeBtn.getGraphic() instanceof javafx.scene.shape.SVGPath) {
+                    ((javafx.scene.shape.SVGPath) closeBtn.getGraphic()).fillProperty().set(javafx.scene.paint.Color.WHITE);
+                }
+            } else {
+                closeBtn.setStyle("-fx-background-color: transparent; -fx-background-radius: 0; -fx-pref-width: 30px; -fx-pref-height: 26px; -fx-padding: 0 0px 0 0;");
+                if (closeBtn.getGraphic() instanceof javafx.scene.shape.SVGPath) {
+                    ((javafx.scene.shape.SVGPath) closeBtn.getGraphic()).fillProperty().set(javafx.scene.paint.Color.BLACK);
+                }
             }
         });
 
@@ -412,9 +446,22 @@ public class TomatoController {
             return;
         }
 
-        if (event.getTarget() instanceof javafx.scene.control.TextInputControl ||
-            event.getTarget() instanceof javafx.scene.control.ButtonBase ||
-            event.getTarget() instanceof javafx.scene.control.ListCell) {
+        // 向上遍历父节点链查找交互控件（ButtonBase/TextInputControl/ListCell），
+        // 这样点击按钮内的子节点（如 SVGPath 图标）也能正确过滤，避免在按钮上按下拖动时移动窗体
+        boolean onInteractiveControl = false;
+        if (event.getTarget() instanceof javafx.scene.Node) {
+            javafx.scene.Node node = (javafx.scene.Node) event.getTarget();
+            while (node != null) {
+                if (node instanceof javafx.scene.control.TextInputControl ||
+                    node instanceof javafx.scene.control.ButtonBase ||
+                    node instanceof javafx.scene.control.ListCell) {
+                    onInteractiveControl = true;
+                    break;
+                }
+                node = node.getParent();
+            }
+        }
+        if (onInteractiveControl) {
             windowManagementActive = false;
             return;
         }
