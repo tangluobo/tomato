@@ -790,6 +790,74 @@ public class DatabaseService {
     }
 
     /**
+     * 清空多个表的数据（DELETE FROM，可回滚，不重置自增列）
+     * @return 成功清空的表名列表
+     */
+    public static List<String> clearTables(ConnectionConfig config, String databaseName, List<String> tableNames) throws Exception {
+        return clearTables(config, databaseName, null, tableNames);
+    }
+
+    /**
+     * 清空多个表的数据（DELETE FROM，可回滚，不重置自增列）
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     * @return 成功清空的表名列表
+     */
+    public static List<String> clearTables(ConnectionConfig config, String databaseName, String schemaName, List<String> tableNames) throws Exception {
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
+        List<String> cleared = new ArrayList<>();
+        List<String> errors = new ArrayList<>();
+        for (String tableName : tableNames) {
+            String sql = buildClearTableSql(config, databaseName, schemaName, tableName);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.executeUpdate(sql);
+                cleared.add(tableName);
+            } catch (Exception e) {
+                errors.add(tableName + ": " + e.getMessage());
+            }
+        }
+        if (!errors.isEmpty()) {
+            throw new RuntimeException("部分表清空失败:\n" + String.join("\n", errors));
+        }
+        return cleared;
+    }
+
+    /**
+     * 截断多个表（TRUNCATE TABLE，不可回滚，重置自增列）
+     * @return 成功截断的表名列表
+     */
+    public static List<String> truncateTables(ConnectionConfig config, String databaseName, List<String> tableNames) throws Exception {
+        return truncateTables(config, databaseName, null, tableNames);
+    }
+
+    /**
+     * 截断多个表（TRUNCATE TABLE，不可回滚，重置自增列）
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     * @return 成功截断的表名列表
+     */
+    public static List<String> truncateTables(ConnectionConfig config, String databaseName, String schemaName, List<String> tableNames) throws Exception {
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
+        List<String> truncated = new ArrayList<>();
+        List<String> errors = new ArrayList<>();
+        for (String tableName : tableNames) {
+            String sql = buildTruncateTableSql(config, databaseName, schemaName, tableName);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.executeUpdate(sql);
+                truncated.add(tableName);
+            } catch (Exception e) {
+                errors.add(tableName + ": " + e.getMessage());
+            }
+        }
+        if (!errors.isEmpty()) {
+            throw new RuntimeException("部分表截断失败:\n" + String.join("\n", errors));
+        }
+        return truncated;
+    }
+
+    /**
      * 删除多个视图
      * @return 成功删除的视图名列表
      */
@@ -836,6 +904,32 @@ public class DatabaseService {
             case MYSQL -> "DROP TABLE `" + databaseName + "`.`" + tableName + "`";
             case POSTGRESQL -> "DROP TABLE \"" + pgSchema + "\".\"" + tableName + "\"";
             case ORACLE -> "DROP TABLE \"" + databaseName + "\".\"" + tableName + "\"";
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        };
+    }
+
+    /**
+     * 构建清空表数据SQL（DELETE FROM）
+     */
+    private static String buildClearTableSql(ConnectionConfig config, String databaseName, String schemaName, String tableName) {
+        String pgSchema = schemaName != null ? schemaName : databaseName;
+        return switch (config.getType()) {
+            case MYSQL -> "DELETE FROM `" + databaseName + "`.`" + tableName + "`";
+            case POSTGRESQL -> "DELETE FROM \"" + pgSchema + "\".\"" + tableName + "\"";
+            case ORACLE -> "DELETE FROM \"" + databaseName + "\".\"" + tableName + "\"";
+            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+        };
+    }
+
+    /**
+     * 构建截断表SQL（TRUNCATE TABLE）
+     */
+    private static String buildTruncateTableSql(ConnectionConfig config, String databaseName, String schemaName, String tableName) {
+        String pgSchema = schemaName != null ? schemaName : databaseName;
+        return switch (config.getType()) {
+            case MYSQL -> "TRUNCATE TABLE `" + databaseName + "`.`" + tableName + "`";
+            case POSTGRESQL -> "TRUNCATE TABLE \"" + pgSchema + "\".\"" + tableName + "\"";
+            case ORACLE -> "TRUNCATE TABLE \"" + databaseName + "\".\"" + tableName + "\"";
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
     }

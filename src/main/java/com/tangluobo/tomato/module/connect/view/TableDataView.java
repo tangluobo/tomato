@@ -135,6 +135,12 @@ public class TableDataView extends BorderPane {
         contextMenu.getItems().add(new SeparatorMenuItem());
         contextMenu.getItems().add(deleteItem);
 
+        // 刷新菜单项：重新加载当前页数据
+        MenuItem refreshItem = new MenuItem("刷新");
+        refreshItem.setOnAction(e -> refreshData());
+        contextMenu.getItems().add(new SeparatorMenuItem());
+        contextMenu.getItems().add(refreshItem);
+
         // 只在数据行区域显示右键菜单，表头区域不显示
         tableView.setOnContextMenuRequested(event -> {
             // 检查右键是否在表头区域

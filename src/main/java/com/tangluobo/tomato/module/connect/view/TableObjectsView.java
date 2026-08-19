@@ -109,6 +109,10 @@ public class TableObjectsView extends BorderPane {
         void createTable();
         /** 删除表/视图（批量，视图内部已刷新，无需再刷新） */
         void deleteObjects(List<DatabaseNodeData> dataList);
+        /** 清空表数据（DELETE FROM，仅作用于表） */
+        void clearTables(List<DatabaseNodeData> dataList);
+        /** 截断表（TRUNCATE TABLE，仅作用于表） */
+        void truncateTables(List<DatabaseNodeData> dataList);
         /** 重命名表/视图，成功后回调 onSuccess */
         void renameObject(DatabaseNodeData data, String newName, Runnable onSuccess);
         /** 导入向导 */
@@ -526,6 +530,33 @@ public class TableObjectsView extends BorderPane {
         operations.deleteObjects(list);
     }
 
+    /** 清空表数据（DELETE FROM），仅作用于表类型对象 */
+    private void handleClearTable() {
+        if (selectedObjects.isEmpty() || operations == null) return;
+        List<DatabaseNodeData> list = collectTableNodeData();
+        if (list.isEmpty()) return;
+        operations.clearTables(list);
+    }
+
+    /** 截断表（TRUNCATE TABLE），仅作用于表类型对象 */
+    private void handleTruncateTable() {
+        if (selectedObjects.isEmpty() || operations == null) return;
+        List<DatabaseNodeData> list = collectTableNodeData();
+        if (list.isEmpty()) return;
+        operations.truncateTables(list);
+    }
+
+    /** 从选中对象中收集表类型（排除视图）的 DatabaseNodeData 列表 */
+    private List<DatabaseNodeData> collectTableNodeData() {
+        List<DatabaseNodeData> list = new ArrayList<>();
+        for (ObjectInfo obj : selectedObjects) {
+            if (obj.type == ObjectType.TABLE) {
+                list.add(buildNodeData(obj));
+            }
+        }
+        return list;
+    }
+
     private DatabaseNodeData buildNodeData(ObjectInfo obj) {
         return new DatabaseNodeData(
                 obj.type == ObjectType.TABLE ? DatabaseNodeData.NodeType.TABLE : DatabaseNodeData.NodeType.VIEW,
@@ -898,27 +929,38 @@ public class TableObjectsView extends BorderPane {
         newTableItem.setOnAction(e -> { if (operations != null) operations.createTable(); });
         MenuItem copyItem = new MenuItem("复制表", createImageIcon("/images/connect/copy_tables.png", 16));
         copyItem.setOnAction(e -> copySelectedTablesToClipboard());
+        MenuItem clearItem = new MenuItem("清空表", createImageIcon("/images/connect/table_drop.png", 16));
+        clearItem.setOnAction(e -> handleClearTable());
+        MenuItem truncateItem = new MenuItem("截断表", createImageIcon("/images/connect/table_drop.png", 16));
+        truncateItem.setOnAction(e -> handleTruncateTable());
         MenuItem deleteItem = new MenuItem("删除表", createImageIcon("/images/connect/table_drop.png", 16));
         deleteItem.setOnAction(e -> handleDeleteTable());
         MenuItem refreshItem = new MenuItem("刷新", createImageIcon("/images/connect/refresh.png", 16));
         refreshItem.setOnAction(e -> loadData());
         contextMenu.getItems().addAll(openTableItem, designItem, newTableItem, new SeparatorMenuItem(),
-                copyItem, new SeparatorMenuItem(), deleteItem, new SeparatorMenuItem(), refreshItem);
+                copyItem, new SeparatorMenuItem(), clearItem, truncateItem, new SeparatorMenuItem(),
+                deleteItem, new SeparatorMenuItem(), refreshItem);
 
         iconScroll.setOnContextMenuRequested(e -> {
             boolean empty = selectedObjects.isEmpty();
+            boolean hasTable = hasSelectedTable();
             openTableItem.setDisable(empty);
             designItem.setDisable(empty);
             copyItem.setDisable(empty);
+            clearItem.setDisable(!hasTable);
+            truncateItem.setDisable(!hasTable);
             deleteItem.setDisable(empty);
             contextMenu.show(this, e.getScreenX(), e.getScreenY());
             e.consume();
         });
         detailTableView.setOnContextMenuRequested(e -> {
             boolean empty = selectedObjects.isEmpty();
+            boolean hasTable = hasSelectedTable();
             openTableItem.setDisable(empty);
             designItem.setDisable(empty);
             copyItem.setDisable(empty);
+            clearItem.setDisable(!hasTable);
+            truncateItem.setDisable(!hasTable);
             deleteItem.setDisable(empty);
             contextMenu.show(this, e.getScreenX(), e.getScreenY());
             e.consume();
@@ -930,6 +972,14 @@ public class TableObjectsView extends BorderPane {
                 contextMenu.hide();
             }
         });
+    }
+
+    /** 当前选中对象中是否至少包含一个表（排除视图） */
+    private boolean hasSelectedTable() {
+        for (ObjectInfo obj : selectedObjects) {
+            if (obj.type == ObjectType.TABLE) return true;
+        }
+        return false;
     }
 
     /**

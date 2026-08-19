@@ -588,6 +588,119 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         }, "DB-DeleteObjects").start();
     }
 
+    /**
+     * 清空表数据（DELETE FROM）：根据传入的 DatabaseNodeData 列表收集表名，
+     * 调用 DatabaseService.clearTables 删除所有数据，完成后回调刷新视图。
+     * 仅处理 TABLE 类型对象，视图会被忽略。
+     */
+    public void handleClearTables(List<DatabaseNodeData> dataList, Runnable onComplete) {
+        if (dataList == null || dataList.isEmpty()) {
+            if (onComplete != null) onComplete.run();
+            return;
+        }
+        List<String> tableNames = collectTableNames(dataList);
+        if (tableNames.isEmpty()) {
+            if (onComplete != null) onComplete.run();
+            return;
+        }
+        DatabaseNodeData sample = findFirstTable(dataList);
+        confirmAndRun("清空确认",
+                "确定要清空选中的 " + tableNames.size() + " 张表的数据吗？\n" +
+                        "此操作将删除所有数据（DELETE FROM），不可恢复！",
+                "确认清空", tableNames, sample, "DB-ClearTables",
+                (cfg, db, schema, names) -> DatabaseService.clearTables(cfg, db, schema, names),
+                onComplete);
+    }
+
+    /**
+     * 截断表（TRUNCATE TABLE）：根据传入的 DatabaseNodeData 列表收集表名，
+     * 调用 DatabaseService.truncateTables 删除所有数据并重置自增列，完成后回调刷新视图。
+     * 仅处理 TABLE 类型对象，视图会被忽略。
+     */
+    public void handleTruncateTables(List<DatabaseNodeData> dataList, Runnable onComplete) {
+        if (dataList == null || dataList.isEmpty()) {
+            if (onComplete != null) onComplete.run();
+            return;
+        }
+        List<String> tableNames = collectTableNames(dataList);
+        if (tableNames.isEmpty()) {
+            if (onComplete != null) onComplete.run();
+            return;
+        }
+        DatabaseNodeData sample = findFirstTable(dataList);
+        confirmAndRun("截断确认",
+                "确定要截断选中的 " + tableNames.size() + " 张表吗？\n" +
+                        "此操作将删除所有数据（TRUNCATE TABLE），不可恢复，且会重置自增列！",
+                "确认截断", tableNames, sample, "DB-TruncateTables",
+                (cfg, db, schema, names) -> DatabaseService.truncateTables(cfg, db, schema, names),
+                onComplete);
+    }
+
+    /** 从 dataList 中收集表（TABLE）类型名称列表 */
+    private List<String> collectTableNames(List<DatabaseNodeData> dataList) {
+        List<String> tableNames = new ArrayList<>();
+        for (DatabaseNodeData d : dataList) {
+            if (d.getType() == DatabaseNodeData.NodeType.TABLE) {
+                tableNames.add(d.getName());
+            }
+        }
+        return tableNames;
+    }
+
+    /** 从 dataList 中查找第一个表（TABLE）类型对象作为连接/库/schema 取样 */
+    private DatabaseNodeData findFirstTable(List<DatabaseNodeData> dataList) {
+        for (DatabaseNodeData d : dataList) {
+            if (d.getType() == DatabaseNodeData.NodeType.TABLE) return d;
+        }
+        return null;
+    }
+
+    /** 批量执行表操作的通用流程：确认对话框 → 后台线程执行 → 错误提示 → 完成回调 */
+    private void confirmAndRun(String title, String message, String confirmBtnText,
+                               List<String> tableNames, DatabaseNodeData sample,
+                               String threadName,
+                               TableBatchAction action, Runnable onComplete) {
+        Alert confirm = new Alert(Alert.AlertType.WARNING);
+        confirm.setTitle(title);
+        confirm.setHeaderText(null);
+        confirm.setContentText(message);
+        ButtonType okBtn = new ButtonType(confirmBtnText);
+        confirm.getButtonTypes().setAll(okBtn, ButtonType.CANCEL);
+        DialogPositionUtil.centerOnOwner(confirm, module.getStage());
+        Optional<ButtonType> result = confirm.showAndWait();
+        if (result.isEmpty() || result.get() != okBtn) {
+            if (onComplete != null) onComplete.run();
+            return;
+        }
+
+        ConnectionConfig cfg = sample.getConnectionConfig();
+        String dbName = sample.getDatabaseName();
+        String schema = sample.getSchemaName();
+
+        new Thread(() -> {
+            try {
+                action.execute(cfg, dbName, schema, tableNames);
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert err = new Alert(Alert.AlertType.ERROR);
+                    err.setTitle("操作失败");
+                    err.setHeaderText(null);
+                    err.setContentText(e.getMessage());
+                    DialogPositionUtil.centerOnOwner(err, module.getStage());
+                    err.showAndWait();
+                });
+            } finally {
+                if (onComplete != null) Platform.runLater(onComplete);
+            }
+        }, threadName).start();
+    }
+
+    /** 表批量操作函数式接口 */
+    @FunctionalInterface
+    private interface TableBatchAction {
+        void execute(ConnectionConfig cfg, String dbName, String schema, List<String> tableNames) throws Exception;
+    }
+
     // ==================== 刷新 ====================
 
     /** 刷新数据库主机：重新加载数据库列表 */
@@ -945,6 +1058,20 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                     @Override
                     public void deleteObjects(List<DatabaseNodeData> dataList) {
                         handleDeleteObjects(dataList, () -> {
+                            if (holder[0] != null) holder[0].notifyObjectDeleted();
+                        });
+                    }
+
+                    @Override
+                    public void clearTables(List<DatabaseNodeData> dataList) {
+                        handleClearTables(dataList, () -> {
+                            if (holder[0] != null) holder[0].notifyObjectDeleted();
+                        });
+                    }
+
+                    @Override
+                    public void truncateTables(List<DatabaseNodeData> dataList) {
+                        handleTruncateTables(dataList, () -> {
                             if (holder[0] != null) holder[0].notifyObjectDeleted();
                         });
                     }
