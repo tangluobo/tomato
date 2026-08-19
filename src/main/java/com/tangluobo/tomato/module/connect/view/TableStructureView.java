@@ -2113,7 +2113,10 @@ public class TableStructureView extends BorderPane {
         final int finalTargetRow = targetRow;
         final TableColumn<ObservableList<String>, String> finalTargetCol = targetCol;
         Platform.runLater(() -> {
-            tableView.getSelectionModel().clearAndSelect(finalTargetRow);
+            // 单元格选择模式下，选中目标单元格（而非整行），与非编辑状态的导航行为一致
+            tableView.getSelectionModel().clearSelection();
+            tableView.getSelectionModel().select(finalTargetRow, finalTargetCol);
+            tableView.getFocusModel().focus(finalTargetRow, finalTargetCol);
             tableView.edit(finalTargetRow, finalTargetCol);
         });
     }
