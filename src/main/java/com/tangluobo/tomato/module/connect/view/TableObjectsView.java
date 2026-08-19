@@ -894,13 +894,15 @@ public class TableObjectsView extends BorderPane {
         openTableItem.setOnAction(e -> handleOpenTable());
         MenuItem designItem = new MenuItem("设计表", createImageIcon("/images/connect/table_edit.png", 16));
         designItem.setOnAction(e -> handleDesignTable());
+        MenuItem newTableItem = new MenuItem("新建表", createImageIcon("/images/connect/table_add.png", 16));
+        newTableItem.setOnAction(e -> { if (operations != null) operations.createTable(); });
         MenuItem copyItem = new MenuItem("复制表", createImageIcon("/images/connect/copy_tables.png", 16));
         copyItem.setOnAction(e -> copySelectedTablesToClipboard());
         MenuItem deleteItem = new MenuItem("删除表", createImageIcon("/images/connect/table_drop.png", 16));
         deleteItem.setOnAction(e -> handleDeleteTable());
         MenuItem refreshItem = new MenuItem("刷新", createImageIcon("/images/connect/refresh.png", 16));
         refreshItem.setOnAction(e -> loadData());
-        contextMenu.getItems().addAll(openTableItem, designItem, new SeparatorMenuItem(),
+        contextMenu.getItems().addAll(openTableItem, designItem, newTableItem, new SeparatorMenuItem(),
                 copyItem, new SeparatorMenuItem(), deleteItem, new SeparatorMenuItem(), refreshItem);
 
         iconScroll.setOnContextMenuRequested(e -> {

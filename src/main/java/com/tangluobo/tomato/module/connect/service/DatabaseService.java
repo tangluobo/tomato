@@ -1759,7 +1759,28 @@ public class DatabaseService {
                 Map<String, String> col = new LinkedHashMap<>();
                 String colName = rs.getString("COLUMN_NAME");
                 col.put("字段名", colName);
-                col.put("类型", rs.getString("TYPE_NAME"));
+                String typeName = rs.getString("TYPE_NAME");
+                // MySQL JDBC 返回的 TYPE_NAME 会带 UNSIGNED/ZEROFILL 后缀（如 "TINYINT UNSIGNED"），
+                // 这里拆分出基础类型填入"类型"，把无符号/填充零状态写入对应隐藏列，
+                // 与 Navicat 行为保持一致：类型只显示基础类型，无符号通过下方复选框勾选。
+                boolean isUnsigned = false;
+                boolean isZerofill = false;
+                if (config.getType() == ConnectType.MYSQL && typeName != null) {
+                    String upper = typeName.toUpperCase();
+                    int idxUnsigned = upper.indexOf(" UNSIGNED");
+                    int idxZerofill = upper.indexOf(" ZEROFILL");
+                    if (idxUnsigned >= 0) {
+                        isUnsigned = true;
+                        typeName = typeName.substring(0, idxUnsigned).trim();
+                        upper = typeName.toUpperCase();
+                        idxZerofill = upper.indexOf(" ZEROFILL");
+                    }
+                    if (idxZerofill >= 0) {
+                        isZerofill = true;
+                        typeName = typeName.substring(0, idxZerofill).trim();
+                    }
+                }
+                col.put("类型", typeName != null ? typeName : "");
                 col.put("长度", rs.getString("COLUMN_SIZE"));
                 String decimalDigits = rs.getString("DECIMAL_DIGITS");
                 col.put("小数点", decimalDigits != null ? decimalDigits : "");
@@ -1771,6 +1792,14 @@ public class DatabaseService {
                 col.put("默认值", defaultValue != null ? defaultValue : "");
                 String remarks = rs.getString("REMARKS");
                 col.put("注释", remarks != null ? remarks : "");
+                // 以下隐藏列不在表格中显示（由字段属性面板编辑），但需存在以便面板读写，
+                // 并保证加载已有表与新建表模式下的 columnTitles 一致
+                col.put("无符号", isUnsigned ? "是" : "否");
+                col.put("填充零", isZerofill ? "是" : "否");
+                col.put("字符集", "");
+                col.put("排序规则", "");
+                col.put("键长度", "");
+                col.put("二进制", "否");
                 columns.add(col);
             }
         }
@@ -3277,6 +3306,10 @@ public class DatabaseService {
                     + "&useLocalSessionState=true&cacheDefaultDatabase=true&cacheServerConfiguration=true"
                     + "&maintainTimeStats=false&prepStmtCacheEnabled=true&prepStmtCacheSize=250"
                     + "&useServerPrepStmts=true&rewriteBatchedStatements=true"
+                    // tinyInt1isBit=false：禁用驱动把 tinyint(1) 当作 BIT 类型的默认行为，
+                    // 否则表结构中 tinyint(1) 字段的 TYPE_NAME 会被返回为 "BIT"，
+                    // 导致设计表中 tinyint(1) 回显成 bit 类型（与 Navicat 不一致）
+                    + "&tinyInt1isBit=false"
                     + "&connectTimeout=5000&socketTimeout=30000";
             case POSTGRESQL -> "jdbc:postgresql://" + host + ":" + port + "/" + db + "?connectTimeout=5&socketTimeout=300";
             case ORACLE -> "jdbc:oracle:thin:@" + host + ":" + port + ":" + db;
