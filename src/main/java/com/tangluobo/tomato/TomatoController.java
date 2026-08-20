@@ -245,14 +245,16 @@ public class TomatoController {
         rootPane.setStyle("-fx-border-color: transparent; -fx-border-width: 0;");
 
         // 最大化后图标切换为"两个错开的空心方框"（还原图标样式）：
-        // 右上方框在 (7,3)-(19,15)，左下方框在 (4,8)-(16,20)，左下盖在右上之上
-        // 用 Group 包含两个独立 SVGPath，后添加的左下方框会覆盖右上方框的重叠边线
-        // 边框厚度1（外框到内框偏移1）
+        // 右上方框 (7,3)-(19,15) 只绘制不被左下方框覆盖的外框边线段（左下角被遮挡）
+        // 左下方框 (4,6)-(16,18) 完整绘制（环形空心），覆盖在右上方框之上
+        // 边框厚度1（与左下方框一致）
         javafx.scene.shape.SVGPath topRightBox = new javafx.scene.shape.SVGPath();
-        topRightBox.setContent("M7 3h12v12H7V3zm1 1v10h10V4H8z");
+        // 右上方框可见外框边线（4条边，去掉被左下方框覆盖的左下角段）：
+        // 上边 y=3 x[7,19]；右边 x[18,19] y[3,15]；左边上段 x[7,8] y[3,6]；下边右段 x[16,19] y[15,16]
+        topRightBox.setContent("M7 3h12v1H7z M18 3h1v12h-1z M7 3h1v3h-1z M16 15h3v1h-3z");
         topRightBox.setFill(javafx.scene.paint.Color.web("#131313"));
         javafx.scene.shape.SVGPath bottomLeftBox = new javafx.scene.shape.SVGPath();
-        bottomLeftBox.setContent("M4 8h12v12H4V8zm1 1v10h10V9H5z");
+        bottomLeftBox.setContent("M4 6h12v12H4V6zm1 1v10h10V7H5z");
         bottomLeftBox.setFill(javafx.scene.paint.Color.web("#131313"));
         javafx.scene.Group restoreIcon = new javafx.scene.Group(topRightBox, bottomLeftBox);
         maximizeBtn.setGraphic(restoreIcon);
