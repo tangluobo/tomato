@@ -89,8 +89,7 @@ public class TomatoController {
     private double dragStartX = 0;
     private double dragStartY = 0;
 
-    private static final int EDGE_THRESHOLD = 10;
-    /** 左右两侧边缘 resize 命中范围更小，避免覆盖内容区边缘的交互控件 */
+    /** 窗口四侧边缘 resize 命中范围，统一较小值避免覆盖内容区边缘的交互控件 */
     private static final int HORIZONTAL_EDGE_THRESHOLD = 3;
     private static final int MAXIMIZE_THRESHOLD = 5;
 
@@ -446,8 +445,8 @@ public class TomatoController {
     private Cursor determineCursor(double x, double y, double width, double height) {
         boolean nearLeft = x <= HORIZONTAL_EDGE_THRESHOLD;
         boolean nearRight = x >= width - HORIZONTAL_EDGE_THRESHOLD;
-        boolean nearTop = y <= EDGE_THRESHOLD;
-        boolean nearBottom = y >= height - EDGE_THRESHOLD;
+        boolean nearTop = y <= HORIZONTAL_EDGE_THRESHOLD;
+        boolean nearBottom = y >= height - HORIZONTAL_EDGE_THRESHOLD;
 
         if (nearLeft && nearTop) return Cursor.NW_RESIZE;
         if (nearRight && nearTop) return Cursor.NE_RESIZE;
@@ -511,8 +510,8 @@ public class TomatoController {
 
         resizingLeft = sceneX <= HORIZONTAL_EDGE_THRESHOLD;
         resizingRight = sceneX >= width - HORIZONTAL_EDGE_THRESHOLD;
-        resizingTop = sceneY <= EDGE_THRESHOLD;
-        resizingBottom = sceneY >= height - EDGE_THRESHOLD;
+        resizingTop = sceneY <= HORIZONTAL_EDGE_THRESHOLD;
+        resizingBottom = sceneY >= height - HORIZONTAL_EDGE_THRESHOLD;
 
         if (resizingLeft || resizingRight || resizingTop || resizingBottom) {
             windowManagementActive = true;
