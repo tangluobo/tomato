@@ -761,6 +761,21 @@
     -fx-max-height: 15;
 }
 
+/* 打开表（TableDataView）：ScrollPane 仅填充视口，恢复 TableView 内部水平滚动条 */
+.data-table-view .virtual-flow .scroll-bar:horizontal {
+    -fx-opacity: 1;
+    -fx-pref-height: 15;
+    -fx-min-height: 15;
+    -fx-max-height: 15;
+}
+
+.data-table-view .virtual-flow .scroll-bar:horizontal .track,
+.data-table-view .virtual-flow .scroll-bar:horizontal .thumb {
+    -fx-pref-height: 15;
+    -fx-min-height: 15;
+    -fx-max-height: 15;
+}
+
 .table-view .corner {
     -fx-background-color: transparent;
     -fx-padding: 0;
