@@ -12,8 +12,8 @@ public enum ConnectType {
     ALIYUN("Aliyun", "阿里云", "/images/connect/aliyun.png", Category.OTHERS),
     ALIYUN_OSS("AliyunOSS", "阿里云OSS", "/images/connect/aliyun_oss.png", Category.OTHERS),
     REDIS("Redis", "Redis", "/images/connect/redis.png", Category.DATABASE),
-    ROCKETMQ("RocketMQ", "RocketMQ", "/images/connect/rocketmq.png", Category.DATABASE),
-    KAFKA("Kafka", "Kafka", "/images/connect/kafka.png", Category.DATABASE),
+    ROCKETMQ("RocketMQ", "RocketMQ", "/images/connect/rocketmq.png", Category.MESSAGE_QUEUE),
+    KAFKA("Kafka", "Kafka", "/images/connect/kafka.png", Category.MESSAGE_QUEUE),
     LOCAL_TERMINAL("LocalTerminal", "本地终端", "/images/connect/shell.png", Category.OTHERS),
     LOCAL_DIRECTORY("LocalDirectory", "本地目录", "/images/connect/folder.png", Category.OTHERS),
     TOOL("Tool", "工具", "/images/connect/beautiful.png", Category.TOOL),
@@ -23,6 +23,7 @@ public enum ConnectType {
 
     public enum Category {
         DATABASE,
+        MESSAGE_QUEUE,
         OTHERS,
         TOOL
     }

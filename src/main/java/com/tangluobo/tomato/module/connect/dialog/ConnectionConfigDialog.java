@@ -274,6 +274,9 @@ public class ConnectionConfigDialog {
         // 数据库标签
         Tab dbTab = new Tab("数据库");
         dbTab.setContent(buildCategoryTilePane(ConnectType.Category.DATABASE, false));
+        // 消息队列标签
+        Tab mqTab = new Tab("消息队列");
+        mqTab.setContent(buildCategoryTilePane(ConnectType.Category.MESSAGE_QUEUE, false));
         // 其他标签
         Tab othersTab = new Tab("客户端");
         othersTab.setContent(buildCategoryTilePane(ConnectType.Category.OTHERS, false));
@@ -287,7 +290,7 @@ public class ConnectionConfigDialog {
         Tab gameTab = new Tab("游戏");
         gameTab.setContent(buildGameTilePane());
 
-        categoryTabPane.getTabs().addAll(dbTab, othersTab, toolTab, serverTab, gameTab);
+        categoryTabPane.getTabs().addAll(dbTab, mqTab, othersTab, toolTab, serverTab, gameTab);
 
         HBox typeButtons = new HBox(10);
         typeButtons.setAlignment(Pos.CENTER_RIGHT);
