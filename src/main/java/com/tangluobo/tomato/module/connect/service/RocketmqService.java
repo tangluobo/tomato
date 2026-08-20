@@ -10,6 +10,9 @@ import org.apache.rocketmq.client.consumer.PullStatus;
 import org.apache.rocketmq.client.impl.MQClientAPIImpl;
 import org.apache.rocketmq.client.impl.consumer.DefaultMQPullConsumerImpl;
 import org.apache.rocketmq.client.impl.factory.MQClientInstance;
+import org.apache.rocketmq.client.impl.producer.DefaultMQProducerImpl;
+import org.apache.rocketmq.client.producer.DefaultMQProducer;
+import org.apache.rocketmq.client.producer.SendResult;
 import org.apache.rocketmq.remoting.InvokeCallback;
 import org.apache.rocketmq.remoting.RemotingClient;
 import org.apache.rocketmq.remoting.RPCHook;
@@ -20,6 +23,7 @@ import org.apache.rocketmq.remoting.protocol.admin.ConsumeStats;
 import org.apache.rocketmq.remoting.protocol.admin.OffsetWrapper;
 import org.apache.rocketmq.remoting.protocol.admin.TopicOffset;
 import org.apache.rocketmq.remoting.protocol.admin.TopicStatsTable;
+import org.apache.rocketmq.common.message.Message;
 import org.apache.rocketmq.common.message.MessageExt;
 import org.apache.rocketmq.remoting.protocol.body.ClusterInfo;
 import org.apache.rocketmq.remoting.protocol.body.ConsumerConnection;
@@ -187,6 +191,23 @@ public class RocketmqService {
             installTunnelingRemotingClient(mqi, config);
         } catch (Exception e) {
             throw new RuntimeException("安装PullConsumer隧道RemotingClient失败: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 为 Producer 安装隧道 RemotingClient 装饰器
+     */
+    private static void installTunnelingRemotingClient(DefaultMQProducer producer, ConnectionConfig config) {
+        if (!config.isUseSshTunnel() || config.getSshTunnelHostId() == null) return;
+        try {
+            DefaultMQProducerImpl impl = producer.getDefaultMQProducerImpl();
+            if (impl == null) return;
+            Field f = DefaultMQProducerImpl.class.getDeclaredField("mQClientFactory");
+            f.setAccessible(true);
+            MQClientInstance mqi = (MQClientInstance) f.get(impl);
+            installTunnelingRemotingClient(mqi, config);
+        } catch (Exception e) {
+            throw new RuntimeException("安装Producer隧道RemotingClient失败: " + e.getMessage(), e);
         }
     }
 
@@ -1035,5 +1056,37 @@ public class RocketmqService {
             map.put("remark", "返回结果为空");
         }
         return map;
+    }
+
+    // ==================== 消息发送 ====================
+
+    /**
+     * 发送消息到指定主题。
+     * tags/keys 可为空；delayLevel=0 表示普通消息，>0 表示延迟消息。
+     * 返回包含 msgId/queueId/queueOffset/topic 的 Map。
+     */
+    public static Map<String, Object> sendMessage(ConnectionConfig config, String topic, String tags, String keys, String body, int delayLevel) throws Exception {
+        DefaultMQProducer producer = new DefaultMQProducer("tomato_producer_" + System.currentTimeMillis());
+        producer.setNamesrvAddr(nameServer(config));
+        producer.start();
+        installTunnelingRemotingClient(producer, config);
+        try {
+            Message msg = new Message(topic, tags != null ? tags : "", body.getBytes("UTF-8"));
+            if (keys != null && !keys.isEmpty()) {
+                msg.setKeys(keys);
+            }
+            if (delayLevel > 0) {
+                msg.setDelayTimeLevel(delayLevel);
+            }
+            SendResult result = producer.send(msg);
+            Map<String, Object> ret = new LinkedHashMap<>();
+            ret.put("msgId", result.getMsgId());
+            ret.put("queueId", result.getMessageQueue().getQueueId());
+            ret.put("queueOffset", result.getQueueOffset());
+            ret.put("topic", result.getMessageQueue().getTopic());
+            return ret;
+        } finally {
+            producer.shutdown();
+        }
     }
 }

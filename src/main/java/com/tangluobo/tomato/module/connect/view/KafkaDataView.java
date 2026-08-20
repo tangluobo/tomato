@@ -52,9 +52,14 @@ public class KafkaDataView extends VBox {
     private VBox topicOffsetSection;
 
     // Message tab
+    private TabPane queryTabPane;
     private String currentMessageTopic;
     private TextField offsetPartitionField;
     private TextField offsetOffsetField;
+    private TextField sendKeyField;
+    private TextField sendPartitionField;
+    private TextArea sendHeadersArea;
+    private TextArea sendBodyArea;
     private DatePicker beginDatePicker;
     private DatePicker endDatePicker;
     private TableView<MessageItem> messageTable;
@@ -132,6 +137,16 @@ public class KafkaDataView extends VBox {
         mainTabPane.getSelectionModel().select(1);
         String t = (topicName != null && !topicName.isEmpty()) ? topicName : this.topicName;
         currentMessageTopic = t;
+    }
+
+    public void selectSendTab(String topicName) {
+        mainTabPane.getSelectionModel().select(1);
+        String t = (topicName != null && !topicName.isEmpty()) ? topicName : this.topicName;
+        currentMessageTopic = t;
+        if (queryTabPane != null) {
+            queryTabPane.getSelectionModel().select(2);
+            queryTabPane.setMaxHeight(300);
+        }
     }
 
     // ==================== Topic Tab ====================
@@ -419,6 +434,7 @@ public class KafkaDataView extends VBox {
         content.setPadding(Insets.EMPTY);
 
         TabPane queryTabPane = new TabPane();
+        this.queryTabPane = queryTabPane;
 
         String queryCss = getClass().getResource("/css/tab-nogap.css") != null
                 ? getClass().getResource("/css/tab-nogap.css").toExternalForm()
@@ -503,10 +519,57 @@ public class KafkaDataView extends VBox {
         offsetQueryTab.setContent(offsetQueryContent);
         offsetQueryTab.setClosable(false);
 
-        queryTabPane.getTabs().addAll(timeQueryTab, offsetQueryTab);
+        // --- 发送消息 ---
+        VBox sendContent = new VBox(5);
+        sendContent.setPadding(Insets.EMPTY);
+        sendContent.setAlignment(Pos.CENTER_LEFT);
 
+        sendKeyField = new TextField();
+        sendKeyField.setPromptText("消息 Key (可选)");
+        sendKeyField.setPrefWidth(200);
+        sendKeyField.setStyle("-fx-font-size: 12px;");
+
+        sendPartitionField = new TextField();
+        sendPartitionField.setPromptText("分区ID (留空=默认)");
+        sendPartitionField.setPrefWidth(120);
+        sendPartitionField.setStyle("-fx-font-size: 12px;");
+
+        Button sendBtn = new Button("发送");
+        sendBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-font-size: 12px;");
+        sendBtn.setOnAction(e -> doSendMessage());
+
+        HBox sendConfigBar = new HBox(10);
+        sendConfigBar.setAlignment(Pos.CENTER_LEFT);
+        sendConfigBar.getChildren().addAll(new Label("Key:"), sendKeyField, new Label("Partition:"), sendPartitionField, sendBtn);
+
+        sendHeadersArea = new TextArea();
+        sendHeadersArea.setPromptText("Headers (可选，每行 key=value)");
+        sendHeadersArea.setPrefHeight(50);
+        sendHeadersArea.setStyle("-fx-font-size: 12px;");
+
+        sendBodyArea = new TextArea();
+        sendBodyArea.setPromptText("消息内容");
+        sendBodyArea.setPrefHeight(100);
+        sendBodyArea.setStyle("-fx-font-size: 12px;");
+
+        sendContent.getChildren().addAll(sendConfigBar, new Label("Headers:"), sendHeadersArea, new Label("Body:"), sendBodyArea);
+
+        Tab sendTab = new Tab("发送消息");
+        sendTab.setContent(sendContent);
+        sendTab.setClosable(false);
+
+        queryTabPane.getTabs().addAll(timeQueryTab, offsetQueryTab, sendTab);
+
+        final Tab finalSendTab = sendTab;
         queryTabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) ->
-                Platform.runLater(this::applyNoGapStyles));
+                Platform.runLater(() -> {
+                    if (newTab == finalSendTab) {
+                        queryTabPane.setMaxHeight(300);
+                    } else {
+                        queryTabPane.setMaxHeight(120);
+                    }
+                    applyNoGapStyles();
+                }));
 
         // 消息表格
         messageTable = new TableView<>();
@@ -862,6 +925,67 @@ public class KafkaDataView extends VBox {
                 });
             }
         }, "Kafka-QueryByOffset").start();
+    }
+
+    private void doSendMessage() {
+        final String topic = getCurrentTopic();
+        if (topic == null || topic.isEmpty()) {
+            showWarning("当前标签未关联主题");
+            return;
+        }
+        final String body = sendBodyArea.getText();
+        if (body == null || body.trim().isEmpty()) {
+            showWarning("消息内容不能为空");
+            return;
+        }
+        final String key = sendKeyField.getText().trim();
+        final String partitionText = sendPartitionField.getText().trim();
+        final Integer partition;
+        try {
+            partition = partitionText.isEmpty() ? null : Integer.parseInt(partitionText);
+        } catch (NumberFormatException ex) {
+            showWarning("分区ID必须为数字");
+            return;
+        }
+        final Map<String, String> headers = new LinkedHashMap<>();
+        String headerText = sendHeadersArea.getText();
+        if (headerText != null && !headerText.trim().isEmpty()) {
+            for (String line : headerText.split("\n")) {
+                line = line.trim();
+                if (line.isEmpty()) continue;
+                int eq = line.indexOf('=');
+                if (eq > 0) {
+                    headers.put(line.substring(0, eq).trim(), line.substring(eq + 1).trim());
+                }
+            }
+        }
+
+        new Thread(() -> {
+            try {
+                Map<String, Object> result = KafkaService.sendMessage(config, topic, partition,
+                        key.isEmpty() ? null : key, body, headers.isEmpty() ? null : headers);
+                Platform.runLater(() -> {
+                    String partitionStr = String.valueOf(result.getOrDefault("partition", ""));
+                    String offsetStr = String.valueOf(result.getOrDefault("offset", ""));
+                    String timestamp = formatTimestamp(result.get("timestamp"));
+                    Alert info = new Alert(Alert.AlertType.INFORMATION);
+                    info.setTitle("发送成功");
+                    info.setHeaderText("消息已发送到 " + topic);
+                    info.setContentText("Partition: " + partitionStr + "\nOffset: " + offsetStr + "\n时间: " + timestamp);
+                    DialogPositionUtil.centerOnOwner(info, this);
+                    info.showAndWait();
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("发送失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("发送消息失败: " + e.getMessage());
+                    DialogPositionUtil.centerOnOwner(alert, this);
+                    alert.showAndWait();
+                });
+            }
+        }, "Kafka-SendMessage").start();
     }
 
     private void displayQueryResults(List<Map<String, Object>> messages) {

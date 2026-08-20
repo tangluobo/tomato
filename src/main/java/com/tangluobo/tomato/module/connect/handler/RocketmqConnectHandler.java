@@ -640,6 +640,54 @@ public class RocketmqConnectHandler implements ConnectHandler {
         module.showDataView();
     }
 
+    /** 右键"发送消息"：打开主题详情 Tab 并切换到发送消息子标签 */
+    public void handleSendTopic(ConnectModule module, TreeItem<String> item, DatabaseNodeData data) {
+        javafx.scene.control.TabPane terminalTabPane = module.getTerminalTabPane();
+        if (terminalTabPane == null) return;
+        if (!module.ensureTabPaneInstalled()) return;
+
+        ConnectionConfig config = data.getConnectionConfig();
+        String topicName = data.getName();
+        String tabId = "rocketmq_topic_" + config.getId() + "_" + topicName;
+
+        for (javafx.scene.control.Tab tab : terminalTabPane.getTabs()) {
+            if (tabId.equals(tab.getUserData())) {
+                if (tab.getContent() instanceof RocketmqDataView) {
+                    ((RocketmqDataView) tab.getContent()).selectSendTab(topicName);
+                }
+                terminalTabPane.getSelectionModel().select(tab);
+                module.showDataView();
+                return;
+            }
+        }
+
+        RocketmqDataView dataView = new RocketmqDataView(config, topicName);
+        dataView.selectSendTab(topicName);
+
+        String tabTitle = topicName + "(" + config.getHost() + ":" + config.getPort() + ")";
+        javafx.scene.control.Tab tab = new javafx.scene.control.Tab(tabTitle);
+
+        try {
+            Image rocketmqIcon = new Image(getClass().getResourceAsStream("/images/connect/rocketmq.png"));
+            ImageView tabIconView = new ImageView(rocketmqIcon);
+            tabIconView.setFitWidth(18);
+            tabIconView.setFitHeight(18);
+            tab.setGraphic(ConnectModule.createFixedSizeGraphic(tabIconView));
+        } catch (Exception ignored) {}
+
+        tab.setContent(dataView);
+        tab.setUserData(tabId);
+        tab.setOnClosed(e -> {
+            if (terminalTabPane.getTabs().isEmpty()) {
+                module.showWelcomeView();
+            }
+        });
+
+        terminalTabPane.getTabs().add(tab);
+        terminalTabPane.getSelectionModel().select(tab);
+        module.showDataView();
+    }
+
     /** 双击消费者组节点：打开消费者组一级标签 */
     public void handleConsumerDoubleClick(ConnectModule module, TreeItem<String> item, DatabaseNodeData data) {
         // 双击消费者组项也打开消费者组一级标签
@@ -822,9 +870,11 @@ public class RocketmqConnectHandler implements ConnectHandler {
             case ROCKETMQ_TOPIC -> {
                 MenuItem openItem = new MenuItem("查看详情");
                 openItem.setOnAction(e -> handleTopicDoubleClick(module, item, data));
+                MenuItem sendItem = new MenuItem("发送消息");
+                sendItem.setOnAction(e -> handleSendTopic(module, item, data));
                 MenuItem deleteItem = new MenuItem("删除主题");
                 deleteItem.setOnAction(e -> handleDeleteTopic(module, item, data));
-                contextMenu.getItems().addAll(openItem, new SeparatorMenuItem(), deleteItem);
+                contextMenu.getItems().addAll(openItem, sendItem, new SeparatorMenuItem(), deleteItem);
             }
             case ROCKETMQ_CONSUMER -> {
                 MenuItem openItem = new MenuItem("查看详情");

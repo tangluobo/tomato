@@ -3,6 +3,10 @@ package com.tangluobo.tomato.module.connect.service;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import com.tangluobo.tomato.module.connect.SshTunnelManager;
 import org.apache.kafka.clients.admin.*;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -11,8 +15,10 @@ import org.apache.kafka.clients.consumer.OffsetResetStrategy;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.header.Headers;
+import org.apache.kafka.common.header.internals.RecordHeader;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.common.serialization.StringSerializer;
 
 import java.time.Duration;
 import java.util.*;
@@ -745,6 +751,61 @@ public class KafkaService {
             } catch (Exception ignored) {}
         }
         return result;
+    }
+
+    // ==================== 消息发送 ====================
+
+    /**
+     * 发送消息到指定主题。
+     * partition 为 null 时由默认分区器选择分区；key/headers 可为 null。
+     * 返回包含 topic/partition/offset/timestamp 的 Map。
+     */
+    public static Map<String, Object> sendMessage(ConnectionConfig config, String topic, Integer partition, String key, String value, Map<String, String> headers) throws Exception {
+        String bootstrap = bootstrap(config);
+        System.out.println("[KafkaService] sendMessage: topic=" + topic + " partition=" + partition
+                + " key=" + key + " valueLen=" + (value != null ? value.length() : 0)
+                + " bootstrap=" + bootstrap);
+        KafkaProducer<String, String> producer = new KafkaProducer<>(buildProducerProps(bootstrap));
+        try {
+            ProducerRecord<String, String> record = new ProducerRecord<>(topic, partition, key, value);
+            if (headers != null) {
+                for (Map.Entry<String, String> h : headers.entrySet()) {
+                    if (h.getKey() == null || h.getKey().isEmpty()) continue;
+                    String hVal = h.getValue() != null ? h.getValue() : "";
+                    record.headers().add(new RecordHeader(h.getKey(), hVal.getBytes("UTF-8")));
+                }
+            }
+            RecordMetadata metadata = producer.send(record).get();
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("topic", metadata.topic());
+            result.put("partition", metadata.partition());
+            result.put("offset", metadata.offset());
+            result.put("timestamp", metadata.timestamp());
+            System.out.println("[KafkaService] sendMessage 成功: partition=" + metadata.partition()
+                    + " offset=" + metadata.offset());
+            return result;
+        } finally {
+            Thread t = new Thread(() -> {
+                try { producer.close(Duration.ofMillis(1000)); } catch (Exception ignored) {}
+            }, "Kafka-ProducerCloser");
+            t.setDaemon(true);
+            t.start();
+        }
+    }
+
+    private static Properties buildProducerProps(String bootstrap) {
+        Properties props = new Properties();
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap);
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        props.put(ProducerConfig.CLIENT_ID_CONFIG, "tomato-kafka-producer");
+        props.put(ProducerConfig.ACKS_CONFIG, "1");
+        props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 30000);
+        props.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 120000);
+        props.put(ProducerConfig.RECONNECT_BACKOFF_MS_CONFIG, 50);
+        props.put(ProducerConfig.RECONNECT_BACKOFF_MAX_MS_CONFIG, 3000);
+        props.put(ProducerConfig.RETRY_BACKOFF_MS_CONFIG, 100);
+        return props;
     }
 
     // ==================== 辅助方法 ====================
