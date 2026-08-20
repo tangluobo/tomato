@@ -67,8 +67,9 @@ public class KafkaService {
     public static String testConnection(ConnectionConfig config) {
         boolean tunnelAcquired = false;
         AdminClient admin = null;
+        String bootstrap = null;
         try {
-            String bootstrap = resolveBootstrap(config);
+            bootstrap = resolveBootstrap(config);
             tunnelAcquired = config.isUseSshTunnel() && config.getSshTunnelHostId() != null;
 
             // 第一步：原始 TCP 连接测试，区分网络问题与 Kafka 客户端问题
@@ -77,7 +78,10 @@ public class KafkaService {
             int tcpPort = Integer.parseInt(hp[1]);
             try (java.net.Socket socket = new java.net.Socket()) {
                 socket.connect(new java.net.InetSocketAddress(tcpHost, tcpPort), 5000);
-                System.out.println("[KafkaService] TCP 连接成功: " + tcpHost + ":" + tcpPort);
+                // 同时打印 DNS 解析后的 IP，便于排查 IPv6 / DNS 问题
+                java.net.InetAddress resolved = java.net.InetAddress.getByName(tcpHost);
+                System.out.println("[KafkaService] TCP 连接成功: " + tcpHost + ":" + tcpPort
+                        + " (解析地址: " + resolved.getHostAddress() + ")");
             } catch (Exception tcpEx) {
                 System.err.println("[KafkaService] TCP 连接失败: " + tcpHost + ":" + tcpPort + " - " + tcpEx.getMessage());
                 return "TCP连接失败(" + tcpHost + ":" + tcpPort + "): " + tcpEx.getClass().getSimpleName() + ": " + tcpEx.getMessage();
@@ -87,9 +91,27 @@ public class KafkaService {
             admin = AdminClient.create(buildAdminProps(bootstrap));
             admin.listTopics().names().get(30, TimeUnit.SECONDS);
             return null;
+        } catch (java.util.concurrent.TimeoutException te) {
+            // TimeoutException.getMessage() 默认返回 null，导致原显示为 "TimeoutException:null"。
+            // 这里补充诊断信息，便于用户定位 advertised.listeners / 端口 / SASL 等常见问题。
+            String diag = "Kafka AdminClient 连接超时(30s)\n"
+                    + "  bootstrap=" + bootstrap + "\n"
+                    + "  SSH隧道=" + (tunnelAcquired ? "已启用" : "未启用") + "\n"
+                    + "常见原因:\n"
+                    + "  1) broker 的 advertised.listeners 配置为 localhost/主机名/内网IP，客户端无法访问\n"
+                    + "  2) 端口错误（如连了 ZooKeeper 的 2181 端口，TCP 通但 Kafka 协议不通）\n"
+                    + "  3) broker 启用了 SASL/SSL，但客户端未提供凭证\n"
+                    + "  4) 客户端到 broker 网络存在 accept 但不转发的假连接";
+            System.err.println("[KafkaService] " + diag);
+            return "TimeoutException: " + diag;
         } catch (Throwable e) {
+            // 异常 message 可能为 null，回退到 toString() 至少保留类名
+            String msg = e.getMessage();
+            if (msg == null || msg.isEmpty()) {
+                msg = e.toString();
+            }
             e.printStackTrace();
-            return e.getClass().getSimpleName() + ": " + e.getMessage();
+            return e.getClass().getSimpleName() + ": " + msg;
         } finally {
             if (admin != null) {
                 try { admin.close(Duration.ofSeconds(3)); } catch (Exception ignored) {}

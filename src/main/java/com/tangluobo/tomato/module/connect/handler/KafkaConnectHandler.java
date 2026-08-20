@@ -58,8 +58,14 @@ public class KafkaConnectHandler implements ConnectHandler {
                         hostItem.setGraphic(module.getIconForConfig(config));
                         Alert alert = new Alert(Alert.AlertType.ERROR);
                         alert.setTitle("连接失败");
-                        alert.setHeaderText(null);
-                        alert.setContentText("无法连接到Kafka " + config.getHost() + ":" + config.getPort() + "\n错误: " + error);
+                        alert.setHeaderText("无法连接到 Kafka " + config.getHost() + ":" + config.getPort());
+                        // 错误信息可能较长（含诊断提示），用 TextArea 包装便于滚动与复制
+                        TextArea errorArea = new TextArea("无法连接到Kafka " + config.getHost() + ":" + config.getPort() + "\n\n错误: " + error);
+                        errorArea.setEditable(false);
+                        errorArea.setWrapText(true);
+                        errorArea.setPrefWidth(560);
+                        errorArea.setPrefRowCount(12);
+                        alert.getDialogPane().setContent(errorArea);
                         showDialog(alert);
                     });
                     return;
@@ -95,8 +101,16 @@ public class KafkaConnectHandler implements ConnectHandler {
                     hostItem.setGraphic(module.getIconForConfig(config));
                     Alert alert = new Alert(Alert.AlertType.ERROR);
                     alert.setTitle("连接失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("无法连接到Kafka " + config.getName() + ": " + e.getMessage());
+                    alert.setHeaderText("无法连接到 Kafka " + config.getName());
+                    // 异常 message 可能为 null（如某些 ExecutionException），回退到 toString 保留类名
+                    String msg = e.getMessage();
+                    if (msg == null || msg.isEmpty()) msg = e.toString();
+                    TextArea errorArea = new TextArea("无法连接到Kafka " + config.getName() + ": " + msg);
+                    errorArea.setEditable(false);
+                    errorArea.setWrapText(true);
+                    errorArea.setPrefWidth(560);
+                    errorArea.setPrefRowCount(8);
+                    alert.getDialogPane().setContent(errorArea);
                     showDialog(alert);
                 });
             }
