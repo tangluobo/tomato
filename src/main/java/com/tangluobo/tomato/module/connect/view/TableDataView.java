@@ -199,7 +199,13 @@ public class TableDataView extends BorderPane {
             }
             // 找到点击的cell位置
             int[] cellPos = getCellPositionAt(event);
-            if (cellPos == null) return;
+            if (cellPos == null) {
+                // 点击空白区域（右侧空白或表格下方空白）：清除选中，不选中任何cell或行
+                tableView.getSelectionModel().clearSelection();
+                anchorCell[0] = -1;
+                anchorCell[1] = -1;
+                return;
+            }
 
             if (event.isShiftDown() && anchorCell[0] >= 0) {
                 // Shift+点击：从锚点到当前cell的矩形范围选中
@@ -314,28 +320,8 @@ public class TableDataView extends BorderPane {
             }
             target = target.getParent();
         }
-        // 点击的不是TableCell（如右侧空白区域），但命中了TableRow
-        if (clickedRow != null) {
-            int rowIndex = clickedRow.getIndex();
-            int lastCol = getLastVisibleDataColumnIndex();
-            if (lastCol >= 0) {
-                return new int[]{rowIndex, lastCol};
-            }
-        }
+        // 点击的不是TableCell（如右侧空白区域），即使命中TableRow也不选中任何cell
         return null;
-    }
-
-    /**
-     * 获取最后一个可见数据列在 tableView.getColumns() 中的索引
-     */
-    private int getLastVisibleDataColumnIndex() {
-        for (int i = tableView.getColumns().size() - 1; i >= 0; i--) {
-            TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(i);
-            if (col.isVisible() && !ROW_SELECTOR_COL.equals(col.getUserData())) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     /**

@@ -746,6 +746,21 @@
     -fx-padding: 0;
 }
 
+/* 设计表（TableStructureView）：未被 ScrollPane 包裹，恢复 TableView 内部水平滚动条 */
+.design-table-view .virtual-flow .scroll-bar:horizontal {
+    -fx-opacity: 1;
+    -fx-pref-height: 15;
+    -fx-min-height: 15;
+    -fx-max-height: 15;
+}
+
+.design-table-view .virtual-flow .scroll-bar:horizontal .track,
+.design-table-view .virtual-flow .scroll-bar:horizontal .thumb {
+    -fx-pref-height: 15;
+    -fx-min-height: 15;
+    -fx-max-height: 15;
+}
+
 .table-view .corner {
     -fx-background-color: transparent;
     -fx-padding: 0;

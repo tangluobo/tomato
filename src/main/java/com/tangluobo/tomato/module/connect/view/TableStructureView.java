@@ -264,6 +264,8 @@ public class TableStructureView extends BorderPane {
                 globalConfig.getTableFontName(), globalConfig.getTableFontSize());
         tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0; -fx-table-header-height: " + rowHeight + ";");
         tableView.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+        // 设计表使用 TableView 内部水平滚动条（未被 ScrollPane 包裹），需恢复被全局规则隐藏的内部水平滚动条
+        tableView.getStyleClass().add("design-table-view");
 
         // Ctrl+C 复制字段、Ctrl+V 粘贴字段
         // 使用Scene加速器（最高优先级，在所有事件处理之前触发），
@@ -780,7 +782,13 @@ public class TableStructureView extends BorderPane {
         tableView.setOnMousePressed(event -> {
             if (event.getButton() != javafx.scene.input.MouseButton.PRIMARY) return;
             int[] cellPos = getCellPositionAt(event);
-            if (cellPos == null) return;
+            if (cellPos == null) {
+                // 点击空白区域（右侧空白或表格下方空白）：清除选中，不选中任何cell或行
+                tableView.getSelectionModel().clearSelection();
+                anchorCell[0] = -1;
+                anchorCell[1] = -1;
+                return;
+            }
 
             if (event.isShiftDown() && anchorCell[0] >= 0) {
                 // Shift+点击：从锚点到当前cell的矩形范围选中
@@ -892,15 +900,11 @@ public class TableStructureView extends BorderPane {
     /**
      * 根据鼠标事件位置获取对应的单元格位置 [row, col]。
      * 通过遍历 PickResult 节点链找到 TableCell，直接获取行列索引。
-     * 点击非TableCell区域（如行右侧空白）时回退到该行最后一个可见数据列。
+     * 点击非TableCell区域（如右侧空白）时返回 null，不选中任何cell或行。
      */
     private int[] getCellPositionAt(javafx.scene.input.MouseEvent event) {
         Node target = event.getPickResult().getIntersectedNode();
-        TableRow<?> clickedRow = null;
         while (target != null && target != tableView) {
-            if (clickedRow == null && target instanceof TableRow<?> row) {
-                clickedRow = row;
-            }
             if (target instanceof TableCell<?, ?> cell) {
                 if (cell.getTableColumn() != null && cell.getTableRow() != null) {
                     int row = cell.getTableRow().getIndex();
@@ -912,28 +916,8 @@ public class TableStructureView extends BorderPane {
             }
             target = target.getParent();
         }
-        // 点击的不是TableCell（如右侧空白区域），但命中了TableRow
-        if (clickedRow != null) {
-            int rowIndex = clickedRow.getIndex();
-            int lastCol = getLastVisibleDataColumnIndex();
-            if (lastCol >= 0) {
-                return new int[]{rowIndex, lastCol};
-            }
-        }
+        // 点击的不是TableCell（如右侧空白区域），不选中任何cell
         return null;
-    }
-
-    /**
-     * 获取最后一个可见数据列在 tableView.getColumns() 中的索引（排除行选择器列）
-     */
-    private int getLastVisibleDataColumnIndex() {
-        for (int i = tableView.getColumns().size() - 1; i >= 0; i--) {
-            TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(i);
-            if (col.isVisible() && !ROW_SELECTOR_COL.equals(col.getUserData())) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     /**
