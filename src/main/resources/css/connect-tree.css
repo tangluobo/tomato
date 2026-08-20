@@ -1130,12 +1130,15 @@
 }
 
 /* 悬停和选中状态保持可读性 */
-/* 未选中行悬停：仅单元格淡蓝色，行背景白色（右侧空白列保持白色） */
-.objects-detail-table .table-row-cell:filled:hover {
+/* 未选中行划过：custom-hover 由 Java 代码（TableRow 的 MOUSE_MOVED 事件过滤器 +
+   PickResult 判断）根据鼠标是否落在 TableCell 上动态添加/移除。
+   鼠标在行内右侧空白区域时移除 custom-hover，整行 cell 保持白色。
+   注意：JavaFX CSS 不支持 :not()，选中行靠 :selected 后定义覆盖 custom-hover。 */
+.objects-detail-table .table-row-cell:filled .table-cell {
     -fx-background-color: white;
 }
 
-.objects-detail-table .table-row-cell:filled:hover .table-cell {
+.objects-detail-table .table-row-cell.custom-hover .table-cell {
     -fx-background-color: #D8E6F2;
 }
 
@@ -1150,19 +1153,5 @@
 }
 
 .objects-detail-table .table-row-cell:selected .table-cell .label {
-    -fx-text-fill: white;
-}
-
-/* 选中行悬停：保持蓝色单元格（优先级高于 :filled:hover） */
-.objects-detail-table .table-row-cell:selected:hover {
-    -fx-background-color: white;
-}
-
-.objects-detail-table .table-row-cell:selected:hover .table-cell {
-    -fx-background-color: #3592CB;
-    -fx-text-fill: white;
-}
-
-.objects-detail-table .table-row-cell:selected:hover .table-cell .label {
     -fx-text-fill: white;
 }

@@ -4,6 +4,7 @@ import com.tangluobo.tomato.module.connect.ToolType;
 import com.tangluobo.tomato.module.tools.DatasetConverterPane;
 import com.tangluobo.tomato.module.tools.DesktopShortcutPane;
 import com.tangluobo.tomato.module.tools.HostsFilePane;
+import com.tangluobo.tomato.module.tools.ImageBackgroundRemoverPane;
 import com.tangluobo.tomato.module.tools.ImageFormatConverterPane;
 import com.tangluobo.tomato.module.tools.JsonToolPane;
 import com.tangluobo.tomato.module.tools.ResourceExtractorPane;
@@ -53,6 +54,7 @@ public class ToolPane extends BorderPane {
             case JSON_TOOL -> pane = new JsonToolPane();
             case DESKTOP_SHORTCUT -> pane = new DesktopShortcutPane();
             case HOSTS_FILE -> pane = new HostsFilePane();
+            case IMAGE_BACKGROUND_REMOVER -> pane = new ImageBackgroundRemoverPane();
             case TRAE_SESSION -> pane = new TraeSessionPane();
             case RESOURCE_EXTRACTOR -> pane = new ResourceExtractorPane();
             default -> {

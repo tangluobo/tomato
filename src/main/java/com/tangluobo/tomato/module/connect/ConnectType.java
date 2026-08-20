@@ -13,6 +13,7 @@ public enum ConnectType {
     ALIYUN_OSS("AliyunOSS", "阿里云OSS", "/images/connect/aliyun_oss.png", Category.OTHERS),
     REDIS("Redis", "Redis", "/images/connect/redis.png", Category.DATABASE),
     ROCKETMQ("RocketMQ", "RocketMQ", "/images/connect/rocketmq.png", Category.DATABASE),
+    KAFKA("Kafka", "Kafka", "/images/connect/kafka.png", Category.DATABASE),
     LOCAL_TERMINAL("LocalTerminal", "本地终端", "/images/connect/shell.png", Category.OTHERS),
     LOCAL_DIRECTORY("LocalDirectory", "本地目录", "/images/connect/folder.png", Category.OTHERS),
     TOOL("Tool", "工具", "/images/connect/beautiful.png", Category.TOOL),

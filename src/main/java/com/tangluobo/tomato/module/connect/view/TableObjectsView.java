@@ -1299,6 +1299,19 @@ public class TableObjectsView extends BorderPane {
             col.setMaxWidth(colMax);
             col.setPrefWidth(100); // 初始值，autoFitColumns 会覆盖
             col.setCellValueFactory(param -> new SimpleStringProperty(param.getValue().get(colIndex)));
+            col.setCellFactory(tc -> new TableCell<ObservableList<String>, String>() {
+                @Override
+                protected void updateItem(String item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) {
+                        setText(null);
+                        setGraphic(null);
+                    } else {
+                        setText(item);
+                        setGraphic(null);
+                    }
+                }
+            });
             detailTableView.getColumns().add(col);
         }
 
@@ -1313,12 +1326,49 @@ public class TableObjectsView extends BorderPane {
 
         detailTableView.setRowFactory(tv -> {
             TableRow<ObservableList<String>> row = new TableRow<>();
+            // 行划过效果：鼠标在 cell 上时整行 cell 变淡蓝，鼠标在行内右侧空白区域时移除。
+            // 用 MOUSE_MOVED 事件过滤器（capturing 阶段，子节点无法阻止）+ PickResult 判断 target 是否落在 TableCell 上。
+            // 单事件源，无 cell 间 mouseEntered/mouseExited 时序竞态。
+            // 选中行不显示划过效果（保持选中蓝色），故选中时跳过添加并立即移除已有 custom-hover。
+            row.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_MOVED, e -> {
+                if (row.isEmpty() || row.isSelected()) {
+                    if (row.getStyleClass().contains("custom-hover")) {
+                        row.getStyleClass().remove("custom-hover");
+                    }
+                    return;
+                }
+                javafx.scene.Node target = e.getPickResult().getIntersectedNode();
+                boolean onCell = false;
+                while (target != null && target != row) {
+                    if (target instanceof TableCell<?, ?>) {
+                        onCell = true;
+                        break;
+                    }
+                    target = target.getParent();
+                }
+                if (onCell) {
+                    if (!row.getStyleClass().contains("custom-hover")) {
+                        row.getStyleClass().add("custom-hover");
+                    }
+                } else {
+                    row.getStyleClass().remove("custom-hover");
+                }
+            });
+            // 选中状态变化时立即移除 custom-hover，避免选中瞬间残留淡蓝
+            row.selectedProperty().addListener((obs, wasSel, isSel) -> {
+                if (isSel) {
+                    row.getStyleClass().remove("custom-hover");
+                }
+            });
+            row.setOnMouseExited(e -> row.getStyleClass().remove("custom-hover"));
             row.setOnMouseClicked(e -> {
                 if (row.isEmpty()) return;
                 if (e.getButton() == javafx.scene.input.MouseButton.SECONDARY) return;
 
                 // 双击：取消编辑定时器，打开表
                 if (e.getClickCount() == 2) {
+                    // 空白区域（行内右侧无 cell 部分）双击不响应
+                    if (getRowIndexOf(e) < 0) return;
                     if (singleClickTimer != null) {
                         singleClickTimer.stop();
                         singleClickTimer = null;
@@ -1527,15 +1577,14 @@ public class TableObjectsView extends BorderPane {
 
     /**
      * 根据鼠标事件位置获取对应的行索引。
-     * 通过遍历 PickResult 节点链找到 TableRow/TableCell，直接获取行索引。
+     * 通过遍历 PickResult 节点链找到 TableCell，直接获取行索引。
+     * 仅命中 TableCell 时才视为点击数据行；命中 TableRow 但无 TableCell
+     * （如数据行右侧空白区域）视为空白区域，不选中任何行/单元格。
      * 参考 TableDataView.getCellPositionAt 的实现方式。
      */
     private int getRowIndexOf(javafx.scene.input.MouseEvent event) {
         javafx.scene.Node target = event.getPickResult().getIntersectedNode();
         while (target != null && target != detailTableView) {
-            if (target instanceof TableRow<?> row && !row.isEmpty()) {
-                return row.getIndex();
-            }
             if (target instanceof TableCell<?, ?> cell
                     && cell.getTableRow() != null && !cell.getTableRow().isEmpty()) {
                 return cell.getTableRow().getIndex();

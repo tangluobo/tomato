@@ -22,6 +22,12 @@ public class DatabaseNodeData {
         ROCKETMQ_CONSUMER,         // RocketMQ单个消费者组
         ROCKETMQ_BROKER,           // RocketMQ单个Broker
         ROCKETMQ_MESSAGE,           // RocketMQ单条消息
+        KAFKA_TOPICS_FOLDER,       // Kafka主题文件夹
+        KAFKA_CONSUMERS_FOLDER,    // Kafka消费者组文件夹
+        KAFKA_CLUSTER_FOLDER,      // Kafka集群文件夹
+        KAFKA_TOPIC,               // Kafka单个主题
+        KAFKA_CONSUMER,            // Kafka单个消费者组
+        KAFKA_BROKER,              // Kafka单个Broker
         ALIYUN_PRODUCT_FOLDER,      // 阿里云产品文件夹（如ECS、RDS等）
         ALIYUN_ECS_INSTANCE,        // 阿里云ECS实例
         ALIYUN_DOMAIN,              // 阿里云域名

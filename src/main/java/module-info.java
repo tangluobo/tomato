@@ -33,6 +33,7 @@ module tomato {
     requires rocketmq.client;
     requires rocketmq.acl;
     requires rocketmq.srvutil;
+    requires kafka.clients;
     requires org.apache.commons.lang3;
     requires slf4j.api;
     requires org.apache.xmlgraphics.batik.transcoder;

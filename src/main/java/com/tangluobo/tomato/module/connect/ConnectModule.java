@@ -12,6 +12,7 @@ import com.tangluobo.tomato.module.connect.service.BackupService;
 import com.tangluobo.tomato.module.connect.service.DatabaseService;
 import com.tangluobo.tomato.module.connect.service.RedisService;
 import com.tangluobo.tomato.module.connect.service.RocketmqService;
+import com.tangluobo.tomato.module.connect.service.KafkaService;
 import com.tangluobo.tomato.module.connect.view.RocketmqDataView;
 import com.tangluobo.tomato.module.connect.view.SqlEditorView;
 import com.tangluobo.tomato.module.connect.view.ToolPane;
@@ -89,6 +90,13 @@ public class ConnectModule implements Module {
     private Image rocketmqConsumerItemIcon;
     private Image rocketmqBrokerItemIcon;
     private Image rocketmqMessageItemIcon;
+    // ===== Kafka 图标（复用现有图片资源，与 RocketMQ 风格一致）=====
+    private Image kafkaTopicIcon;
+    private Image kafkaConsumerIcon;
+    private Image kafkaClusterIcon;
+    private Image kafkaTopicItemIcon;
+    private Image kafkaConsumerItemIcon;
+    private Image kafkaBrokerItemIcon;
     private Image aliyunProductIcon;
     private Image aliyunEcsIcon;
     private Image aliyunDomainIcon;
@@ -194,6 +202,12 @@ public class ConnectModule implements Module {
         try { rocketmqConsumerItemIcon = new Image(getClass().getResourceAsStream("/images/connect/user.png")); } catch (Exception e) { rocketmqConsumerItemIcon = null; }
         try { rocketmqBrokerItemIcon = new Image(getClass().getResourceAsStream("/images/connect/monitor.png")); } catch (Exception e) { rocketmqBrokerItemIcon = null; }
         try { rocketmqMessageItemIcon = new Image(getClass().getResourceAsStream("/images/connect/code.png")); } catch (Exception e) { rocketmqMessageItemIcon = null; }
+        try { kafkaTopicIcon = new Image(getClass().getResourceAsStream("/images/connect/table.png")); } catch (Exception e) { kafkaTopicIcon = null; }
+        try { kafkaConsumerIcon = new Image(getClass().getResourceAsStream("/images/connect/user.png")); } catch (Exception e) { kafkaConsumerIcon = null; }
+        try { kafkaClusterIcon = new Image(getClass().getResourceAsStream("/images/connect/monitor.png")); } catch (Exception e) { kafkaClusterIcon = null; }
+        try { kafkaTopicItemIcon = new Image(getClass().getResourceAsStream("/images/connect/table.png")); } catch (Exception e) { kafkaTopicItemIcon = null; }
+        try { kafkaConsumerItemIcon = new Image(getClass().getResourceAsStream("/images/connect/user.png")); } catch (Exception e) { kafkaConsumerItemIcon = null; }
+        try { kafkaBrokerItemIcon = new Image(getClass().getResourceAsStream("/images/connect/monitor.png")); } catch (Exception e) { kafkaBrokerItemIcon = null; }
         try { aliyunProductIcon = new Image(getClass().getResourceAsStream("/images/connect/monitor.png")); } catch (Exception e) { aliyunProductIcon = null; }
         try { aliyunEcsIcon = new Image(getClass().getResourceAsStream("/images/connect/server.png")); } catch (Exception e) { aliyunEcsIcon = null; }
         try { aliyunDomainIcon = new Image(getClass().getResourceAsStream("/images/connect/s3.png")); } catch (Exception e) { aliyunDomainIcon = null; }
@@ -239,6 +253,12 @@ public class ConnectModule implements Module {
             case ROCKETMQ_CONSUMER -> rocketmqConsumerItemIcon;
             case ROCKETMQ_BROKER -> rocketmqBrokerItemIcon;
             case ROCKETMQ_MESSAGE -> rocketmqMessageItemIcon;
+            case KAFKA_TOPICS_FOLDER -> kafkaTopicIcon;
+            case KAFKA_CONSUMERS_FOLDER -> kafkaConsumerIcon;
+            case KAFKA_CLUSTER_FOLDER -> kafkaClusterIcon;
+            case KAFKA_TOPIC -> kafkaTopicItemIcon;
+            case KAFKA_CONSUMER -> kafkaConsumerItemIcon;
+            case KAFKA_BROKER -> kafkaBrokerItemIcon;
             case ALIYUN_PRODUCT_FOLDER -> aliyunProductIcon;
             case ALIYUN_ECS_INSTANCE -> aliyunEcsIcon;
             case ALIYUN_DOMAIN -> aliyunDomainIcon;
@@ -506,6 +526,7 @@ public class ConnectModule implements Module {
                                 || targetConfig.getType() == ConnectType.ORACLE;
                         boolean isRedis = targetConfig.getType() == ConnectType.REDIS;
                         boolean isRocketmq = targetConfig.getType() == ConnectType.ROCKETMQ;
+                        boolean isKafka = targetConfig.getType() == ConnectType.KAFKA;
                         boolean isLocalDirectory = targetConfig.getType() == ConnectType.LOCAL_DIRECTORY;
                         if (isDatabase) {
                             MenuItem createDbItem = new MenuItem("新建数据库");
@@ -530,6 +551,13 @@ public class ConnectModule implements Module {
                             }
                         }
                         if (isRocketmq) {
+                            if (!targetItem.getChildren().isEmpty()) {
+                                MenuItem closeConnItem = new MenuItem("关闭连接");
+                                closeConnItem.setOnAction(e -> closeHostConnection(targetItem, targetConfig));
+                                contextMenu.getItems().addAll(closeConnItem, new SeparatorMenuItem());
+                            }
+                        }
+                        if (isKafka) {
                             if (!targetItem.getChildren().isEmpty()) {
                                 MenuItem closeConnItem = new MenuItem("关闭连接");
                                 closeConnItem.setOnAction(e -> closeHostConnection(targetItem, targetConfig));
@@ -1234,6 +1262,42 @@ public class ConnectModule implements Module {
                     rq.handleBrokerDoubleClick(this, item, data);
                 }
             }
+            case KAFKA_TOPICS_FOLDER -> {
+                ConnectHandler kfH = createConnectHandler(data.getConnectionConfig());
+                if (kfH instanceof KafkaConnectHandler kf) {
+                    kf.handleTopicsFolderDoubleClick(this, item, data);
+                }
+            }
+            case KAFKA_CONSUMERS_FOLDER -> {
+                ConnectHandler kfH = createConnectHandler(data.getConnectionConfig());
+                if (kfH instanceof KafkaConnectHandler kf) {
+                    kf.handleConsumersFolderDoubleClick(this, item, data);
+                }
+            }
+            case KAFKA_CLUSTER_FOLDER -> {
+                ConnectHandler kfH = createConnectHandler(data.getConnectionConfig());
+                if (kfH instanceof KafkaConnectHandler kf) {
+                    kf.handleClusterFolderDoubleClick(this, item, data);
+                }
+            }
+            case KAFKA_TOPIC -> {
+                ConnectHandler kfH = createConnectHandler(data.getConnectionConfig());
+                if (kfH instanceof KafkaConnectHandler kf) {
+                    kf.handleTopicDoubleClick(this, item, data);
+                }
+            }
+            case KAFKA_CONSUMER -> {
+                ConnectHandler kfH = createConnectHandler(data.getConnectionConfig());
+                if (kfH instanceof KafkaConnectHandler kf) {
+                    kf.handleConsumerDoubleClick(this, item, data);
+                }
+            }
+            case KAFKA_BROKER -> {
+                ConnectHandler kfH = createConnectHandler(data.getConnectionConfig());
+                if (kfH instanceof KafkaConnectHandler kf) {
+                    kf.handleBrokerDoubleClick(this, item, data);
+                }
+            }
             case ALIYUN_PRODUCT_FOLDER -> {
                 ConnectHandler alH = createConnectHandler(data.getConnectionConfig());
                 if (alH instanceof AliyunConnectHandler al) {
@@ -1380,6 +1444,8 @@ public class ConnectModule implements Module {
                     RedisService.closeSshTunnel(config.getId());
                 } else if (config.getType() == ConnectType.ROCKETMQ) {
                     RocketmqService.closeAdmin(config);
+                } else if (config.getType() == ConnectType.KAFKA) {
+                    KafkaService.closeAdmin(config);
                 }
             } catch (Exception ignored) {
             }
@@ -1440,6 +1506,7 @@ public class ConnectModule implements Module {
         // 其他类型
         if (type == ConnectType.REDIS) return new RedisConnectHandler();
         if (type == ConnectType.ROCKETMQ) return new RocketmqConnectHandler();
+        if (type == ConnectType.KAFKA) return new KafkaConnectHandler();
         if (type == ConnectType.ALIYUN) return new AliyunConnectHandler();
         if (type == ConnectType.LOCAL_TERMINAL) return new LocalTerminalConnectHandler();
         if (type == ConnectType.LOCAL_DIRECTORY) return new LocalDirectoryConnectHandler();
@@ -1668,6 +1735,13 @@ public class ConnectModule implements Module {
                 ConnectHandler handler = createConnectHandler(config);
                 if (handler instanceof RocketmqConnectHandler rq) {
                     rq.refreshDbNode(this, item, data);
+                }
+            }
+            case KAFKA_TOPICS_FOLDER, KAFKA_CONSUMERS_FOLDER, KAFKA_CLUSTER_FOLDER -> {
+                item.getChildren().clear();
+                ConnectHandler handler = createConnectHandler(config);
+                if (handler instanceof KafkaConnectHandler kf) {
+                    kf.refreshDbNode(this, item, data);
                 }
             }
             case ALIYUN_PRODUCT_FOLDER, ALIYUN_DOMAIN -> {

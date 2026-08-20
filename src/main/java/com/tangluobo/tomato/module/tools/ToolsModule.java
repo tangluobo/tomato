@@ -159,6 +159,10 @@ public class ToolsModule implements Module {
         Node hostsFileIcon = createHostsFileIcon();
         toolItems.add(new ToolItem("hosts_file", "Hosts文件管理", "管理和切换不同环境的Hosts配置", hostsFileIcon));
 
+        // 图片背景透明化工具
+        Node imageBgRemoverIcon = createImageBackgroundRemoverIcon();
+        toolItems.add(new ToolItem("image_background_remover", "图片背景透明化", "JPG/PNG白灰背景转透明PNG", imageBgRemoverIcon));
+
         // Trae 会话管理工具
         Node traeSessionIcon = createTraeSessionIcon();
         toolItems.add(new ToolItem("trae_session", "Trae会话管理", "管理 Trae CN 多账号会话切换", traeSessionIcon));
@@ -212,6 +216,16 @@ public class ToolsModule implements Module {
         // Material Icons: dns (域名解析/Hosts 文件图标)
         SVGPath path = new SVGPath();
         path.setContent("M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM9 17H7v-5h2v5zm4 0h-2V7h2v10zm4 0h-2v-7h2v7z");
+        path.setFill(Color.web("#1976D2"));
+        path.setScaleX(0.9);
+        path.setScaleY(0.9);
+        return path;
+    }
+
+    private Node createImageBackgroundRemoverIcon() {
+        // Material Icons: layers (层叠，代表透明图层)
+        SVGPath path = new SVGPath();
+        path.setContent("M11.99 18.54l-7.37-5.73L3 14.07l9 7 9-7-1.63-1.27-7.38 5.74zM12 16l7.36-5.73L21 9l-9-7-9 7 1.63 1.27L12 16z");
         path.setFill(Color.web("#1976D2"));
         path.setScaleX(0.9);
         path.setScaleY(0.9);
@@ -351,6 +365,11 @@ public class ToolsModule implements Module {
                 HostsFilePane hostsFilePane = new HostsFilePane();
                 contentArea.getChildren().add(hostsFilePane);
                 VBox.setVgrow(hostsFilePane, Priority.ALWAYS);
+                break;
+            case "image_background_remover":
+                ImageBackgroundRemoverPane bgRemoverPane = new ImageBackgroundRemoverPane();
+                contentArea.getChildren().add(bgRemoverPane);
+                VBox.setVgrow(bgRemoverPane, Priority.ALWAYS);
                 break;
             case "trae_session":
                 TraeSessionPane traeSessionPane = new TraeSessionPane();

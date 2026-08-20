@@ -169,6 +169,21 @@ public class ConnectionConfigDialog {
     private VBox rocketmqSshTunnelContent;
     private ComboBox<ConnectionConfig> rocketmqSshHostCombo;
 
+    // ===== Kafka专属字段 =====
+    private TabPane kafkaTabPane;
+    private Tab kafkaGeneralTab;
+    private VBox kafkaConfigContent;
+    private TextField kafkaNameField;
+    private TextField kafkaHostField;
+    private TextField kafkaPortField;
+    private TextField kafkaDescriptionField;
+
+    // Kafka专用 SSH通道（引用方式：选择已有SSH主机作为跳板机）
+    private Tab kafkaSshTunnelTab;
+    private CheckBox kafkaUseSshTunnelCheckBox;
+    private VBox kafkaSshTunnelContent;
+    private ComboBox<ConnectionConfig> kafkaSshHostCombo;
+
     // ===== 阿里云专属字段 =====
     private VBox aliyunConfigContent;
     private TextField aliyunNameField;
@@ -316,6 +331,9 @@ public class ConnectionConfigDialog {
         // ---- 构建RocketMQ类型的配置 ----
         buildRocketmqConfigContent();
 
+        // ---- 构建Kafka类型的配置 ----
+        buildKafkaConfigContent();
+
         // ---- 构建阿里云类型的配置 ----
         buildAliyunConfigContent();
 
@@ -340,7 +358,7 @@ public class ConnectionConfigDialog {
 
         configButtons.getChildren().addAll(backBtn, cancelBtn2, okBtn);
 
-        configPage.getChildren().addAll(configTitle, dbTabPane, sshTabPane, simpleConfigContent, localTerminalConfigContent, s3TabPane, redisTabPane, rocketmqTabPane, aliyunConfigContent, localDirectoryConfigContent, configButtons);
+        configPage.getChildren().addAll(configTitle, dbTabPane, sshTabPane, simpleConfigContent, localTerminalConfigContent, s3TabPane, redisTabPane, rocketmqTabPane, kafkaTabPane, aliyunConfigContent, localDirectoryConfigContent, configButtons);
 
         // 编辑已有连接时直接显示配置页
         if (existingConfig != null) {
@@ -755,6 +773,7 @@ public class ConnectionConfigDialog {
         if (redisSshHostCombo != null) redisSshHostCombo.getItems().clear();
         if (sshSshHostCombo != null) sshSshHostCombo.getItems().clear();
         if (rocketmqSshHostCombo != null) rocketmqSshHostCombo.getItems().clear();
+        if (kafkaSshHostCombo != null) kafkaSshHostCombo.getItems().clear();
         try {
             List<ConnectionConfig> all = ConfigManager.loadConnections();
             for (ConnectionConfig c : all) {
@@ -764,6 +783,7 @@ public class ConnectionConfigDialog {
                     if (redisSshHostCombo != null) redisSshHostCombo.getItems().add(c);
                     if (sshSshHostCombo != null) sshSshHostCombo.getItems().add(c);
                     if (rocketmqSshHostCombo != null) rocketmqSshHostCombo.getItems().add(c);
+                    if (kafkaSshHostCombo != null) kafkaSshHostCombo.getItems().add(c);
                 }
             }
         } catch (Exception e) {
@@ -1619,6 +1639,110 @@ public class ConnectionConfigDialog {
     }
 
     /**
+     * 构建Kafka类型的配置内容
+     */
+    private void buildKafkaConfigContent() {
+        kafkaConfigContent = new VBox(15);
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(10);
+        grid.setPadding(new Insets(10, 0, 0, 0));
+
+        int row = 0;
+
+        grid.add(new Label("名称："), 0, row);
+        kafkaNameField = new TextField();
+        kafkaNameField.setPromptText("连接名称");
+        kafkaNameField.setPrefWidth(280);
+        grid.add(kafkaNameField, 1, row++);
+
+        grid.add(new Label("Bootstrap主机："), 0, row);
+        kafkaHostField = new TextField();
+        kafkaHostField.setPromptText("Bootstrap地址");
+        kafkaHostField.setPrefWidth(280);
+        grid.add(kafkaHostField, 1, row++);
+
+        grid.add(new Label("Bootstrap端口："), 0, row);
+        kafkaPortField = new TextField();
+        kafkaPortField.setPromptText("9092");
+        kafkaPortField.setPrefWidth(100);
+        grid.add(kafkaPortField, 1, row++);
+
+        grid.add(new Label("备注："), 0, row);
+        kafkaDescriptionField = new TextField();
+        kafkaDescriptionField.setPromptText("备注信息");
+        kafkaDescriptionField.setPrefWidth(280);
+        grid.add(kafkaDescriptionField, 1, row);
+
+        Label hint = new Label("填写Kafka Bootstrap地址，直接连接管理主题、消息、消费者组等");
+        hint.setStyle("-fx-font-size: 10px; -fx-text-fill: #999;");
+        hint.setWrapText(true);
+
+        kafkaConfigContent.getChildren().addAll(grid, hint);
+
+        // 构建 Kafka 专用 TabPane（常规 + SSH通道），与 S3/Redis/RocketMQ 结构一致
+        kafkaTabPane = new TabPane();
+        kafkaTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        kafkaTabPane.setVisible(false);
+        kafkaTabPane.setManaged(false);
+        kafkaTabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+
+        kafkaGeneralTab = new Tab("常规");
+        kafkaGeneralTab.setContent(kafkaConfigContent);
+
+        // ===== Kafka 专用 SSH通道 Tab（引用方式：选择已有SSH主机作为跳板机）=====
+        VBox kafkaTunnelContent = new VBox(10);
+        kafkaTunnelContent.setPadding(new Insets(10, 0, 0, 20));
+
+        kafkaUseSshTunnelCheckBox = new CheckBox("启用SSH通道（跳板机）");
+        kafkaUseSshTunnelCheckBox.setStyle("-fx-font-weight: bold;");
+
+        kafkaSshTunnelContent = new VBox(10);
+        kafkaSshTunnelContent.setPadding(new Insets(5, 0, 0, 0));
+        kafkaSshTunnelContent.setDisable(true);
+
+        kafkaUseSshTunnelCheckBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
+            kafkaSshTunnelContent.setDisable(!newVal);
+        });
+
+        // 选择已有SSH主机作为跳板机
+        HBox kafkaSelectHostBox = new HBox(8);
+        kafkaSelectHostBox.setAlignment(Pos.CENTER_LEFT);
+        Label kafkaSelectHostLabel = new Label("选择已有SSH主机：");
+        kafkaSshHostCombo = new ComboBox<>();
+        kafkaSshHostCombo.setPrefWidth(280);
+        kafkaSshHostCombo.setPromptText("选择已保存的SSH连接作为跳板机");
+        kafkaSshHostCombo.setCellFactory(lv -> new ListCell<ConnectionConfig>() {
+            @Override
+            protected void updateItem(ConnectionConfig item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : item.getName() + " (" + item.getHost() + ":" + item.getPort() + ")");
+            }
+        });
+        kafkaSshHostCombo.setButtonCell(new ListCell<ConnectionConfig>() {
+            @Override
+            protected void updateItem(ConnectionConfig item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : item.getName() + " (" + item.getHost() + ":" + item.getPort() + ")");
+            }
+        });
+        kafkaSelectHostBox.getChildren().addAll(kafkaSelectHostLabel, kafkaSshHostCombo);
+        loadAvailableSshHosts();
+
+        Label kafkaTunnelHint = new Label("启用后，将通过所选SSH主机（跳板机）建立安全通道访问Bootstrap；SSH连接信息随引用主机自动更新。跳板机需已保存凭据。");
+        kafkaTunnelHint.setStyle("-fx-font-size: 10px; -fx-text-fill: #999;");
+        kafkaTunnelHint.setWrapText(true);
+
+        kafkaSshTunnelContent.getChildren().addAll(kafkaSelectHostBox, kafkaTunnelHint);
+        kafkaTunnelContent.getChildren().addAll(kafkaUseSshTunnelCheckBox, kafkaSshTunnelContent);
+
+        kafkaSshTunnelTab = new Tab("SSH通道");
+        kafkaSshTunnelTab.setContent(kafkaTunnelContent);
+
+        kafkaTabPane.getTabs().addAll(kafkaGeneralTab, kafkaSshTunnelTab);
+    }
+
+    /**
      * 构建阿里云类型的配置内容
      */
     private void buildAliyunConfigContent() {
@@ -1945,12 +2069,13 @@ public class ConnectionConfigDialog {
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
         boolean isRedis = selectedType == ConnectType.REDIS;
         boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
+        boolean isKafka = selectedType == ConnectType.KAFKA;
         boolean isAliyun = selectedType == ConnectType.ALIYUN;
         boolean isLocalDirectory = selectedType == ConnectType.LOCAL_DIRECTORY;
-        boolean isSimple = !isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis && !isRocketmq && !isAliyun && !isLocalDirectory;
+        boolean isSimple = !isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis && !isRocketmq && !isKafka && !isAliyun && !isLocalDirectory;
 
-        // 数据库/S3/Redis/SSH/RocketMQ 类型 TabPane 已有标签标题，隐藏顶部标题避免重复
-        boolean useTabPane = isDatabase || isS3orOSS || isRedis || isSSH || isRocketmq;
+        // 数据库/S3/Redis/SSH/RocketMQ/Kafka 类型 TabPane 已有标签标题，隐藏顶部标题避免重复
+        boolean useTabPane = isDatabase || isS3orOSS || isRedis || isSSH || isRocketmq || isKafka;
         configTitle.setVisible(!useTabPane);
         configTitle.setManaged(!useTabPane);
         // TabPane 类型时去掉顶部和左侧 padding，让标签顶到最上面和最左边
@@ -1974,6 +2099,8 @@ public class ConnectionConfigDialog {
         redisTabPane.setManaged(isRedis);
         rocketmqTabPane.setVisible(isRocketmq);
         rocketmqTabPane.setManaged(isRocketmq);
+        kafkaTabPane.setVisible(isKafka);
+        kafkaTabPane.setManaged(isKafka);
         aliyunConfigContent.setVisible(isAliyun);
         aliyunConfigContent.setManaged(isAliyun);
         localDirectoryConfigContent.setVisible(isLocalDirectory);
@@ -2010,6 +2137,10 @@ public class ConnectionConfigDialog {
             if (rocketmqPortField.getText().isEmpty()) {
                 rocketmqPortField.setText("9876");
             }
+        } else if (isKafka) {
+            if (kafkaPortField.getText().isEmpty()) {
+                kafkaPortField.setText("9092");
+            }
         } else {
             if (simplePortField.getText().isEmpty()) {
                 simplePortField.setText(String.valueOf(getDefaultPort(selectedType)));
@@ -2032,6 +2163,7 @@ public class ConnectionConfigDialog {
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
         boolean isRedis = selectedType == ConnectType.REDIS;
         boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
+        boolean isKafka = selectedType == ConnectType.KAFKA;
         boolean isAliyun = selectedType == ConnectType.ALIYUN;
         boolean isLocalDirectory = selectedType == ConnectType.LOCAL_DIRECTORY;
 
@@ -2174,6 +2306,22 @@ public class ConnectionConfigDialog {
                     }
                 }
             }
+        } else if (isKafka) {
+            kafkaNameField.setText(existingConfig.getName());
+            kafkaHostField.setText(existingConfig.getHost());
+            kafkaPortField.setText(String.valueOf(existingConfig.getPort()));
+            kafkaDescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
+            // SSH通道配置（引用方式：记录引用的SSH跳板机ID）
+            kafkaUseSshTunnelCheckBox.setSelected(existingConfig.isUseSshTunnel());
+            kafkaSshHostCombo.setValue(null);
+            if (existingConfig.getSshTunnelHostId() != null) {
+                for (ConnectionConfig c : availableSshHosts) {
+                    if (existingConfig.getSshTunnelHostId().equals(c.getId())) {
+                        kafkaSshHostCombo.setValue(c);
+                        break;
+                    }
+                }
+            }
         } else if (isAliyun) {
             aliyunNameField.setText(existingConfig.getName());
             aliyunAccessKeyField.setText(existingConfig.getUsername() != null ? existingConfig.getUsername() : "");
@@ -2250,6 +2398,7 @@ public class ConnectionConfigDialog {
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
         boolean isRedis = selectedType == ConnectType.REDIS;
         boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
+        boolean isKafka = selectedType == ConnectType.KAFKA;
         boolean isAliyun = selectedType == ConnectType.ALIYUN;
         boolean isLocalDirectory = selectedType == ConnectType.LOCAL_DIRECTORY;
 
@@ -2378,6 +2527,17 @@ public class ConnectionConfigDialog {
             ConnectionConfig selectedRocketmqJumpHost = rocketmqSshHostCombo.getValue();
             config.setSshTunnelHostId(selectedRocketmqJumpHost != null ? selectedRocketmqJumpHost.getId() : null);
 
+        } else if (isKafka) {
+            config.setName(kafkaNameField.getText().trim());
+            config.setHost(kafkaHostField.getText().trim());
+            config.setPort(Integer.parseInt(kafkaPortField.getText().trim()));
+            config.setDescription(kafkaDescriptionField.getText().trim());
+
+            // SSH通道配置（引用方式：记录引用的SSH跳板机ID）
+            config.setUseSshTunnel(kafkaUseSshTunnelCheckBox.isSelected());
+            ConnectionConfig selectedKafkaJumpHost = kafkaSshHostCombo.getValue();
+            config.setSshTunnelHostId(selectedKafkaJumpHost != null ? selectedKafkaJumpHost.getId() : null);
+
         } else if (isAliyun) {
             config.setName(aliyunNameField.getText().trim());
             config.setUsername(aliyunAccessKeyField.getText().trim());
@@ -2465,6 +2625,7 @@ public class ConnectionConfigDialog {
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
         boolean isRedis = selectedType == ConnectType.REDIS;
         boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
+        boolean isKafka = selectedType == ConnectType.KAFKA;
         boolean isAliyun = selectedType == ConnectType.ALIYUN;
         boolean isLocalDirectory = selectedType == ConnectType.LOCAL_DIRECTORY;
 
@@ -2480,6 +2641,8 @@ public class ConnectionConfigDialog {
             return validateRedisInput();
         } else if (isRocketmq) {
             return validateRocketmqInput();
+        } else if (isKafka) {
+            return validateKafkaInput();
         } else if (isAliyun) {
             return validateAliyunInput();
         } else if (isLocalDirectory) {
@@ -2689,6 +2852,23 @@ public class ConnectionConfigDialog {
         return true;
     }
 
+    private boolean validateKafkaInput() {
+        if (kafkaNameField.getText().trim().isEmpty()) {
+            showAlert("请输入连接名称");
+            return false;
+        }
+        if (kafkaHostField.getText().trim().isEmpty()) {
+            showAlert("请输入Bootstrap主机地址");
+            return false;
+        }
+        // SSH通道验证（引用方式：启用时必须选择已有SSH跳板机）
+        if (kafkaUseSshTunnelCheckBox.isSelected() && kafkaSshHostCombo.getValue() == null) {
+            showAlert("启用SSH通道后请选择已有SSH跳板机");
+            return false;
+        }
+        return true;
+    }
+
     private boolean validateAliyunInput() {
         if (aliyunNameField.getText().trim().isEmpty()) {
             showAlert("请输入连接名称");
@@ -2744,6 +2924,7 @@ public class ConnectionConfigDialog {
             case ALIYUN_OSS -> 443;
             case REDIS -> 6379;
             case ROCKETMQ -> 8080;
+            case KAFKA -> 9092;
             case LOCAL_TERMINAL -> 0;
             case LOCAL_DIRECTORY -> 0;
             case TOOL -> 0;
