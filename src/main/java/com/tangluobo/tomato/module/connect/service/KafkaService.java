@@ -497,12 +497,19 @@ public class KafkaService {
             }
 
             List<Map<String, Object>> messages = new ArrayList<>();
-            long deadline = System.currentTimeMillis() + 30000; // 最多查询30秒
-            // 不再用 emptyPollCount 提前退出 —— assign 模式下前几次 poll 可能因 metadata 加载返回空，
-            // 提前退出会错过实际数据。只用 deadline 时间限制 + allPastEnd 退出（所有 records 都超过 end 时间）。
+            long deadline = System.currentTimeMillis() + 10000; // 最多查询10秒
+            int emptyAfterData = 0;
+            boolean gotData = false;
+            // assign 模式下前几次 poll 可能因 metadata 加载返回空，不提前退出；
+            // 但拿到数据后 1 次空 poll 即视为已读完。
             while (System.currentTimeMillis() < deadline && messages.size() < 256) {
-                var records = consumer.poll(Duration.ofMillis(500));
-                if (records.isEmpty()) continue;
+                var records = consumer.poll(Duration.ofMillis(200));
+                if (records.isEmpty()) {
+                    if (gotData && ++emptyAfterData >= 1) break;
+                    continue;
+                }
+                emptyAfterData = 0;
+                gotData = true;
                 boolean allPastEnd = true;
                 for (var record : records) {
                     if (record.timestamp() <= end) {
@@ -561,14 +568,14 @@ public class KafkaService {
             boolean gotData = false;
             while (System.currentTimeMillis() < deadline1 && messages.size() < maxCount) {
                 try {
-                    var records = consumer.poll(Duration.ofMillis(500));
+                    var records = consumer.poll(Duration.ofMillis(200));
                     pollCount1++;
                     recordsCount1 += records.count();
                     log("[KafkaService] [assign] poll#" + pollCount1 + " records=" + records.count() + " total=" + messages.size());
                     if (records.isEmpty()) {
-                        // 拿到数据后连续 3 次空 poll（1.5s）视为已读完，提前退出
-                        if (gotData && ++emptyAfterData >= 3) {
-                            log("[KafkaService] [assign] 拿到数据后连续 3 次空 poll，提前退出");
+                        // 拿到数据后 1 次空 poll 即视为已读完，提前退出
+                        if (gotData && ++emptyAfterData >= 1) {
+                            log("[KafkaService] [assign] 拿到数据后空 poll，提前退出");
                             break;
                         }
                         continue;
@@ -601,10 +608,11 @@ public class KafkaService {
                 int recordsCount2 = 0;
                 while (System.currentTimeMillis() < deadline2 && messages.size() < maxCount) {
                     try {
-                        var records = consumer.poll(Duration.ofMillis(500));
+                        var records = consumer.poll(Duration.ofMillis(200));
                         pollCount2++;
                         recordsCount2 += records.count();
                         log("[KafkaService] [subscribe] poll#" + pollCount2 + " records=" + records.count() + " total=" + messages.size());
+                        if (records.isEmpty() && !messages.isEmpty()) break;
                         for (var record : records) {
                             messages.add(convertRecord(record));
                             if (messages.size() >= maxCount) break;
@@ -678,9 +686,15 @@ public class KafkaService {
                 if (start >= end) continue;
                 consumer.seek(tp, start);
             }
-            long deadline = System.currentTimeMillis() + 20000;
+            long deadline = System.currentTimeMillis() + 10000;
+            boolean gotData = false;
             while (System.currentTimeMillis() < deadline && result.size() < maxCount) {
-                var records = consumer.poll(Duration.ofMillis(500));
+                var records = consumer.poll(Duration.ofMillis(200));
+                if (records.isEmpty()) {
+                    if (gotData) break;
+                    continue;
+                }
+                gotData = true;
                 for (var record : records) {
                     // 超过 endOffset 的不再计入
                     if (record.offset() >= endOffsets.getOrDefault(new TopicPartition(record.topic(), record.partition()), 0L)) continue;
