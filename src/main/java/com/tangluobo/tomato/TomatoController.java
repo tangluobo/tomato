@@ -44,8 +44,6 @@ public class TomatoController {
     @FXML
     private HBox titleBar;
     @FXML
-    private Label chatTitle;
-    @FXML
     private VBox chatContent;
     @FXML
     private ScrollPane chatScrollPane;
@@ -55,8 +53,6 @@ public class TomatoController {
     private Button maximizeBtn;
     @FXML
     private Button closeBtn;
-    @FXML
-    private ImageView logoView;
     @FXML
     private ToggleButton sidebarToggleBtn;
     @FXML
@@ -148,8 +144,6 @@ public class TomatoController {
         if (module == null) {
             return;
         }
-
-        chatTitle.setText(module.getName());
 
         // 移除当前模块的侧边栏子节点（保留节点到缓存，不销毁状态）
         sidebarPane.getChildren().clear();
@@ -249,6 +243,19 @@ public class TomatoController {
 
         customMaximized = true;
         rootPane.setStyle("-fx-border-color: transparent; -fx-border-width: 0;");
+
+        // 最大化后图标切换为"两个错开的空心方框"（还原图标样式）：
+        // 右上方框在 (7,3)-(19,15)，左下方框在 (4,8)-(16,20)，左下盖在右上之上
+        // 用 Group 包含两个独立 SVGPath，后添加的左下方框会覆盖右上方框的重叠边线
+        // 边框厚度1（外框到内框偏移1）
+        javafx.scene.shape.SVGPath topRightBox = new javafx.scene.shape.SVGPath();
+        topRightBox.setContent("M7 3h12v12H7V3zm1 1v10h10V4H8z");
+        topRightBox.setFill(javafx.scene.paint.Color.web("#131313"));
+        javafx.scene.shape.SVGPath bottomLeftBox = new javafx.scene.shape.SVGPath();
+        bottomLeftBox.setContent("M4 8h12v12H4V8zm1 1v10h10V9H5z");
+        bottomLeftBox.setFill(javafx.scene.paint.Color.web("#131313"));
+        javafx.scene.Group restoreIcon = new javafx.scene.Group(topRightBox, bottomLeftBox);
+        maximizeBtn.setGraphic(restoreIcon);
     }
 
     /**
@@ -274,6 +281,12 @@ public class TomatoController {
         stage.setHeight(savedHeight);
         customMaximized = false;
         rootPane.setStyle("-fx-border-color: #D9D9D7; -fx-border-width: 0 0 1 1;");
+
+        // 还原窗口后图标恢复为单矩形（最大化图标样式），重建 SVGPath 替换 Group
+        javafx.scene.shape.SVGPath maximizeIcon = new javafx.scene.shape.SVGPath();
+        maximizeIcon.setContent("M5 6h14v12H5V6zm1 1v10h12V7H6z");
+        maximizeIcon.setFill(javafx.scene.paint.Color.web("#131313"));
+        maximizeBtn.setGraphic(maximizeIcon);
     }
 
     @FXML
@@ -284,15 +297,10 @@ public class TomatoController {
 
     @FXML
     public void initialize() {
-        Image logoImage = new Image(getClass().getResourceAsStream("/images/logo.png"));
-        if (logoImage != null) {
-            logoView.setImage(logoImage);
-        }
-
-        Image sideBarImage = new Image(getClass().getResourceAsStream("/images/side_bar.png"));
-        if (sideBarImage != null) {
-            sidebarToggleIcon.setImage(sideBarImage);
-        }
+//        Image sideBarImage = new Image(getClass().getResourceAsStream("/images/side_bar.png"));
+//        if (sideBarImage != null) {
+//            sidebarToggleIcon.setImage(sideBarImage);
+//        }
 
         // 侧边栏开关默认关闭，隐藏最左侧导航栏
         navPane.setVisible(false);
