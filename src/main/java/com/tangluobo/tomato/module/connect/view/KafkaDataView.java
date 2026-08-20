@@ -33,6 +33,14 @@ public class KafkaDataView extends VBox {
     private final TabPane mainTabPane;
     private final String topicName;
 
+    /** 把日志同时写入 stdout 和 kafka_diag.log 文件，方便排查 */
+    private static void log(String msg) {
+        System.out.println(msg);
+        try (java.io.FileWriter fw = new java.io.FileWriter("kafka_diag.log", true)) {
+            fw.write(new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(new java.util.Date()) + " " + msg + "\n");
+        } catch (Exception ignored) {}
+    }
+
     // Topic tab
     private TableView<TopicItem> topicTable;
     private final ObservableList<TopicItem> topicData = FXCollections.observableArrayList();
@@ -714,14 +722,54 @@ public class KafkaDataView extends VBox {
             return;
         }
 
+        final long beginFinal = begin;
+        final long endFinal = end;
         new Thread(() -> {
             try {
                 List<Map<String, Object>> messages = KafkaService.queryMessageByTime(config, topic, begin, end);
                 displayQueryResults(messages);
+                if (messages == null || messages.isEmpty()) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                        alert.setTitle("查询结果");
+                        alert.setHeaderText("未查询到消息");
+                        String diag = "topic: " + topic + "\n"
+                                + "时间范围: " + java.time.Instant.ofEpochMilli(beginFinal)
+                                + " ~ " + java.time.Instant.ofEpochMilli(endFinal) + "\n"
+                                + "SSH隧道: " + (config.isUseSshTunnel() ? "已启用" : "未启用") + "\n\n"
+                                + "可能原因:\n"
+                                + "  1) 消息时间早于开始时间（命令行 --from-beginning 能看历史消息，按时间查询只返回 begin~end 之间的消息）\n"
+                                + "  2) 消息时间晚于结束时间\n"
+                                + "  3) 该主题无消息或 KafkaConsumer 无法连接到 broker（advertised.listeners 问题）\n\n"
+                                + "详细诊断见控制台 stdout 日志（[KafkaService] queryMessageByTime 开头）";
+                        TextArea area = new TextArea(diag);
+                        area.setEditable(false);
+                        area.setWrapText(true);
+                        area.setPrefWidth(560);
+                        area.setPrefRowCount(12);
+                        alert.getDialogPane().setContent(area);
+                        DialogPositionUtil.centerOnOwner(alert, this);
+                        alert.showAndWait();
+                    });
+                }
             } catch (Exception e) {
                 Platform.runLater(() -> {
                     messageData.clear();
                     showErrorInBody("查询消息失败: " + e.getMessage());
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("查询消息失败");
+                    alert.setHeaderText(null);
+                    TextArea area = new TextArea("topic: " + topic + "\n"
+                            + "时间范围: " + java.time.Instant.ofEpochMilli(beginFinal)
+                            + " ~ " + java.time.Instant.ofEpochMilli(endFinal) + "\n"
+                            + "异常: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                    area.setEditable(false);
+                    area.setWrapText(true);
+                    area.setPrefWidth(560);
+                    area.setPrefRowCount(8);
+                    alert.getDialogPane().setContent(area);
+                    DialogPositionUtil.centerOnOwner(alert, this);
+                    alert.showAndWait();
                 });
             }
         }, "Kafka-QueryByTime").start();
@@ -743,24 +791,86 @@ public class KafkaDataView extends VBox {
             return;
         }
 
+        final int partitionFinal = partition;
+        final long offsetFinal = offset;
         new Thread(() -> {
             try {
+                log("[KafkaDataView] queryByOffset: 调用 KafkaService.queryMessageByOffset...");
                 List<Map<String, Object>> messages = KafkaService.queryMessageByOffset(config, topic, partition, offset, 256);
+                log("[KafkaDataView] queryByOffset: KafkaService 返回 " + (messages == null ? "null" : messages.size()) + " 条消息，即将调用 displayQueryResults");
                 displayQueryResults(messages);
+                log("[KafkaDataView] queryByOffset: displayQueryResults 已调用完毕");
+                if (messages == null || messages.isEmpty()) {
+                    // 在 worker 线程读 ThreadLocal 诊断（在 JavaFX 线程读会拿到另一个 ThreadLocal）
+                    final String consumerDiag = KafkaService.getLastDiag();
+                    // 拿集群 broker 地址（即 broker 注册到 ZK/KRaft 的 advertised.listeners）展示给用户
+                    String brokerInfo;
+                    try {
+                        List<Map<String, Object>> cluster = KafkaService.getClusterInfo(config);
+                        StringBuilder sb = new StringBuilder();
+                        for (Map<String, Object> b : cluster) {
+                            sb.append("  broker-").append(b.get("brokerId"))
+                              .append("  address=").append(b.get("address"))
+                              .append("  role=").append(b.get("role"))
+                              .append("\n");
+                        }
+                        brokerInfo = sb.length() == 0 ? "  (集群无 broker 信息)" : sb.toString();
+                    } catch (Exception ce) {
+                        brokerInfo = "  获取集群信息失败: " + ce.getClass().getSimpleName() + ": " + ce.getMessage();
+                    }
+                    final String brokerInfoFinal = brokerInfo;
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.WARNING);
+                        alert.setTitle("查询结果");
+                        alert.setHeaderText("未查询到消息");
+                        String diag = "topic: " + topic + "  partition: " + partitionFinal + "  offset: " + offsetFinal + "\n\n"
+                                + "=== Kafka 集群 broker 注册地址 ===\n"
+                                + brokerInfoFinal
+                                + "你配置的连接地址: " + config.getHost() + ":" + config.getPort() + "\n\n"
+                                + "=== KafkaConsumer 内部诊断 ===\n"
+                                + consumerDiag;
+                        TextArea area = new TextArea(diag);
+                        area.setEditable(false);
+                        area.setWrapText(true);
+                        area.setPrefWidth(600);
+                        area.setPrefRowCount(20);
+                        alert.getDialogPane().setContent(area);
+                        DialogPositionUtil.centerOnOwner(alert, this);
+                        alert.showAndWait();
+                    });
+                }
             } catch (Exception e) {
+                log("[KafkaDataView] queryByOffset 捕获异常: " + e.getClass().getName() + ": " + e.getMessage());
+                java.io.StringWriter sw = new java.io.StringWriter();
+                e.printStackTrace(new java.io.PrintWriter(sw));
+                log("[KafkaDataView] 异常堆栈:\n" + sw.toString());
                 Platform.runLater(() -> {
                     messageData.clear();
                     showErrorInBody("查询消息失败: " + e.getMessage());
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("查询消息失败");
+                    alert.setHeaderText(null);
+                    TextArea area = new TextArea("topic: " + topic + "  partition: " + partitionFinal + "  offset: " + offsetFinal + "\n"
+                            + "异常: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                    area.setEditable(false);
+                    area.setWrapText(true);
+                    area.setPrefWidth(560);
+                    area.setPrefRowCount(8);
+                    alert.getDialogPane().setContent(area);
+                    DialogPositionUtil.centerOnOwner(alert, this);
+                    alert.showAndWait();
                 });
             }
         }, "Kafka-QueryByOffset").start();
     }
 
     private void displayQueryResults(List<Map<String, Object>> messages) {
+        log("[KafkaDataView] displayQueryResults 调用: messages=" + (messages == null ? "null" : messages.size()));
         Platform.runLater(() -> {
             messageData.clear();
             if (messages == null || messages.isEmpty()) {
                 showErrorInBody("没有消息");
+                log("[KafkaDataView] UI 更新: messages 为空，显示'没有消息'");
             } else {
                 clearBody();
             }
@@ -772,6 +882,8 @@ public class KafkaDataView extends VBox {
                 String tsType = String.valueOf(m.getOrDefault("timestampType", ""));
                 messageData.add(new MessageItem(partition, offset, key, storeTime, tsType, m));
             }
+            log("[KafkaDataView] UI 更新完成: messageData.size=" + messageData.size()
+                    + " (Thread=" + Thread.currentThread().getName() + ")");
         });
     }
 

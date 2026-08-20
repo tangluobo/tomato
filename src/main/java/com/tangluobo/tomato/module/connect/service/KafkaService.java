@@ -33,6 +33,34 @@ import java.util.concurrent.TimeUnit;
 public class KafkaService {
     private static final Map<String, AdminClient> adminCache = new ConcurrentHashMap<>();
 
+    /** 最近一次查询的内部诊断信息（每个线程独立），UI 在查询失败时可读取展示 */
+    private static final ThreadLocal<StringBuilder> lastDiag = ThreadLocal.withInitial(StringBuilder::new);
+
+    public static String getLastDiag() {
+        return lastDiag.get().toString();
+    }
+
+    /** 把诊断日志同时写入工作目录下的 kafka_diag.log 文件，方便用户排查 */
+    private static void logFile(String msg) {
+        try (java.io.FileWriter fw = new java.io.FileWriter("kafka_diag.log", true)) {
+            fw.write(new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(new java.util.Date()) + " " + msg + "\n");
+        } catch (Exception ignored) {}
+    }
+
+    private static void log(String msg) {
+        System.out.println(msg);
+        logFile(msg);
+    }
+
+    private static void logErr(String msg, Throwable t) {
+        System.err.println(msg);
+        t.printStackTrace();
+        try (java.io.PrintWriter pw = new java.io.PrintWriter(new java.io.FileWriter("kafka_diag.log", true))) {
+            pw.println(new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(new java.util.Date()) + " " + msg);
+            t.printStackTrace(pw);
+        } catch (Exception ignored) {}
+    }
+
     private KafkaService() {}
 
     static {
@@ -294,7 +322,7 @@ public class KafkaService {
      */
     public static List<Map<String, Object>> getConsumerGroupList(ConnectionConfig config) throws Exception {
         AdminClient admin = getAdmin(config);
-        List<String> groups = new ArrayList<>(admin.listConsumerGroups().all().get()
+        List<String> groups = new ArrayList<>(admin.listGroups(ListGroupsOptions.forConsumerGroups()).all().get()
                 .stream().map(g -> g.groupId()).collect(java.util.stream.Collectors.toSet()));
         Collections.sort(groups);
         // 过滤本工具内部临时组
@@ -433,38 +461,68 @@ public class KafkaService {
      */
     public static List<Map<String, Object>> queryMessageByTime(ConnectionConfig config, String topic, long begin, long end) throws Exception {
         List<TopicPartition> partitions = topicPartitions(config, topic);
-        if (partitions.isEmpty()) return Collections.emptyList();
+        if (partitions.isEmpty()) {
+            System.out.println("[KafkaService] queryMessageByTime: 主题 " + topic + " 无分区，返回空");
+            return Collections.emptyList();
+        }
         String bootstrap = bootstrap(config);
-        try (KafkaConsumer<String, byte[]> consumer = new KafkaConsumer<>(buildConsumerProps(bootstrap, "tomato_kafka_time_" + System.currentTimeMillis()))) {
+        System.out.println("[KafkaService] queryMessageByTime 开始: topic=" + topic
+                + " partitions=" + partitions.size()
+                + " begin=" + java.time.Instant.ofEpochMilli(begin)
+                + " end=" + java.time.Instant.ofEpochMilli(end)
+                + " bootstrap=" + bootstrap);
+        KafkaConsumer<String, byte[]> consumer = new KafkaConsumer<>(buildConsumerProps(bootstrap, "tomato_kafka_time_" + System.currentTimeMillis()));
+        try {
             consumer.assign(partitions);
             // seek 到 begin 时间
             Map<TopicPartition, Long> timestamps = new HashMap<>();
             for (TopicPartition tp : partitions) timestamps.put(tp, begin);
-            Map<TopicPartition, Long> offsetsForTimes = new HashMap<>();
+            Map<TopicPartition, Long> seekOffsets = new HashMap<>();
             for (Map.Entry<TopicPartition, OffsetAndTimestamp> e : consumer.offsetsForTimes(timestamps).entrySet()) {
-                if (e.getValue() != null) offsetsForTimes.put(e.getKey(), e.getValue().offset());
+                if (e.getValue() != null) {
+                    seekOffsets.put(e.getKey(), e.getValue().offset());
+                    System.out.println("[KafkaService]   分区 " + e.getKey().partition()
+                            + " 命中 begin: offset=" + e.getValue().offset());
+                } else {
+                    System.out.println("[KafkaService]   分区 " + e.getKey().partition()
+                            + " 无 begin 命中（分区所有消息都早于 begin，将 seekToBeginning）");
+                }
             }
-            for (Map.Entry<TopicPartition, Long> e : offsetsForTimes.entrySet()) {
+            for (Map.Entry<TopicPartition, Long> e : seekOffsets.entrySet()) {
                 consumer.seek(e.getKey(), e.getValue());
             }
             // 对于无时间命中分区，从最早开始
             for (TopicPartition tp : partitions) {
-                if (!offsetsForTimes.containsKey(tp)) consumer.seekToBeginning(Collections.singleton(tp));
+                if (!seekOffsets.containsKey(tp)) consumer.seekToBeginning(Collections.singleton(tp));
             }
+
             List<Map<String, Object>> messages = new ArrayList<>();
             long deadline = System.currentTimeMillis() + 30000; // 最多查询30秒
+            // 不再用 emptyPollCount 提前退出 —— assign 模式下前几次 poll 可能因 metadata 加载返回空，
+            // 提前退出会错过实际数据。只用 deadline 时间限制 + allPastEnd 退出（所有 records 都超过 end 时间）。
             while (System.currentTimeMillis() < deadline && messages.size() < 256) {
                 var records = consumer.poll(Duration.ofMillis(500));
-                boolean anyPastEnd = false;
+                if (records.isEmpty()) continue;
+                boolean allPastEnd = true;
                 for (var record : records) {
-                    if (record.timestamp() > end) { anyPastEnd = true; continue; }
-                    if (record.timestamp() >= begin) {
-                        messages.add(convertRecord(record));
+                    if (record.timestamp() <= end) {
+                        allPastEnd = false;
+                        if (record.timestamp() >= begin) {
+                            messages.add(convertRecord(record));
+                        }
                     }
                 }
-                if (anyPastEnd && records.isEmpty()) break;
+                // 本次 poll 的所有 records 都超过 end 时间，说明涉及的所有分区已读到尾部
+                if (allPastEnd) break;
             }
+            System.out.println("[KafkaService] queryMessageByTime 完成: 共 " + messages.size() + " 条消息");
             return messages;
+        } finally {
+            Thread t = new Thread(() -> {
+                try { consumer.close(Duration.ofMillis(1000)); } catch (Exception ignored) {}
+            }, "Kafka-ConsumerCloser");
+            t.setDaemon(true);
+            t.start();
         }
     }
 
@@ -472,24 +530,122 @@ public class KafkaService {
      * 按分区+起始偏移查询消息（从指定 offset 开始拉取 maxCount 条）。
      */
     public static List<Map<String, Object>> queryMessageByOffset(ConnectionConfig config, String topic, int partition, long offset, int maxCount) throws Exception {
+        StringBuilder diag = lastDiag.get();
+        diag.setLength(0);
         TopicPartition tp = new TopicPartition(topic, partition);
         String bootstrap = bootstrap(config);
-        try (KafkaConsumer<String, byte[]> consumer = new KafkaConsumer<>(buildConsumerProps(bootstrap, "tomato_kafka_offset_" + System.currentTimeMillis()))) {
-            consumer.assign(Collections.singleton(tp));
-            long endOffset = consumer.endOffsets(Collections.singleton(tp)).getOrDefault(tp, 0L);
+        diag.append("bootstrap=").append(bootstrap).append("\n")
+            .append("topic=").append(topic).append(" partition=").append(partition)
+            .append(" offset=").append(offset).append("\n");
+        log("[KafkaService] ====== queryMessageByOffset 开始 ======");
+        log("[KafkaService] topic=" + topic + " partition=" + partition + " offset=" + offset
+                + " bootstrap=" + bootstrap);
+        // 打印调用方堆栈，确认是谁调用的 queryMessageByOffset
+        java.io.StringWriter sw = new java.io.StringWriter();
+        new Throwable().printStackTrace(new java.io.PrintWriter(sw));
+        log("[KafkaService] 调用方堆栈:\n" + sw.toString());
+        KafkaConsumer<String, byte[]> consumer = new KafkaConsumer<>(buildConsumerProps(bootstrap, "tomato_kafka_offset_" + System.currentTimeMillis()));
+        try {
             if (offset < 0) offset = 0;
-            if (offset >= endOffset) return Collections.emptyList();
-            consumer.seek(tp, offset);
             List<Map<String, Object>> messages = new ArrayList<>();
-            long deadline = System.currentTimeMillis() + 15000;
-            while (System.currentTimeMillis() < deadline && messages.size() < maxCount) {
-                var records = consumer.poll(Duration.ofMillis(500));
-                for (var record : records) {
-                    messages.add(convertRecord(record));
-                    if (messages.size() >= maxCount) break;
+
+            // 方案 1：assign + seek + poll（手动分配，直接定位到指定 offset）
+            log("[KafkaService] === 方案 1: assign + seek + poll ===");
+            consumer.assign(Collections.singleton(tp));
+            consumer.seek(tp, offset);
+            log("[KafkaService] assign+seek 完成");
+            long deadline1 = System.currentTimeMillis() + 10000;
+            int pollCount1 = 0;
+            int recordsCount1 = 0;
+            int emptyAfterData = 0;   // 拿到数据后连续空 poll 的次数
+            boolean gotData = false;
+            while (System.currentTimeMillis() < deadline1 && messages.size() < maxCount) {
+                try {
+                    var records = consumer.poll(Duration.ofMillis(500));
+                    pollCount1++;
+                    recordsCount1 += records.count();
+                    log("[KafkaService] [assign] poll#" + pollCount1 + " records=" + records.count() + " total=" + messages.size());
+                    if (records.isEmpty()) {
+                        // 拿到数据后连续 3 次空 poll（1.5s）视为已读完，提前退出
+                        if (gotData && ++emptyAfterData >= 3) {
+                            log("[KafkaService] [assign] 拿到数据后连续 3 次空 poll，提前退出");
+                            break;
+                        }
+                        continue;
+                    }
+                    emptyAfterData = 0;
+                    gotData = true;
+                    for (var record : records) {
+                        messages.add(convertRecord(record));
+                        if (messages.size() >= maxCount) break;
+                    }
+                } catch (Exception e) {
+                    logErr("[KafkaService] [assign] poll#" + pollCount1 + " 异常", e);
+                    throw e;
                 }
             }
+            diag.append("[assign+seek] poll次数=").append(pollCount1)
+                .append(" 累计records=").append(recordsCount1)
+                .append(" 最终messages=").append(messages.size()).append("\n");
+            log("[KafkaService] [assign] 结束: poll=" + pollCount1 + " records=" + recordsCount1 + " messages=" + messages.size());
+
+            // 方案 2：assign 模式拿不到数据时，fallback 到 subscribe 模式（与 console-consumer 一致）
+            // 注意：这里完全不过滤 partition/offset，先看能不能拿到任何数据
+            if (messages.isEmpty()) {
+                log("[KafkaService] === 方案 2: subscribe + poll (不过滤，所有 partition 全收) ===");
+                diag.append("assign 模式拿不到数据，fallback 到 subscribe 模式（不过滤，所有 partition 全收）\n");
+                consumer.unsubscribe();
+                consumer.subscribe(Collections.singleton(topic));
+                long deadline2 = System.currentTimeMillis() + 10000;
+                int pollCount2 = 0;
+                int recordsCount2 = 0;
+                while (System.currentTimeMillis() < deadline2 && messages.size() < maxCount) {
+                    try {
+                        var records = consumer.poll(Duration.ofMillis(500));
+                        pollCount2++;
+                        recordsCount2 += records.count();
+                        log("[KafkaService] [subscribe] poll#" + pollCount2 + " records=" + records.count() + " total=" + messages.size());
+                        for (var record : records) {
+                            messages.add(convertRecord(record));
+                            if (messages.size() >= maxCount) break;
+                        }
+                    } catch (Exception e) {
+                        logErr("[KafkaService] [subscribe] poll#" + pollCount2 + " 异常", e);
+                        throw e;
+                    }
+                }
+                diag.append("[subscribe] poll次数=").append(pollCount2)
+                    .append(" 累计records=").append(recordsCount2)
+                    .append(" 最终messages=").append(messages.size()).append("\n");
+                log("[KafkaService] [subscribe] 结束: poll=" + pollCount2 + " records=" + recordsCount2 + " messages=" + messages.size());
+                if (!messages.isEmpty()) {
+                    var first = messages.get(0);
+                    diag.append("  第一条: partition=").append(first.get("partition"))
+                        .append(" offset=").append(first.get("offset"))
+                        .append(" timestamp=").append(first.get("timestamp")).append("\n");
+                    diag.append("  ⚠️ subscribe 拿到数据了！但你查询的 partition=").append(partition)
+                        .append(" offset=").append(offset).append(" 可能不匹配\n");
+                    log("[KafkaService] subscribe 拿到数据了！第一条 partition=" + first.get("partition")
+                            + " offset=" + first.get("offset") + " timestamp=" + first.get("timestamp"));
+                }
+            }
+
+            if (messages.isEmpty()) {
+                diag.append("⚠️ assign 和 subscribe 模式都拿不到数据\n");
+                diag.append("可能原因:\n");
+                diag.append("  1) partition 无数据或 offset 超过 endOffset\n");
+                diag.append("  2) broker 端启用了 SASL/SSL，客户端未提供凭证\n");
+                diag.append("  3) docker 容器端口映射异常\n");
+                log("[KafkaService] ⚠️ assign 和 subscribe 模式都拿不到数据！详见上面的 poll 日志");
+            }
+            log("[KafkaService] ====== queryMessageByOffset 完成: 共 " + messages.size() + " 条消息 ======");
             return messages;
+        } finally {
+            Thread t = new Thread(() -> {
+                try { consumer.close(Duration.ofMillis(1000)); } catch (Exception ignored) {}
+            }, "Kafka-ConsumerCloser");
+            t.setDaemon(true);
+            t.start();
         }
     }
 
@@ -512,7 +668,8 @@ public class KafkaService {
 
         String bootstrap = bootstrap(config);
         List<Map<String, Object>> result = new ArrayList<>();
-        try (KafkaConsumer<String, byte[]> consumer = new KafkaConsumer<>(buildConsumerProps(bootstrap, "tomato_kafka_unconsumed_" + System.currentTimeMillis()))) {
+        KafkaConsumer<String, byte[]> consumer = new KafkaConsumer<>(buildConsumerProps(bootstrap, "tomato_kafka_unconsumed_" + System.currentTimeMillis()));
+        try {
             consumer.assign(topicPartitions);
             Map<TopicPartition, Long> endOffsets = consumer.endOffsets(topicPartitions);
             for (TopicPartition tp : topicPartitions) {
@@ -531,6 +688,12 @@ public class KafkaService {
                     if (result.size() >= maxCount) break;
                 }
             }
+        } finally {
+            Thread t = new Thread(() -> {
+                try { consumer.close(Duration.ofMillis(1000)); } catch (Exception ignored) {}
+            }, "Kafka-ConsumerCloser");
+            t.setDaemon(true);
+            t.start();
         }
         return result;
     }
@@ -540,7 +703,7 @@ public class KafkaService {
      */
     public static List<Map<String, Object>> getTopicConsumeStatus(ConnectionConfig config, String topic) throws Exception {
         AdminClient admin = getAdmin(config);
-        List<String> groups = new ArrayList<>(admin.listConsumerGroups().all().get()
+        List<String> groups = new ArrayList<>(admin.listGroups(ListGroupsOptions.forConsumerGroups()).all().get()
                 .stream().map(g -> g.groupId()).collect(java.util.stream.Collectors.toSet()));
         groups.removeIf(g -> g != null && g.startsWith("tomato_kafka_"));
         List<TopicPartition> partitions = topicPartitions(config, topic);
@@ -589,10 +752,17 @@ public class KafkaService {
     private static Map<TopicPartition, Long> endOffsets(ConnectionConfig config, String topic, List<TopicPartition> partitions) {
         if (partitions.isEmpty()) return Collections.emptyMap();
         String bootstrap = bootstrap(config);
-        try (KafkaConsumer<String, byte[]> consumer = new KafkaConsumer<>(buildConsumerProps(bootstrap, "tomato_kafka_offsets_" + System.currentTimeMillis()))) {
+        KafkaConsumer<String, byte[]> consumer = new KafkaConsumer<>(buildConsumerProps(bootstrap, "tomato_kafka_offsets_" + System.currentTimeMillis()));
+        try {
             return consumer.endOffsets(partitions);
         } catch (Exception e) {
             return Collections.emptyMap();
+        } finally {
+            Thread t = new Thread(() -> {
+                try { consumer.close(Duration.ofMillis(1000)); } catch (Exception ignored) {}
+            }, "Kafka-ConsumerCloser");
+            t.setDaemon(true);
+            t.start();
         }
     }
 

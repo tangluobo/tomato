@@ -10,6 +10,7 @@ import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
@@ -693,6 +694,75 @@ public class RocketmqConnectHandler implements ConnectHandler {
         }
     }
 
+    /** 创建主题：弹出对话框收集主题名/队列数，调用 RocketmqService.createTopic，成功后刷新主题列表 */
+    public void handleCreateTopic(ConnectModule module, TreeItem<String> folderItem, DatabaseNodeData data) {
+        ConnectionConfig config = data.getConnectionConfig();
+
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("创建 RocketMQ 主题");
+        dialog.setHeaderText("在 " + config.getHost() + ":" + config.getPort() + " 上创建新的主题");
+
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(10);
+        grid.setPadding(new Insets(20, 20, 10, 20));
+
+        TextField topicField = new TextField();
+        topicField.setPromptText("如：order-events");
+        topicField.setPrefWidth(280);
+
+        Spinner<Integer> queueSpinner = new Spinner<>();
+        queueSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 256, 4));
+        queueSpinner.setEditable(false);
+        queueSpinner.setPrefWidth(80);
+
+        grid.add(new Label("主题名:"), 0, 0);
+        grid.add(topicField, 1, 0);
+        grid.add(new Label("队列数:"), 0, 1);
+        grid.add(queueSpinner, 1, 1);
+
+        dialog.getDialogPane().setContent(grid);
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+        final Button okButton = (Button) dialog.getDialogPane().lookupButton(ButtonType.OK);
+        okButton.setDisable(true);
+        okButton.setText("创建");
+        final Button cancelButton = (Button) dialog.getDialogPane().lookupButton(ButtonType.CANCEL);
+        cancelButton.setText("取消");
+        topicField.textProperty().addListener((obs, oldVal, newVal) ->
+                okButton.setDisable(newVal == null || newVal.trim().isEmpty()));
+
+        Platform.runLater(topicField::requestFocus);
+
+        dialog.showAndWait().ifPresent(btn -> {
+            if (btn == ButtonType.OK) {
+                String topic = topicField.getText().trim();
+                int queueNum = queueSpinner.getValue();
+                new Thread(() -> {
+                    try {
+                        RocketmqService.createTopic(config, topic, queueNum);
+                        Platform.runLater(() -> {
+                            Alert info = new Alert(Alert.AlertType.INFORMATION);
+                            info.setTitle("成功");
+                            info.setHeaderText(null);
+                            info.setContentText("主题 " + topic + " 已创建");
+                            info.showAndWait();
+                            loadTopicsForFolder(module, folderItem, config);
+                        });
+                    } catch (Exception e) {
+                        Platform.runLater(() -> {
+                            Alert alert = new Alert(Alert.AlertType.ERROR);
+                            alert.setTitle("创建失败");
+                            alert.setHeaderText(null);
+                            alert.setContentText("创建主题失败: " + e.getMessage());
+                            alert.showAndWait();
+                        });
+                    }
+                }, "RocketMQ-CreateTopic").start();
+            }
+        });
+    }
+
     /** 删除主题节点 */
     public void handleDeleteTopic(ConnectModule module, TreeItem<String> item, DatabaseNodeData data) {
         ConnectionConfig config = data.getConnectionConfig();
@@ -737,7 +807,14 @@ public class RocketmqConnectHandler implements ConnectHandler {
     @Override
     public void populateNodeContextMenu(ConnectModule module, ContextMenu contextMenu, TreeItem<String> item, DatabaseNodeData data) {
         switch (data.getType()) {
-            case ROCKETMQ_TOPICS_FOLDER, ROCKETMQ_CONSUMERS_FOLDER, ROCKETMQ_CLUSTER_FOLDER -> {
+            case ROCKETMQ_TOPICS_FOLDER -> {
+                MenuItem createItem = new MenuItem("创建主题");
+                createItem.setOnAction(e -> handleCreateTopic(module, item, data));
+                MenuItem refreshItem = new MenuItem("刷新");
+                refreshItem.setOnAction(e -> module.refreshDbNode(item, data));
+                contextMenu.getItems().addAll(createItem, new SeparatorMenuItem(), refreshItem);
+            }
+            case ROCKETMQ_CONSUMERS_FOLDER, ROCKETMQ_CLUSTER_FOLDER -> {
                 MenuItem refreshItem = new MenuItem("刷新");
                 refreshItem.setOnAction(e -> module.refreshDbNode(item, data));
                 contextMenu.getItems().add(refreshItem);
