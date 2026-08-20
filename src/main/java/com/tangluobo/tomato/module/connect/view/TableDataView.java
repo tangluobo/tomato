@@ -1025,8 +1025,9 @@ public class TableDataView extends BorderPane {
         tableScrollPane.setFitToWidth(false);
         tableScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
         tableScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        // TableView宽度跟随视口（让垂直滚动条位于面板最右，右侧空白属于表格）
-        tableView.minWidthProperty().bind(tableScrollPane.widthProperty());
+        // 列少时让 TableView 填满视口（垂直滚动条位于面板最右），列多时解除 minWidth 约束以显示水平滚动条
+        // 用 listener 动态调整 minWidth，替代直接绑定：直接绑定会让列变宽后仍被 clamp 在视口宽度，无法水平滚动查看右侧数据
+        tableScrollPane.widthProperty().addListener((obs, o, n) -> updateTableMinWidth());
 
         // 拖拽范围选择矩形：半透明蓝色（与选中色#3592CB一致），鼠标透明，置于最上层
         dragSelectRect.setFill(Color.rgb(53, 146, 203, 0.15));
@@ -1544,6 +1545,39 @@ public class TableDataView extends BorderPane {
 
         // 布局完成后绑定表头点击事件和排序箭头
         bindColumnHeaderEvents();
+
+        // 监听列宽变化（双击表头自适应列宽后动态调整 minWidth，确保列变宽时解除约束以显示水平滚动条）
+        for (TableColumn<?, ?> col : tableView.getColumns()) {
+            col.widthProperty().addListener((obs, o, n) -> updateTableMinWidth());
+        }
+        updateTableMinWidth();
+    }
+
+    /**
+     * 动态调整 TableView 的 minWidth 和 prefWidth：
+     * - 列总宽 <= 视口宽度：minWidth = prefWidth = 视口宽度（填满视口，垂直滚动条位于最右，右侧空白属于表格）
+     * - 列总宽 >  视口宽度：minWidth = 0，prefWidth = 列总宽（解除约束，让 ScrollPane 把 TableView 扩展到列总宽并显示水平滚动条）
+     * 替代原先对 tableScrollPane.widthProperty() 的 minWidth 绑定：该绑定让 minWidth 恒等于视口宽度，
+     * 双击表头自适应列宽后 TableView 被 clamp 在视口宽度，无法水平滚动查看右侧数据。
+     * 同时监听列宽变化（手动拖动表头分隔条、双击自适应），实时调整 minWidth/prefWidth 以正确显示/隐藏水平滚动条。
+     */
+    private void updateTableMinWidth() {
+        if (tableView == null || tableScrollPane == null) return;
+        double viewportWidth = tableScrollPane.getWidth();
+        if (viewportWidth <= 0) return;
+        double columnsTotal = 0;
+        for (TableColumn<?, ?> col : tableView.getColumns()) {
+            columnsTotal += col.getWidth();
+        }
+        if (columnsTotal > viewportWidth) {
+            // 列变宽：解除 minWidth 约束，设置 prefWidth=列总宽，让 ScrollPane 扩展 TableView 并显示水平滚动条
+            tableView.setMinWidth(0);
+            tableView.setPrefWidth(columnsTotal);
+        } else {
+            // 列少：填满视口，垂直滚动条位于最右
+            tableView.setMinWidth(viewportWidth);
+            tableView.setPrefWidth(viewportWidth);
+        }
     }
 
     /**
