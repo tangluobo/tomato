@@ -908,7 +908,7 @@ public class TableObjectsView extends BorderPane {
 
         // 创建 TextField（参考 S3 图标视图重命名样式）
         detailEditField = new TextField(obj.name);
-        detailEditField.setStyle("-fx-padding: 0 6; -fx-font-size: 12px; -fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 1.5; -fx-border-radius: 0; -fx-background-radius: 0;");
+        detailEditField.setStyle("-fx-padding: 0 6; -fx-font-size: 12px; -fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 1; -fx-border-radius: 0; -fx-background-radius: 0; -fx-focus-color: transparent; -fx-faint-focus-color: transparent;");
         Text measureText = new Text(obj.name);
         measureText.setFont(Font.font(12));
         double contentWidth = measureText.getLayoutBounds().getWidth() + 20;
@@ -941,10 +941,12 @@ public class TableObjectsView extends BorderPane {
         detailEditPopup.setAutoFix(false);
         detailEditPopup.setAutoHide(true);
         detailEditPopup.setHideOnEscape(false);
-        double offsetX = (fieldWidth - labelW) / 2.0;
+        // 水平：TextField 左边比 Label 左边再左移 3px，使文本框与左侧图标间距为 3px
+        // （Label 与图标间距由 HBox spacing=6 决定，左移 3px 后净距 = 6-3 = 3px）
+        double offsetX = -3;
         double offsetY = (labelH - fieldHeight) / 2.0;
         detailEditPopup.getContent().add(detailEditField);
-        detailEditPopup.show(window, screenX - offsetX, screenY + offsetY);
+        detailEditPopup.show(window, screenX + offsetX, screenY + offsetY);
         detailEditField.selectAll();
         Platform.runLater(() -> detailEditField.requestFocus());
     }
