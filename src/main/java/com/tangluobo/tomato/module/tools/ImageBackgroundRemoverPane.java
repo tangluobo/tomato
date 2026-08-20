@@ -669,9 +669,10 @@ public class ImageBackgroundRemoverPane extends VBox {
         if (w <= 0 || h <= 0) return;
 
         BufferedImage cropped = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
-        java.awt.Graphics2D g = cropped.createGraphics();
-        g.drawImage(currentTransparentImage.getSubimage(x, y, w, h), 0, 0, null);
-        g.dispose();
+        // 用 getRGB/setRGB 直接复制像素，避免 getSubimage 共享 raster 导致数据不完整
+        int[] pixels = new int[w * h];
+        currentTransparentImage.getRGB(x, y, w, h, pixels, 0, w);
+        cropped.setRGB(0, 0, w, h, pixels, 0, w);
 
         currentTransparentImage = cropped;
         currentImgW = w;
@@ -773,7 +774,10 @@ public class ImageBackgroundRemoverPane extends VBox {
         }
 
         final int threshold = (int) thresholdSlider.getValue();
-        final boolean crop = autoCropCheckBox.isSelected();
+        final boolean autoCrop = autoCropCheckBox.isSelected();
+        // 单文件模式：保存预览当前显示的图（所见即所得）
+        // 用 final 引用直接保存，避免复制过程中丢失像素数据
+        final BufferedImage imgToSave = (!isDirMode) ? currentTransparentImage : null;
         final int total = sourceFiles.size();
         final String sourcePathFinal = sourcePath;
 
@@ -788,16 +792,20 @@ public class ImageBackgroundRemoverPane extends VBox {
                 File srcFile = sourceFiles.get(i);
                 File outFile;
                 if (isDirMode) {
-                    // 目录模式：输出到源文件同目录，保持原文件名 + _transparent.png
                     String baseName = srcFile.getName().replaceAll("(?i)\\.(jpg|jpeg|png)$", "");
                     outFile = new File(srcFile.getParentFile(), baseName + "_transparent.png");
                 } else {
-                    // 单文件模式：输出到源文件同目录，文件名 + _transparent.png
                     String baseName = srcFile.getName().replaceAll("(?i)\\.(jpg|jpeg|png)$", "");
                     outFile = new File(srcFile.getParentFile(), baseName + "_transparent.png");
                 }
                 try {
-                    removeBackground(srcFile, outFile, threshold, crop);
+                    if (!isDirMode && imgToSave != null) {
+                        // 单文件模式：直接保存预览图（所见即所得）
+                        savePng(imgToSave, outFile);
+                    } else {
+                        // 目录模式：重新处理 + autoCrop
+                        removeBackground(srcFile, outFile, threshold, autoCrop);
+                    }
                     successCount++;
                 } catch (Exception e) {
                     failCount++;
@@ -851,7 +859,6 @@ public class ImageBackgroundRemoverPane extends VBox {
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
                 int argb = normalized.getRGB(x, y);
-                int a = (argb >>> 24) & 0xFF;
                 int r = (argb >> 16) & 0xFF;
                 int g = (argb >> 8) & 0xFF;
                 int b = argb & 0xFF;
@@ -880,15 +887,58 @@ public class ImageBackgroundRemoverPane extends VBox {
         return dst;
     }
 
-    private void removeBackground(File srcFile, File outFile, int threshold, boolean crop) throws Exception {
+    /**
+     * 目录模式：重新处理源文件并保存。
+     */
+    private void removeBackground(File srcFile, File outFile, int threshold, boolean autoCrop) throws Exception {
         BufferedImage src = ImageIO.read(srcFile);
         if (src == null) {
             throw new IOException("无法读取图片: " + srcFile.getName());
         }
-        BufferedImage dst = processImage(src, threshold, crop);
-        if (!ImageIO.write(dst, "png", outFile)) {
-            throw new IOException("无法写入 PNG: " + outFile.getName());
+        BufferedImage dst = processImage(src, threshold, autoCrop);
+        savePng(dst, outFile);
+    }
+
+    /**
+     * 保存 BufferedImage 为 PNG。
+     * 用 ImageWriter 逐行写入，避免 ImageIO.write 对大图批量编码的不完整问题。
+     */
+    private void savePng(BufferedImage img, File outFile) throws Exception {
+        // 确保图像数据独立完整（复制一份，避免共享 raster）
+        int w = img.getWidth();
+        int h = img.getHeight();
+        BufferedImage safeImg = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        int[] pixels = new int[w];
+        for (int y = 0; y < h; y++) {
+            img.getRGB(0, y, w, 1, pixels, 0, w);
+            safeImg.setRGB(0, y, w, 1, pixels, 0, w);
         }
+
+        java.util.Iterator<javax.imageio.ImageWriter> writers = ImageIO.getImageWritersByFormatName("png");
+        if (!writers.hasNext()) {
+            throw new IOException("找不到 PNG Writer");
+        }
+        javax.imageio.ImageWriter writer = writers.next();
+        javax.imageio.ImageWriteParam param = writer.getDefaultWriteParam();
+        javax.imageio.stream.ImageOutputStream ios = ImageIO.createImageOutputStream(outFile);
+        writer.setOutput(ios);
+        writer.write(null, new javax.imageio.IIOImage(safeImg, null, null), param);
+        ios.flush();
+        ios.close();
+        writer.dispose();
+    }
+
+    /**
+     * 复制 BufferedImage（用 getRGB/setRGB 直接复制像素，避免子图共享 raster 问题）。
+     */
+    private static BufferedImage copyBufferedImage(BufferedImage src) {
+        int w = src.getWidth();
+        int h = src.getHeight();
+        BufferedImage copy = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        int[] pixels = new int[w * h];
+        src.getRGB(0, 0, w, h, pixels, 0, w);
+        copy.setRGB(0, 0, w, h, pixels, 0, w);
+        return copy;
     }
 
     /**
@@ -918,10 +968,11 @@ public class ImageBackgroundRemoverPane extends VBox {
         }
         int newW = maxX - minX + 1;
         int newH = maxY - minY + 1;
+        // 用 getRGB/setRGB 直接复制像素，避免 getSubimage 共享 raster 导致数据不完整
         BufferedImage result = new BufferedImage(newW, newH, BufferedImage.TYPE_INT_ARGB);
-        java.awt.Graphics2D g = result.createGraphics();
-        g.drawImage(img.getSubimage(minX, minY, newW, newH), 0, 0, null);
-        g.dispose();
+        int[] pixels = new int[newW * newH];
+        img.getRGB(minX, minY, newW, newH, pixels, 0, newW);
+        result.setRGB(0, 0, newW, newH, pixels, 0, newW);
         return result;
     }
 
