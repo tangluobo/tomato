@@ -14,6 +14,8 @@ public class DatabaseNodeData {
         TABLE,          // 表节点
         VIEW,           // 视图节点
         FUNCTION_FOLDER, BACKUP_FOLDER, QUERY, BACKUP,
+        QUERY_DIR,      // 查询目录节点（查询文件夹下的子目录）
+        BACKUP_DIR,     // 备份目录节点（备份文件夹下的子目录）
         ROCKETMQ_TOPICS_FOLDER,   // RocketMQ主题文件夹
         ROCKETMQ_CONSUMERS_FOLDER, // RocketMQ消费者组文件夹
         ROCKETMQ_CLUSTER_FOLDER,   // RocketMQ集群文件夹
@@ -42,18 +44,26 @@ public class DatabaseNodeData {
     // PostgreSQL 模式名（schema）。MySQL/Oracle 忽略；PostgreSQL 表相关操作使用 schema 名，
     // databaseName 仅用于建立绑定到具体数据库的连接。
     private final String schemaName;
+    // 查询/备份目录的相对路径（相对于 query/backup 根目录），""表示根目录。
+    // 仅 QUERY/QUERY_DIR/BACKUP/BACKUP_DIR 节点使用；QUERY_FOLDER/BACKUP_FOLDER 固定为""。
+    private final String path;
     private boolean opened;
 
     public DatabaseNodeData(NodeType type, String name, ConnectionConfig connectionConfig, String databaseName) {
-        this(type, name, connectionConfig, databaseName, null);
+        this(type, name, connectionConfig, databaseName, null, "");
     }
 
     public DatabaseNodeData(NodeType type, String name, ConnectionConfig connectionConfig, String databaseName, String schemaName) {
+        this(type, name, connectionConfig, databaseName, schemaName, "");
+    }
+
+    public DatabaseNodeData(NodeType type, String name, ConnectionConfig connectionConfig, String databaseName, String schemaName, String path) {
         this.type = type;
         this.name = name;
         this.connectionConfig = connectionConfig;
         this.databaseName = databaseName;
         this.schemaName = schemaName;
+        this.path = path == null ? "" : path;
         this.opened = false;
     }
 
@@ -62,6 +72,7 @@ public class DatabaseNodeData {
     public ConnectionConfig getConnectionConfig() { return connectionConfig; }
     public String getDatabaseName() { return databaseName; }
     public String getSchemaName() { return schemaName; }
+    public String getPath() { return path; }
     public boolean isOpened() { return opened; }
     public void setOpened(boolean opened) { this.opened = opened; }
 }

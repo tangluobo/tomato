@@ -24,6 +24,7 @@ public class BackupDialog {
 
     private final ConnectionConfig config;
     private final String databaseName;
+    private final String path;
 
     private TextArea commentArea;
     private CheckBox lockTablesCheck;
@@ -41,9 +42,10 @@ public class BackupDialog {
     private final List<BackupObject> selectedObjects = new ArrayList<>();
     private BackupTask currentTask;
 
-    public BackupDialog(Stage parent, ConnectionConfig config, String databaseName) {
+    public BackupDialog(Stage parent, ConnectionConfig config, String databaseName, String path) {
         this.config = config;
         this.databaseName = databaseName;
+        this.path = path == null ? "" : path;
         initUI(parent);
         loadObjects();
     }
@@ -616,7 +618,7 @@ public class BackupDialog {
         boolean singleTx = singleTransactionCheck.isSelected();
         String customFile = useCustomFilenameCheck.isSelected() ? customFilenameField.getText() : null;
 
-        currentTask = new BackupTask(config, databaseName, selected, comment, lockTables, singleTx, customFile);
+        currentTask = new BackupTask(config, databaseName, selected, comment, lockTables, singleTx, customFile, path);
 
         currentTask.messageProperty().addListener((obs, oldMsg, newMsg) -> {
             Platform.runLater(() -> logArea.appendText(newMsg + "\n"));
@@ -781,6 +783,7 @@ public class BackupDialog {
         private final boolean lockTables;
         private final boolean singleTransaction;
         private final String customFilename;
+        private final String path;
 
         private int recordCount = 0;
         private long startTime;
@@ -789,7 +792,7 @@ public class BackupDialog {
         private final javafx.beans.property.SimpleStringProperty runningTime = new javafx.beans.property.SimpleStringProperty();
 
         public BackupTask(ConnectionConfig config, String databaseName, List<BackupObject> objects,
-                          String comment, boolean lockTables, boolean singleTransaction, String customFilename) {
+                          String comment, boolean lockTables, boolean singleTransaction, String customFilename, String path) {
             this.config = config;
             this.databaseName = databaseName;
             this.objects = objects;
@@ -797,6 +800,7 @@ public class BackupDialog {
             this.lockTables = lockTables;
             this.singleTransaction = singleTransaction;
             this.customFilename = customFilename;
+            this.path = path == null ? "" : path;
         }
 
         public javafx.beans.property.SimpleLongProperty recordCountProperty() { return recordCountProp; }
@@ -813,14 +817,14 @@ public class BackupDialog {
             }
             filename = filename.replaceAll("[\\\\/:*?\"<>|]", "_") + ".nb3";
 
-            String path = BackupService.createBackup(config, databaseName, objects, comment,
-                    lockTables, singleTransaction, filename, this);
+            String result = BackupService.createBackup(config, databaseName, objects, comment,
+                    lockTables, singleTransaction, filename, path, this);
 
             long elapsed = System.currentTimeMillis() - startTime;
             Platform.runLater(() -> runningTime.set(String.format("%d.%d 秒", elapsed / 1000, (elapsed % 1000) / 100)));
-            updateMessage("备份完成: " + path);
+            updateMessage("备份完成: " + result);
 
-            return path;
+            return result;
         }
 
         public void incrementRecordCount(long count) {

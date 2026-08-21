@@ -245,6 +245,8 @@ public class ConnectModule implements Module {
             case VIEW -> viewIcon;
             case BACKUP -> backupIcon;
             case QUERY -> queryIcon;
+            case QUERY_DIR -> folderIcon;
+            case BACKUP_DIR -> folderIcon;
             case ROCKETMQ_TOPICS_FOLDER -> rocketmqTopicIcon;
             case ROCKETMQ_CONSUMERS_FOLDER -> rocketmqConsumerIcon;
             case ROCKETMQ_CLUSTER_FOLDER -> rocketmqClusterIcon;
@@ -1222,7 +1224,15 @@ public class ConnectModule implements Module {
             case BACKUP_FOLDER -> {
                 AbstractDbHandler handler = createDbHandler(data.getConnectionConfig());
                 if (handler != null) {
-                    handler.loadBackupsForFolder(item, data.getConnectionConfig(), data.getDatabaseName());
+                    handler.loadBackupsForFolder(item, data.getConnectionConfig(), data.getDatabaseName(), "");
+                }
+                item.setExpanded(!item.isExpanded());
+            }
+            case QUERY_DIR -> item.setExpanded(!item.isExpanded());
+            case BACKUP_DIR -> {
+                AbstractDbHandler handler = createDbHandler(data.getConnectionConfig());
+                if (handler != null) {
+                    handler.loadBackupsForFolder(item, data.getConnectionConfig(), data.getDatabaseName(), data.getPath());
                 }
                 item.setExpanded(!item.isExpanded());
             }
@@ -1388,12 +1398,12 @@ public class ConnectModule implements Module {
 
     public void handleNewBackup(TreeItem<String> folderItem, DatabaseNodeData data) {
         BackupDialog dialog = new BackupDialog(getStage(),
-                data.getConnectionConfig(), data.getDatabaseName());
+                data.getConnectionConfig(), data.getDatabaseName(), data.getPath());
         dialog.showAndWait();
 
         AbstractDbHandler handler = createDbHandler(data.getConnectionConfig());
         if (handler != null) {
-            handler.loadBackupsForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName());
+            handler.loadBackupsForFolder(folderItem, data.getConnectionConfig(), data.getDatabaseName(), data.getPath());
         }
     }
 

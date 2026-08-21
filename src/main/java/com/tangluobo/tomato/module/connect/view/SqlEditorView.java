@@ -48,6 +48,8 @@ public class SqlEditorView extends BorderPane {
     private String queryName = null;
     private String savedSql = "";
     private TreeItem<String> queryNode;
+    // 当前查询所属目录的相对路径（相对于 query 根目录），""表示根目录
+    private String path = "";
 
     private Consumer<String> onTitleChange;
     private Runnable onSaveRequest;
@@ -273,19 +275,34 @@ public class SqlEditorView extends BorderPane {
         this.modified = false;
         notifyTitleChange();
 
-        persistToFile(name);
+        persistToFile(name, this.path);
     }
 
-    private void persistToFile(String name) {
+    /** 设置当前查询所属目录的相对路径（相对于 query 根目录） */
+    public void setPath(String path) { this.path = path == null ? "" : path; }
+    public String getPath() { return this.path; }
+
+    /** 解析查询目录：~/.tomato/<conn>/<db>/query/<path> */
+    public static Path resolveQueryDir(String connectionName, String dbName, String path) {
+        String sanitizedConn = sanitizeFileName(connectionName);
+        String sanitizedDb = sanitizeFileName(dbName);
+        Path dir = Paths.get(APP_DIR, sanitizedConn, sanitizedDb, QUERY_DIR);
+        if (path != null && !path.isEmpty()) {
+            for (String part : path.split("/")) {
+                dir = dir.resolve(sanitizeFileName(part));
+            }
+        }
+        return dir;
+    }
+
+    private void persistToFile(String name, String path) {
         ConnectionConfig config = connectionCombo.getValue();
         String dbName = databaseCombo.getValue();
         if (config == null || dbName == null) return;
 
-        String sanitizedConn = sanitizeFileName(config.getName());
-        String sanitizedDb = sanitizeFileName(dbName);
         String sanitizedQuery = sanitizeFileName(name);
 
-        Path dir = Paths.get(APP_DIR, sanitizedConn, sanitizedDb, QUERY_DIR);
+        Path dir = resolveQueryDir(config.getName(), dbName, path);
         try {
             Files.createDirectories(dir);
             Path file = dir.resolve(sanitizedQuery + ".sql");
@@ -304,12 +321,11 @@ public class SqlEditorView extends BorderPane {
                    .replaceAll("^_|_$", "");
     }
 
-    public void loadFromFile(String connectionName, String dbName, String queryName) {
-        String sanitizedConn = sanitizeFileName(connectionName);
-        String sanitizedDb = sanitizeFileName(dbName);
+    public void loadFromFile(String connectionName, String dbName, String queryName, String path) {
+        this.path = path == null ? "" : path;
         String sanitizedQuery = sanitizeFileName(queryName);
 
-        Path file = Paths.get(APP_DIR, sanitizedConn, sanitizedDb, QUERY_DIR, sanitizedQuery + ".sql");
+        Path file = resolveQueryDir(connectionName, dbName, this.path).resolve(sanitizedQuery + ".sql");
         if (Files.exists(file)) {
             try {
                 String content = Files.readString(file, StandardCharsets.UTF_8);
@@ -323,12 +339,9 @@ public class SqlEditorView extends BorderPane {
         }
     }
 
-    public void deleteQueryFile(String connectionName, String dbName, String queryName) {
-        String sanitizedConn = sanitizeFileName(connectionName);
-        String sanitizedDb = sanitizeFileName(dbName);
+    public void deleteQueryFile(String connectionName, String dbName, String queryName, String path) {
         String sanitizedQuery = sanitizeFileName(queryName);
-
-        Path file = Paths.get(APP_DIR, sanitizedConn, sanitizedDb, QUERY_DIR, sanitizedQuery + ".sql");
+        Path file = resolveQueryDir(connectionName, dbName, path).resolve(sanitizedQuery + ".sql");
         try {
             Files.deleteIfExists(file);
         } catch (IOException e) {
@@ -337,12 +350,9 @@ public class SqlEditorView extends BorderPane {
         }
     }
 
-    public static void cleanupQueryFile(String connectionName, String dbName, String queryName) {
-        String sanitizedConn = sanitizeFileName(connectionName);
-        String sanitizedDb = sanitizeFileName(dbName);
+    public static void cleanupQueryFile(String connectionName, String dbName, String queryName, String path) {
         String sanitizedQuery = sanitizeFileName(queryName);
-
-        Path file = Paths.get(APP_DIR, sanitizedConn, sanitizedDb, QUERY_DIR, sanitizedQuery + ".sql");
+        Path file = resolveQueryDir(connectionName, dbName, path).resolve(sanitizedQuery + ".sql");
         try {
             Files.deleteIfExists(file);
         } catch (IOException e) {
@@ -351,11 +361,9 @@ public class SqlEditorView extends BorderPane {
         }
     }
 
-    public static List<String> listQueries(String connectionName, String dbName) {
-        String sanitizedConn = sanitizeFileName(connectionName);
-        String sanitizedDb = sanitizeFileName(dbName);
-
-        Path dir = Paths.get(APP_DIR, sanitizedConn, sanitizedDb, QUERY_DIR);
+    /** 列出查询目录下的查询名（.sql 文件，去掉扩展名） */
+    public static List<String> listQueries(String connectionName, String dbName, String path) {
+        Path dir = resolveQueryDir(connectionName, dbName, path);
         List<String> queries = new ArrayList<>();
         if (!Files.isDirectory(dir)) return queries;
 
@@ -369,6 +377,35 @@ public class SqlEditorView extends BorderPane {
             System.err.println("加载查询列表失败: " + e.getMessage());
         }
         return queries;
+    }
+
+    /** 列出查询目录下的子目录名 */
+    public static List<String> listQueryDirs(String connectionName, String dbName, String path) {
+        Path dir = resolveQueryDir(connectionName, dbName, path);
+        List<String> dirs = new ArrayList<>();
+        if (!Files.isDirectory(dir)) return dirs;
+
+        try (java.util.stream.Stream<Path> stream = Files.list(dir)) {
+            stream.filter(Files::isDirectory)
+                  .forEach(p -> dirs.add(p.getFileName().toString()));
+        } catch (IOException e) {
+            System.err.println("加载查询子目录失败: " + e.getMessage());
+        }
+        return dirs;
+    }
+
+    /** 递归删除查询目录（磁盘上的子目录及其所有内容） */
+    public static void deleteQueryDir(String connectionName, String dbName, String path) {
+        Path dir = resolveQueryDir(connectionName, dbName, path);
+        if (!Files.isDirectory(dir)) return;
+        try (java.util.stream.Stream<Path> walk = Files.walk(dir)) {
+            walk.sorted(java.util.Comparator.reverseOrder())
+                .forEach(p -> {
+                    try { Files.deleteIfExists(p); } catch (IOException ignored) {}
+                });
+        } catch (IOException e) {
+            System.err.println("删除查询目录失败: " + e.getMessage());
+        }
     }
 
     // ==================== 数据库列表 ====================

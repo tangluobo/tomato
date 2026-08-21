@@ -312,11 +312,11 @@
             <version>1.15</version>
         </dependency>
 
-        <!-- commons-lang3（StringUtils 等，markdown-writer-fx 依赖） -->
+        <!-- commons-lang3（StringUtils 等；commons-compress 1.26.x 运行时需 SystemProperties，故需 3.13.0+） -->
         <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>
-            <version>3.12.0</version>
+            <version>3.17.0</version>
         </dependency>
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>

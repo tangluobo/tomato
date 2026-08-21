@@ -19,6 +19,7 @@ public class RestoreDialog {
     private final ConnectionConfig config;
     private final String databaseName;
     private final String backupName;
+    private final String path;
 
     private Label serverValue;
     private Label dbValue;
@@ -32,10 +33,11 @@ public class RestoreDialog {
 
     private BackupService.RestoreTask currentTask;
 
-    public RestoreDialog(Stage parent, ConnectionConfig config, String databaseName, String backupName) {
+    public RestoreDialog(Stage parent, ConnectionConfig config, String databaseName, String backupName, String path) {
         this.config = config;
         this.databaseName = databaseName;
         this.backupName = backupName;
+        this.path = path == null ? "" : path;
         initUI(parent);
     }
 
@@ -227,7 +229,7 @@ public class RestoreDialog {
             recordCountLabel.setText("0");
             progressBar.setProgress(0);
 
-            currentTask = new BackupService.RestoreTask(config, databaseName, backupName);
+            currentTask = new BackupService.RestoreTask(config, databaseName, backupName, path);
 
             currentTask.messageProperty().addListener((obs, oldMsg, newMsg) -> {
                 Platform.runLater(() -> logArea.appendText(newMsg + "\n"));

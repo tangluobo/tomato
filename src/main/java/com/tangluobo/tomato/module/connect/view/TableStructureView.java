@@ -142,6 +142,8 @@ public class TableStructureView extends BorderPane {
     private List<ObservableList<String>> originalColumnsSnapshot = new ArrayList<>();
     /** 是否有未保存的字段变更（增/删/改/移动），控制Tab标题星号 */
     private boolean dirty = false;
+    /** 检测到字段顺序变更但当前数据库类型不支持直接重排序（PG/Oracle） */
+    private volatile boolean reorderUnsupported = false;
     /** Shift+点击范围选择的锚点单元格 {row, col} */
     private final int[] anchorCell = {-1, -1};
 
@@ -1547,6 +1549,7 @@ public class TableStructureView extends BorderPane {
                                                  List<ObservableList<String>> originalRows,
                                                  List<ObservableList<String>> currentRows) {
         List<String> sqlList = new ArrayList<>();
+        reorderUnsupported = false;
         if (titles == null || tableName == null || tableName.isEmpty()) return sqlList;
         int nameIdx = titles.indexOf("字段名");
         int pkIdx = titles.indexOf("主键");
@@ -1579,7 +1582,23 @@ public class TableStructureView extends BorderPane {
             }
         }
 
-        // 2) 新增 + 修改：按当前行顺序处理
+        // 构建原始/当前共同列名顺序列表（用于检测字段顺序变更）
+        java.util.List<String> origCommonNames = new java.util.ArrayList<>();
+        for (ObservableList<String> row : originalRows) {
+            String n = nameIdx < row.size() ? row.get(nameIdx) : "";
+            if (n != null && !n.isEmpty() && currentByName.containsKey(n)) {
+                origCommonNames.add(n);
+            }
+        }
+        java.util.List<String> curCommonNames = new java.util.ArrayList<>();
+        for (ObservableList<String> row : currentRows) {
+            String n = nameIdx < row.size() ? row.get(nameIdx) : "";
+            if (n != null && !n.isEmpty() && originalByName.containsKey(n)) {
+                curCommonNames.add(n);
+            }
+        }
+
+        // 2) 新增 + 修改 + 顺序变更：按当前行顺序处理
         for (ObservableList<String> cur : currentRows) {
             String colName = nameIdx < cur.size() ? cur.get(nameIdx) : "";
             if (colName == null || colName.isEmpty()) continue;
@@ -1591,12 +1610,32 @@ public class TableStructureView extends BorderPane {
                     sqlList.add("-- 生成新增列SQL失败(" + colName + "): " + ex.getMessage());
                 }
             } else {
-                // 修改列（字段名相同但属性变化）
                 ObservableList<String> orig = originalByName.get(colName);
-                try {
-                    sqlList.addAll(DatabaseService.generateModifyColumnSql(config, databaseName, schemaName, tableName, titles, orig, cur));
-                } catch (Exception ex) {
-                    sqlList.add("-- 生成修改列SQL失败(" + colName + "): " + ex.getMessage());
+                int origPos = origCommonNames.indexOf(colName);
+                int curPos = curCommonNames.indexOf(colName);
+                boolean positionChanged = (origPos != curPos);
+
+                if (positionChanged && config.getType() == com.tangluobo.tomato.module.connect.ConnectType.MYSQL) {
+                    // MySQL: MODIFY COLUMN ... AFTER/FIRST（含完整列定义，覆盖属性变更）
+                    String afterCol = (curPos > 0) ? curCommonNames.get(curPos - 1) : null;
+                    try {
+                        String reorderSql = DatabaseService.generateReorderColumnSql(config, databaseName, schemaName, tableName, titles, cur, afterCol);
+                        if (reorderSql != null) {
+                            sqlList.add(reorderSql);
+                        }
+                    } catch (Exception ex) {
+                        sqlList.add("-- 生成列顺序变更SQL失败(" + colName + "): " + ex.getMessage());
+                    }
+                } else {
+                    if (positionChanged) {
+                        reorderUnsupported = true;
+                    }
+                    // 常规属性变更
+                    try {
+                        sqlList.addAll(DatabaseService.generateModifyColumnSql(config, databaseName, schemaName, tableName, titles, orig, cur));
+                    } catch (Exception ex) {
+                        sqlList.add("-- 生成修改列SQL失败(" + colName + "): " + ex.getMessage());
+                    }
                 }
             }
         }
@@ -1851,7 +1890,18 @@ public class TableStructureView extends BorderPane {
         }
 
         if (alterStatements.isEmpty() && tableCommentSql == null) {
-            statusLabel.setText("没有需要保存的变更");
+            if (reorderUnsupported) {
+                String dbType = config.getType().toString();
+                Alert alert = new Alert(Alert.AlertType.WARNING);
+                alert.setTitle("保存表结构");
+                alert.setHeaderText("当前数据库类型不支持直接调整字段顺序");
+                alert.setContentText(dbType + " 不支持通过 ALTER TABLE 调整列顺序，如需调整需重建表。");
+                DialogPositionUtil.centerOnOwner(alert, this);
+                alert.showAndWait();
+                statusLabel.setText(dbType + " 不支持调整字段顺序");
+            } else {
+                statusLabel.setText("没有需要保存的变更");
+            }
             return;
         }
 

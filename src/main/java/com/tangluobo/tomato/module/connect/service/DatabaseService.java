@@ -68,6 +68,11 @@ public class DatabaseService {
                     port = oldTunnel.getForwardedLocalPort();
                     host = "127.0.0.1";
                 } else {
+                    // 隧道已失效或不复用：先断开旧隧道并移除缓存，确保重建得到干净的新隧道，避免端口占用与资源泄漏
+                    if (oldTunnel != null) {
+                        tunnelCache.remove(key);
+                        try { oldTunnel.disconnect(); } catch (Exception ignored) {}
+                    }
                     SshTunnel tunnel = SshTunnel.fromConfig(config);
                     int localPort = tunnel.connect();
                     tunnelCache.put(key, tunnel);
@@ -613,6 +618,11 @@ public class DatabaseService {
                     port = oldTunnel.getForwardedLocalPort();
                     host = "127.0.0.1";
                 } else {
+                    // 隧道已失效或不复用：先断开旧隧道并移除缓存，确保重建得到干净的新隧道，避免端口占用与资源泄漏
+                    if (oldTunnel != null) {
+                        tunnelCache.remove(tunnelKey);
+                        try { oldTunnel.disconnect(); } catch (Exception ignored) {}
+                    }
                     SshTunnel tunnel = SshTunnel.fromConfig(config);
                     int localPort = tunnel.connect();
                     tunnelCache.put(tunnelKey, tunnel);
@@ -3027,6 +3037,52 @@ public class DatabaseService {
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         }
         return sqlList;
+    }
+
+    /**
+     * 生成调整列顺序的ALTER SQL（仅MySQL支持，使用 MODIFY COLUMN ... AFTER/FIRST）。
+     * PostgreSQL/Oracle不支持直接调整列顺序，返回null。
+     * @param afterColumnName 移动到该列之后；null或空字符串表示移到首位（FIRST）
+     * @return ALTER SQL；不支持的数据库类型返回null
+     */
+    public static String generateReorderColumnSql(ConnectionConfig config, String databaseName, String schemaName,
+                                                  String tableName, List<String> columnTitles,
+                                                  ObservableList<String> row, String afterColumnName) {
+        if (config.getType() != ConnectType.MYSQL) {
+            return null;
+        }
+        String columnName = getValue(row, columnTitles, "字段名");
+        String type = getValue(row, columnTitles, "类型");
+        String length = getValue(row, columnTitles, "长度");
+        String decimal = getValue(row, columnTitles, "小数点");
+        String typeSize = buildTypeSize(type, length, decimal);
+        String nullable = getValue(row, columnTitles, "非空");
+        String autoInc = getValue(row, columnTitles, "自增");
+        String defaultValue = getValue(row, columnTitles, "默认值");
+        String colComment = getValue(row, columnTitles, "注释");
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("ALTER TABLE `").append(databaseName).append("`.`").append(tableName).append("` ");
+        sql.append("MODIFY COLUMN `").append(columnName).append("` ").append(type).append(typeSize);
+        if ("是".equals(getValue(row, columnTitles, "无符号"))) sql.append(" UNSIGNED");
+        if ("是".equals(getValue(row, columnTitles, "填充零"))) sql.append(" ZEROFILL");
+        String cs = getValue(row, columnTitles, "字符集");
+        if (cs != null && !cs.isEmpty()) sql.append(" CHARACTER SET ").append(cs);
+        String co = getValue(row, columnTitles, "排序规则");
+        if (co != null && !co.isEmpty()) sql.append(" COLLATE ").append(co);
+        if ("是".equals(nullable)) sql.append(" NOT NULL");
+        else sql.append(" NULL");
+        if ("是".equals(autoInc)) sql.append(" AUTO_INCREMENT");
+        appendDefaultClause(sql, defaultValue);
+        if (colComment != null && !colComment.isEmpty()) {
+            sql.append(" COMMENT '").append(colComment.replace("'", "''")).append("'");
+        }
+        if (afterColumnName == null || afterColumnName.isEmpty()) {
+            sql.append(" FIRST");
+        } else {
+            sql.append(" AFTER `").append(afterColumnName).append("`");
+        }
+        return sql.toString();
     }
 
     /**

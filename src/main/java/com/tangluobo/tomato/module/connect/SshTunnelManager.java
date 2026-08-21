@@ -39,6 +39,11 @@ public class SshTunnelManager {
             entry.refCount.incrementAndGet();
             return entry.tunnel.getForwardedLocalPort();
         }
+        // 隧道已失效或不存在：先清理失效的旧隧道并移除缓存，确保重建得到干净的新隧道，避免端口占用与资源泄漏
+        if (entry != null) {
+            cache.remove(key);
+            try { entry.tunnel.disconnect(); } catch (Exception ignored) {}
+        }
 
         try {
             ConnectionConfig sshHost = findSshHostConfig(config.getSshTunnelHostId());
@@ -118,6 +123,11 @@ public class SshTunnelManager {
         TunnelEntry entry = cache.get(key);
         if (entry != null && entry.tunnel.isActive()) {
             return entry.tunnel.getForwardedLocalPort();
+        }
+        // 隧道已失效或不存在：先清理失效的旧隧道并移除缓存，确保重建得到干净的新隧道，避免端口占用与资源泄漏
+        if (entry != null) {
+            cache.remove(key);
+            try { entry.tunnel.disconnect(); } catch (Exception ignored) {}
         }
         try {
             ConnectionConfig sshHost = findSshHostConfig(config.getSshTunnelHostId());

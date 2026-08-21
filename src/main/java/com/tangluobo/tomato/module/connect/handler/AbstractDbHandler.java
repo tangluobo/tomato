@@ -33,6 +33,7 @@ import javafx.scene.input.Clipboard;
 import javafx.scene.input.DataFormat;
 import javafx.stage.Stage;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -764,10 +765,18 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 loadViewsForFolder(item, config, data.getDatabaseName(), data.getSchemaName(), false);
             }
             case QUERY_FOLDER -> {
-                loadQueriesForFolder(item, config, data.getDatabaseName());
+                loadQueriesForFolder(item, config, data.getDatabaseName(), "");
             }
             case BACKUP_FOLDER -> {
-                loadBackupsForFolder(item, config, data.getDatabaseName());
+                loadBackupsForFolder(item, config, data.getDatabaseName(), "");
+            }
+            case QUERY_DIR -> {
+                module.removeDbNodeDataRecursive(item);
+                loadQueriesForFolder(item, config, data.getDatabaseName(), data.getPath());
+            }
+            case BACKUP_DIR -> {
+                module.removeDbNodeDataRecursive(item);
+                loadBackupsForFolder(item, config, data.getDatabaseName(), data.getPath());
             }
             default -> {}
         }
@@ -898,26 +907,52 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         }, "DB-LoadTablesAndViews").start();
     }
 
-    /** 加载查询列表到指定文件夹节点 */
-    public void loadQueriesForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName) {
-        List<String> queryNames = SqlEditorView.listQueries(config.getName(), dbName);
+    /** 加载查询列表（含子目录）到指定文件夹节点。path 为相对 query 根目录的相对路径，""表示根 */
+    public void loadQueriesForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName, String path) {
+        String currentPath = path == null ? "" : path;
         folderItem.getChildren().clear();
-        for (String queryName : queryNames) {
+
+        // 先加载子目录
+        for (String dirName : SqlEditorView.listQueryDirs(config.getName(), dbName, currentPath)) {
+            String dirPath = currentPath.isEmpty() ? dirName : currentPath + "/" + dirName;
+            TreeItem<String> dirItem = new TreeItem<>(dirName);
+            DatabaseNodeData dirData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_DIR, dirName, config, dbName, null, dirPath);
+            dirItem.setGraphic(module.getDbNodeIcon(dirData));
+            module.getDbNodeDataMap().put(dirItem, dirData);
+            folderItem.getChildren().add(dirItem);
+        }
+
+        // 再加载查询文件
+        for (String queryName : SqlEditorView.listQueries(config.getName(), dbName, currentPath)) {
             TreeItem<String> queryItem = new TreeItem<>(queryName);
-            queryItem.setGraphic(module.getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, queryName, config, dbName)));
-            module.getDbNodeDataMap().put(queryItem, new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, queryName, config, dbName));
+            DatabaseNodeData queryData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, queryName, config, dbName, null, currentPath);
+            queryItem.setGraphic(module.getDbNodeIcon(queryData));
+            module.getDbNodeDataMap().put(queryItem, queryData);
             folderItem.getChildren().add(queryItem);
         }
     }
 
-    /** 加载备份列表到指定文件夹节点 */
-    public void loadBackupsForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName) {
-        List<String> backupNames = BackupService.listBackups(config.getName(), dbName);
+    /** 加载备份列表（含子目录）到指定文件夹节点。path 为相对 backup 根目录的相对路径，""表示根 */
+    public void loadBackupsForFolder(TreeItem<String> folderItem, ConnectionConfig config, String dbName, String path) {
+        String currentPath = path == null ? "" : path;
         folderItem.getChildren().clear();
-        for (String backupName : backupNames) {
+
+        // 先加载子目录
+        for (String dirName : BackupService.listBackupDirs(config.getName(), dbName, currentPath)) {
+            String dirPath = currentPath.isEmpty() ? dirName : currentPath + "/" + dirName;
+            TreeItem<String> dirItem = new TreeItem<>(dirName);
+            DatabaseNodeData dirData = new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_DIR, dirName, config, dbName, null, dirPath);
+            dirItem.setGraphic(module.getDbNodeIcon(dirData));
+            module.getDbNodeDataMap().put(dirItem, dirData);
+            folderItem.getChildren().add(dirItem);
+        }
+
+        // 再加载备份文件
+        for (String backupName : BackupService.listBackups(config.getName(), dbName, currentPath)) {
             TreeItem<String> backupItem = new TreeItem<>(backupName);
-            backupItem.setGraphic(module.getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP, backupName, config, dbName)));
-            module.getDbNodeDataMap().put(backupItem, new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP, backupName, config, dbName));
+            DatabaseNodeData backupData = new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP, backupName, config, dbName, null, currentPath);
+            backupItem.setGraphic(module.getDbNodeIcon(backupData));
+            module.getDbNodeDataMap().put(backupItem, backupData);
             folderItem.getChildren().add(backupItem);
         }
     }
@@ -951,13 +986,13 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         queryFolder.setGraphic(module.getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, dbName)));
         module.getDbNodeDataMap().put(queryFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, dbName));
 
-        loadQueriesForFolder(queryFolder, config, dbName);
+        loadQueriesForFolder(queryFolder, config, dbName, "");
 
         TreeItem<String> backupFolder = new TreeItem<>("备份");
         backupFolder.setGraphic(module.getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, dbName)));
         module.getDbNodeDataMap().put(backupFolder, new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, dbName));
 
-        loadBackupsForFolder(backupFolder, config, dbName);
+        loadBackupsForFolder(backupFolder, config, dbName, "");
 
         dbItem.getChildren().addAll(tablesFolder, viewsFolder, functionFolder, queryFolder, backupFolder);
         dbItem.setExpanded(true);
@@ -990,13 +1025,13 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         DatabaseNodeData queryData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_FOLDER, "查询", config, dbName, schemaName);
         queryFolder.setGraphic(module.getDbNodeIcon(queryData));
         module.getDbNodeDataMap().put(queryFolder, queryData);
-        loadQueriesForFolder(queryFolder, config, dbName);
+        loadQueriesForFolder(queryFolder, config, dbName, "");
 
         TreeItem<String> backupFolder = new TreeItem<>("备份");
         DatabaseNodeData backupData = new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_FOLDER, "备份", config, dbName, schemaName);
         backupFolder.setGraphic(module.getDbNodeIcon(backupData));
         module.getDbNodeDataMap().put(backupFolder, backupData);
-        loadBackupsForFolder(backupFolder, config, dbName);
+        loadBackupsForFolder(backupFolder, config, dbName, "");
 
         schemaItem.getChildren().addAll(tablesFolder, viewsFolder, functionFolder, queryFolder, backupFolder);
     }
@@ -1528,16 +1563,46 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             case QUERY_FOLDER -> {
                 MenuItem newQueryItem = new MenuItem("新建查询");
                 newQueryItem.setOnAction(e -> handleNewQuery(item, data));
+                MenuItem newDirItem = new MenuItem("新建目录");
+                newDirItem.setOnAction(e -> handleNewQueryDir(item, data));
                 MenuItem refreshItem = new MenuItem("刷新");
                 refreshItem.setOnAction(e -> refreshDbNode(item, data));
-                contextMenu.getItems().addAll(newQueryItem, new SeparatorMenuItem(), refreshItem);
+                contextMenu.getItems().addAll(newQueryItem, newDirItem, new SeparatorMenuItem(), refreshItem);
             }
             case BACKUP_FOLDER -> {
                 MenuItem newBackupItem = new MenuItem("新建备份");
                 newBackupItem.setOnAction(e -> module.handleNewBackup(item, data));
+                MenuItem newDirItem = new MenuItem("新建目录");
+                newDirItem.setOnAction(e -> handleNewBackupDir(item, data));
                 MenuItem refreshItem = new MenuItem("刷新");
                 refreshItem.setOnAction(e -> refreshDbNode(item, data));
-                contextMenu.getItems().addAll(newBackupItem, new SeparatorMenuItem(), refreshItem);
+                contextMenu.getItems().addAll(newBackupItem, newDirItem, new SeparatorMenuItem(), refreshItem);
+            }
+            case QUERY_DIR -> {
+                MenuItem newQueryItem = new MenuItem("新建查询");
+                newQueryItem.setOnAction(e -> handleNewQuery(item, data));
+                MenuItem newDirItem = new MenuItem("新建目录");
+                newDirItem.setOnAction(e -> handleNewQueryDir(item, data));
+                MenuItem renameItem = new MenuItem("重命名");
+                renameItem.setOnAction(e -> handleRenameQueryDir(item, data));
+                MenuItem deleteItem = new MenuItem("删除");
+                deleteItem.setOnAction(e -> handleDeleteQueryDir(item, data));
+                MenuItem refreshItem = new MenuItem("刷新");
+                refreshItem.setOnAction(e -> refreshDbNode(item, data));
+                contextMenu.getItems().addAll(newQueryItem, newDirItem, new SeparatorMenuItem(), renameItem, deleteItem, new SeparatorMenuItem(), refreshItem);
+            }
+            case BACKUP_DIR -> {
+                MenuItem newBackupItem = new MenuItem("新建备份");
+                newBackupItem.setOnAction(e -> module.handleNewBackup(item, data));
+                MenuItem newDirItem = new MenuItem("新建目录");
+                newDirItem.setOnAction(e -> handleNewBackupDir(item, data));
+                MenuItem renameItem = new MenuItem("重命名");
+                renameItem.setOnAction(e -> handleRenameBackupDir(item, data));
+                MenuItem deleteItem = new MenuItem("删除");
+                deleteItem.setOnAction(e -> handleDeleteBackupDir(item, data));
+                MenuItem refreshItem = new MenuItem("刷新");
+                refreshItem.setOnAction(e -> refreshDbNode(item, data));
+                contextMenu.getItems().addAll(newBackupItem, newDirItem, new SeparatorMenuItem(), renameItem, deleteItem, new SeparatorMenuItem(), refreshItem);
             }
             case TABLE, VIEW -> {
                 MenuItem openTableItem = new MenuItem("打开表");
@@ -1926,8 +1991,10 @@ public abstract class AbstractDbHandler implements ConnectHandler {
     public void handleNewQuery(TreeItem<String> folderItem, DatabaseNodeData data) {
         ConnectionConfig config = data.getConnectionConfig();
         String dbName = data.getDatabaseName();
+        String path = data.getPath();
 
         SqlEditorView editorView = new SqlEditorView(module.getConnections(), config, dbName);
+        editorView.setPath(path);
 
         Tab tab = new Tab("*未保存查询");
         Image tabIcon = module.getQueryIcon();
@@ -1956,7 +2023,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 editorView.doSave(queryName);
 
                 TreeItem<String> queryItem = new TreeItem<>(queryName);
-                DatabaseNodeData queryData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, queryName, config, dbName);
+                DatabaseNodeData queryData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, queryName, config, dbName, null, path);
                 queryItem.setGraphic(module.getDbNodeIcon(queryData));
                 module.getDbNodeDataMap().put(queryItem, queryData);
                 folderItem.getChildren().add(queryItem);
@@ -1964,7 +2031,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
 
                 editorView.setQueryNode(queryItem);
 
-                String newTabId = "query_" + config.getId() + "_" + dbName + "_" + queryName;
+                String newTabId = "query_" + config.getId() + "_" + dbName + "_" + path + "_" + queryName;
                 tab.setUserData(newTabId);
             });
         });
@@ -1988,7 +2055,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         if (module.getTerminalTabPane() == null) return;
         if (!module.ensureTabPaneInstalled()) return;
 
-        String tabId = "query_" + data.getConnectionConfig().getId() + "_" + data.getDatabaseName() + "_" + data.getName();
+        String tabId = "query_" + data.getConnectionConfig().getId() + "_" + data.getDatabaseName() + "_" + data.getPath() + "_" + data.getName();
         for (Tab tab : module.getTerminalTabPane().getTabs()) {
             if (tabId.equals(tab.getUserData())) {
                 module.getTerminalTabPane().getSelectionModel().select(tab);
@@ -2000,7 +2067,8 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         SqlEditorView editorView = new SqlEditorView(module.getConnections(), data.getConnectionConfig(), data.getDatabaseName());
         editorView.setQueryName(data.getName());
         editorView.setQueryNode(queryItem);
-        editorView.loadFromFile(data.getConnectionConfig().getName(), data.getDatabaseName(), data.getName());
+        editorView.setPath(data.getPath());
+        editorView.loadFromFile(data.getConnectionConfig().getName(), data.getDatabaseName(), data.getName(), data.getPath());
 
         Tab tab = new Tab(data.getName());
         Image tabIcon = module.getQueryIcon();
@@ -2048,15 +2116,14 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             if (name.trim().isEmpty()) return;
             String newName = name.trim();
 
-            String oldSanitizedConn = sanitizeForFs(data.getConnectionConfig().getName());
-            String oldSanitizedDb = sanitizeForFs(data.getDatabaseName());
-            String oldSanitizedQuery = sanitizeForFs(data.getName());
             String newSanitizedQuery = sanitizeForFs(newName);
 
-            java.nio.file.Path oldFile = Paths.get(System.getProperty("user.home") + "/.tomato",
-                    oldSanitizedConn, oldSanitizedDb, "query", oldSanitizedQuery + ".sql");
-            java.nio.file.Path newFile = Paths.get(System.getProperty("user.home") + "/.tomato",
-                    oldSanitizedConn, oldSanitizedDb, "query", newSanitizedQuery + ".sql");
+            java.nio.file.Path oldFile = SqlEditorView.resolveQueryDir(
+                    data.getConnectionConfig().getName(), data.getDatabaseName(), data.getPath())
+                    .resolve(sanitizeForFs(data.getName()) + ".sql");
+            java.nio.file.Path newFile = SqlEditorView.resolveQueryDir(
+                    data.getConnectionConfig().getName(), data.getDatabaseName(), data.getPath())
+                    .resolve(newSanitizedQuery + ".sql");
 
             try {
                 if (Files.exists(oldFile)) {
@@ -2070,7 +2137,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             }
 
             queryItem.setValue(newName);
-            DatabaseNodeData newData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, newName, data.getConnectionConfig(), data.getDatabaseName());
+            DatabaseNodeData newData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, newName, data.getConnectionConfig(), data.getDatabaseName(), null, data.getPath());
             module.getDbNodeDataMap().remove(queryItem);
             module.getDbNodeDataMap().put(queryItem, newData);
         });
@@ -2083,7 +2150,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         confirm.setHeaderText("确定要删除查询 \"" + data.getName() + "\" 吗？");
         confirm.showAndWait().ifPresent(response -> {
             if (response == ButtonType.OK) {
-                SqlEditorView.cleanupQueryFile(data.getConnectionConfig().getName(), data.getDatabaseName(), data.getName());
+                SqlEditorView.cleanupQueryFile(data.getConnectionConfig().getName(), data.getDatabaseName(), data.getName(), data.getPath());
                 module.getDbNodeDataMap().remove(queryItem);
                 queryItem.getParent().getChildren().remove(queryItem);
             }
@@ -2098,16 +2165,14 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         if (stage == null) return;
 
         RestoreDialog dialog = new RestoreDialog(stage,
-                data.getConnectionConfig(), data.getDatabaseName(), data.getName());
+                data.getConnectionConfig(), data.getDatabaseName(), data.getName(), data.getPath());
         dialog.showAndWait();
     }
 
     /** 打开备份所在目录 */
     public void handleOpenBackupDir(DatabaseNodeData data) {
-        String sanitizedConn = sanitizeForFs(data.getConnectionConfig().getName());
-        String sanitizedDb = sanitizeForFs(data.getDatabaseName());
-        java.nio.file.Path backupDir = Paths.get(System.getProperty("user.home") + "/.tomato",
-                sanitizedConn, sanitizedDb, "backup");
+        java.nio.file.Path backupDir = BackupService.resolveBackupDir(
+                data.getConnectionConfig().getName(), data.getDatabaseName(), data.getPath());
         java.nio.file.Path backupFile = backupDir.resolve(data.getName() + ".nb3");
 
         new Thread(() -> {
@@ -2154,10 +2219,10 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             String newName = name.trim();
             try {
                 BackupService.renameBackupFile(data.getConnectionConfig().getName(),
-                        data.getDatabaseName(), data.getName(), newName);
+                        data.getDatabaseName(), data.getName(), newName, data.getPath());
                 backupItem.setValue(newName);
                 DatabaseNodeData newData = new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP,
-                        newName, data.getConnectionConfig(), data.getDatabaseName());
+                        newName, data.getConnectionConfig(), data.getDatabaseName(), null, data.getPath());
                 module.getDbNodeDataMap().remove(backupItem);
                 module.getDbNodeDataMap().put(backupItem, newData);
             } catch (Exception e) {
@@ -2178,9 +2243,185 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         confirm.showAndWait().ifPresent(response -> {
             if (response == ButtonType.OK) {
                 BackupService.deleteBackupFile(data.getConnectionConfig().getName(),
-                        data.getDatabaseName(), data.getName());
+                        data.getDatabaseName(), data.getName(), data.getPath());
                 module.getDbNodeDataMap().remove(backupItem);
                 backupItem.getParent().getChildren().remove(backupItem);
+            }
+        });
+    }
+
+    // ==================== 查询/备份目录节点 ====================
+
+    /** 新建查询目录：在父目录（QUERY_FOLDER 或 QUERY_DIR）下创建子目录 */
+    public void handleNewQueryDir(TreeItem<String> folderItem, DatabaseNodeData data) {
+        TextInputDialog dialog = new TextInputDialog("新目录");
+        dialog.setTitle("新建目录");
+        dialog.setHeaderText(null);
+        dialog.setContentText("目录名称：");
+        dialog.showAndWait().ifPresent(name -> {
+            if (name.trim().isEmpty()) return;
+            String dirName = name.trim();
+            String parentPath = data.getPath();
+            String dirPath = (parentPath == null || parentPath.isEmpty()) ? dirName : parentPath + "/" + dirName;
+
+            try {
+                Files.createDirectories(SqlEditorView.resolveQueryDir(
+                        data.getConnectionConfig().getName(), data.getDatabaseName(), dirPath));
+            } catch (IOException e) {
+                Alert err = new Alert(Alert.AlertType.ERROR);
+                err.setTitle("创建目录失败");
+                err.setHeaderText(null);
+                err.setContentText(e.getMessage());
+                err.showAndWait();
+                return;
+            }
+
+            TreeItem<String> dirItem = new TreeItem<>(dirName);
+            DatabaseNodeData dirData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_DIR, dirName,
+                    data.getConnectionConfig(), data.getDatabaseName(), null, dirPath);
+            dirItem.setGraphic(module.getDbNodeIcon(dirData));
+            module.getDbNodeDataMap().put(dirItem, dirData);
+            folderItem.getChildren().add(0, dirItem);
+            folderItem.setExpanded(true);
+        });
+    }
+
+    /** 新建备份目录 */
+    public void handleNewBackupDir(TreeItem<String> folderItem, DatabaseNodeData data) {
+        TextInputDialog dialog = new TextInputDialog("新目录");
+        dialog.setTitle("新建目录");
+        dialog.setHeaderText(null);
+        dialog.setContentText("目录名称：");
+        dialog.showAndWait().ifPresent(name -> {
+            if (name.trim().isEmpty()) return;
+            String dirName = name.trim();
+            String parentPath = data.getPath();
+            String dirPath = (parentPath == null || parentPath.isEmpty()) ? dirName : parentPath + "/" + dirName;
+
+            try {
+                Files.createDirectories(BackupService.resolveBackupDir(
+                        data.getConnectionConfig().getName(), data.getDatabaseName(), dirPath));
+            } catch (IOException e) {
+                Alert err = new Alert(Alert.AlertType.ERROR);
+                err.setTitle("创建目录失败");
+                err.setHeaderText(null);
+                err.setContentText(e.getMessage());
+                err.showAndWait();
+                return;
+            }
+
+            TreeItem<String> dirItem = new TreeItem<>(dirName);
+            DatabaseNodeData dirData = new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_DIR, dirName,
+                    data.getConnectionConfig(), data.getDatabaseName(), null, dirPath);
+            dirItem.setGraphic(module.getDbNodeIcon(dirData));
+            module.getDbNodeDataMap().put(dirItem, dirData);
+            folderItem.getChildren().add(0, dirItem);
+            folderItem.setExpanded(true);
+        });
+    }
+
+    /** 重命名查询目录：移动磁盘目录并刷新子节点 */
+    public void handleRenameQueryDir(TreeItem<String> dirItem, DatabaseNodeData data) {
+        TextInputDialog dialog = new TextInputDialog(data.getName());
+        dialog.setTitle("重命名目录");
+        dialog.setHeaderText(null);
+        dialog.setContentText("新名称：");
+        dialog.showAndWait().ifPresent(name -> {
+            if (name.trim().isEmpty()) return;
+            String newName = name.trim();
+            String currentPath = data.getPath();
+            int lastSlash = currentPath.lastIndexOf('/');
+            String parentOf = lastSlash < 0 ? "" : currentPath.substring(0, lastSlash);
+            String newPath = parentOf.isEmpty() ? newName : parentOf + "/" + newName;
+
+            try {
+                java.nio.file.Path oldDir = SqlEditorView.resolveQueryDir(
+                        data.getConnectionConfig().getName(), data.getDatabaseName(), currentPath);
+                java.nio.file.Path newDir = SqlEditorView.resolveQueryDir(
+                        data.getConnectionConfig().getName(), data.getDatabaseName(), newPath);
+                Files.move(oldDir, newDir);
+            } catch (IOException e) {
+                Alert err = new Alert(Alert.AlertType.ERROR);
+                err.setTitle("重命名失败");
+                err.setHeaderText(null);
+                err.setContentText(e.getMessage());
+                err.showAndWait();
+                return;
+            }
+
+            dirItem.setValue(newName);
+            DatabaseNodeData newData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY_DIR, newName,
+                    data.getConnectionConfig(), data.getDatabaseName(), null, newPath);
+            module.getDbNodeDataMap().remove(dirItem);
+            module.getDbNodeDataMap().put(dirItem, newData);
+            refreshDbNode(dirItem, newData);
+        });
+    }
+
+    /** 重命名备份目录 */
+    public void handleRenameBackupDir(TreeItem<String> dirItem, DatabaseNodeData data) {
+        TextInputDialog dialog = new TextInputDialog(data.getName());
+        dialog.setTitle("重命名目录");
+        dialog.setHeaderText(null);
+        dialog.setContentText("新名称：");
+        dialog.showAndWait().ifPresent(name -> {
+            if (name.trim().isEmpty()) return;
+            String newName = name.trim();
+            String currentPath = data.getPath();
+            int lastSlash = currentPath.lastIndexOf('/');
+            String parentOf = lastSlash < 0 ? "" : currentPath.substring(0, lastSlash);
+            String newPath = parentOf.isEmpty() ? newName : parentOf + "/" + newName;
+
+            try {
+                java.nio.file.Path oldDir = BackupService.resolveBackupDir(
+                        data.getConnectionConfig().getName(), data.getDatabaseName(), currentPath);
+                java.nio.file.Path newDir = BackupService.resolveBackupDir(
+                        data.getConnectionConfig().getName(), data.getDatabaseName(), newPath);
+                Files.move(oldDir, newDir);
+            } catch (IOException e) {
+                Alert err = new Alert(Alert.AlertType.ERROR);
+                err.setTitle("重命名失败");
+                err.setHeaderText(null);
+                err.setContentText(e.getMessage());
+                err.showAndWait();
+                return;
+            }
+
+            dirItem.setValue(newName);
+            DatabaseNodeData newData = new DatabaseNodeData(DatabaseNodeData.NodeType.BACKUP_DIR, newName,
+                    data.getConnectionConfig(), data.getDatabaseName(), null, newPath);
+            module.getDbNodeDataMap().remove(dirItem);
+            module.getDbNodeDataMap().put(dirItem, newData);
+            refreshDbNode(dirItem, newData);
+        });
+    }
+
+    /** 删除查询目录：递归删除磁盘目录与所有内容 */
+    public void handleDeleteQueryDir(TreeItem<String> dirItem, DatabaseNodeData data) {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("删除目录");
+        confirm.setHeaderText("确定要删除目录 \"" + data.getName() + "\" 及其所有内容吗？");
+        confirm.showAndWait().ifPresent(response -> {
+            if (response == ButtonType.OK) {
+                SqlEditorView.deleteQueryDir(data.getConnectionConfig().getName(),
+                        data.getDatabaseName(), data.getPath());
+                module.removeDbNodeDataRecursive(dirItem);
+                dirItem.getParent().getChildren().remove(dirItem);
+            }
+        });
+    }
+
+    /** 删除备份目录 */
+    public void handleDeleteBackupDir(TreeItem<String> dirItem, DatabaseNodeData data) {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("删除目录");
+        confirm.setHeaderText("确定要删除目录 \"" + data.getName() + "\" 及其所有内容吗？");
+        confirm.showAndWait().ifPresent(response -> {
+            if (response == ButtonType.OK) {
+                BackupService.deleteBackupDir(data.getConnectionConfig().getName(),
+                        data.getDatabaseName(), data.getPath());
+                module.removeDbNodeDataRecursive(dirItem);
+                dirItem.getParent().getChildren().remove(dirItem);
             }
         });
     }
