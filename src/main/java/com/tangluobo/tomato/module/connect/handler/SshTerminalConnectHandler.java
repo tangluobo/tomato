@@ -84,6 +84,18 @@ public class SshTerminalConnectHandler implements ConnectHandler {
         module.getTerminalTabPane().getSelectionModel().select(tab);
         module.showTerminalView();
 
+        // 注入跳板隧道解析回调：重连时判断是否重建隧道。
+        // 先 peek 复用活跃隧道（不改变引用计数，避免误断共享隧道）；
+        // 隧道已失效则 release 旧引用并 resolve 重建（引用计数保持平衡，未使用隧道时两步均为 -1）。
+        terminalPane.setTunnelResolver(() -> {
+            int p = SshTunnelManager.peek(config);
+            if (p != -1) {
+                return p;
+            }
+            SshTunnelManager.release(config);
+            return SshTunnelManager.resolve(config);
+        });
+
         doConnect(module, terminalPane, config);
     }
 
