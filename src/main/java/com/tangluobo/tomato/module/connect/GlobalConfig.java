@@ -22,6 +22,8 @@ public class GlobalConfig {
     private String tableFontName = "Sans Serif";
     private int tableFontSize = 10;
 
+    private boolean sidebarVisible = true;
+
     public int getScrollbackLines() {
         return scrollbackLines;
     }
@@ -44,6 +46,14 @@ public class GlobalConfig {
 
     public void setTableFontSize(int tableFontSize) {
         this.tableFontSize = tableFontSize;
+    }
+
+    public boolean isSidebarVisible() {
+        return sidebarVisible;
+    }
+
+    public void setSidebarVisible(boolean sidebarVisible) {
+        this.sidebarVisible = sidebarVisible;
     }
 
     private static GlobalConfig instance;

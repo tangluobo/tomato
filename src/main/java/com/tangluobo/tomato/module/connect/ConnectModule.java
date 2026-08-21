@@ -1700,7 +1700,7 @@ public class ConnectModule implements Module {
     }
 
     /** 在右侧内容区以可关闭标签页形式打开"设置"界面 */
-    public void openSettingsTab() {
+    public void openSettingsTab(java.util.function.Consumer<Boolean> onSidebarToggle) {
         if (!ensureTabPaneInstalled()) return;
 
         // 避免重复打开
@@ -1733,6 +1733,15 @@ public class ConnectModule implements Module {
         VBox settings = new VBox(15);
         settings.setPadding(new Insets(20, 0, 0, 0));
 
+        CheckBox sidebarVisible = new CheckBox("开启侧边栏");
+        sidebarVisible.setStyle("-fx-font-size: 14px;");
+        sidebarVisible.setSelected(GlobalConfig.getInstance().isSidebarVisible());
+        sidebarVisible.selectedProperty().addListener((obs, wasSelected, isNowSelected) -> {
+            if (onSidebarToggle != null) {
+                onSidebarToggle.accept(isNowSelected);
+            }
+        });
+
         CheckBox autoStart = new CheckBox("开机自动启动");
         autoStart.setStyle("-fx-font-size: 14px;");
 
@@ -1746,7 +1755,7 @@ public class ConnectModule implements Module {
         Button saveBtn = new Button("保存设置");
         saveBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-width: 100px;");
 
-        settings.getChildren().addAll(autoStart, autoUpdate, themeField, saveBtn);
+        settings.getChildren().addAll(sidebarVisible, autoStart, autoUpdate, themeField, saveBtn);
         settingsRoot.getChildren().addAll(title, settings);
 
         settingsTab.setContent(settingsRoot);

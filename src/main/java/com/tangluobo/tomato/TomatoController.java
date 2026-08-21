@@ -2,6 +2,7 @@ package com.tangluobo.tomato;
 
 import com.tangluobo.tomato.module.Module;
 import com.tangluobo.tomato.module.connect.ConnectModule;
+import com.tangluobo.tomato.module.connect.GlobalConfig;
 import com.tangluobo.tomato.module.server.ServerModule;
 import com.tangluobo.tomato.module.settings.SettingsModule;
 import com.tangluobo.tomato.module.tools.ToolsModule;
@@ -10,7 +11,6 @@ import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
-import javafx.scene.control.ToggleButton;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseEvent;
@@ -57,10 +57,6 @@ public class TomatoController {
     private Button settingsBtn;
     @FXML
     private ImageView settingsIcon;
-    @FXML
-    private ToggleButton sidebarToggleBtn;
-    @FXML
-    private ImageView sidebarToggleIcon;
 
     private double xOffset = 0;
     private double yOffset = 0;
@@ -208,7 +204,7 @@ public class TomatoController {
         }
         Module module = moduleCache.get("connect");
         if (module instanceof ConnectModule cm) {
-            cm.openSettingsTab();
+            cm.openSettingsTab(show -> applySidebarVisible(show, true));
         }
     }
 
@@ -218,15 +214,18 @@ public class TomatoController {
         stage.setIconified(true);
     }
 
-    @FXML
-    protected void onSidebarToggle() {
-        boolean show = sidebarToggleBtn.isSelected();
+    /**
+     * 应用侧边栏显隐状态：同步 navPane 可见性，并可持久化到全局配置。
+     */
+    private void applySidebarVisible(boolean show, boolean persist) {
         navPane.setVisible(show);
         navPane.setManaged(show);
-        if (show) {
-            sidebarToggleBtn.setStyle("-fx-background-color: #e0e0e0; -fx-pref-width: 16px; -fx-pref-height: 16px; -fx-padding: 0 6px 0 6px; -fx-background-radius: 4px;");
-        } else {
-            sidebarToggleBtn.setStyle("-fx-background-color: transparent; -fx-pref-width: 16px; -fx-pref-height: 16px; -fx-padding: 0 6px 0 6px; -fx-background-radius: 4px;");
+        if (persist) {
+            GlobalConfig cfg = GlobalConfig.getInstance();
+            if (cfg.isSidebarVisible() != show) {
+                cfg.setSidebarVisible(show);
+                cfg.save();
+            }
         }
     }
 
@@ -314,19 +313,13 @@ public class TomatoController {
 
     @FXML
     public void initialize() {
-//        Image sideBarImage = new Image(getClass().getResourceAsStream("/images/side_bar.png"));
-//        if (sideBarImage != null) {
-//            sidebarToggleIcon.setImage(sideBarImage);
-//        }
-
         Image settingsImage = new Image(getClass().getResourceAsStream("/images/settings.png"));
         if (settingsImage != null && !settingsImage.isError()) {
             settingsIcon.setImage(settingsImage);
         }
 
-        // 侧边栏开关默认关闭，隐藏最左侧导航栏
-        navPane.setVisible(false);
-        navPane.setManaged(false);
+        // 侧边栏显隐从全局配置读取（默认显示）
+        applySidebarVisible(GlobalConfig.getInstance().isSidebarVisible(), false);
 
         divider2.setViewOrder(-1);
         divider2.setMouseTransparent(false);
