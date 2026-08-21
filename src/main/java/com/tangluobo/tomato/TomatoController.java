@@ -54,6 +54,10 @@ public class TomatoController {
     @FXML
     private Button closeBtn;
     @FXML
+    private Button settingsBtn;
+    @FXML
+    private ImageView settingsIcon;
+    @FXML
     private ToggleButton sidebarToggleBtn;
     @FXML
     private ImageView sidebarToggleIcon;
@@ -197,6 +201,18 @@ public class TomatoController {
     }
 
     @FXML
+    protected void onSettings() {
+        // 确保连接模块已加载（terminalTabPane 在 connect 模块的 loadContent 中创建）
+        if (!"connect".equals(currentModuleId)) {
+            loadModule("connect");
+        }
+        Module module = moduleCache.get("connect");
+        if (module instanceof ConnectModule cm) {
+            cm.openSettingsTab();
+        }
+    }
+
+    @FXML
     protected void onMinimize() {
         Stage stage = (Stage) rootPane.getScene().getWindow();
         stage.setIconified(true);
@@ -303,6 +319,11 @@ public class TomatoController {
 //            sidebarToggleIcon.setImage(sideBarImage);
 //        }
 
+        Image settingsImage = new Image(getClass().getResourceAsStream("/images/settings.png"));
+        if (settingsImage != null && !settingsImage.isError()) {
+            settingsIcon.setImage(settingsImage);
+        }
+
         // 侧边栏开关默认关闭，隐藏最左侧导航栏
         navPane.setVisible(false);
         navPane.setManaged(false);
@@ -365,6 +386,8 @@ public class TomatoController {
         minimizeBtn.setOnMouseExited(e -> minimizeBtn.setStyle(minMaxNormalStyle));
         maximizeBtn.setOnMouseEntered(e -> maximizeBtn.setStyle(minMaxHoverStyle));
         maximizeBtn.setOnMouseExited(e -> maximizeBtn.setStyle(minMaxNormalStyle));
+        settingsBtn.setOnMouseEntered(e -> settingsBtn.setStyle(minMaxHoverStyle));
+        settingsBtn.setOnMouseExited(e -> settingsBtn.setStyle(minMaxNormalStyle));
 
         titleBar.setOnMouseClicked(event -> {
             if (event.getClickCount() == 2) {

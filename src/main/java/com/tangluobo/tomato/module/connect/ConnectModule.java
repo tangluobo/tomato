@@ -1699,6 +1699,61 @@ public class ConnectModule implements Module {
         terminalTabPane.getSelectionModel().select(toolTab);
     }
 
+    /** 在右侧内容区以可关闭标签页形式打开"设置"界面 */
+    public void openSettingsTab() {
+        if (!ensureTabPaneInstalled()) return;
+
+        // 避免重复打开
+        for (Tab t : terminalTabPane.getTabs()) {
+            if ("__settings__".equals(t.getUserData())) {
+                terminalTabPane.getSelectionModel().select(t);
+                return;
+            }
+        }
+
+        Tab settingsTab = new Tab("设置");
+        settingsTab.setUserData("__settings__");
+
+        // 图标
+        try {
+            ImageView icon = new ImageView(new Image(getClass().getResourceAsStream("/images/settings.png")));
+            icon.setFitWidth(16);
+            icon.setFitHeight(16);
+            settingsTab.setGraphic(createFixedSizeGraphic(icon));
+        } catch (Exception ignored) {}
+
+        // 设置内容
+        VBox settingsRoot = new VBox();
+        settingsRoot.setStyle("-fx-background-color: #ffffff; -fx-padding: 20;");
+        settingsRoot.setSpacing(15);
+
+        Label title = new Label("系统设置");
+        title.setStyle("-fx-font-size: 20px; -fx-font-weight: bold;");
+
+        VBox settings = new VBox(15);
+        settings.setPadding(new Insets(20, 0, 0, 0));
+
+        CheckBox autoStart = new CheckBox("开机自动启动");
+        autoStart.setStyle("-fx-font-size: 14px;");
+
+        CheckBox autoUpdate = new CheckBox("自动检查更新");
+        autoUpdate.setStyle("-fx-font-size: 14px;");
+
+        TextField themeField = new TextField();
+        themeField.setPromptText("主题颜色");
+        themeField.setStyle("-fx-background-color: #f0f0f0; -fx-border-radius: 6px; -fx-background-radius: 6px; -fx-padding: 8 12;");
+
+        Button saveBtn = new Button("保存设置");
+        saveBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-width: 100px;");
+
+        settings.getChildren().addAll(autoStart, autoUpdate, themeField, saveBtn);
+        settingsRoot.getChildren().addAll(title, settings);
+
+        settingsTab.setContent(settingsRoot);
+        terminalTabPane.getTabs().add(settingsTab);
+        terminalTabPane.getSelectionModel().select(settingsTab);
+    }
+
     /** 刷新主机节点 dispatcher：根据连接类型分发到对应处理器 */
     public void refreshDbHost(TreeItem<String> hostItem, ConnectionConfig config) {
         ConnectType type = config.getType();

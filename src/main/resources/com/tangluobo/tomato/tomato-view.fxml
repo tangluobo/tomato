@@ -75,6 +75,12 @@
                     <ImageView fx:id="sidebarToggleIcon" fitWidth="11" fitHeight="11" preserveRatio="true"/>
                   </graphic>
                 </ToggleButton>
+                <Button fx:id="settingsBtn" style="-fx-background-color: transparent; -fx-background-radius: 0; -fx-pref-width: 30px; -fx-pref-height: 26px; -fx-padding: 0 0px 0 0;"
+                        onAction="#onSettings">
+                  <graphic>
+                    <ImageView fx:id="settingsIcon" fitWidth="18" fitHeight="18" preserveRatio="true"/>
+                  </graphic>
+                </Button>
                 <Button fx:id="minimizeBtn" style="-fx-background-color: transparent; -fx-background-radius: 0; -fx-pref-width: 30px; -fx-pref-height: 26px; -fx-padding: 0 0px 0 0;"
                         onAction="#onMinimize">
                   <graphic>
