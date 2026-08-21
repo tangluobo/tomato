@@ -1905,32 +1905,20 @@ public class TableStructureView extends BorderPane {
             return;
         }
 
-        statusLabel.setText("正在保存变更（" + (alterStatements.size() + (tableCommentSql != null ? 1 : 0)) + " 条SQL）...");
+        statusLabel.setText("正在保存变更（" + (alterStatements.size() + (tableCommentSql != null ? 1 : 0)) + " 条SQL，事务模式）...");
         String finalTableCommentSql = tableCommentSql;
         new Thread(() -> {
             java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
             connLock.lock();
             try {
-                List<String> errors = new ArrayList<>();
-                // 执行字段/主键ALTER
-                for (String sql : alterStatements) {
-                    try {
-                        DatabaseService.executeDdl(config, databaseName, sql);
-                    } catch (Exception e) {
-                        errors.add(sql + " => " + e.getMessage());
-                    }
-                }
-                // 执行表注释
-                if (finalTableCommentSql != null) {
-                    try {
-                        DatabaseService.executeDdl(config, databaseName, finalTableCommentSql);
-                    } catch (Exception e) {
-                        errors.add("表注释: " + e.getMessage());
-                    }
-                }
+                // 收集所有SQL到同一事务执行：任一失败则自动回滚，DB状态保持与保存前一致，
+                // 因此失败时无需刷新表结构，可保留用户当前编辑内容，允许在原有基础上修改后重试。
+                List<String> allSqls = new ArrayList<>(alterStatements);
+                if (finalTableCommentSql != null) allSqls.add(finalTableCommentSql);
 
-                Platform.runLater(() -> {
-                    if (errors.isEmpty()) {
+                try {
+                    DatabaseService.executeDdlsInTransaction(config, databaseName, allSqls);
+                    Platform.runLater(() -> {
                         // 更新原始注释缓存（兼容旧逻辑）
                         int commentIdx = columnTitles != null ? columnTitles.indexOf("注释") : -1;
                         int nameIdx = columnTitles != null ? columnTitles.indexOf("字段名") : -1;
@@ -1948,21 +1936,20 @@ public class TableStructureView extends BorderPane {
                         clearDirty();
                         if (sqlPreviewLoaded) loadSqlPreview();
                         statusLabel.setText("变更已保存");
-                    } else {
-                        // 部分失败：已成功执行的ALTER已修改DB，但 originalColumnsSnapshot 未刷新。
-                        // 必须重新加载表结构以同步快照，否则下次保存会重复执行已应用的变更
-                        // （如重复ADD COLUMN导致"Duplicate column name"）。
-                        statusLabel.setText("保存部分失败，正在刷新表结构...");
-                        Alert alert = new Alert(Alert.AlertType.WARNING);
+                    });
+                } catch (Exception e) {
+                    // 事务已回滚，DB状态与保存前完全一致，无需刷新表结构。
+                    // 不调用 clearDirty()/loadStructure()，保留用户编辑内容以便修改后重试。
+                    Platform.runLater(() -> {
+                        statusLabel.setText("保存失败（已回滚，可在原编辑基础上修改后重试）");
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
                         alert.setTitle("保存表结构");
-                        alert.setHeaderText("部分变更保存失败（已成功执行的变更已生效）");
-                        alert.setContentText(String.join("\n", errors));
+                        alert.setHeaderText("保存失败，所有变更已回滚（DB未发生变更）");
+                        alert.setContentText(e.getMessage());
                         DialogPositionUtil.centerOnOwner(alert, this);
                         alert.showAndWait();
-                        // 重新加载表结构，使 originalColumnsSnapshot 与DB实际状态一致
-                        loadStructure();
-                    }
-                });
+                    });
+                }
             } finally {
                 connLock.unlock();
             }

@@ -2624,6 +2624,41 @@ public class DatabaseService {
     }
 
     /**
+     * 在同一事务中执行多条DDL语句（MySQL/Oracle 主连接）。
+     * 全部成功才commit；任意一条失败则rollback，保证原子性。
+     * 注意：调用方需自行管理使用锁（acquireUsageLock），避免与查询线程并发使用同一连接。
+     */
+    public static void executeDdlsInTransaction(ConnectionConfig config, List<String> sqls) throws Exception {
+        executeDdlsInTransaction(config, null, sqls);
+    }
+
+    /**
+     * 在同一事务中执行多条DDL语句（按数据库类型选连接：PostgreSQL绑定到具体数据库，其他用主连接）。
+     * 全部成功才commit；任意一条失败则rollback，保证原子性。
+     * 注意：调用方需自行管理使用锁（acquireUsageLock），避免与查询线程并发使用同一连接。
+     */
+    public static void executeDdlsInTransaction(ConnectionConfig config, String databaseName, List<String> sqls) throws Exception {
+        if (sqls == null || sqls.isEmpty()) return;
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(config, databaseName)
+                : getConnection(config);
+        boolean originalAutoCommit = conn.getAutoCommit();
+        try (Statement stmt = conn.createStatement()) {
+            conn.setAutoCommit(false);
+            for (String sql : sqls) {
+                if (sql == null || sql.trim().isEmpty()) continue;
+                stmt.executeUpdate(sql);
+            }
+            conn.commit();
+        } catch (Exception e) {
+            try { conn.rollback(); } catch (Exception ignored) {}
+            throw e;
+        } finally {
+            try { conn.setAutoCommit(originalAutoCommit); } catch (Exception ignored) {}
+        }
+    }
+
+    /**
      * 创建新表：根据字段列表、选项和注释生成 CREATE TABLE 并执行
      * @param columns 字段列表，每个Map包含：字段名、类型、长度、非空、主键、自增、默认值、注释、
      *                无符号、填充零、字符集、排序规则、键长度、二进制（后几项可选，MySQL专用）
