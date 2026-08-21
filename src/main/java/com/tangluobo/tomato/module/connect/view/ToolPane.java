@@ -7,6 +7,7 @@ import com.tangluobo.tomato.module.tools.HostsFilePane;
 import com.tangluobo.tomato.module.tools.ImageBackgroundRemoverPane;
 import com.tangluobo.tomato.module.tools.ImageFormatConverterPane;
 import com.tangluobo.tomato.module.tools.JsonToolPane;
+import com.tangluobo.tomato.module.tools.PortMappingPane;
 import com.tangluobo.tomato.module.tools.ResourceExtractorPane;
 import com.tangluobo.tomato.module.tools.TraeSessionPane;
 import javafx.geometry.Insets;
@@ -57,6 +58,7 @@ public class ToolPane extends BorderPane {
             case IMAGE_BACKGROUND_REMOVER -> pane = new ImageBackgroundRemoverPane();
             case TRAE_SESSION -> pane = new TraeSessionPane();
             case RESOURCE_EXTRACTOR -> pane = new ResourceExtractorPane();
+            case PORT_MAPPING -> pane = new PortMappingPane();
             default -> {
                 return buildPlaceholder();
             }

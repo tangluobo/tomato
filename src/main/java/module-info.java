@@ -80,7 +80,7 @@ module tomato {
     exports com.tangluobo.tomato.module.settings;
     opens com.tangluobo.tomato.module.settings to javafx.fxml;
     exports com.tangluobo.tomato.module.tools;
-    opens com.tangluobo.tomato.module.tools to javafx.fxml;
+    opens com.tangluobo.tomato.module.tools to javafx.fxml, com.google.gson;
     exports com.tangluobo.tomato.module.tools.extractor;
     opens com.tangluobo.tomato.module.tools.extractor to javafx.fxml;
     exports com.tangluobo.tomato.module.tools.server;
