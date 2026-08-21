@@ -1722,16 +1722,21 @@ public class ConnectModule implements Module {
             settingsTab.setGraphic(createFixedSizeGraphic(icon));
         } catch (Exception ignored) {}
 
-        // 设置内容
-        VBox settingsRoot = new VBox();
-        settingsRoot.setStyle("-fx-background-color: #ffffff; -fx-padding: 20;");
-        settingsRoot.setSpacing(15);
+        // 设置内容：内嵌 TabPane，包含"系统设置"和"SSH终端"两个子标签页
+        TabPane settingsTabPane = new TabPane();
+        settingsTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        settingsTabPane.setStyle("-fx-padding: 0; -fx-background-color: #ffffff;");
 
-        Label title = new Label("系统设置");
-        title.setStyle("-fx-font-size: 20px; -fx-font-weight: bold;");
+        // ===== 系统设置 Tab =====
+        VBox systemRoot = new VBox();
+        systemRoot.setStyle("-fx-background-color: #ffffff; -fx-padding: 20;");
+        systemRoot.setSpacing(15);
 
-        VBox settings = new VBox(15);
-        settings.setPadding(new Insets(20, 0, 0, 0));
+        Label systemTitle = new Label("系统设置");
+        systemTitle.setStyle("-fx-font-size: 20px; -fx-font-weight: bold;");
+
+        VBox systemSettings = new VBox(15);
+        systemSettings.setPadding(new Insets(20, 0, 0, 0));
 
         CheckBox sidebarVisible = new CheckBox("开启侧边栏");
         sidebarVisible.setStyle("-fx-font-size: 14px;");
@@ -1755,12 +1760,116 @@ public class ConnectModule implements Module {
         Button saveBtn = new Button("保存设置");
         saveBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-width: 100px;");
 
-        settings.getChildren().addAll(sidebarVisible, autoStart, autoUpdate, themeField, saveBtn);
-        settingsRoot.getChildren().addAll(title, settings);
+        systemSettings.getChildren().addAll(sidebarVisible, autoStart, autoUpdate, themeField, saveBtn);
+        systemRoot.getChildren().addAll(systemTitle, systemSettings);
 
-        settingsTab.setContent(settingsRoot);
+        Tab systemTab = new Tab("系统设置");
+        systemTab.setContent(systemRoot);
+        settingsTabPane.getTabs().add(systemTab);
+
+        // ===== SSH终端 Tab =====
+        VBox sshRoot = new VBox();
+        sshRoot.setStyle("-fx-background-color: #ffffff; -fx-padding: 20;");
+        sshRoot.setSpacing(15);
+
+        Label sshTitle = new Label("SSH终端");
+        sshTitle.setStyle("-fx-font-size: 20px; -fx-font-weight: bold;");
+
+        GridPane sshGrid = new GridPane();
+        sshGrid.setHgap(10);
+        sshGrid.setVgap(12);
+        sshGrid.setPadding(new Insets(20, 0, 0, 0));
+
+        Label fontNameLabel = new Label("字体名称");
+        fontNameLabel.setStyle("-fx-font-size: 14px;");
+        GridPane.setConstraints(fontNameLabel, 0, 0);
+
+        ComboBox<String> fontNameCombo = new ComboBox<>();
+        fontNameCombo.setEditable(true);
+        fontNameCombo.setPrefWidth(220);
+        // 填充系统等宽字体 + 通用字体
+        fontNameCombo.getItems().addAll(
+                javafx.scene.text.Font.getFamilies().stream()
+                        .filter(f -> {
+                            String lf = f.toLowerCase();
+                            return lf.contains("mono") || lf.contains("consol")
+                                    || lf.contains("courier") || lf.contains("menlo")
+                                    || lf.contains("dejavu") || lf.contains("liberation")
+                                    || lf.contains("sarasa") || lf.contains("cascadia")
+                                    || lf.contains("jetbrains");
+                        })
+                        .toList()
+        );
+        fontNameCombo.setValue(GlobalConfig.getInstance().getSshTerminalFontName());
+        GridPane.setConstraints(fontNameCombo, 1, 0);
+
+        Label fontSizeLabel = new Label("字体大小");
+        fontSizeLabel.setStyle("-fx-font-size: 14px;");
+        GridPane.setConstraints(fontSizeLabel, 0, 1);
+
+        Spinner<Integer> fontSizeSpinner = new Spinner<>(6, 48, (int) GlobalConfig.getInstance().getSshTerminalFontSize());
+        fontSizeSpinner.setEditable(true);
+        fontSizeSpinner.setPrefWidth(100);
+        GridPane.setConstraints(fontSizeSpinner, 1, 1);
+
+        sshGrid.getChildren().addAll(fontNameLabel, fontNameCombo, fontSizeLabel, fontSizeSpinner);
+
+        // 预览
+        Label previewLabel = new Label("预览：");
+        previewLabel.setStyle("-fx-font-size: 14px; -fx-padding: 10 0 0 0;");
+        javafx.scene.text.Text previewText = new javafx.scene.text.Text("abcdefghijklmnopqrstuvwxyz 0123456789\nABCDEFGHIJKLMNOPQRSTUVWXYZ ~!@#$%^&*()");
+        previewText.setFont(javafx.scene.text.Font.font(
+                GlobalConfig.getInstance().getSshTerminalFontName(),
+                GlobalConfig.getInstance().getSshTerminalFontSize()));
+        Runnable updatePreview = () -> {
+            String f = fontNameCombo.getValue();
+            Integer s = fontSizeSpinner.getValue();
+            if (f == null || f.isBlank()) f = "monospace";
+            if (s == null || s <= 0) s = 13;
+            previewText.setFont(javafx.scene.text.Font.font(f, s));
+        };
+        fontNameCombo.valueProperty().addListener((obs, o, n) -> updatePreview.run());
+        fontSizeSpinner.valueProperty().addListener((obs, o, n) -> updatePreview.run());
+
+        Button applyFontBtn = new Button("应用并保存");
+        applyFontBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-width: 100px;");
+        applyFontBtn.setOnAction(e -> {
+            String f = fontNameCombo.getValue();
+            Integer s = fontSizeSpinner.getValue();
+            if (f == null || f.isBlank()) f = "monospace";
+            if (s == null || s <= 0) s = 13;
+
+            GlobalConfig cfg = GlobalConfig.getInstance();
+            cfg.setSshTerminalFontName(f);
+            cfg.setSshTerminalFontSize(s);
+            cfg.save();
+
+            // 应用到所有已打开的终端
+            applyTerminalFontToAllTabs(f, s);
+        });
+
+        sshRoot.getChildren().addAll(sshTitle, sshGrid, previewLabel, previewText, applyFontBtn);
+
+        Tab sshTab = new Tab("SSH终端");
+        sshTab.setContent(sshRoot);
+        settingsTabPane.getTabs().add(sshTab);
+
+        settingsTab.setContent(settingsTabPane);
         terminalTabPane.getTabs().add(settingsTab);
         terminalTabPane.getSelectionModel().select(settingsTab);
+    }
+
+    /** 将字体应用到 terminalTabPane 中所有已打开的 SSH/本地终端 */
+    private void applyTerminalFontToAllTabs(String family, double size) {
+        if (terminalTabPane == null) return;
+        for (Tab tab : terminalTabPane.getTabs()) {
+            Object content = tab.getContent();
+            if (content instanceof com.tangluobo.tomato.ssh.SSHTerminalPane pane) {
+                pane.updateTerminalFont(family, size);
+            } else if (content instanceof com.tangluobo.tomato.ssh.LocalTerminalPane pane) {
+                pane.updateTerminalFont(family, size);
+            }
+        }
     }
 
     /** 刷新主机节点 dispatcher：根据连接类型分发到对应处理器 */

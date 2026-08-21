@@ -131,6 +131,9 @@ public class SSHTerminalPane extends BorderPane {
     public SSHTerminalPane() {
         emulator = new TerminalEmulator();
         terminalView = new TerminalView(emulator);
+        // 应用全局配置的终端字体
+        com.tangluobo.tomato.module.connect.GlobalConfig gcfg = com.tangluobo.tomato.module.connect.GlobalConfig.getInstance();
+        terminalView.setTerminalFont(gcfg.getSshTerminalFontName(), gcfg.getSshTerminalFontSize());
 
         // 状态栏
         HBox statusBar = new HBox();
@@ -1220,6 +1223,13 @@ public class SSHTerminalPane extends BorderPane {
      */
     public TerminalView getTerminalView() {
         return terminalView;
+    }
+
+    /**
+     * 更新终端字体并重绘
+     */
+    public void updateTerminalFont(String family, double size) {
+        terminalView.setTerminalFont(family, size);
     }
 
     /**

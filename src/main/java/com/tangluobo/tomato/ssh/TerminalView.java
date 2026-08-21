@@ -32,6 +32,7 @@ public class TerminalView extends Canvas {
     private double charHeight = 16;
     private double fontAscent = 12;
     private String fontFamily = "monospace";
+    private double fontSize = 13;
 
     // 颜色缓存（256色）
     private static final Color[] FX_COLORS = new Color[256];
@@ -246,14 +247,35 @@ public class TerminalView extends Canvas {
     }
 
     private void updateFontMetrics() {
-        gc.setFont(javafx.scene.text.Font.font(fontFamily, 13));
+        gc.setFont(javafx.scene.text.Font.font(fontFamily, fontSize));
         gc.save();
         javafx.scene.text.Text text = new javafx.scene.text.Text("M");
-        text.setFont(javafx.scene.text.Font.font(fontFamily, 13));
+        text.setFont(javafx.scene.text.Font.font(fontFamily, fontSize));
         charWidth = text.getLayoutBounds().getWidth();
-        charHeight = 18;
-        fontAscent = 14;
+        charHeight = Math.max(fontSize + 5, 18);
+        fontAscent = fontSize + 1;
         gc.restore();
+    }
+
+    /** 设置终端字体族与字号，会重新计算字符度量并触发重绘 */
+    public void setTerminalFont(String family, double size) {
+        if (family != null && !family.isBlank()) {
+            this.fontFamily = family;
+        }
+        if (size > 0) {
+            this.fontSize = size;
+        }
+        updateFontMetrics();
+        resize((int) (getWidth() / charWidth), (int) (getHeight() / charHeight));
+        render();
+    }
+
+    public String getFontFamily() {
+        return fontFamily;
+    }
+
+    public double getFontSize() {
+        return fontSize;
     }
 
     private void handleKeyPressed(KeyEvent event) {
@@ -456,7 +478,7 @@ public class TerminalView extends Canvas {
         gc.setFill(defaultBg);
         gc.fillRect(0, 0, getWidth(), getHeight());
 
-        gc.setFont(javafx.scene.text.Font.font(fontFamily, 13));
+        gc.setFont(javafx.scene.text.Font.font(fontFamily, fontSize));
 
         // 复用StringBuilder，避免每个run都创建对象
         StringBuilder segBuf = new StringBuilder(256);

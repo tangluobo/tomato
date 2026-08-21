@@ -61,6 +61,8 @@ public class LocalTerminalPane extends BorderPane {
     public LocalTerminalPane() {
         emulator = new TerminalEmulator();
         terminalView = new TerminalView(emulator);
+        com.tangluobo.tomato.module.connect.GlobalConfig gcfg = com.tangluobo.tomato.module.connect.GlobalConfig.getInstance();
+        terminalView.setTerminalFont(gcfg.getSshTerminalFontName(), gcfg.getSshTerminalFontSize());
 
         // 调试：输出 emulator 接收的原始数据
         // emulator.setDebugWriter(line -> System.err.print("[EMU-RECV] " + line));
@@ -229,6 +231,11 @@ public class LocalTerminalPane extends BorderPane {
     /** 请求终端输入焦点 */
     public void requestTerminalFocus() {
         Platform.runLater(() -> terminalView.requestFocus());
+    }
+
+    /** 更新终端字体并重绘 */
+    public void updateTerminalFont(String family, double size) {
+        terminalView.setTerminalFont(family, size);
     }
 
     /** 设置回滚行数 */
