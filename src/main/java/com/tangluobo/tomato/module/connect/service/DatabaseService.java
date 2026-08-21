@@ -2891,6 +2891,17 @@ public class DatabaseService {
      */
     public static String generateAddColumnSql(ConnectionConfig config, String databaseName, String schemaName,
                                               String tableName, List<String> columnTitles, ObservableList<String> row) {
+        return generateAddColumnSql(config, databaseName, schemaName, tableName, columnTitles, row, null);
+    }
+
+    /**
+     * 生成新增列的ALTER SQL（支持MySQL/PostgreSQL/Oracle）。
+     * @param afterColumnName 在该列之后插入（仅MySQL生效，用于在已有字段中间插入新列）；
+     *                         null或空字符串表示插入到首位（MySQL FIRST）；其他数据库类型忽略该参数（新列固定加到末尾）
+     */
+    public static String generateAddColumnSql(ConnectionConfig config, String databaseName, String schemaName,
+                                              String tableName, List<String> columnTitles, ObservableList<String> row,
+                                              String afterColumnName) {
         String pgSchema = schemaName != null ? schemaName : databaseName;
         String columnName = getValue(row, columnTitles, "字段名");
         String type = getValue(row, columnTitles, "类型");
@@ -2918,6 +2929,12 @@ public class DatabaseService {
                 appendDefaultClause(sql, defaultValue);
                 if (colComment != null && !colComment.isEmpty()) {
                     sql.append(" COMMENT '").append(colComment.replace("'", "''")).append("'");
+                }
+                // 指定插入位置：在已有字段中间插入新列时使用，避免被追加到表末尾
+                if (afterColumnName == null || afterColumnName.isEmpty()) {
+                    sql.append(" FIRST");
+                } else {
+                    sql.append(" AFTER `").append(afterColumnName).append("`");
                 }
             }
             case POSTGRESQL -> {

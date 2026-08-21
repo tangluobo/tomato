@@ -1599,13 +1599,25 @@ public class TableStructureView extends BorderPane {
         }
 
         // 2) 新增 + 修改 + 顺序变更：按当前行顺序处理
-        for (ObservableList<String> cur : currentRows) {
+        for (int i = 0; i < currentRows.size(); i++) {
+            ObservableList<String> cur = currentRows.get(i);
             String colName = nameIdx < cur.size() ? cur.get(nameIdx) : "";
             if (colName == null || colName.isEmpty()) continue;
             if (!originalByName.containsKey(colName)) {
-                // 新增列
+                // 新增列：取 UI 中当前行的前一个有效字段名作为 AFTER 锚点（仅 MySQL 生效），
+                // 确保用户在已有字段中间插入新列时，新列按 UI 顺序插入而非被追加到表末尾。
+                // 事务内按 currentRows 顺序执行：若前一个也是新增列，则先于本列被 ADD，AFTER 引用安全。
+                String afterCol = null;
+                for (int j = i - 1; j >= 0; j--) {
+                    ObservableList<String> prev = currentRows.get(j);
+                    String pn = nameIdx < prev.size() ? prev.get(nameIdx) : "";
+                    if (pn != null && !pn.isEmpty()) {
+                        afterCol = pn;
+                        break;
+                    }
+                }
                 try {
-                    sqlList.add(DatabaseService.generateAddColumnSql(config, databaseName, schemaName, tableName, titles, cur));
+                    sqlList.add(DatabaseService.generateAddColumnSql(config, databaseName, schemaName, tableName, titles, cur, afterCol));
                 } catch (Exception ex) {
                     sqlList.add("-- 生成新增列SQL失败(" + colName + "): " + ex.getMessage());
                 }
