@@ -1,5 +1,6 @@
 package com.tangluobo.tomato.ssh;
 
+import com.tangluobo.tomato.utils.RowSelectorDragSelection;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
@@ -7,15 +8,19 @@ import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ContentDisplay;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.SelectionMode;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
+import javafx.scene.control.TableRow;
+import javafx.scene.control.TablePosition;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.Tooltip;
@@ -23,6 +28,8 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -30,6 +37,7 @@ import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
+import javafx.scene.shape.Polygon;
 import javafx.stage.Stage;
 
 import java.io.BufferedReader;
@@ -40,10 +48,12 @@ import java.util.List;
 
 /**
  * Docker 容器管理面板
- * 列出远程服务器上的 Docker 容器，支持启动/停止/重启/删除/查看日志等操作
- * 结构与 PortPanel 一致：顶部工具栏 + 容器表格 + 右键菜单 + 底部状态栏
+ * 列出远程服务器上的 Docker 容器，支持启动/停止/重启/删除/强制删除/查看日志等操作
+ * 结构与 PortPanel 一致：顶部工具栏 + 容器表格（含行选择器列）+ 右键菜单 + 底部状态栏
  */
 public class DockerPanel extends BorderPane {
+
+    private static final String ROW_SELECTOR_COL = "__ROW_SELECTOR__";
 
     private final SSHSession sshSession;
     private final TableView<ContainerItem> containerTable;
@@ -96,7 +106,90 @@ public class DockerPanel extends BorderPane {
                 javafx.beans.binding.Bindings.size(containerList).multiply(24).add(30));
         containerTable.setMinHeight(80);
         containerTable.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
-        containerTable.getSelectionModel().setSelectionMode(javafx.scene.control.SelectionMode.MULTIPLE);
+        containerTable.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+
+        // 行选择器列（参考 PortPanel 实现）
+        TableColumn<ContainerItem, String> selectorCol = new TableColumn<>();
+        selectorCol.setPrefWidth(15);
+        selectorCol.setMaxWidth(15);
+        selectorCol.setMinWidth(15);
+        selectorCol.setSortable(false);
+        selectorCol.setReorderable(false);
+        selectorCol.setResizable(false);
+        selectorCol.setStyle("-fx-alignment: CENTER;");
+        selectorCol.setUserData(ROW_SELECTOR_COL);
+        selectorCol.setCellFactory(col -> new TableCell<>() {
+            private final Polygon arrow = new Polygon(0, -0.5, 5, 4.5, 0, 9.5);
+            private javafx.beans.InvalidationListener selectionListener;
+
+            {
+                arrow.setFill(Color.BLACK);
+                setGraphic(arrow);
+                setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+                setAlignment(Pos.CENTER);
+                arrow.setVisible(false);
+                setStyle("-fx-border-color: transparent #e0e0e0 transparent #e0e0e0; -fx-border-width: 0 1 0 1;");
+                // 点击行选择器列时选中整行（Ctrl/Shift 支持多选）
+                final int[] dragStart = RowSelectorDragSelection.install(containerTable, this);
+                addEventFilter(MouseEvent.MOUSE_PRESSED, event -> {
+                    // 右键不处理选中逻辑，由 setOnContextMenuRequested 统一处理右键菜单
+                    if (event.getButton() == MouseButton.SECONDARY) {
+                        return;
+                    }
+                    if (getTableRow() != null && getTableRow().getItem() != null) {
+                        int row = getTableRow().getIndex();
+                        if (event.isControlDown()) {
+                            dragStart[0] = -1;
+                            if (isRowSelected(row)) {
+                                containerTable.getSelectionModel().clearSelection(row);
+                            } else {
+                                containerTable.getSelectionModel().select(row);
+                            }
+                        } else if (event.isShiftDown()) {
+                            dragStart[0] = -1;
+                            int anchor = containerTable.getSelectionModel().getFocusedIndex();
+                            if (anchor >= 0) {
+                                int start = Math.min(row, anchor);
+                                int end = Math.max(row, anchor);
+                                containerTable.getSelectionModel().clearSelection();
+                                containerTable.getSelectionModel().selectRange(start, end + 1);
+                            } else {
+                                containerTable.getSelectionModel().clearSelection();
+                                containerTable.getSelectionModel().select(row);
+                            }
+                        } else {
+                            containerTable.getSelectionModel().clearSelection();
+                            containerTable.getSelectionModel().select(row);
+                            dragStart[0] = row;
+                        }
+                        event.consume();
+                    }
+                });
+            }
+
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                if (selectionListener != null) {
+                    containerTable.getSelectionModel().getSelectedCells().removeListener(selectionListener);
+                    selectionListener = null;
+                }
+                super.updateItem(item, empty);
+                if (empty || getTableRow() == null || getTableRow().getItem() == null) {
+                    arrow.setVisible(false);
+                    setStyle("-fx-border-color: transparent; -fx-border-width: 0;");
+                    return;
+                }
+                setStyle("-fx-border-color: transparent #e0e0e0 #e0e0e0 #e0e0e0; -fx-border-width: 0 1 1 1;");
+                arrow.setVisible(isRowSelected(getTableRow().getIndex()));
+                selectionListener = obs -> {
+                    if (getTableRow() != null) {
+                        arrow.setVisible(isRowSelected(getTableRow().getIndex()));
+                    }
+                };
+                containerTable.getSelectionModel().getSelectedCells().addListener(selectionListener);
+            }
+        });
+        containerTable.getColumns().add(selectorCol);
 
         // 容器ID列
         TableColumn<ContainerItem, String> idCol = new TableColumn<>("容器ID");
@@ -185,7 +278,10 @@ public class DockerPanel extends BorderPane {
         restartItem.setOnAction(e -> execForSelected("restart", "重启"));
 
         MenuItem deleteItem = new MenuItem("删除");
-        deleteItem.setOnAction(e -> execForSelected("rm -f", "删除"));
+        deleteItem.setOnAction(e -> execForSelected("rm", "删除"));
+
+        MenuItem forceDeleteItem = new MenuItem("强制删除");
+        forceDeleteItem.setOnAction(e -> execForSelected("rm -f", "强制删除"));
 
         MenuItem logItem = new MenuItem("查看日志");
         logItem.setOnAction(e -> {
@@ -216,56 +312,137 @@ public class DockerPanel extends BorderPane {
         MenuItem refreshItem = new MenuItem("刷新");
         refreshItem.setOnAction(e -> new Thread(this::refresh, "Docker-ManualRefresh").start());
 
-        contextMenu.getItems().addAll(startItem, stopItem, restartItem, deleteItem,
+        contextMenu.getItems().addAll(startItem, stopItem, restartItem,
+                new SeparatorMenuItem(), deleteItem, forceDeleteItem,
                 new SeparatorMenuItem(), logItem, copyIdItem,
                 new SeparatorMenuItem(), refreshItem);
         contextMenu.setAutoHide(true);
 
-        // 右键弹出菜单时更新菜单项状态
-        containerTable.setOnContextMenuRequested(event -> {
-            List<ContainerItem> selected = containerTable.getSelectionModel().getSelectedItems();
-            int count = selected.size();
-            boolean hasRunning = false;
-            boolean hasStopped = false;
-            for (ContainerItem item : selected) {
-                if (item == null) continue;
-                String lower = item.getStatus().toLowerCase();
-                if (lower.startsWith("up")) hasRunning = true;
-                else if (lower.startsWith("exited")) hasStopped = true;
-            }
-            startItem.setDisable(!hasStopped);
-            stopItem.setDisable(!hasRunning);
-            restartItem.setDisable(count == 0);
-            deleteItem.setDisable(count == 0);
-            logItem.setDisable(count != 1);
-            copyIdItem.setDisable(count == 0);
+        // 行工厂：左键点击时隐藏已有菜单
+        containerTable.setRowFactory(tv -> {
+            TableRow<ContainerItem> row = new TableRow<>();
+            row.setOnMousePressed(event -> {
+                if (event.getButton() == MouseButton.PRIMARY && contextMenu.isShowing()) {
+                    contextMenu.hide();
+                }
+            });
+            return row;
+        });
 
-            String suffix = count > 1 ? "(" + count + "个)" : "";
-            startItem.setText("启动" + suffix);
-            stopItem.setText("停止" + suffix);
-            restartItem.setText("重启" + suffix);
-            deleteItem.setText("删除" + suffix);
-            copyIdItem.setText("复制容器ID" + suffix);
-
-            if (count == 0) {
+        // 统一在 DockerPanel 上处理右键菜单（ContextMenuEvent 在右键释放时触发）
+        // consume() 阻止事件冒泡到 SSHTerminalPane，避免弹出终端的复制/粘贴菜单
+        setOnContextMenuRequested(event -> {
+            Node node = event.getPickResult().getIntersectedNode();
+            Integer rowIndex = findRowIndex(node);
+            if (rowIndex == null) {
+                // 点击空白区域：不弹出菜单，消费事件阻止冒泡
                 contextMenu.hide();
                 event.consume();
                 return;
             }
-            contextMenu.show(containerTable, event.getScreenX(), event.getScreenY());
+            // 右键点击的行未选中时，清除多选并只选中该行
+            if (!containerTable.getSelectionModel().isSelected(rowIndex)) {
+                containerTable.getSelectionModel().clearSelection();
+                containerTable.getSelectionModel().select(rowIndex);
+            }
+            updateMenuState(startItem, stopItem, restartItem, deleteItem, forceDeleteItem, logItem, copyIdItem);
+            contextMenu.show(this, event.getScreenX(), event.getScreenY());
             event.consume();
         });
 
-        // 左键点击时隐藏菜单
+        // 左键点击空白区域清除选择
         containerTable.setOnMousePressed(event -> {
-            if (contextMenu.isShowing()) {
+            if (event.getButton() == MouseButton.PRIMARY && contextMenu.isShowing()) {
                 contextMenu.hide();
+            }
+            if (event.getButton() == MouseButton.PRIMARY
+                    && isClickOnEmptyArea(event.getPickResult().getIntersectedNode())) {
+                containerTable.getSelectionModel().clearSelection();
             }
         });
     }
 
     /**
-     * 对选中容器执行 docker 命令（start/stop/restart/rm -f）
+     * 从点击的节点向上查找所属 TableRow 的索引
+     * @return 行索引，点击空白区域返回 null
+     */
+    private Integer findRowIndex(Node node) {
+        while (node != null && node != containerTable) {
+            if (node instanceof TableRow) {
+                TableRow<?> row = (TableRow<?>) node;
+                return row.isEmpty() ? null : row.getIndex();
+            }
+            node = node.getParent();
+        }
+        return null;
+    }
+
+    /**
+     * 判断指定行是否处于选中状态
+     */
+    private boolean isRowSelected(int rowIndex) {
+        for (TablePosition<?, ?> pos : containerTable.getSelectionModel().getSelectedCells()) {
+            if (pos.getRow() == rowIndex) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 判断点击位置是否在表格空白区域（空行或表格背景）
+     */
+    private boolean isClickOnEmptyArea(Node node) {
+        while (node != null && node != containerTable) {
+            if (node instanceof TableRow) {
+                return ((TableRow<?>) node).isEmpty();
+            }
+            node = node.getParent();
+        }
+        return true;
+    }
+
+    /**
+     * 根据当前选中项更新右键菜单状态（禁用/文本）
+     * - 启动：选中有已停止容器才可用
+     * - 停止：选中有运行中容器才可用
+     * - 重启：选中任何容器都可用
+     * - 删除：选中容器中无运行中的才可用（docker rm 不能删除运行中的容器）
+     * - 强制删除：选中任何容器都可用（docker rm -f 会先停止再删除）
+     * - 查看日志：只选中1个才可用
+     * - 复制容器ID：选中任何容器都可用
+     */
+    private void updateMenuState(MenuItem startItem, MenuItem stopItem, MenuItem restartItem,
+                                  MenuItem deleteItem, MenuItem forceDeleteItem,
+                                  MenuItem logItem, MenuItem copyIdItem) {
+        List<ContainerItem> selected = containerTable.getSelectionModel().getSelectedItems();
+        int count = selected.size();
+        boolean hasRunning = false;
+        boolean hasStopped = false;
+        for (ContainerItem item : selected) {
+            if (item == null) continue;
+            String lower = item.getStatus().toLowerCase();
+            if (lower.startsWith("up")) hasRunning = true;
+            else if (lower.startsWith("exited")) hasStopped = true;
+        }
+        String suffix = count > 1 ? "(" + count + "个)" : "";
+        startItem.setText("启动" + suffix);
+        startItem.setDisable(!hasStopped);
+        stopItem.setText("停止" + suffix);
+        stopItem.setDisable(!hasRunning);
+        restartItem.setText("重启" + suffix);
+        restartItem.setDisable(count == 0);
+        // 删除：有运行中的容器时不可用（灰色），docker rm 不能删除运行中的容器
+        deleteItem.setText("删除" + suffix);
+        deleteItem.setDisable(hasRunning || count == 0);
+        // 强制删除：始终可用，docker rm -f 会先停止再删除
+        forceDeleteItem.setText("强制删除" + suffix);
+        forceDeleteItem.setDisable(count == 0);
+        logItem.setDisable(count != 1);
+        copyIdItem.setText("复制容器ID" + suffix);
+        copyIdItem.setDisable(count == 0);
+    }
+
+    /**
+     * 对选中容器执行 docker 命令（start/stop/restart/rm/rm -f）
      */
     private void execForSelected(String action, String label) {
         List<ContainerItem> selected = containerTable.getSelectionModel().getSelectedItems();
