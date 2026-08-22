@@ -108,6 +108,10 @@ public class ConnectModule implements Module {
     private VBox contentArea;
     TabPane terminalTabPane;
 
+    // 设置面板：侧边栏回调 + 内层 TabPane（供 handler 打开并选中 SSH 终端子标签）
+    private java.util.function.Consumer<Boolean> sidebarToggleCallback;
+    private TabPane settingsInnerTabPane;
+
     @Override
     public String getName() {
         return "连接";
@@ -1711,12 +1715,29 @@ public class ConnectModule implements Module {
 
     /** 在右侧内容区以可关闭标签页形式打开"设置"界面 */
     public void openSettingsTab(java.util.function.Consumer<Boolean> onSidebarToggle) {
+        openSettingsTab(onSidebarToggle, false);
+    }
+
+    /** 供 handler 调用：打开设置并选中 SSH 终端子标签 */
+    public void openSettingsTabWithSshSelected() {
+        openSettingsTab(null, true);
+    }
+
+    private void openSettingsTab(java.util.function.Consumer<Boolean> onSidebarToggle, boolean selectSshTab) {
         if (!ensureTabPaneInstalled()) return;
+
+        if (onSidebarToggle != null) {
+            this.sidebarToggleCallback = onSidebarToggle;
+        }
 
         // 避免重复打开
         for (Tab t : terminalTabPane.getTabs()) {
             if ("__settings__".equals(t.getUserData())) {
                 terminalTabPane.getSelectionModel().select(t);
+                if (selectSshTab && settingsInnerTabPane != null
+                        && settingsInnerTabPane.getTabs().size() > 1) {
+                    settingsInnerTabPane.getSelectionModel().select(1);
+                }
                 return;
             }
         }
@@ -1736,6 +1757,7 @@ public class ConnectModule implements Module {
         TabPane settingsTabPane = new TabPane();
         settingsTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         settingsTabPane.setStyle("-fx-padding: 0; -fx-background-color: #ffffff;");
+        this.settingsInnerTabPane = settingsTabPane;
 
         // ===== 系统设置 Tab =====
         VBox systemRoot = new VBox();
@@ -1752,8 +1774,8 @@ public class ConnectModule implements Module {
         sidebarVisible.setStyle("-fx-font-size: 14px;");
         sidebarVisible.setSelected(GlobalConfig.getInstance().isSidebarVisible());
         sidebarVisible.selectedProperty().addListener((obs, wasSelected, isNowSelected) -> {
-            if (onSidebarToggle != null) {
-                onSidebarToggle.accept(isNowSelected);
+            if (sidebarToggleCallback != null) {
+                sidebarToggleCallback.accept(isNowSelected);
             }
         });
 
@@ -1822,15 +1844,33 @@ public class ConnectModule implements Module {
         fontSizeSpinner.setPrefWidth(100);
         GridPane.setConstraints(fontSizeSpinner, 1, 1);
 
-        sshGrid.getChildren().addAll(fontNameLabel, fontNameCombo, fontSizeLabel, fontSizeSpinner);
+        // 回滚行数配置（参考会话配置）
+        Label scrollbackLabel = new Label("回滚行数");
+        scrollbackLabel.setStyle("-fx-font-size: 14px;");
+        GridPane.setConstraints(scrollbackLabel, 0, 2);
 
-        // 预览
+        HBox scrollbackBox = new HBox(8);
+        TextField scrollbackField = new TextField(String.valueOf(GlobalConfig.getInstance().getScrollbackLines()));
+        scrollbackField.setPrefWidth(100);
+        Label scrollbackHint = new Label("(0=无限制)");
+        scrollbackHint.setStyle("-fx-font-size: 12px; -fx-text-fill: #888;");
+        scrollbackBox.getChildren().addAll(scrollbackField, scrollbackHint);
+        GridPane.setConstraints(scrollbackBox, 1, 2);
+
+        sshGrid.getChildren().addAll(fontNameLabel, fontNameCombo, fontSizeLabel, fontSizeSpinner,
+                scrollbackLabel, scrollbackBox);
+
+        // 预览（放在字体配置右边）
+        VBox previewBox = new VBox(8);
+        previewBox.setPadding(new Insets(20, 0, 0, 30));
         Label previewLabel = new Label("预览：");
-        previewLabel.setStyle("-fx-font-size: 14px; -fx-padding: 10 0 0 0;");
+        previewLabel.setStyle("-fx-font-size: 14px;");
         javafx.scene.text.Text previewText = new javafx.scene.text.Text("abcdefghijklmnopqrstuvwxyz 0123456789\nABCDEFGHIJKLMNOPQRSTUVWXYZ ~!@#$%^&*()");
         previewText.setFont(javafx.scene.text.Font.font(
                 GlobalConfig.getInstance().getSshTerminalFontName(),
                 GlobalConfig.getInstance().getSshTerminalFontSize()));
+        previewBox.getChildren().addAll(previewLabel, previewText);
+
         Runnable updatePreview = () -> {
             String f = fontNameCombo.getValue();
             Integer s = fontSizeSpinner.getValue();
@@ -1841,6 +1881,9 @@ public class ConnectModule implements Module {
         fontNameCombo.valueProperty().addListener((obs, o, n) -> updatePreview.run());
         fontSizeSpinner.valueProperty().addListener((obs, o, n) -> updatePreview.run());
 
+        HBox sshConfigBox = new HBox(20);
+        sshConfigBox.getChildren().addAll(sshGrid, previewBox);
+
         Button applyFontBtn = new Button("应用并保存");
         applyFontBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-width: 100px;");
         applyFontBtn.setOnAction(e -> {
@@ -1849,20 +1892,34 @@ public class ConnectModule implements Module {
             if (f == null || f.isBlank()) f = "monospace";
             if (s == null || s <= 0) s = 13;
 
+            int newScrollback;
+            try {
+                int val = Integer.parseInt(scrollbackField.getText().trim());
+                newScrollback = Math.max(0, val);
+            } catch (NumberFormatException ex) {
+                newScrollback = GlobalConfig.getInstance().getScrollbackLines();
+            }
+
             GlobalConfig cfg = GlobalConfig.getInstance();
             cfg.setSshTerminalFontName(f);
             cfg.setSshTerminalFontSize(s);
+            cfg.setScrollbackLines(newScrollback);
             cfg.save();
 
             // 应用到所有已打开的终端
             applyTerminalFontToAllTabs(f, s);
+            applyScrollbackToAllTabs(newScrollback);
         });
 
-        sshRoot.getChildren().addAll(sshTitle, sshGrid, previewLabel, previewText, applyFontBtn);
+        sshRoot.getChildren().addAll(sshTitle, sshConfigBox, applyFontBtn);
 
         Tab sshTab = new Tab("SSH终端");
         sshTab.setContent(sshRoot);
         settingsTabPane.getTabs().add(sshTab);
+
+        if (selectSshTab) {
+            settingsTabPane.getSelectionModel().select(sshTab);
+        }
 
         settingsTab.setContent(settingsTabPane);
         terminalTabPane.getTabs().add(settingsTab);
@@ -1878,6 +1935,26 @@ public class ConnectModule implements Module {
                 pane.updateTerminalFont(family, size);
             } else if (content instanceof com.tangluobo.tomato.ssh.LocalTerminalPane pane) {
                 pane.updateTerminalFont(family, size);
+            }
+        }
+    }
+
+    /** 将全局回滚行数应用到所有使用全局配置的终端（会话级覆盖不受影响） */
+    private void applyScrollbackToAllTabs(int scrollback) {
+        if (terminalTabPane == null) return;
+        for (Tab tab : terminalTabPane.getTabs()) {
+            Object content = tab.getContent();
+            Object userData = tab.getUserData();
+            if (userData instanceof String configId) {
+                ConnectionConfig config = findConnectionById(configId);
+                // 仅更新使用全局配置（scrollbackLines == null）的终端
+                if (config != null && config.getScrollbackLines() == null) {
+                    if (content instanceof com.tangluobo.tomato.ssh.SSHTerminalPane pane) {
+                        pane.setScrollbackLines(scrollback);
+                    } else if (content instanceof com.tangluobo.tomato.ssh.LocalTerminalPane pane) {
+                        pane.setScrollbackLines(scrollback);
+                    }
+                }
             }
         }
     }

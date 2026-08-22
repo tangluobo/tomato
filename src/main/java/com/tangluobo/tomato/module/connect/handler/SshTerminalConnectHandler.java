@@ -5,7 +5,6 @@ import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import com.tangluobo.tomato.module.connect.GlobalConfig;
 import com.tangluobo.tomato.module.connect.SshTunnelManager;
-import com.tangluobo.tomato.module.connect.dialog.GlobalConfigDialog;
 import com.tangluobo.tomato.module.connect.dialog.PasswordPromptDialog;
 import com.tangluobo.tomato.module.connect.dialog.SessionConfigDialog;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
@@ -60,13 +59,9 @@ public class SshTerminalConnectHandler implements ConnectHandler {
             module.saveConnections();
         });
 
-        MenuItem globalConfigItem = new MenuItem("终端配置");
+        MenuItem globalConfigItem = new MenuItem("全局配置");
         globalConfigItem.setOnAction(e -> {
-            Stage stage = (Stage) module.getTerminalTabPane().getScene().getWindow();
-            GlobalConfigDialog.show(stage, GlobalConfigDialog.ConfigMode.SSH);
-            if (config.getScrollbackLines() == null) {
-                terminalPane.setScrollbackLines(GlobalConfig.getInstance().getScrollbackLines());
-            }
+            module.openSettingsTabWithSshSelected();
         });
 
         tabContextMenu.getItems().addAll(copySessionItem, new SeparatorMenuItem(), sessionConfigItem, globalConfigItem);
