@@ -13,8 +13,6 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
-import javafx.scene.input.KeyCode;
-import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
@@ -411,34 +409,6 @@ public class TomatoController {
                 newScene.addEventFilter(MouseEvent.MOUSE_MOVED, this::onMouseMoved);
                 newScene.addEventFilter(MouseEvent.MOUSE_EXITED, this::onMouseExited);
                 newScene.addEventFilter(MouseEvent.MOUSE_RELEASED, this::onMouseReleased);
-
-                // 拦截 Enter 键事件：若焦点在窗口控制按钮（maximize/minimize/close/settings）或
-                // 主窗体本身（rootPane/titleBar）上，则消耗事件，防止触发按钮 onAction 还原窗口。
-                // 焦点在内容区（终端/数据表/输入框）时不拦截，由内容控件正常处理回车。
-                newScene.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
-                    if (event.getCode() != KeyCode.ENTER) {
-                        return;
-                    }
-                    Object target = event.getTarget();
-                    if (!(target instanceof Node)) {
-                        return;
-                    }
-                    // 向上遍历父节点链，判断焦点是否位于窗口控制按钮或主窗体节点上
-                    Node node = (Node) target;
-                    boolean shouldConsume = false;
-                    while (node != null) {
-                        if (node == maximizeBtn || node == minimizeBtn
-                                || node == closeBtn || node == settingsBtn
-                                || node == rootPane || node == titleBar) {
-                            shouldConsume = true;
-                            break;
-                        }
-                        node = node.getParent();
-                    }
-                    if (shouldConsume) {
-                        event.consume();
-                    }
-                });
             }
         });
 
