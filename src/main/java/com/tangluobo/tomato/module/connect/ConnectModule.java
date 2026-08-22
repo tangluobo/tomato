@@ -17,6 +17,9 @@ import com.tangluobo.tomato.module.connect.view.RocketmqDataView;
 import com.tangluobo.tomato.module.connect.view.SqlEditorView;
 import com.tangluobo.tomato.module.connect.view.ToolPane;
 import com.tangluobo.tomato.module.connect.view.ColorTransposeGamePane;
+import javafx.scene.SnapshotParameters;
+import javafx.scene.canvas.Canvas;
+import javafx.scene.canvas.GraphicsContext;
 import com.tangluobo.tomato.module.tools.ServerManagerPane;
 import com.tangluobo.tomato.module.tools.server.ServerConfig;
 import com.tangluobo.tomato.ssh.LocalTerminalPane;
@@ -102,6 +105,12 @@ public class ConnectModule implements Module {
     private Image aliyunDomainIcon;
     private Image localFileIcon;
     private Image mdFileIcon;
+    // SSH 服务管理子节点图标（终端/容器/服务/端口/文件）
+    private Image sshServiceTerminalIcon;
+    private Image sshServiceContainerIcon;
+    private Image sshServiceServiceIcon;
+    private Image sshServicePortIcon;
+    private Image sshServiceFileIcon;
     private TextField searchField;
 
     // 内容区域
@@ -217,6 +226,43 @@ public class ConnectModule implements Module {
         try { aliyunDomainIcon = new Image(getClass().getResourceAsStream("/images/connect/s3.png")); } catch (Exception e) { aliyunDomainIcon = null; }
         try { localFileIcon = new Image(getClass().getResourceAsStream("/images/connect/code.png")); } catch (Exception e) { localFileIcon = null; }
         try { mdFileIcon = new Image(getClass().getResourceAsStream("/images/connect/md.png")); } catch (Exception e) { mdFileIcon = null; }
+        // SSH 服务管理子节点图标：复用现有资源
+        try { sshServiceTerminalIcon = new Image(getClass().getResourceAsStream("/images/connect/shell.png")); } catch (Exception e) { sshServiceTerminalIcon = null; }
+        try { sshServiceContainerIcon = new Image(getClass().getResourceAsStream("/images/connect/docker.png")); } catch (Exception e) { sshServiceContainerIcon = null; }
+        try { sshServiceServiceIcon = new Image(getClass().getResourceAsStream("/images/connect/monitor.png")); } catch (Exception e) { sshServiceServiceIcon = null; }
+        try { sshServicePortIcon = createPortIconImage(); } catch (Exception e) { sshServicePortIcon = null; }
+        try { sshServiceFileIcon = new Image(getClass().getResourceAsStream("/images/connect/folder.png")); } catch (Exception e) { sshServiceFileIcon = null; }
+    }
+
+    /**
+     * 程序化绘制端口图标 Image（与 SSHTerminalPane 右下角端口按钮图标一致）。
+     */
+    private Image createPortIconImage() {
+        Canvas canvas = new Canvas(16, 16);
+        GraphicsContext gc = canvas.getGraphicsContext2D();
+        gc.clearRect(0, 0, 16, 16);
+
+        // 外框：网络端口插口
+        gc.setStroke(Color.valueOf("#4a90d9"));
+        gc.setLineWidth(1.2);
+        gc.strokeRoundRect(2, 3, 12, 10, 2, 2);
+
+        // 顶部接口线
+        gc.strokeLine(5, 3, 5, 1);
+        gc.strokeLine(8, 3, 8, 1);
+        gc.strokeLine(11, 3, 11, 1);
+
+        // 内部触点
+        gc.setFill(Color.valueOf("#4a90d9"));
+        gc.fillRoundRect(4, 6, 8, 4, 1, 1);
+
+        // 底部标识点
+        gc.setFill(Color.valueOf("#2d7d46"));
+        gc.fillOval(7, 11, 2, 2);
+
+        SnapshotParameters params = new SnapshotParameters();
+        params.setFill(Color.TRANSPARENT);
+        return canvas.snapshot(params, null);
     }
 
     /**
@@ -279,6 +325,11 @@ public class ConnectModule implements Module {
                 }
                 yield localFileIcon;
             }
+            case SSH_SERVICE_TERMINAL -> sshServiceTerminalIcon;
+            case SSH_SERVICE_CONTAINER -> sshServiceContainerIcon;
+            case SSH_SERVICE_SERVICE -> sshServiceServiceIcon;
+            case SSH_SERVICE_PORT -> sshServicePortIcon;
+            case SSH_SERVICE_FILE -> sshServiceFileIcon;
         };
         if (icon != null) iv.setImage(icon);
         return iv;
@@ -1337,6 +1388,14 @@ public class ConnectModule implements Module {
                     ld.handleFileDoubleClick(this, item, data);
                 }
             }
+            case SSH_SERVICE_TERMINAL -> triggerConnect(data.getConnectionConfig());
+            case SSH_SERVICE_FILE -> {
+                ConnectHandler handler = createConnectHandler(data.getConnectionConfig());
+                if (handler instanceof SshTerminalConnectHandler ssh) {
+                    ssh.handleFileNodeDoubleClick(this, data.getConnectionConfig());
+                }
+            }
+            case SSH_SERVICE_CONTAINER, SSH_SERVICE_SERVICE, SSH_SERVICE_PORT -> { /* TODO */ }
         }
     }
 
@@ -1857,8 +1916,14 @@ public class ConnectModule implements Module {
         scrollbackBox.getChildren().addAll(scrollbackField, scrollbackHint);
         GridPane.setConstraints(scrollbackBox, 1, 2);
 
+        // 开启服务管理（默认勾选）：双击 SSH 节点时展开服务管理子节点
+        CheckBox sshServiceMgmtCheckBox = new CheckBox("开启服务管理");
+        sshServiceMgmtCheckBox.setStyle("-fx-font-size: 14px;");
+        sshServiceMgmtCheckBox.setSelected(GlobalConfig.getInstance().isSshServiceManagementEnabled());
+        GridPane.setConstraints(sshServiceMgmtCheckBox, 1, 3);
+
         sshGrid.getChildren().addAll(fontNameLabel, fontNameCombo, fontSizeLabel, fontSizeSpinner,
-                scrollbackLabel, scrollbackBox);
+                scrollbackLabel, scrollbackBox, sshServiceMgmtCheckBox);
 
         // 预览（放在字体配置右边）
         VBox previewBox = new VBox(8);
@@ -1904,6 +1969,7 @@ public class ConnectModule implements Module {
             cfg.setSshTerminalFontName(f);
             cfg.setSshTerminalFontSize(s);
             cfg.setScrollbackLines(newScrollback);
+            cfg.setSshServiceManagementEnabled(sshServiceMgmtCheckBox.isSelected());
             cfg.save();
 
             // 应用到所有已打开的终端

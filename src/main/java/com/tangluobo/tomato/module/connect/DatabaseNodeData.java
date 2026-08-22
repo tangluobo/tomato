@@ -34,7 +34,12 @@ public class DatabaseNodeData {
         ALIYUN_ECS_INSTANCE,        // 阿里云ECS实例
         ALIYUN_DOMAIN,              // 阿里云域名
         LOCAL_DIR_FOLDER,           // 本地目录文件夹
-        LOCAL_DIR_FILE              // 本地目录文件
+        LOCAL_DIR_FILE,             // 本地目录文件
+        SSH_SERVICE_TERMINAL,       // SSH 服务管理：终端
+        SSH_SERVICE_CONTAINER,      // SSH 服务管理：容器
+        SSH_SERVICE_SERVICE,        // SSH 服务管理：服务
+        SSH_SERVICE_PORT,           // SSH 服务管理：端口
+        SSH_SERVICE_FILE            // SSH 服务管理：文件
     }
 
     private final NodeType type;

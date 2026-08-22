@@ -3,13 +3,20 @@ package com.tangluobo.tomato.module.connect.handler;
 import com.tangluobo.tomato.module.connect.ConnectModule;
 import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.DatabaseNodeData;
 import com.tangluobo.tomato.module.connect.GlobalConfig;
 import com.tangluobo.tomato.module.connect.SshTunnelManager;
 import com.tangluobo.tomato.module.connect.dialog.PasswordPromptDialog;
 import com.tangluobo.tomato.module.connect.dialog.SessionConfigDialog;
+import com.tangluobo.tomato.ssh.SFTPClient;
+import com.tangluobo.tomato.ssh.SFTPFileBrowser;
+import com.tangluobo.tomato.ssh.SSHSession;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
 import javafx.application.Platform;
 import javafx.scene.control.*;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
+import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
 
 import java.util.List;
@@ -28,6 +35,153 @@ public class SshTerminalConnectHandler implements ConnectHandler {
     @Override
     public void handleConnect(ConnectModule module, ConnectionConfig config) {
         createSshTerminalTab(module, config);
+    }
+
+    /**
+     * 双击 SSH 主机节点：
+     * - 已展开（有子节点）则切换展开/收起状态；
+     * - 否则打开 SSH 终端 tab，并在开启服务管理时在节点下添加
+     *   终端/容器/服务/端口/文件 五个子节点。
+     */
+    @Override
+    public void handleHostDoubleClick(ConnectModule module, TreeItem<String> hostItem, ConnectionConfig config) {
+        if (!hostItem.getChildren().isEmpty()) {
+            hostItem.setExpanded(!hostItem.isExpanded());
+            return;
+        }
+        createSshTerminalTab(module, config);
+        if (GlobalConfig.getInstance().isSshServiceManagementEnabled()) {
+            addServiceManagementNodes(module, hostItem, config);
+        }
+    }
+
+    /**
+     * 在 SSH 主机节点下添加服务管理子节点：终端/容器/服务/端口/文件
+     */
+    private void addServiceManagementNodes(ConnectModule module, TreeItem<String> hostItem, ConnectionConfig config) {
+        Platform.runLater(() -> {
+            hostItem.getChildren().clear();
+            addServiceChild(module, hostItem, config, "终端", DatabaseNodeData.NodeType.SSH_SERVICE_TERMINAL);
+            addServiceChild(module, hostItem, config, "容器", DatabaseNodeData.NodeType.SSH_SERVICE_CONTAINER);
+            addServiceChild(module, hostItem, config, "服务", DatabaseNodeData.NodeType.SSH_SERVICE_SERVICE);
+            addServiceChild(module, hostItem, config, "端口", DatabaseNodeData.NodeType.SSH_SERVICE_PORT);
+            addServiceChild(module, hostItem, config, "文件", DatabaseNodeData.NodeType.SSH_SERVICE_FILE);
+            hostItem.setExpanded(true);
+            module.updateHostIcon(hostItem, config, true);
+        });
+    }
+
+    private void addServiceChild(ConnectModule module, TreeItem<String> hostItem, ConnectionConfig config,
+                                String name, DatabaseNodeData.NodeType type) {
+        TreeItem<String> item = new TreeItem<>(name);
+        DatabaseNodeData data = new DatabaseNodeData(type, name, config, null);
+        item.setGraphic(module.getDbNodeIcon(data));
+        module.getDbNodeDataMap().put(item, data);
+        hostItem.getChildren().add(item);
+    }
+
+    /**
+     * 双击 SSH 主机下"文件"子节点：打开独立文件浏览器标签页。
+     * 建立独立的 SSH 会话（复用跳板隧道引用计数），打开 SFTP 通道，
+     * 以 SFTPFileBrowser（standalone 模式）作为标签页内容。
+     */
+    public void handleFileNodeDoubleClick(ConnectModule module, ConnectionConfig config) {
+        if (!module.ensureTabPaneInstalled()) return;
+
+        // 文件浏览器标签唯一标识，避免重复打开
+        String tabId = "sftp_" + config.getId();
+        for (Tab t : module.getTerminalTabPane().getTabs()) {
+            if (tabId.equals(t.getUserData())) {
+                module.getTerminalTabPane().getSelectionModel().select(t);
+                module.showTerminalView();
+                return;
+            }
+        }
+
+        Tab tab = new Tab(config.getName() + " - 文件");
+        tab.setUserData(tabId);
+
+        try {
+            Image icon = new Image(getClass().getResourceAsStream("/images/connect/folder.png"));
+            if (icon != null) {
+                ImageView iv = new ImageView(icon);
+                iv.setFitWidth(16);
+                iv.setFitHeight(16);
+                tab.setGraphic(ConnectModule.createFixedSizeGraphic(iv));
+            }
+        } catch (Exception ignored) {}
+
+        // 占位内容，连接成功后替换
+        StackPane loading = new StackPane(new ProgressIndicator());
+        tab.setContent(loading);
+
+        ContextMenu tabContextMenu = new ContextMenu();
+        tabContextMenu.getItems().addAll();
+        tab.setContextMenu(tabContextMenu);
+
+        module.getTerminalTabPane().getTabs().add(tab);
+        module.getTerminalTabPane().getSelectionModel().select(tab);
+        module.showTerminalView();
+
+        // 后台建立 SSH 会话 + SFTP 通道
+        new Thread(() -> {
+            int tunnelLocalPort = -1;
+            SSHSession sshSession = null;
+            SFTPClient sftpClient = null;
+            try {
+                // 复用跳板隧道（引用计数 +1）
+                tunnelLocalPort = SshTunnelManager.resolve(config);
+
+                String host = config.getHost();
+                int port = config.getPort();
+                if (tunnelLocalPort != -1) {
+                    host = "localhost";
+                    port = tunnelLocalPort;
+                }
+
+                List<String> keyPaths = config.isUseKey() ? config.getPrivateKeyPaths() : null;
+                sshSession = new SSHSession(host, port, config.getUsername(), config.getPassword(), keyPaths);
+                sshSession.connect();
+
+                sftpClient = new SFTPClient();
+                sftpClient.connect(sshSession.getJschSession());
+
+                final SSHSession session = sshSession;
+                final SFTPClient sftp = sftpClient;
+                final int tunnelPort = tunnelLocalPort;
+
+                Platform.runLater(() -> {
+                    SFTPFileBrowser browser = new SFTPFileBrowser(session, sftp, true);
+                    tab.setContent(browser);
+                    browser.initConnection();
+
+                    tab.setOnClosed(e -> {
+                        browser.disconnect();
+                        if (tunnelPort != -1) {
+                            SshTunnelManager.release(config);
+                        }
+                        if (module.getTerminalTabPane().getTabs().isEmpty()) {
+                            module.showWelcomeView();
+                        }
+                    });
+                });
+            } catch (Exception e) {
+                // 连接失败：释放资源
+                if (sftpClient != null) try { sftpClient.disconnect(); } catch (Exception ignored) {}
+                if (sshSession != null) try { sshSession.disconnect(); } catch (Exception ignored) {}
+                if (tunnelLocalPort != -1) {
+                    SshTunnelManager.release(config);
+                }
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("连接失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("建立SFTP文件浏览器失败: " + e.getMessage());
+                    alert.showAndWait();
+                });
+                e.printStackTrace();
+            }
+        }, "SFTP-Connect").start();
     }
 
     /**
