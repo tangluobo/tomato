@@ -356,7 +356,20 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
         // 框选：在图标视图空白处按下鼠标开始框选
         iconScrollPane.addEventFilter(MouseEvent.MOUSE_PRESSED, e -> {
             if (e.getButton() != MouseButton.PRIMARY) return;
-            if (e.getTarget() instanceof VBox) return; // 点中图标项，交给图标项处理
+            // 判断是否点击在图标项上：沿事件链向上查找带 "fileItem" 属性的 VBox（图标项）。
+            // 注意：点击图标图像(ImageView)或文件名(Label/LabeledText)时 target 是其子节点，
+            // 直接 instanceof VBox 判断会误判为空白点击而清空选中，导致"已选中再单击"无法进入重命名。
+            Node targetNode = e.getTarget() instanceof Node ? (Node) e.getTarget() : null;
+            boolean clickedOnIconBox = false;
+            while (targetNode != null && targetNode != iconScrollPane) {
+                if (targetNode instanceof VBox && targetNode.getProperties().containsKey("fileItem")) {
+                    clickedOnIconBox = true;
+                    break;
+                }
+                if (targetNode == iconFlowPane) break;
+                targetNode = targetNode.getParent();
+            }
+            if (clickedOnIconBox) return; // 点在图标项上，交给图标项自身的点击处理
             // 空白处点击：清空选中并开始框选
             if (!e.isControlDown() && !e.isShiftDown()) {
                 iconSelectedItems.clear();
@@ -841,7 +854,11 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
                 // 单击：判断是否"已选中再点击"以进入重命名编辑
                 if (event.getClickCount() == 1 && !event.isControlDown() && !event.isShiftDown()) {
                     int rowIdx = row.getIndex();
+                    // clickedBeforeItem == row.getItem()：确保点击的就是之前已选中的那一项
+                    // （与树节点 selectedItem == selectedItemBeforeClick、图标视图 clickedBeforeItem == item 逻辑一致），
+                    // 否则"选中A后单击B"会误触发B的重命名
                     boolean wasAlreadySelected = clickedBeforeItem != null
+                            && clickedBeforeItem == row.getItem()
                             && editingItem == null
                             && fileTable.getSelectionModel().getSelectedIndices().size() == 1
                             && fileTable.getSelectionModel().isSelected(rowIdx);
