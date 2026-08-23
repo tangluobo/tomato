@@ -415,19 +415,23 @@ public class S3FileBrowserPane extends AbstractFileBrowserPane {
     }
 
     @Override
-    protected void doUpload(List<File> files) {
-        if (currentBucket == null) {
-            Platform.runLater(() -> {
-                Alert alert = new Alert(Alert.AlertType.WARNING);
-                alert.setTitle("提示");
-                alert.setHeaderText(null);
-                alert.setContentText("请先进入一个 Bucket 再上传文件");
-                DialogPositionUtil.centerOnOwner(alert, this);
-                alert.showAndWait();
-            });
-            return;
+    protected String preUploadCheck() {
+        return currentBucket == null ? "请先进入一个 Bucket 再上传文件" : null;
+    }
+
+    @Override
+    protected void doUploadSingle(File localFile) throws Exception {
+        String key = (currentPrefix != null ? currentPrefix : "") + localFile.getName();
+        long size = localFile.length();
+        String contentType = java.net.URLConnection.guessContentTypeFromName(localFile.getName());
+        if (contentType == null) contentType = "application/octet-stream";
+        try (java.io.FileInputStream fis = new java.io.FileInputStream(localFile)) {
+            if (isAliyunOSS) {
+                OssService.uploadFile(config, currentBucket, key, fis, size, contentType);
+            } else {
+                S3Service.uploadFile(config, currentBucket, key, fis, size, contentType);
+            }
         }
-        uploadLocalFiles(files);
     }
 
     @Override
@@ -1442,57 +1446,6 @@ public class S3FileBrowserPane extends AbstractFileBrowserPane {
         }
     }
 
-    // ==================== 上传本地文件 ====================
-    /**
-     * 上传本地文件列表到当前 bucket/prefix
-     */
-    private void uploadLocalFiles(List<File> files) {
-        if (currentBucket == null || files == null || files.isEmpty()) return;
-        setStatus("上传中... (0/" + files.size() + ")");
-        new Thread(() -> {
-            int success = 0;
-            int failed = 0;
-            String lastError = null;
-            for (File file : files) {
-                String key = (currentPrefix != null ? currentPrefix : "") + file.getName();
-                try (java.io.FileInputStream fis = new java.io.FileInputStream(file)) {
-                    long size = file.length();
-                    String contentType = java.net.URLConnection.guessContentTypeFromName(file.getName());
-                    if (contentType == null) contentType = "application/octet-stream";
-                    if (isAliyunOSS) {
-                        OssService.uploadFile(config, currentBucket, key, fis, size, contentType);
-                    } else {
-                        S3Service.uploadFile(config, currentBucket, key, fis, size, contentType);
-                    }
-                    success++;
-                } catch (Exception e) {
-                    failed++;
-                    lastError = e.getMessage();
-                    e.printStackTrace();
-                }
-                final int done = success + failed;
-                Platform.runLater(() -> setStatus("上传中... (" + done + "/" + files.size() + ")"));
-            }
-            final int okCount = success;
-            final int failCount = failed;
-            final String err = lastError;
-            Platform.runLater(() -> {
-                if (failCount == 0) {
-                    setStatus("上传完成: 成功 " + okCount + " 个");
-                } else {
-                    setStatus("上传结束: 成功 " + okCount + " 个, 失败 " + failCount + " 个");
-                    Alert alert = new Alert(Alert.AlertType.WARNING);
-                    alert.setTitle("部分上传失败");
-                    alert.setHeaderText("成功 " + okCount + " 个, 失败 " + failCount + " 个");
-                    alert.setContentText(err != null ? err : "");
-                    DialogPositionUtil.centerOnOwner(alert, this);
-                    alert.showAndWait();
-                }
-                refresh();
-            });
-        }, "S3-Upload").start();
-    }
-
     // ==================== 访问 URL ====================
     @Override
     protected String getAccessUrl(FileItem item) {
@@ -1560,6 +1513,12 @@ public class S3FileBrowserPane extends AbstractFileBrowserPane {
 
     @Override
     protected void handlePaste() {
+        Clipboard clipboard = Clipboard.getSystemClipboard();
+        // 优先处理本地文件粘贴上传
+        if (clipboard.hasFiles()) {
+            doUpload(clipboard.getFiles());
+            return;
+        }
         if (currentBucket == null) {
             Alert alert = new Alert(Alert.AlertType.WARNING);
             alert.setTitle("提示");
@@ -1569,7 +1528,6 @@ public class S3FileBrowserPane extends AbstractFileBrowserPane {
             alert.showAndWait();
             return;
         }
-        Clipboard clipboard = Clipboard.getSystemClipboard();
         if (!clipboard.hasContent(S3_COPY_FORMAT)) {
             return;
         }
@@ -2199,13 +2157,12 @@ public class S3FileBrowserPane extends AbstractFileBrowserPane {
     /**
      * 设置全局键盘快捷键（Ctrl+C 复制、Ctrl+V 粘贴）
      */
-    private void setupKeyboardShortcuts() {
+    public void setupKeyboardShortcuts() {
+        // 仅注册 Ctrl+C 复制；Ctrl+V 粘贴由基类 setupKeyboardShortcuts 统一注册
         KeyCodeCombination copyCombo = new KeyCodeCombination(KeyCode.C, KeyCombination.SHORTCUT_DOWN);
-        KeyCodeCombination pasteCombo = new KeyCodeCombination(KeyCode.V, KeyCombination.SHORTCUT_DOWN);
         this.sceneProperty().addListener((obs, oldScene, newScene) -> {
             if (newScene != null) {
                 newScene.getAccelerators().put(copyCombo, this::handleCopy);
-                newScene.getAccelerators().put(pasteCombo, this::handlePaste);
             }
         });
     }

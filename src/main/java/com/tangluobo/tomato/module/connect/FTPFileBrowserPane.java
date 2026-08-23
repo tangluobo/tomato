@@ -173,9 +173,9 @@ public class FTPFileBrowserPane extends AbstractFileBrowserPane {
     }
 
     @Override
-    protected void doUpload(List<File> files) {
+    protected void doUploadSingle(File localFile) throws Exception {
         // FTP STOR upload not yet implemented
-        setStatus("上传功能暂未实现");
+        throw new UnsupportedOperationException("FTP 上传功能暂未实现");
     }
 
     @Override

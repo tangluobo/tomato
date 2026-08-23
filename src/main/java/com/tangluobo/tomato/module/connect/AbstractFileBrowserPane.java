@@ -8,6 +8,7 @@ import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
+import javafx.scene.Scene;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.control.*;
@@ -42,6 +43,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 文件浏览器抽象基类。
@@ -94,6 +96,13 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
     protected javafx.animation.Timeline singleClickTimer;
     protected Popup iconEditPopup;
     protected TextField iconEditField;
+
+    // ==================== 上传进度对话框（Ctrl+V 粘贴上传 / 拖拽上传 / 菜单上传） ====================
+    private Stage uploadProgressStage;
+    private ProgressBar uploadProgressBar;
+    private Label uploadProgressLabel;
+    private Label uploadProgressDetailLabel;
+    private final AtomicBoolean uploadCancelled = new AtomicBoolean(false);
 
     // ==================== 图标 ====================
     protected Image folderIcon;
@@ -241,6 +250,9 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
 
         // ---- 底部状态栏 ----
         setBottom(createStatusBar());
+
+        // Ctrl+V 粘贴上传快捷键
+        setupKeyboardShortcuts();
     }
 
     /**
@@ -1110,11 +1122,13 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
             downloadItem.setVisible(single && first != null && !first.isDirectory());
             copyUrlItem.setVisible(supportsBuckets() && single && first != null && !first.isDirectory());
 
-            // 复制/粘贴：仅支持复制粘贴的子类可见
+            // 复制/粘贴：仅支持复制粘贴的子类可见；本地剪贴板有文件时所有面板都可粘贴上传
             boolean copyPaste = supportsCopyPaste();
             copyItem.setVisible(copyPaste && !selected.isEmpty());
             copyItem.setText(selected.size() > 1 ? "复制(" + selected.size() + "项)" : "复制");
-            pasteItem.setVisible(copyPaste && hasCopyData());
+            boolean clipboardHasFiles = Clipboard.getSystemClipboard().hasFiles();
+            pasteItem.setVisible(clipboardHasFiles || (copyPaste && hasCopyData()));
+            pasteItem.setText(clipboardHasFiles ? "粘贴上传文件" : "粘贴");
 
             createFileItem.setVisible(supportsCreateFile());
             deleteItem.setVisible(!selected.isEmpty());
@@ -1502,6 +1516,165 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
         List<File> files = chooser.showOpenMultipleDialog(getStage());
         if (files == null || files.isEmpty()) return;
         doUpload(files);
+    }
+
+    /**
+     * 上传文件列表到当前远程目录：基类统一负责进度对话框、后台线程、逐文件调用
+     * {@link #doUploadSingle(File)}，子类只需实现单文件同步上传（失败抛异常）。
+     * <p>支持取消：点击取消按钮或关闭进度窗口会停止后续文件上传。
+     */
+    protected void doUpload(List<File> files) {
+        if (files == null || files.isEmpty()) return;
+        String err = preUploadCheck();
+        if (err != null) {
+            Alert alert = new Alert(Alert.AlertType.WARNING);
+            alert.setTitle("提示");
+            alert.setHeaderText(null);
+            alert.setContentText(err);
+            DialogPositionUtil.centerOnOwner(alert, this);
+            alert.showAndWait();
+            return;
+        }
+        if (!isConnected()) {
+            Alert alert = new Alert(Alert.AlertType.WARNING);
+            alert.setTitle("提示");
+            alert.setHeaderText(null);
+            alert.setContentText("未连接，无法上传");
+            DialogPositionUtil.centerOnOwner(alert, this);
+            alert.showAndWait();
+            return;
+        }
+        final int total = files.size();
+        uploadCancelled.set(false);
+        showUploadProgressDialog(total);
+        setStatus("上传中... (0/" + total + ")");
+        new Thread(() -> {
+            int success = 0, failed = 0;
+            String lastError = null;
+            for (int i = 0; i < total; i++) {
+                if (uploadCancelled.get()) break;
+                File file = files.get(i);
+                try {
+                    doUploadSingle(file);
+                    success++;
+                } catch (Exception ex) {
+                    failed++;
+                    lastError = ex.getMessage();
+                    if (lastError == null) lastError = ex.toString();
+                }
+                final int done = success + failed;
+                final String name = file.getName();
+                final long size = file.length();
+                Platform.runLater(() -> updateUploadProgress(done, total, name, size));
+            }
+            final int okCount = success;
+            final int failCount = failed;
+            final String err2 = lastError;
+            final boolean cancelled = uploadCancelled.get();
+            Platform.runLater(() -> {
+                hideUploadProgressDialog();
+                if (cancelled && (okCount + failCount) < total) {
+                    setStatus("上传已取消: 已完成 " + okCount + " 个");
+                } else if (failCount == 0) {
+                    setStatus("上传完成: 成功 " + okCount + " 个");
+                } else {
+                    setStatus("上传结束: 成功 " + okCount + " 个, 失败 " + failCount + " 个");
+                    Alert alert = new Alert(Alert.AlertType.WARNING);
+                    alert.setTitle("部分上传失败");
+                    alert.setHeaderText("成功 " + okCount + " 个, 失败 " + failCount + " 个");
+                    alert.setContentText(err2 != null ? err2 : "");
+                    DialogPositionUtil.centerOnOwner(alert, this);
+                    alert.showAndWait();
+                }
+                refresh();
+            });
+        }, "Upload").start();
+    }
+
+    // ==================== 上传进度对话框 ====================
+    private void showUploadProgressDialog(int total) {
+        uploadProgressStage = new Stage();
+        uploadProgressStage.setTitle(total > 0 ? "上传文件 (" + total + " 个)" : "上传文件");
+        uploadProgressStage.setWidth(500);
+        uploadProgressStage.setHeight(190);
+        uploadProgressStage.setResizable(false);
+        uploadProgressStage.initOwner(getStage());
+
+        VBox vbox = new VBox(10);
+        vbox.setPadding(new Insets(15));
+        vbox.setAlignment(Pos.CENTER_LEFT);
+
+        Label titleLabel = new Label("正在上传...");
+        titleLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold;");
+
+        uploadProgressLabel = new Label("准备上传...");
+        uploadProgressLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #333;");
+        uploadProgressLabel.setMaxWidth(470);
+        uploadProgressLabel.setTextOverrun(OverrunStyle.ELLIPSIS);
+
+        uploadProgressBar = new ProgressBar(0);
+        uploadProgressBar.setMaxWidth(Double.MAX_VALUE);
+        uploadProgressBar.setStyle("-fx-accent: #07c160;");
+
+        uploadProgressDetailLabel = new Label("");
+        uploadProgressDetailLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+        uploadProgressDetailLabel.setMaxWidth(470);
+        uploadProgressDetailLabel.setTextOverrun(OverrunStyle.ELLIPSIS);
+
+        Button cancelBtn = new Button("取消");
+        cancelBtn.setStyle("-fx-background-color: #f5f5f5; -fx-border-color: #ddd;");
+        cancelBtn.setOnAction(e -> uploadCancelled.set(true));
+
+        HBox buttonBox = new HBox();
+        buttonBox.setAlignment(Pos.CENTER_RIGHT);
+        buttonBox.getChildren().add(cancelBtn);
+
+        vbox.getChildren().addAll(titleLabel, uploadProgressLabel, uploadProgressBar, uploadProgressDetailLabel, buttonBox);
+        uploadProgressStage.setScene(new Scene(vbox));
+        uploadProgressStage.setOnCloseRequest(e -> {
+            uploadCancelled.set(true);
+            e.consume();
+        });
+        DialogPositionUtil.centerOnOwner(uploadProgressStage, this);
+        uploadProgressStage.show();
+    }
+
+    private void hideUploadProgressDialog() {
+        if (uploadProgressStage != null) {
+            uploadProgressStage.close();
+            uploadProgressStage = null;
+        }
+    }
+
+    private void updateUploadProgress(int done, int total, String fileName, long fileSize) {
+        if (uploadProgressBar == null || uploadProgressLabel == null) return;
+        double progress = total > 0 ? (double) done / total : 0;
+        uploadProgressBar.setProgress(progress);
+        uploadProgressLabel.setText(String.format("正在上传: %s (%d/%d)", fileName, done, total));
+        if (uploadProgressDetailLabel != null) {
+            uploadProgressDetailLabel.setText(String.format("%s · 大小 %s",
+                    done >= total ? "完成" : "传输中...", formatFileSize(fileSize)));
+        }
+    }
+
+    private String formatFileSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024));
+        return String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024));
+    }
+
+    /**
+     * 注册 Ctrl+V 粘贴快捷键：检测系统剪贴板中的本地文件并上传。
+     * 子类可进一步覆盖 {@link #handlePaste()} 处理自身复制格式。
+     */
+    protected void setupKeyboardShortcuts() {
+        KeyCodeCombination pasteCombo = new KeyCodeCombination(KeyCode.V, KeyCombination.SHORTCUT_DOWN);
+        this.sceneProperty().addListener((obs, oldScene, newScene) -> {
+            if (newScene != null) {
+                newScene.getAccelerators().put(pasteCombo, this::handlePaste);
+            }
+        });
     }
 
     /**
@@ -1918,9 +2091,11 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
     protected abstract void doMkdir(String fullPath);
 
     /**
-     * 上传文件列表到当前目录（子类负责内部异步执行，完成后调用 refresh）。
+     * 上传单个文件到当前远程目录（同步阻塞，失败抛出异常）。
+     * 子类根据自身 currentPath / currentBucket 计算远程路径并执行后端上传。
+     * 进度对话框、线程调度、刷新由基类 {@link #doUpload(List)} 负责。
      */
-    protected abstract void doUpload(List<File> files);
+    protected abstract void doUploadSingle(File localFile) throws Exception;
 
     /**
      * 下载文件项到本地指定文件（子类负责内部异步执行，完成后更新状态栏）。
@@ -1963,8 +2138,21 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
     protected boolean hasCopyData() { return false; }
     /** 复制选中项到剪贴板。 */
     protected void handleCopy() {}
-    /** 从剪贴板粘贴到当前位置。 */
-    protected void handlePaste() {}
+    /**
+     * 从剪贴板粘贴到当前位置：检测系统剪贴板中的本地文件并上传，
+     * 否则由支持内部复制粘贴的子类（如 S3）覆盖处理自身复制格式。
+     */
+    protected void handlePaste() {
+        Clipboard clipboard = Clipboard.getSystemClipboard();
+        if (clipboard.hasFiles()) {
+            List<File> files = clipboard.getFiles();
+            if (files != null && !files.isEmpty()) {
+                doUpload(files);
+            }
+        }
+    }
+    /** 上传前检查：返回非 null 表示不可上传（给出错误提示），返回 null 表示通过。 */
+    protected String preUploadCheck() { return null; }
     /** 加载缩略图（图标视图模式下调用）。 */
     protected void loadThumbnails() {}
     /** 创建文件（supportsCreateFile 返回 true 的子类覆盖实现）。 */

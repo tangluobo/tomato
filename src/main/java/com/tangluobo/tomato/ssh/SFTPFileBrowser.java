@@ -211,6 +211,9 @@ public class SFTPFileBrowser extends AbstractFileBrowserPane {
         statusLabel = new Label("就绪");
         statusLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: #888; -fx-padding: 2 6;");
         setBottom(statusLabel);
+
+        // Ctrl+V 粘贴上传（侧边栏模式未调用基类 initializeUI，需手动注册）
+        setupKeyboardShortcuts();
     }
 
     /**
@@ -368,26 +371,10 @@ public class SFTPFileBrowser extends AbstractFileBrowserPane {
     }
 
     @Override
-    protected void doUpload(List<File> files) {
-        setStatus("上传中...");
-        new Thread(() -> {
-            try {
-                String cwd = getCurrentPath();
-                for (File file : files) {
-                    String remotePath = cwd.endsWith("/") ? cwd + file.getName() : cwd + "/" + file.getName();
-                    sftpClient.upload(file.getAbsolutePath(), remotePath);
-                }
-                Platform.runLater(() -> {
-                    setStatus("上传完成");
-                    refresh();
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    setStatus("上传失败: " + e.getMessage());
-                    refresh();
-                });
-            }
-        }, "SFTP-Upload").start();
+    protected void doUploadSingle(File localFile) throws Exception {
+        String cwd = getCurrentPath();
+        String remotePath = cwd.endsWith("/") ? cwd + localFile.getName() : cwd + "/" + localFile.getName();
+        sftpClient.upload(localFile.getAbsolutePath(), remotePath);
     }
 
     @Override

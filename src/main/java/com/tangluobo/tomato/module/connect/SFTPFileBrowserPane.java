@@ -204,43 +204,9 @@ public class SFTPFileBrowserPane extends AbstractFileBrowserPane {
     }
 
     @Override
-    protected void doUpload(List<File> files) {
-        if (files == null || files.isEmpty()) return;
-        setStatus("上传中... (0/" + files.size() + ")");
-        new Thread(() -> {
-            int success = 0;
-            int failed = 0;
-            String lastError = null;
-            for (File file : files) {
-                String remotePath = joinPath(currentPath, file.getName());
-                try {
-                    sftpClient.upload(file.getAbsolutePath(), remotePath);
-                    success++;
-                } catch (Exception e) {
-                    failed++;
-                    lastError = e.getMessage();
-                    e.printStackTrace();
-                }
-                final int done = success + failed;
-                Platform.runLater(() -> setStatus("上传中... (" + done + "/" + files.size() + ")"));
-            }
-            final int okCount = success;
-            final int failCount = failed;
-            final String err = lastError;
-            Platform.runLater(() -> {
-                if (failCount == 0) {
-                    setStatus("上传完成: 成功 " + okCount + " 个");
-                } else {
-                    setStatus("上传结束: 成功 " + okCount + " 个, 失败 " + failCount + " 个");
-                    Alert alert = new Alert(Alert.AlertType.WARNING);
-                    alert.setTitle("部分上传失败");
-                    alert.setHeaderText("成功 " + okCount + " 个, 失败 " + failCount + " 个");
-                    alert.setContentText(err != null ? err : "");
-                    alert.showAndWait();
-                }
-                refresh();
-            });
-        }, "SFTP-Upload").start();
+    protected void doUploadSingle(File localFile) throws Exception {
+        String remotePath = joinPath(currentPath, localFile.getName());
+        sftpClient.upload(localFile.getAbsolutePath(), remotePath);
     }
 
     @Override
