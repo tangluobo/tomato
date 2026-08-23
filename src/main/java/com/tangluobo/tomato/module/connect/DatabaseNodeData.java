@@ -39,7 +39,8 @@ public class DatabaseNodeData {
         SSH_SERVICE_CONTAINER,      // SSH 服务管理：容器
         SSH_SERVICE_SERVICE,        // SSH 服务管理：服务
         SSH_SERVICE_PORT,           // SSH 服务管理：端口
-        SSH_SERVICE_FILE            // SSH 服务管理：文件
+        SSH_SERVICE_FILE,           // SSH 服务管理：文件
+        SSH_CONTAINER               // SSH 服务管理：单个 Docker 容器节点（opened=true 表示运行中）
     }
 
     private final NodeType type;
@@ -51,6 +52,7 @@ public class DatabaseNodeData {
     private final String schemaName;
     // 查询/备份目录的相对路径（相对于 query/backup 根目录），""表示根目录。
     // 仅 QUERY/QUERY_DIR/BACKUP/BACKUP_DIR 节点使用；QUERY_FOLDER/BACKUP_FOLDER 固定为""。
+    // SSH_CONTAINER 节点复用该字段存储 docker 命令前缀（"sudo -n docker" 或 "docker"）。
     private final String path;
     private boolean opened;
 

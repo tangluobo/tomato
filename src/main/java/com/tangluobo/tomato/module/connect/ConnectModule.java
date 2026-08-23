@@ -34,6 +34,9 @@ import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.image.PixelReader;
+import javafx.scene.image.PixelWriter;
+import javafx.scene.image.WritableImage;
 import javafx.scene.input.*;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
@@ -111,6 +114,9 @@ public class ConnectModule implements Module {
     private Image sshServiceServiceIcon;
     private Image sshServicePortIcon;
     private Image sshServiceFileIcon;
+    // Docker 容器节点图标：运行中彩色 / 已停止灰色
+    private Image dockerContainerIcon;
+    private Image dockerContainerGrayIcon;
     private TextField searchField;
 
     // 内容区域
@@ -232,6 +238,41 @@ public class ConnectModule implements Module {
         try { sshServiceServiceIcon = new Image(getClass().getResourceAsStream("/images/connect/monitor.png")); } catch (Exception e) { sshServiceServiceIcon = null; }
         try { sshServicePortIcon = createPortIconImage(); } catch (Exception e) { sshServicePortIcon = null; }
         try { sshServiceFileIcon = new Image(getClass().getResourceAsStream("/images/connect/folder.png")); } catch (Exception e) { sshServiceFileIcon = null; }
+        // Docker 容器节点图标：运行中彩色；已停止灰色（由彩色版程序化去色生成，保留透明度）
+        try {
+            dockerContainerIcon = new Image(getClass().getResourceAsStream("/images/connect/docker.png"));
+            dockerContainerGrayIcon = createGrayImage(dockerContainerIcon);
+        } catch (Exception e) {
+            dockerContainerIcon = null;
+            dockerContainerGrayIcon = null;
+        }
+    }
+
+    /**
+     * 将彩色图标程序化转成灰色版本（保留透明度），用于容器"未启动"状态图标。
+     */
+    private Image createGrayImage(Image src) {
+        if (src == null || src.isError() || src.getPixelReader() == null
+                || (int) src.getWidth() <= 0 || (int) src.getHeight() <= 0) {
+            return null;
+        }
+        int w = (int) src.getWidth();
+        int h = (int) src.getHeight();
+        WritableImage out = new WritableImage(w, h);
+        PixelReader pr = src.getPixelReader();
+        PixelWriter pw = out.getPixelWriter();
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int argb = pr.getArgb(x, y);
+                int a = (argb >>> 24) & 0xFF;
+                int r = (argb >>> 16) & 0xFF;
+                int g = (argb >>> 8) & 0xFF;
+                int b = argb & 0xFF;
+                int gray = (r * 299 + g * 587 + b * 114) / 1000;
+                pw.setArgb(x, y, (a << 24) | (gray << 16) | (gray << 8) | gray);
+            }
+        }
+        return out;
     }
 
     /**
@@ -330,6 +371,8 @@ public class ConnectModule implements Module {
             case SSH_SERVICE_SERVICE -> sshServiceServiceIcon;
             case SSH_SERVICE_PORT -> sshServicePortIcon;
             case SSH_SERVICE_FILE -> sshServiceFileIcon;
+            // 容器节点：运行中（opened=true）显示彩色图标，已停止显示灰色图标
+            case SSH_CONTAINER -> data.isOpened() ? dockerContainerIcon : dockerContainerGrayIcon;
         };
         if (icon != null) iv.setImage(icon);
         return iv;
@@ -1395,7 +1438,19 @@ public class ConnectModule implements Module {
                     ssh.handleFileNodeDoubleClick(this, data.getConnectionConfig());
                 }
             }
-            case SSH_SERVICE_CONTAINER, SSH_SERVICE_SERVICE, SSH_SERVICE_PORT -> { /* TODO */ }
+            case SSH_SERVICE_CONTAINER -> {
+                ConnectHandler handler = createConnectHandler(data.getConnectionConfig());
+                if (handler instanceof SshTerminalConnectHandler ssh) {
+                    ssh.handleContainerFolderDoubleClick(this, item, data);
+                }
+            }
+            case SSH_CONTAINER -> {
+                ConnectHandler handler = createConnectHandler(data.getConnectionConfig());
+                if (handler instanceof SshTerminalConnectHandler ssh) {
+                    ssh.handleContainerNodeDoubleClick(this, item, data);
+                }
+            }
+            case SSH_SERVICE_SERVICE, SSH_SERVICE_PORT -> { /* TODO */ }
         }
     }
 

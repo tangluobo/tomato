@@ -642,6 +642,25 @@ public class SSHTerminalPane extends BorderPane {
     }
 
     /**
+     * 连接建立后向远端 shell 发送一条命令并回车执行
+     * （用于进入容器终端 docker exec、跟踪容器日志 docker logs -f 等场景）。
+     * 需在连接成功后调用；写入失败静默忽略（连接可能已断开）。
+     */
+    public void sendCommand(String command) {
+        try {
+            if (sshSession != null && sshSession.isConnected()) {
+                OutputStream os = sshSession.getOutputStream();
+                if (os != null) {
+                    os.write((command + "\r").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    os.flush();
+                }
+            }
+        } catch (IOException e) {
+            // 连接断开等异常：忽略
+        }
+    }
+
+    /**
      * 连接SSH
      */
     public void connect(String host, int port, String username, String password) throws Exception {
