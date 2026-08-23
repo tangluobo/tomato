@@ -125,7 +125,7 @@ public class S3FileBrowserPane extends AbstractFileBrowserPane {
 
         setInitialViewMode(ViewMode.ICON);  // S3 面板默认图标视图
         loadBuckets();
-        setupKeyboardShortcuts();
+        // Ctrl+C / Ctrl+V 由基类 setupKeyboardShortcuts（initializeUI 末尾）统一注册
     }
 
     /**
@@ -421,7 +421,12 @@ public class S3FileBrowserPane extends AbstractFileBrowserPane {
 
     @Override
     protected void doUploadSingle(File localFile) throws Exception {
-        String key = (currentPrefix != null ? currentPrefix : "") + localFile.getName();
+        // 规范化前缀：保证带尾斜杠，避免把 key 拼成 "dir1file.txt"
+        String prefix = currentPrefix != null ? currentPrefix : "";
+        if (!prefix.isEmpty() && !prefix.endsWith("/")) {
+            prefix = prefix + "/";
+        }
+        String key = prefix + localFile.getName();
         long size = localFile.length();
         String contentType = java.net.URLConnection.guessContentTypeFromName(localFile.getName());
         if (contentType == null) contentType = "application/octet-stream";
@@ -2154,16 +2159,6 @@ public class S3FileBrowserPane extends AbstractFileBrowserPane {
     }
 
     // ==================== 键盘快捷键 ====================
-    /**
-     * 设置全局键盘快捷键（Ctrl+C 复制、Ctrl+V 粘贴）
-     */
-    public void setupKeyboardShortcuts() {
-        // 仅注册 Ctrl+C 复制；Ctrl+V 粘贴由基类 setupKeyboardShortcuts 统一注册
-        KeyCodeCombination copyCombo = new KeyCodeCombination(KeyCode.C, KeyCombination.SHORTCUT_DOWN);
-        this.sceneProperty().addListener((obs, oldScene, newScene) -> {
-            if (newScene != null) {
-                newScene.getAccelerators().put(copyCombo, this::handleCopy);
-            }
-        });
-    }
+    // Ctrl+C 复制 / Ctrl+V 粘贴由基类 setupKeyboardShortcuts 统一注册，
+    // 本类通过覆盖 handleCopy / handlePaste 实现自身复制粘贴逻辑。
 }

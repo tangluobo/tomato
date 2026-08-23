@@ -1665,13 +1665,15 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
     }
 
     /**
-     * 注册 Ctrl+V 粘贴快捷键：检测系统剪贴板中的本地文件并上传。
-     * 子类可进一步覆盖 {@link #handlePaste()} 处理自身复制格式。
+     * 注册键盘快捷键：Ctrl+C 复制（子类可覆盖 handleCopy）、Ctrl+V 粘贴（上传系统剪贴板中的本地文件）。
+     * 在文本输入控件聚焦时由其自行处理，accelerator 不会被触发。
      */
     protected void setupKeyboardShortcuts() {
+        KeyCodeCombination copyCombo = new KeyCodeCombination(KeyCode.C, KeyCombination.SHORTCUT_DOWN);
         KeyCodeCombination pasteCombo = new KeyCodeCombination(KeyCode.V, KeyCombination.SHORTCUT_DOWN);
         this.sceneProperty().addListener((obs, oldScene, newScene) -> {
             if (newScene != null) {
+                newScene.getAccelerators().put(copyCombo, this::handleCopy);
                 newScene.getAccelerators().put(pasteCombo, this::handlePaste);
             }
         });
