@@ -58,8 +58,9 @@ public class SFTPFileBrowser extends BorderPane {
     private final boolean standalone;
 
     /** 视图模式（仅 standalone 模式有效） */
-    private enum ViewMode { ICON, LIST, COLUMN }
+    public enum ViewMode { ICON, LIST, COLUMN }
     private ViewMode currentViewMode = ViewMode.LIST;
+    private ToggleButton iconViewBtn, listViewBtn, columnViewBtn;
     private FlowPane iconFlowPane;
     private ScrollPane iconScrollPane;
     private HBox columnContainer;
@@ -122,6 +123,19 @@ public class SFTPFileBrowser extends BorderPane {
         setStyle("-fx-background-color: #FFFFFF;");
 
         createUI();
+    }
+
+    /**
+     * 设置初始文件视图模式（在 initConnection 前或后调用均可，仅 standalone 模式有效）
+     */
+    public void setInitialViewMode(ViewMode mode) {
+        if (mode != null) {
+            this.currentViewMode = mode;
+            // 若 UI 已构建（容器已初始化），立即切换视图
+            if (iconScrollPane != null) {
+                switchViewMode(mode);
+            }
+        }
     }
 
     private Image loadIcon(String path) {
@@ -319,12 +333,49 @@ public class SFTPFileBrowser extends BorderPane {
     }
 
     /**
-     * 根据文件名获取对应图标（优先系统图标，后备生成图标）
+     * 文件类型图标缓存：扩展名 -> Image（小尺寸）和大尺寸
      */
+    private final java.util.Map<String, Image> fileTypeIconCache = new java.util.HashMap<>();
+    private final java.util.Map<String, Image> fileTypeLargeIconCache = new java.util.HashMap<>();
+
+    /**
+     * 从 /images/connect/fileTypes/ 目录加载文件类型图标
+     * 支持的扩展名：aac/ai/avi/bin/bmp/cad/cdr/css/csv/db/doc/docx/eps/exe/flv/gif/
+     * hlp/htm/html/ini/iso/java/jpg/js/mkv/mov/mp3/mp4/mpeg/mpg/pdf/php/png/ppt/ps/
+     * psd/rar/rss/rtf/sql/svg/swf/sys/txt/wma/xls/xlsx/xml/zip
+     */
+    private Image loadFileTypeIcon(String ext, boolean large) {
+        if (ext == null || ext.isEmpty()) return null;
+        String key = ext.toLowerCase();
+        java.util.Map<String, Image> cache = large ? fileTypeLargeIconCache : fileTypeIconCache;
+        if (cache.containsKey(key)) return cache.get(key);
+        Image img = null;
+        try {
+            String path = "/images/connect/fileTypes/" + key.toUpperCase() + ".png";
+            java.io.InputStream is = getClass().getResourceAsStream(path);
+            if (is != null) {
+                if (large) {
+                    img = new Image(is, 48, 48, true, true);
+                } else {
+                    img = new Image(is);
+                }
+                is.close();
+            }
+        } catch (Exception e) {
+            // 加载失败返回 null，后续走系统图标回退
+        }
+        cache.put(key, img);
+        return img;
+    }
+
     private Image getFileIcon(String fileName) {
         int dotIdx = fileName.lastIndexOf('.');
         if (dotIdx > 0) {
             String ext = fileName.substring(dotIdx + 1).toLowerCase();
+            // 优先使用 fileTypes 目录下的类型图标
+            Image typeIcon = loadFileTypeIcon(ext, false);
+            if (typeIcon != null) return typeIcon;
+            // 回退到系统图标
             Image sysIcon = getSystemFileIcon(ext);
             if (sysIcon != null) return sysIcon;
         }
@@ -359,15 +410,21 @@ public class SFTPFileBrowser extends BorderPane {
     }
 
     /**
-     * 获取系统大尺寸文件图标（按扩展名，Windows ShellFolder 大图标）
+     * 获取大尺寸文件图标（优先 fileTypes 目录，回退到系统大图标）
      */
     private Image getLargeFileIcon(String fileName) {
         int dotIdx = fileName.lastIndexOf('.');
         if (dotIdx > 0) {
             String ext = fileName.substring(dotIdx + 1).toLowerCase();
-            return getLargeSystemFileIcon(ext);
+            // 优先使用 fileTypes 目录下的类型图标（大尺寸）
+            Image typeIcon = loadFileTypeIcon(ext, true);
+            if (typeIcon != null) return typeIcon;
+            // 回退到系统大图标
+            Image sysLarge = getLargeSystemFileIcon(ext);
+            if (sysLarge != null) return sysLarge;
         }
-        return getLargeSystemFileIcon("txt");
+        Image defaultLarge = loadFileTypeIcon("bin", true);
+        return defaultLarge != null ? defaultLarge : defaultFileIcon;
     }
 
     private void createUI() {
@@ -405,14 +462,14 @@ public class SFTPFileBrowser extends BorderPane {
         // 视图切换按钮组（图标/列表/列视图，样式参考 S3）
         ToggleGroup viewToggleGroup = new ToggleGroup();
 
-        ToggleButton iconViewBtn = new ToggleButton("⊞");
+        iconViewBtn = new ToggleButton("⊞");
         iconViewBtn.setTooltip(new Tooltip("图标视图"));
         iconViewBtn.setToggleGroup(viewToggleGroup);
         iconViewBtn.setStyle("-fx-font-size: 14px; -fx-padding: 2 6; -fx-background-radius: 4 0 0 4; -fx-border-radius: 4 0 0 4;");
         iconViewBtn.setOnAction(e -> switchViewMode(ViewMode.ICON));
         pathBar.getChildren().add(iconViewBtn);
 
-        ToggleButton listViewBtn = new ToggleButton("≡");
+        listViewBtn = new ToggleButton("≡");
         listViewBtn.setTooltip(new Tooltip("列表视图"));
         listViewBtn.setToggleGroup(viewToggleGroup);
         listViewBtn.setSelected(true);
@@ -420,7 +477,7 @@ public class SFTPFileBrowser extends BorderPane {
         listViewBtn.setOnAction(e -> switchViewMode(ViewMode.LIST));
         pathBar.getChildren().add(listViewBtn);
 
-        ToggleButton columnViewBtn = new ToggleButton("⫶");
+        columnViewBtn = new ToggleButton("⫶");
         columnViewBtn.setTooltip(new Tooltip("列视图（多级目录）"));
         columnViewBtn.setToggleGroup(viewToggleGroup);
         columnViewBtn.setStyle("-fx-font-size: 14px; -fx-padding: 2 6; -fx-background-radius: 0 4 4 0; -fx-border-radius: 0 4 4 0;");
@@ -492,8 +549,8 @@ public class SFTPFileBrowser extends BorderPane {
         initIconView();
         initColumnView();
 
-        // 默认列表视图
-        switchViewMode(ViewMode.LIST);
+        // 默认使用 currentViewMode（可由 setInitialViewMode 设置）
+        switchViewMode(currentViewMode);
 
         // 底部状态栏（参考 S3 样式）
         HBox statusBar = new HBox(8);
@@ -607,6 +664,11 @@ public class SFTPFileBrowser extends BorderPane {
      */
     private void switchViewMode(ViewMode mode) {
         currentViewMode = mode;
+
+        // 同步切换按钮选中状态
+        if (iconViewBtn != null) iconViewBtn.setSelected(mode == ViewMode.ICON);
+        if (listViewBtn != null) listViewBtn.setSelected(mode == ViewMode.LIST);
+        if (columnViewBtn != null) columnViewBtn.setSelected(mode == ViewMode.COLUMN);
 
         VBox centerBox = new VBox();
 

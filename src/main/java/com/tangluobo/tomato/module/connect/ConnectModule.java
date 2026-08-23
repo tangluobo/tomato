@@ -1922,8 +1922,23 @@ public class ConnectModule implements Module {
         sshServiceMgmtCheckBox.setSelected(GlobalConfig.getInstance().isSshServiceManagementEnabled());
         GridPane.setConstraints(sshServiceMgmtCheckBox, 1, 3);
 
+        // 默认文件视图模式
+        Label fileViewModeLabel = new Label("默认文件视图");
+        fileViewModeLabel.setStyle("-fx-font-size: 14px;");
+        GridPane.setConstraints(fileViewModeLabel, 0, 4);
+        ComboBox<String> fileViewModeCombo = new ComboBox<>();
+        fileViewModeCombo.getItems().addAll("图标视图", "详细列表", "多列列表");
+        String currentFileViewMode = GlobalConfig.getInstance().getSshDefaultFileViewMode();
+        fileViewModeCombo.setValue(switch (currentFileViewMode == null ? "LIST" : currentFileViewMode.toUpperCase()) {
+            case "ICON" -> "图标视图";
+            case "COLUMN" -> "多列列表";
+            default -> "详细列表";
+        });
+        fileViewModeCombo.setPrefWidth(150);
+        GridPane.setConstraints(fileViewModeCombo, 1, 4);
+
         sshGrid.getChildren().addAll(fontNameLabel, fontNameCombo, fontSizeLabel, fontSizeSpinner,
-                scrollbackLabel, scrollbackBox, sshServiceMgmtCheckBox);
+                scrollbackLabel, scrollbackBox, sshServiceMgmtCheckBox, fileViewModeLabel, fileViewModeCombo);
 
         // 预览（放在字体配置右边）
         VBox previewBox = new VBox(8);
@@ -1970,6 +1985,12 @@ public class ConnectModule implements Module {
             cfg.setSshTerminalFontSize(s);
             cfg.setScrollbackLines(newScrollback);
             cfg.setSshServiceManagementEnabled(sshServiceMgmtCheckBox.isSelected());
+            String viewModeStr = switch (fileViewModeCombo.getValue()) {
+                case "图标视图" -> "ICON";
+                case "多列列表" -> "COLUMN";
+                default -> "LIST";
+            };
+            cfg.setSshDefaultFileViewMode(viewModeStr);
             cfg.save();
 
             // 应用到所有已打开的终端

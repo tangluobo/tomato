@@ -115,8 +115,35 @@ public class SshTerminalConnectHandler implements ConnectHandler {
         StackPane loading = new StackPane(new ProgressIndicator());
         tab.setContent(loading);
 
+        // 持有 browser 引用，供右键菜单使用
+        final SFTPFileBrowser[] browserHolder = new SFTPFileBrowser[1];
+
         ContextMenu tabContextMenu = new ContextMenu();
-        tabContextMenu.getItems().addAll();
+
+        MenuItem sessionConfigItem = new MenuItem("会话配置");
+        sessionConfigItem.setOnAction(e -> {
+            Stage stage = (Stage) module.getTerminalTabPane().getScene().getWindow();
+            SessionConfigDialog.show(stage, config);
+            // 应用会话级视图模式（会话配置覆盖优先，否则用全局）
+            SFTPFileBrowser browser = browserHolder[0];
+            if (browser != null) {
+                String modeStr = config.getDefaultFileViewMode();
+                if (modeStr == null || modeStr.isEmpty()) {
+                    modeStr = GlobalConfig.getInstance().getSshDefaultFileViewMode();
+                }
+                if (modeStr != null) {
+                    try {
+                        browser.setInitialViewMode(SFTPFileBrowser.ViewMode.valueOf(modeStr.toUpperCase()));
+                    } catch (IllegalArgumentException ignored) {}
+                }
+            }
+            module.saveConnections();
+        });
+
+        MenuItem globalConfigItem = new MenuItem("全局配置");
+        globalConfigItem.setOnAction(e -> module.openSettingsTabWithSshSelected());
+
+        tabContextMenu.getItems().addAll(sessionConfigItem, globalConfigItem);
         tab.setContextMenu(tabContextMenu);
 
         module.getTerminalTabPane().getTabs().add(tab);
@@ -152,6 +179,19 @@ public class SshTerminalConnectHandler implements ConnectHandler {
 
                 Platform.runLater(() -> {
                     SFTPFileBrowser browser = new SFTPFileBrowser(session, sftp, true);
+                    browserHolder[0] = browser;
+                    // 设置初始视图模式：会话级覆盖优先，否则用全局配置
+                    String modeStr = config.getDefaultFileViewMode();
+                    if (modeStr == null || modeStr.isEmpty()) {
+                        modeStr = GlobalConfig.getInstance().getSshDefaultFileViewMode();
+                    }
+                    if (modeStr != null) {
+                        try {
+                            browser.setInitialViewMode(SFTPFileBrowser.ViewMode.valueOf(modeStr.toUpperCase()));
+                        } catch (IllegalArgumentException ignored) {
+                            // 非法值时使用默认 LIST
+                        }
+                    }
                     tab.setContent(browser);
                     browser.initConnection();
 
