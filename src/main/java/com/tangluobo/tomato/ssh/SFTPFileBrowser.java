@@ -88,6 +88,18 @@ public class SFTPFileBrowser extends BorderPane {
     private final Map<String, File> editCache = new ConcurrentHashMap<>();
     private final Map<String, Long> editLastModified = new ConcurrentHashMap<>();
 
+    // 重命名/内联编辑状态（参考 S3FileBrowserPane）
+    private FileItem editingItem;
+    private FileItem selectedItem;       // 主选中项（右键菜单用）
+    private FileItem clickedBeforeItem;  // 上次点击前已选中的项（用于判断"已选中再点击"进入重命名）
+    private javafx.animation.Timeline singleClickTimer;
+    private javafx.stage.Popup iconEditPopup;
+    private TextField iconEditField;
+
+    // SFTP 跨实例剪贴板（同会话内复制粘贴：复制路径+源sftpClient，粘贴时下载到临时再上传）
+    private static final java.util.List<FileItem> sftpClipboard = new java.util.ArrayList<>();
+    private static SFTPClient sftpClipboardSource;
+
     public SFTPFileBrowser(SSHSession sshSession, SFTPClient sftpClient) {
         this(sshSession, sftpClient, false);
     }
@@ -518,11 +530,13 @@ public class SFTPFileBrowser extends BorderPane {
         fileTable.setPlaceholder(new Label("空目录"));
         fileTable.setFixedCellSize(26);
         fileTable.setMinHeight(80);
+        fileTable.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         fileTable.setItems(fileList);
 
         TableColumn<FileItem, String> nameCol = new TableColumn<>("名称");
+        nameCol.setEditable(true);
         nameCol.setCellValueFactory(new PropertyValueFactory<>("displayName"));
-        nameCol.setCellFactory(col -> new FileItemCell());
+        nameCol.setCellFactory(createEditableNameCellFactory());
         nameCol.setPrefWidth(300);
 
         TableColumn<FileItem, String> sizeCol = new TableColumn<>("大小");
@@ -631,11 +645,13 @@ public class SFTPFileBrowser extends BorderPane {
         // 侧边栏模式：高度随内容增长，不产生内部滚动条，由外层 rightPanelScroll 整体滚动
         fileTable.prefHeightProperty().bind(javafx.beans.binding.Bindings.size(fileList).multiply(24).add(30));
         fileTable.setMinHeight(80);
+        fileTable.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         fileTable.setItems(fileList);
 
         TableColumn<FileItem, String> nameCol = new TableColumn<>("名称");
+        nameCol.setEditable(true);
         nameCol.setCellValueFactory(new PropertyValueFactory<>("displayName"));
-        nameCol.setCellFactory(col -> new FileItemCell());
+        nameCol.setCellFactory(createEditableNameCellFactory());
         nameCol.setPrefWidth(180);
 
         TableColumn<FileItem, String> sizeCol = new TableColumn<>("大小");
@@ -866,9 +882,12 @@ public class SFTPFileBrowser extends BorderPane {
         nameLabel.setAlignment(Pos.CENTER);
         box.getChildren().add(nameLabel);
 
-        // 鼠标按下：单击选中（支持 Ctrl/Shift 多选）
+        // 记录点击前已选中的项（用于判断"已选中再点击"进入重命名编辑）
         box.setOnMousePressed(e -> {
             if (e.getButton() == MouseButton.PRIMARY) {
+                // 记录本次点击前该项是否已处于单选状态
+                clickedBeforeItem = (iconSelectedItems.size() == 1 && iconSelectedItems.contains(item)) ? item : null;
+                // 同步选中（支持 Ctrl/Shift 多选）
                 if (e.isControlDown()) {
                     if (iconSelectedItems.contains(item)) {
                         iconSelectedItems.remove(item);
@@ -881,18 +900,71 @@ public class SFTPFileBrowser extends BorderPane {
                     iconSelectedItems.clear();
                     iconSelectedItems.add(item);
                 }
+                selectedItem = item;
                 refreshIconSelectionStyles();
                 e.consume();
             }
         });
 
-        // 双击：目录进入，文件用本地应用打开
+        // 鼠标点击：双击打开、已选中再单击进入重命名、右键选中（参考 S3）
         box.setOnMouseClicked(e -> {
-            if (e.getClickCount() == 2 && e.getButton() == MouseButton.PRIMARY) {
-                if (item.isDirectory()) {
-                    navigateTo(item.getPath());
-                } else {
-                    openWithLocalApp(item);
+            if (e.getButton() == MouseButton.PRIMARY) {
+                // 双击：取消重命名定时器，执行打开
+                if (e.getClickCount() == 2) {
+                    if (singleClickTimer != null) {
+                        singleClickTimer.stop();
+                        singleClickTimer = null;
+                    }
+                    if (editingItem != null) {
+                        cancelIconEdit();
+                    }
+                    if (item.isDirectory()) {
+                        navigateTo(item.getPath());
+                    } else {
+                        openWithLocalApp(item);
+                    }
+                    e.consume();
+                    return;
+                }
+
+                boolean ctrl = e.isControlDown();
+                boolean shift = e.isShiftDown();
+
+                // 单击：判断是否"已选中再点击"以进入重命名编辑
+                boolean wasAlreadySelected = !ctrl && !shift
+                        && clickedBeforeItem == item
+                        && iconSelectedItems.size() == 1
+                        && iconSelectedItems.contains(item)
+                        && editingItem == null;
+                if (wasAlreadySelected) {
+                    final FileItem itemToEdit = item;
+                    if (singleClickTimer != null) {
+                        singleClickTimer.stop();
+                    }
+                    singleClickTimer = new javafx.animation.Timeline(
+                            new javafx.animation.KeyFrame(javafx.util.Duration.millis(300), ae -> {
+                                if (editingItem == null
+                                        && iconSelectedItems.size() == 1
+                                        && iconSelectedItems.contains(itemToEdit)) {
+                                    startIconEdit(itemToEdit);
+                                }
+                                singleClickTimer = null;
+                            }));
+                    singleClickTimer.play();
+                    e.consume();
+                    return;
+                }
+                // 正常选择已在 mousePressed 中处理
+            } else if (e.getButton() == MouseButton.SECONDARY) {
+                // 右键时：如果当前没选中才选中它（保持多选状态不变）
+                if (!iconSelectedItems.contains(item)) {
+                    boolean append = e.isControlDown() || e.isShiftDown();
+                    if (!append) {
+                        iconSelectedItems.clear();
+                    }
+                    iconSelectedItems.add(item);
+                    selectedItem = item;
+                    refreshIconSelectionStyles();
                 }
             }
         });
@@ -1014,6 +1086,7 @@ public class SFTPFileBrowser extends BorderPane {
 
         lv.getSelectionModel().selectedItemProperty().addListener((obs, old, val) -> {
             if (val != null) {
+                selectedItem = val;
                 onColumnItemSelected(val, colIndex);
             }
         });
@@ -1087,21 +1160,73 @@ public class SFTPFileBrowser extends BorderPane {
     }
 
     /**
-     * 表格行工厂：双击进入目录/打开文件，拖拽上传/下载
+     * 表格行工厂：单击选中、双击打开、已选中再单击进入重命名、右键选中、拖拽上传/下载
      */
     private void setupTableRowFactory() {
-        // 双击进入目录或用本地应用打开文件
         fileTable.setRowFactory(tv -> {
             TableRow<FileItem> row = new TableRow<>();
-            row.setOnMouseClicked(e -> {
-                if (e.getClickCount() == 2 && !row.isEmpty()) {
-                    FileItem item = row.getItem();
-                    if (item.isDirectory()) {
-                        navigateTo(item.getPath());
-                    } else {
-                        openWithLocalApp(item);
+            row.setOnMouseClicked(event -> {
+                if (row.isEmpty()) return;
+                if (event.getButton() == MouseButton.SECONDARY) {
+                    // 右键时先选中该行再弹出菜单
+                    if (!fileTable.getSelectionModel().isSelected(row.getIndex())) {
+                        fileTable.getSelectionModel().select(row.getItem());
+                    }
+                    selectedItem = row.getItem();
+                    return;
+                }
+                if (event.getButton() != MouseButton.PRIMARY) return;
+
+                // 双击：取消重命名定时器，执行打开
+                if (event.getClickCount() == 2) {
+                    if (singleClickTimer != null) {
+                        singleClickTimer.stop();
+                        singleClickTimer = null;
+                    }
+                    if (editingItem != null) {
+                        cancelListEdit();
+                    }
+                    FileItem clicked = row.getItem();
+                    if (clicked != null) {
+                        if (clicked.isDirectory()) {
+                            navigateTo(clicked.getPath());
+                        } else {
+                            openWithLocalApp(clicked);
+                        }
+                    }
+                    event.consume();
+                    return;
+                }
+
+                // 单击：判断是否"已选中再点击"以进入重命名编辑
+                if (event.getClickCount() == 1 && !event.isControlDown() && !event.isShiftDown()) {
+                    int rowIdx = row.getIndex();
+                    boolean wasAlreadySelected = clickedBeforeItem != null
+                            && editingItem == null
+                            && fileTable.getSelectionModel().getSelectedIndices().size() == 1
+                            && fileTable.getSelectionModel().isSelected(rowIdx);
+                    if (wasAlreadySelected) {
+                        final int editRow = rowIdx;
+                        if (singleClickTimer != null) {
+                            singleClickTimer.stop();
+                        }
+                        singleClickTimer = new javafx.animation.Timeline(
+                                new javafx.animation.KeyFrame(javafx.util.Duration.millis(300), ae -> {
+                                    if (editingItem == null
+                                            && fileTable.getSelectionModel().getSelectedIndices().size() == 1
+                                            && fileTable.getSelectionModel().isSelected(editRow)) {
+                                        startListEdit(editRow);
+                                    }
+                                    singleClickTimer = null;
+                                }));
+                        singleClickTimer.play();
+                        event.consume();
+                        return;
                     }
                 }
+
+                // 正常单击：记录主选中项
+                selectedItem = row.getItem();
             });
 
             // 拖拽：从远程拖到本地（下载到临时目录后拖出）
@@ -1109,7 +1234,6 @@ public class SFTPFileBrowser extends BorderPane {
                 if (row.isEmpty()) return;
                 FileItem item = row.getItem();
                 if (!item.isDirectory()) {
-                    // 先下载到临时目录
                     File tempFile = downloadToTemp(item);
                     if (tempFile != null) {
                         Dragboard db = row.startDragAndDrop(TransferMode.COPY);
@@ -1146,6 +1270,18 @@ public class SFTPFileBrowser extends BorderPane {
             return row;
         });
 
+        // 记录点击前已选中的项（用于判断"已选中再点击"进入重命名编辑）
+        fileTable.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
+            if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 1) {
+                var selItems = fileTable.getSelectionModel().getSelectedItems();
+                if (selItems.size() == 1 && selItems.get(0) != null) {
+                    clickedBeforeItem = selItems.get(0);
+                } else {
+                    clickedBeforeItem = null;
+                }
+            }
+        });
+
         // 整个表格也支持拖拽上传
         fileTable.setOnDragOver(e -> {
             Dragboard db = e.getDragboard();
@@ -1167,6 +1303,89 @@ public class SFTPFileBrowser extends BorderPane {
         });
     }
 
+    /**
+     * 名称列的可编辑单元格工厂：支持内联 TextField 重命名编辑（参考 S3 实现）
+     */
+    private javafx.util.Callback<TableColumn<FileItem, String>, TableCell<FileItem, String>> createEditableNameCellFactory() {
+        return col -> new TableCell<FileItem, String>() {
+            private TextField editField;
+
+            @Override
+            public void startEdit() {
+                super.startEdit();
+                if (isEmpty()) return;
+                final FileItem item = getTableView().getItems().get(getIndex());
+                editingItem = item;
+                editField = new TextField(item.getDisplayName());
+                editField.setStyle("-fx-padding: 0 4; -fx-font-size: 12px; -fx-background-color: white; -fx-border-color: #3399ff; -fx-border-radius: 0; -fx-background-radius: 0;");
+
+                editField.setOnAction(e -> commitRenameFromField(editField.getText()));
+                editField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
+                    if (!isNowFocused && editingItem == item) {
+                        commitRenameFromField(editField.getText());
+                    }
+                });
+                editField.setOnKeyReleased(e -> {
+                    if (e.getCode() == KeyCode.ESCAPE) {
+                        cancelListEdit();
+                    }
+                });
+
+                HBox box = new HBox(6);
+                box.setAlignment(Pos.CENTER_LEFT);
+                ImageView iv = new ImageView(getIconForItem(item, false));
+                iv.setFitWidth(16);
+                iv.setFitHeight(16);
+                iv.setPreserveRatio(true);
+                box.getChildren().add(iv);
+                box.getChildren().add(editField);
+                setText(null);
+                setGraphic(box);
+                editField.selectAll();
+                Platform.runLater(() -> editField.requestFocus());
+            }
+
+            @Override
+            public void commitEdit(String newValue) {
+                // 实际提交由 commitRenameFromField 处理
+            }
+
+            @Override
+            public void cancelEdit() {
+                super.cancelEdit();
+                editingItem = null;
+                fileTable.setEditable(false);
+                updateItem(getItem(), false);
+            }
+
+            private void commitRenameFromField(String newName) {
+                if (editingItem == null) {
+                    cancelListEdit();
+                    return;
+                }
+                FileItem item = editingItem;
+                commitRename(item, newName, () -> cancelListEdit(), () -> refresh());
+            }
+
+            @Override
+            protected void updateItem(String name, boolean empty) {
+                super.updateItem(name, empty);
+                if (empty || name == null) {
+                    setText(null);
+                    setGraphic(null);
+                } else if (!isEditing()) {
+                    setText(name);
+                    FileItem item = getTableView().getItems().get(getIndex());
+                    ImageView iv = new ImageView();
+                    iv.setFitWidth(16);
+                    iv.setFitHeight(16);
+                    iv.setImage(getIconForItem(item, false));
+                    if (iv.getImage() != null) setGraphic(iv);
+                }
+            }
+        };
+    }
+
     private ContextMenu createContextMenu() {
         ContextMenu menu = new ContextMenu();
 
@@ -1178,7 +1397,7 @@ public class SFTPFileBrowser extends BorderPane {
 
         MenuItem downloadItem = new MenuItem("下载");
         downloadItem.setOnAction(e -> {
-            FileItem selected = fileTable.getSelectionModel().getSelectedItem();
+            FileItem selected = getSelectedItem();
             if (selected != null && !selected.isDirectory()) {
                 downloadFile(selected);
             }
@@ -1186,7 +1405,7 @@ public class SFTPFileBrowser extends BorderPane {
 
         MenuItem openLocalItem = new MenuItem("用本地应用打开");
         openLocalItem.setOnAction(e -> {
-            FileItem selected = fileTable.getSelectionModel().getSelectedItem();
+            FileItem selected = getSelectedItem();
             if (selected != null && !selected.isDirectory()) {
                 openWithLocalApp(selected);
             }
@@ -1194,7 +1413,7 @@ public class SFTPFileBrowser extends BorderPane {
 
         MenuItem deleteItem = new MenuItem("删除");
         deleteItem.setOnAction(e -> {
-            FileItem selected = fileTable.getSelectionModel().getSelectedItem();
+            FileItem selected = getSelectedItem();
             if (selected != null) {
                 deleteEntry(selected);
             }
@@ -1206,8 +1425,298 @@ public class SFTPFileBrowser extends BorderPane {
         MenuItem refreshItem = new MenuItem("刷新");
         refreshItem.setOnAction(e -> refresh());
 
-        menu.getItems().addAll(uploadItem, downloadItem, openLocalItem, new SeparatorMenuItem(), mkdirItem, deleteItem, new SeparatorMenuItem(), refreshItem);
+        MenuItem renameItem = new MenuItem("重命名");
+        renameItem.setOnAction(e -> handleRename());
+
+        menu.getItems().addAll(uploadItem, downloadItem, openLocalItem, new SeparatorMenuItem(),
+                mkdirItem, deleteItem, renameItem, new SeparatorMenuItem(), refreshItem);
+
+        // 右键菜单显示时动态控制各项可见性
+        menu.setOnShowing(e -> {
+            FileItem selected = getSelectedItem();
+            boolean single = selected != null;
+            downloadItem.setVisible(single && !selected.isDirectory());
+            openLocalItem.setVisible(single && !selected.isDirectory());
+            deleteItem.setVisible(single);
+            renameItem.setVisible(single);
+        });
         return menu;
+    }
+
+    /**
+     * 获取当前选中项（按当前视图模式分派，参考 S3 实现）
+     */
+    private FileItem getSelectedItem() {
+        if (currentViewMode == ViewMode.LIST) {
+            return fileTable.getSelectionModel().getSelectedItem();
+        } else if (currentViewMode == ViewMode.COLUMN) {
+            for (ListView<FileItem> lv : columnListViews) {
+                FileItem sel = lv.getSelectionModel().getSelectedItem();
+                if (sel != null) return sel;
+            }
+            return selectedItem;
+        }
+        return selectedItem;
+    }
+
+    /**
+     * 右键菜单"重命名"入口：按当前视图分派到对应的内联编辑
+     */
+    private void handleRename() {
+        FileItem selected = getSelectedItem();
+        if (selected == null) return;
+        if (currentViewMode == ViewMode.ICON) {
+            startIconEdit(selected);
+        } else if (currentViewMode == ViewMode.LIST) {
+            int idx = fileTable.getSelectionModel().getSelectedIndex();
+            if (idx >= 0) startListEdit(idx);
+        } else if (currentViewMode == ViewMode.COLUMN) {
+            startColumnEdit(selected);
+        }
+    }
+
+    /** 列表视图：在指定行号上启动名称列内联编辑 */
+    private void startListEdit(int row) {
+        if (editingItem != null) return;
+        if (row < 0 || row >= fileTable.getItems().size()) return;
+        fileTable.setEditable(true);
+        fileTable.edit(row, fileTable.getColumns().get(0));
+    }
+
+    /** 取消列表视图编辑 */
+    private void cancelListEdit() {
+        editingItem = null;
+        fileTable.setEditable(false);
+        fileTable.edit(-1, null);
+    }
+
+    /**
+     * 图标视图：用 Popup 浮窗悬浮在名称 Label 上方编辑（参考 S3 实现）
+     */
+    private void startIconEdit(FileItem item) {
+        if (editingItem != null) return;
+        VBox box = null;
+        for (javafx.scene.Node node : iconFlowPane.getChildren()) {
+            if (node instanceof VBox v && item.equals(v.getProperties().get("fileItem"))) {
+                box = v;
+                break;
+            }
+        }
+        if (box == null) return;
+        editingItem = item;
+        // 编辑时图标不显示选中样式
+        applyIconSelectionStyle(box, false);
+
+        // 找到名称 Label（图标 ImageView 之后的第一个 Label）
+        Label nameLabel = null;
+        for (int i = 0; i < box.getChildren().size(); i++) {
+            if (box.getChildren().get(i) instanceof Label) {
+                nameLabel = (Label) box.getChildren().get(i);
+                break;
+            }
+        }
+        if (nameLabel == null) { editingItem = null; return; }
+
+        javafx.geometry.Bounds labelSceneBounds = nameLabel.localToScene(nameLabel.getBoundsInLocal());
+        javafx.scene.Scene scene = nameLabel.getScene();
+        if (scene == null || scene.getWindow() == null) { editingItem = null; return; }
+        javafx.stage.Window window = scene.getWindow();
+        double screenX = window.getX() + scene.getX() + labelSceneBounds.getMinX();
+        double screenY = window.getY() + scene.getY() + labelSceneBounds.getMinY();
+
+        iconEditField = new TextField(item.getDisplayName());
+        iconEditField.setStyle("-fx-padding: 0 6; -fx-font-size: 11px; -fx-background-color: white; -fx-border-color: #3399ff; -fx-border-width: 1.5; -fx-border-radius: 0; -fx-background-radius: 0;");
+        // 宽度按内容计算，允许比 Label 宽
+        javafx.scene.text.Text measureText = new javafx.scene.text.Text(item.getDisplayName());
+        measureText.setFont(javafx.scene.text.Font.font(11));
+        double contentWidth = measureText.getLayoutBounds().getWidth() + 20;
+        double labelW = nameLabel.getWidth();
+        if (labelW <= 0) labelW = nameLabel.prefWidth(-1);
+        double fieldWidth = Math.max(contentWidth, labelW);
+        double labelH = nameLabel.getHeight();
+        if (labelH <= 0) labelH = nameLabel.prefHeight(-1);
+        double fieldHeight = (labelH + 8) * 0.6;
+        iconEditField.setPrefWidth(fieldWidth);
+        iconEditField.setPrefHeight(fieldHeight);
+        iconEditField.setMinWidth(fieldWidth);
+        iconEditField.setAlignment(Pos.CENTER);
+
+        iconEditField.setOnAction(e -> commitRename(item, iconEditField.getText(), this::cancelIconEdit, this::refresh));
+        iconEditField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
+            if (!isNowFocused && editingItem == item) {
+                commitRename(item, iconEditField.getText(), this::cancelIconEdit, this::refresh);
+            }
+        });
+        iconEditField.setOnKeyReleased(e -> {
+            if (e.getCode() == KeyCode.ESCAPE) {
+                cancelIconEdit();
+            }
+        });
+
+        iconEditPopup = new javafx.stage.Popup();
+        iconEditPopup.setAutoFix(false);
+        iconEditPopup.setAutoHide(true);
+        iconEditPopup.setHideOnEscape(false);
+        double offsetX = (fieldWidth - labelW) / 2.0;
+        double offsetY = (labelH - fieldHeight) / 2.0;
+        iconEditPopup.getContent().add(iconEditField);
+        iconEditPopup.show(window, screenX - offsetX, screenY + offsetY);
+        iconEditField.selectAll();
+        Platform.runLater(() -> iconEditField.requestFocus());
+    }
+
+    /** 取消图标视图编辑：隐藏并移除 Popup，清除选中状态 */
+    private void cancelIconEdit() {
+        if (editingItem == null) return;
+        editingItem = null;
+        if (iconEditPopup != null) {
+            iconEditPopup.hide();
+            iconEditPopup = null;
+            iconEditField = null;
+        }
+        iconSelectedItems.clear();
+        refreshIconSelectionStyles();
+    }
+
+    /**
+     * 列视图：用 Popup 浮窗悬浮在选中单元格上方编辑（参考 S3 实现）
+     */
+    private void startColumnEdit(FileItem item) {
+        if (editingItem != null) return;
+        ListView<FileItem> targetLv = null;
+        int targetColIndex = -1;
+        for (int i = 0; i < columnListViews.size(); i++) {
+            ListView<FileItem> lv = columnListViews.get(i);
+            FileItem sel = lv.getSelectionModel().getSelectedItem();
+            if (item.equals(sel)) {
+                targetLv = lv;
+                targetColIndex = i;
+                break;
+            }
+        }
+        if (targetLv == null) return;
+
+        ListCell<FileItem> targetCell = null;
+        for (var node : targetLv.lookupAll(".list-cell")) {
+            if (node instanceof ListCell<?> c && item.equals(c.getItem())) {
+                @SuppressWarnings("unchecked")
+                ListCell<FileItem> cast = (ListCell<FileItem>) c;
+                targetCell = cast;
+                break;
+            }
+        }
+        if (targetCell == null) return;
+        editingItem = item;
+
+        javafx.geometry.Bounds cellSceneBounds = targetCell.localToScene(targetCell.getBoundsInLocal());
+        javafx.scene.Scene scene = targetCell.getScene();
+        if (scene == null || scene.getWindow() == null) { editingItem = null; return; }
+        javafx.stage.Window window = scene.getWindow();
+        double screenX = window.getX() + scene.getX() + cellSceneBounds.getMinX();
+        double screenY = window.getY() + scene.getY() + cellSceneBounds.getMinY();
+
+        iconEditField = new TextField(item.getDisplayName());
+        iconEditField.setStyle("-fx-padding: 0 6; -fx-font-size: 12px; -fx-background-color: white; -fx-border-color: #3399ff; -fx-border-width: 1.5; -fx-border-radius: 0; -fx-background-radius: 0;");
+        double cellW = targetCell.getWidth();
+        double cellH = targetCell.getHeight();
+        iconEditField.setPrefWidth(Math.max(cellW - 8, 80));
+        iconEditField.setPrefHeight(cellH * 0.6);
+        iconEditField.setMinWidth(80);
+
+        final int colIdx = targetColIndex;
+        iconEditField.setOnAction(e -> commitRename(item, iconEditField.getText(), this::cancelColumnEdit, () -> reloadColumn(colIdx)));
+        iconEditField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
+            if (!isNowFocused && editingItem == item) {
+                commitRename(item, iconEditField.getText(), this::cancelColumnEdit, () -> reloadColumn(colIdx));
+            }
+        });
+        iconEditField.setOnKeyReleased(e -> {
+            if (e.getCode() == KeyCode.ESCAPE) {
+                cancelColumnEdit();
+            }
+        });
+
+        iconEditPopup = new javafx.stage.Popup();
+        iconEditPopup.setAutoFix(false);
+        iconEditPopup.setAutoHide(true);
+        iconEditPopup.setHideOnEscape(false);
+        iconEditPopup.getContent().add(iconEditField);
+        iconEditPopup.show(window, screenX + 4, screenY + (cellH - cellH * 0.6) / 2.0);
+        iconEditField.selectAll();
+        Platform.runLater(() -> iconEditField.requestFocus());
+    }
+
+    /** 取消列视图编辑 */
+    private void cancelColumnEdit() {
+        if (editingItem == null) return;
+        editingItem = null;
+        if (iconEditPopup != null) {
+            iconEditPopup.hide();
+            iconEditPopup = null;
+            iconEditField = null;
+        }
+    }
+
+    /**
+     * 重载列视图指定列（重命名成功后刷新该列数据）
+     */
+    private void reloadColumn(int colIdx) {
+        if (colIdx < 0 || colIdx >= columnPaths.size()) {
+            refresh();
+            return;
+        }
+        loadColumnAsync(columnPaths.get(colIdx), colIdx);
+    }
+
+    /**
+     * 提交重命名：校验名称后异步执行 SFTP rename（参考 S3 实现，操作改为 SFTP）
+     */
+    private void commitRename(FileItem item, String newName, Runnable onCancel, Runnable onSuccess) {
+        if (editingItem == null) return;
+        // 去除目录名末尾的 "/"（SFTP 目录 displayName 带 "/"）
+        String name = newName == null ? "" : newName.trim();
+        if (name.endsWith("/")) {
+            name = name.substring(0, name.length() - 1);
+        }
+        if (name.isEmpty() || name.equals(item.getName())) {
+            onCancel.run();
+            return;
+        }
+        if (name.contains("/")) {
+            onCancel.run();
+            Platform.runLater(() -> {
+                Alert a = new Alert(Alert.AlertType.WARNING);
+                a.setTitle("重命名失败");
+                a.setHeaderText(null);
+                a.setContentText("名称不能包含 \"/\"");
+                DialogPositionUtil.centerOnOwner(a, this);
+                a.showAndWait();
+            });
+            return;
+        }
+
+        final FileItem editItem = item;
+        final String finalNewName = name;
+        // 先恢复 UI，再异步重命名
+        onCancel.run();
+
+        new Thread(() -> {
+            try {
+                String oldPath = editItem.getPath();
+                int lastSlash = oldPath.lastIndexOf('/');
+                String parent = lastSlash <= 0 ? "" : oldPath.substring(0, lastSlash);
+                String newPath = parent.isEmpty() ? "/" + finalNewName : parent + "/" + finalNewName;
+                sftpClient.rename(oldPath, newPath);
+                Platform.runLater(() -> {
+                    if (onSuccess != null) onSuccess.run();
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    statusLabel.setText("重命名失败: " + e.getMessage());
+                    if (onSuccess != null) onSuccess.run();
+                });
+            }
+        }, "SFTP-Rename").start();
     }
 
     /**

@@ -194,6 +194,20 @@ public class SFTPClient {
     }
 
     /**
+     * 重命名/移动文件或目录（SFTP 原生支持目录重命名）
+     */
+    public synchronized void rename(String oldPath, String newPath) throws SftpException {
+        channel.rename(oldPath, newPath);
+    }
+
+    /**
+     * 创建空文件
+     */
+    public synchronized void createEmptyFile(String path) throws SftpException {
+        channel.put(new ByteArrayInputStream(new byte[0]), path);
+    }
+
+    /**
      * 删除文件
      */
     public synchronized void rm(String path) throws SftpException {
