@@ -9,6 +9,7 @@ import com.tangluobo.tomato.module.connect.SshTunnelManager;
 import com.tangluobo.tomato.module.connect.dialog.PasswordPromptDialog;
 import com.tangluobo.tomato.module.connect.dialog.SessionConfigDialog;
 import com.tangluobo.tomato.ssh.SFTPClient;
+import com.tangluobo.tomato.module.connect.AbstractFileBrowserPane;
 import com.tangluobo.tomato.ssh.SFTPFileBrowser;
 import com.tangluobo.tomato.ssh.SSHSession;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
@@ -133,7 +134,7 @@ public class SshTerminalConnectHandler implements ConnectHandler {
                 }
                 if (modeStr != null) {
                     try {
-                        browser.setInitialViewMode(SFTPFileBrowser.ViewMode.valueOf(modeStr.toUpperCase()));
+                        browser.setInitialViewMode(AbstractFileBrowserPane.ViewMode.valueOf(modeStr.toUpperCase()));
                     } catch (IllegalArgumentException ignored) {}
                 }
             }
@@ -187,7 +188,7 @@ public class SshTerminalConnectHandler implements ConnectHandler {
                     }
                     if (modeStr != null) {
                         try {
-                            browser.setInitialViewMode(SFTPFileBrowser.ViewMode.valueOf(modeStr.toUpperCase()));
+                            browser.setInitialViewMode(AbstractFileBrowserPane.ViewMode.valueOf(modeStr.toUpperCase()));
                         } catch (IllegalArgumentException ignored) {
                             // 非法值时使用默认 LIST
                         }

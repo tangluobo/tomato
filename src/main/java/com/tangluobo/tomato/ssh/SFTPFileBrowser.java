@@ -1,104 +1,54 @@
 package com.tangluobo.tomato.ssh;
 
+import com.tangluobo.tomato.module.connect.AbstractFileBrowserPane;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.application.Platform;
-import javafx.geometry.Insets;
-import javafx.geometry.Pos;
-import javafx.beans.property.SimpleBooleanProperty;
+import javafx.beans.binding.Bindings;
 import javafx.beans.property.BooleanProperty;
-import javafx.collections.FXCollections;
-import javafx.collections.ObservableList;
+import javafx.beans.property.SimpleBooleanProperty;
+import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
-import javafx.scene.input.*;
 import javafx.scene.layout.*;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.paint.Color;
-import javafx.scene.text.Font;
-import javafx.embed.swing.SwingFXUtils;
-import javafx.stage.FileChooser;
-import javafx.stage.DirectoryChooser;
-import javafx.stage.Stage;
 
-import javax.swing.filechooser.FileSystemView;
 import java.awt.Desktop;
-import java.awt.image.BufferedImage;
 import java.io.File;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * SFTP文件浏览器组件
- * 支持浏览远程文件、上传/下载、拖拽操作、跟随终端目录
+ * SFTP文件浏览器组件（SSH终端侧边栏 / 独立标签模式）。
+ * <p>
+ * 通用 UI（视图模式、选中、重命名、右键菜单、图标）由 {@link AbstractFileBrowserPane} 提供，
+ * 本类只实现 SFTP 后端操作、侧边栏布局、跟随终端目录、本地编辑缓存等扩展能力。
  */
-public class SFTPFileBrowser extends BorderPane {
+public class SFTPFileBrowser extends AbstractFileBrowserPane {
 
     private final SFTPClient sftpClient;
     private final SSHSession sshSession;
 
-    // UI组件
-    private TextField pathField;
-    private CheckBox followTerminalCheck;
-    private TableView<FileItem> fileTable;
-    private Label statusLabel;
-    private final ObservableList<FileItem> fileList = FXCollections.observableArrayList();
+    /** 独立标签模式：全宽、支持图标/列视图、无跟随终端 */
+    private final boolean standalone;
 
     // 跟随终端目录
     private final BooleanProperty followTerminal = new SimpleBooleanProperty(true);
-    private String currentPath = "/";
-
-    /** 独立标签模式：作为文件浏览器标签页打开（全宽、表格自滚动、无跟随终端） */
-    private final boolean standalone;
-
-    /** 视图模式（仅 standalone 模式有效） */
-    public enum ViewMode { ICON, LIST, COLUMN }
-    private ViewMode currentViewMode = ViewMode.LIST;
-    private ToggleButton iconViewBtn, listViewBtn, columnViewBtn;
-    private FlowPane iconFlowPane;
-    private ScrollPane iconScrollPane;
-    private HBox columnContainer;
-    private ScrollPane columnScrollPane;
-    private final List<ListView<FileItem>> columnListViews = new ArrayList<>();
-    private final List<ObservableList<FileItem>> columnItems = new ArrayList<>();
-    private final List<String> columnPaths = new ArrayList<>();
-
-    // 图标视图选中状态
-    private final java.util.Set<FileItem> iconSelectedItems = new java.util.LinkedHashSet<>();
-    // 框选矩形
-    private javafx.scene.shape.Rectangle selectionRect;
-    // 框选起点（相对 iconFlowPane）
-    private double selStartX, selStartY;
-
-    // 图标
-    private final Image folderIcon;
-    private final Image folderLargeIcon;
-    private final Image defaultFileIcon;
-    private final java.util.Map<String, Image> systemIconCache = new java.util.HashMap<>();
-    private final java.util.Map<String, Image> systemLargeIconCache = new java.util.HashMap<>();
-    private final File iconTempDir;
+    private CheckBox followTerminalCheck;
 
     // 本地编辑缓存：远程路径 -> 本地文件 / 已知最后修改时间
     private final Map<String, File> editCache = new ConcurrentHashMap<>();
     private final Map<String, Long> editLastModified = new ConcurrentHashMap<>();
 
-    // 重命名/内联编辑状态（参考 S3FileBrowserPane）
-    private FileItem editingItem;
-    private FileItem selectedItem;       // 主选中项（右键菜单用）
-    private FileItem clickedBeforeItem;  // 上次点击前已选中的项（用于判断"已选中再点击"进入重命名）
-    private javafx.animation.Timeline singleClickTimer;
-    private javafx.stage.Popup iconEditPopup;
-    private TextField iconEditField;
+    // 侧边栏模式的路径输入框（独立于基类 currentPathField，样式更紧凑）
+    private TextField sidebarPathField;
 
-    // SFTP 跨实例剪贴板（同会话内复制粘贴：复制路径+源sftpClient，粘贴时下载到临时再上传）
-    private static final java.util.List<FileItem> sftpClipboard = new java.util.ArrayList<>();
-    private static SFTPClient sftpClipboardSource;
+    // ==================== 构造 ====================
 
     public SFTPFileBrowser(SSHSession sshSession, SFTPClient sftpClient) {
         this(sshSession, sftpClient, false);
@@ -108,480 +58,75 @@ public class SFTPFileBrowser extends BorderPane {
      * @param standalone 独立标签模式：全宽、表格自滚动、无跟随终端、显示修改时间列
      */
     public SFTPFileBrowser(SSHSession sshSession, SFTPClient sftpClient, boolean standalone) {
+        super();  // 基类构造期间调用 initializeUI()（本类覆写为 no-op，延迟到构造体）
         this.sshSession = sshSession;
         this.sftpClient = sftpClient;
         this.standalone = standalone;
-
-        // 创建临时目录用于获取系统图标
-        iconTempDir = new File(System.getProperty("java.io.tmpdir"), "tomato-icons");
-        if (!iconTempDir.exists()) iconTempDir.mkdirs();
-
-        // 目录图标统一使用 folder.png（与 S3 风格一致）
-        folderIcon = loadIcon("/images/connect/folder.png");
-        // 大尺寸版本（图标视图用，48x48）
-        folderLargeIcon = folderIcon != null
-                ? new Image(getClass().getResourceAsStream("/images/connect/folder.png"), 48, 48, true, true)
-                : null;
-
-        // 获取系统默认文件图标
-        Image sysFileIcon = getSystemFileIcon("txt");
-        defaultFileIcon = sysFileIcon != null ? sysFileIcon : createFileTypeIcon("?", "#9E9E9E");
 
         if (!standalone) {
             setPrefWidth(280);
             setMinWidth(200);
         }
-        setMinHeight(200);
-        setStyle("-fx-background-color: #FFFFFF;");
 
-        createUI();
-    }
-
-    /**
-     * 设置初始文件视图模式（在 initConnection 前或后调用均可，仅 standalone 模式有效）
-     */
-    public void setInitialViewMode(ViewMode mode) {
-        if (mode != null) {
-            this.currentViewMode = mode;
-            // 若 UI 已构建（容器已初始化），立即切换视图
-            if (iconScrollPane != null) {
-                switchViewMode(mode);
-            }
-        }
-    }
-
-    private Image loadIcon(String path) {
-        try {
-            return new Image(getClass().getResourceAsStream(path));
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /**
-     * 获取系统文件夹图标
-     */
-    private Image getSystemFolderIcon() {
-        try {
-            javax.swing.Icon icon = FileSystemView.getFileSystemView().getSystemIcon(iconTempDir);
-            return swingIconToImage(icon);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /**
-     * 根据扩展名获取系统文件图标（通过创建临时文件获取）
-     */
-    private Image getSystemFileIcon(String ext) {
-        if (ext == null || ext.isEmpty()) return null;
-        ext = ext.toLowerCase();
-        // 先查缓存
-        if (systemIconCache.containsKey(ext)) return systemIconCache.get(ext);
-        try {
-            File tmp = new File(iconTempDir, "icon." + ext);
-            if (!tmp.exists()) tmp.createNewFile();
-            javax.swing.Icon icon = FileSystemView.getFileSystemView().getSystemIcon(tmp);
-            Image fxImage = swingIconToImage(icon);
-            if (fxImage != null) {
-                systemIconCache.put(ext, fxImage);
-                return fxImage;
-            }
-        } catch (Exception ignored) {}
-        return null;
-    }
-
-    /**
-     * 获取系统大尺寸文件夹图标（优先 ShellFolder 大图标，回退 48px 高清重采样）
-     */
-    private Image getLargeSystemFolderIcon() {
-        return getLargeShellFolderIcon(iconTempDir);
-    }
-
-    /**
-     * 获取系统大尺寸文件图标（按扩展名）
-     */
-    private Image getLargeSystemFileIcon(String ext) {
-        if (ext == null || ext.isEmpty()) return null;
-        ext = ext.toLowerCase();
-        if (systemLargeIconCache.containsKey(ext)) return systemLargeIconCache.get(ext);
-        try {
-            File tmp = new File(iconTempDir, "icon." + ext);
-            if (!tmp.exists()) tmp.createNewFile();
-            Image big = getLargeShellFolderIcon(tmp);
-            if (big != null) {
-                systemLargeIconCache.put(ext, big);
-                return big;
-            }
-        } catch (Exception ignored) {}
-        return null;
-    }
-
-    /**
-     * 获取大尺寸系统图标（48x48）。
-     * 通过反射调用 sun.awt.shell.ShellFolder 获取系统大图标（避免编译期依赖内部 API）；
-     * 回退：FileSystemView 小图标高清重采样到 48px。
-     */
-    private Image getLargeShellFolderIcon(File f) {
-        // 方案1：反射调用 ShellFolder.getShellFolder(file).getIcon(true) 获取系统大图标
-        try {
-            Class<?> shellFolderClass = Class.forName("sun.awt.shell.ShellFolder");
-            java.lang.reflect.Method getShellFolder = shellFolderClass.getMethod("getShellFolder", File.class);
-            getShellFolder.setAccessible(true);
-            Object sf = getShellFolder.invoke(null, f);
-            java.lang.reflect.Method getIcon = shellFolderClass.getMethod("getIcon", boolean.class);
-            getIcon.setAccessible(true);
-            java.awt.Image awtImg = (java.awt.Image) getIcon.invoke(sf, Boolean.TRUE);
-            if (awtImg != null) {
-                return scaleToHighDpi(awtImg, 48);
-            }
-        } catch (Throwable ignored) {}
-        // 方案2：FileSystemView 小图标高清重采样到 48px
-        try {
-            javax.swing.Icon icon = FileSystemView.getFileSystemView().getSystemIcon(f);
-            if (icon != null) {
-                BufferedImage bi = new BufferedImage(icon.getIconWidth(), icon.getIconHeight(), BufferedImage.TYPE_INT_ARGB);
-                java.awt.Graphics2D g = bi.createGraphics();
-                icon.paintIcon(null, g, 0, 0);
-                g.dispose();
-                return scaleToHighDpi(bi, 48);
-            }
-        } catch (Exception ignored) {}
-        return null;
-    }
-
-    /**
-     * 将 AWT Image 高质量缩放到指定尺寸，返回 JavaFX Image
-     */
-    private Image scaleToHighDpi(java.awt.Image awtImg, int targetSize) {
-        try {
-            int srcW = awtImg.getWidth(null);
-            int srcH = awtImg.getHeight(null);
-            if (srcW <= 0 || srcH <= 0) {
-                srcW = targetSize;
-                srcH = targetSize;
-            }
-            BufferedImage bi = new BufferedImage(targetSize, targetSize, BufferedImage.TYPE_INT_ARGB);
-            java.awt.Graphics2D g = bi.createGraphics();
-            g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BICUBIC);
-            g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
-            g.setRenderingHint(java.awt.RenderingHints.KEY_RENDERING, java.awt.RenderingHints.VALUE_RENDER_QUALITY);
-            g.drawImage(awtImg, 0, 0, targetSize, targetSize, null);
-            g.dispose();
-            return SwingFXUtils.toFXImage(bi, null);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /**
-     * Swing Icon 转 JavaFX Image
-     */
-    private Image swingIconToImage(javax.swing.Icon icon) {
-        if (icon == null) return null;
-        try {
-            BufferedImage bi = new BufferedImage(icon.getIconWidth(), icon.getIconHeight(), BufferedImage.TYPE_INT_ARGB);
-            java.awt.Graphics2D g = bi.createGraphics();
-            icon.paintIcon(null, g, 0, 0);
-            g.dispose();
-            return SwingFXUtils.toFXImage(bi, null);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /**
-     * 代码生成文件类型图标（后备方案）：圆角矩形背景 + 扩展名文字
-     */
-    private Image createFileTypeIcon(String label, String bgColor) {
-        int size = 16;
-        Canvas canvas = new Canvas(size, size);
-        GraphicsContext gc = canvas.getGraphicsContext2D();
-        gc.setFill(Color.valueOf(bgColor));
-        gc.fillRoundRect(0, 0, size, size, 3, 3);
-        gc.setFill(Color.WHITE);
-        gc.setFont(Font.font("SansSerif", 7));
-        javafx.scene.text.Text text = new javafx.scene.text.Text(label);
-        text.setFont(Font.font("SansSerif", 7));
-        double tw = text.getLayoutBounds().getWidth();
-        gc.fillText(label, (size - tw) / 2, size / 2 + 3);
-        return canvas.snapshot(null, null);
-    }
-
-    /**
-     * 创建导航按钮图标
-     */
-    private ImageView createNavIcon(String type, String bgColor, String fgColor) {
-        int size = 18;
-        Canvas canvas = new Canvas(size, size);
-        GraphicsContext gc = canvas.getGraphicsContext2D();
-
-        if ("/".equals(type)) {
-            // 根目录图标：带横线的房子形状
-            gc.setFill(Color.valueOf(bgColor));
-            // 房子三角屋顶
-            gc.fillPolygon(new double[]{9, 2, 16}, new double[]{2, 9, 9}, 3);
-            // 房子主体
-            gc.fillRect(4, 9, 10, 7);
-            // 门（留白）
-            gc.setFill(Color.valueOf(fgColor));
-            gc.fillRect(7, 11, 4, 5);
-        } else {
-            // 上级目录图标：带箭头的文件夹
-            gc.setFill(Color.valueOf(bgColor));
-            gc.fillRoundRect(1, 5, 14, 9, 2, 2);
-            gc.fillRoundRect(1, 2, 6, 4, 2, 2);
-            // 上箭头
-            gc.setFill(Color.valueOf(fgColor));
-            gc.fillPolygon(new double[]{8, 11.5, 14}, new double[]{3, 0, 3}, 3);
-            gc.fillRect(10.5, 3, 1.5, 5);
-        }
-
-        Image img = canvas.snapshot(null, null);
-        ImageView iv = new ImageView(img);
-        iv.setFitWidth(16);
-        iv.setFitHeight(16);
-        return iv;
-    }
-
-    /**
-     * 文件类型图标缓存：扩展名 -> Image（小尺寸）和大尺寸
-     */
-    private final java.util.Map<String, Image> fileTypeIconCache = new java.util.HashMap<>();
-    private final java.util.Map<String, Image> fileTypeLargeIconCache = new java.util.HashMap<>();
-
-    /**
-     * 从 /images/connect/fileTypes/ 目录加载文件类型图标
-     * 支持的扩展名：aac/ai/avi/bin/bmp/cad/cdr/css/csv/db/doc/docx/eps/exe/flv/gif/
-     * hlp/htm/html/ini/iso/java/jpg/js/mkv/mov/mp3/mp4/mpeg/mpg/pdf/php/png/ppt/ps/
-     * psd/rar/rss/rtf/sql/svg/swf/sys/txt/wma/xls/xlsx/xml/zip
-     */
-    private Image loadFileTypeIcon(String ext, boolean large) {
-        if (ext == null || ext.isEmpty()) return null;
-        String key = ext.toLowerCase();
-        java.util.Map<String, Image> cache = large ? fileTypeLargeIconCache : fileTypeIconCache;
-        if (cache.containsKey(key)) return cache.get(key);
-        Image img = null;
-        try {
-            String path = "/images/connect/fileTypes/" + key.toUpperCase() + ".png";
-            java.io.InputStream is = getClass().getResourceAsStream(path);
-            if (is != null) {
-                if (large) {
-                    img = new Image(is, 48, 48, true, true);
-                } else {
-                    img = new Image(is);
-                }
-                is.close();
-            }
-        } catch (Exception e) {
-            // 加载失败返回 null，后续走系统图标回退
-        }
-        cache.put(key, img);
-        return img;
-    }
-
-    private Image getFileIcon(String fileName) {
-        int dotIdx = fileName.lastIndexOf('.');
-        if (dotIdx > 0) {
-            String ext = fileName.substring(dotIdx + 1).toLowerCase();
-            // 优先使用 fileTypes 目录下的类型图标
-            Image typeIcon = loadFileTypeIcon(ext, false);
-            if (typeIcon != null) return typeIcon;
-            // 回退到系统图标
-            Image sysIcon = getSystemFileIcon(ext);
-            if (sysIcon != null) return sysIcon;
-        }
-        return defaultFileIcon;
-    }
-
-    /**
-     * 获取文件项对应的图标
-     * @param item 文件项
-     * @param large 是否为大图标（图标视图用大尺寸，列表/列视图用小尺寸）
-     */
-    private Image getIconForItem(FileItem item, boolean large) {
-        if (item.isDirectory()) {
-            // 图标视图使用 S3 风格的 folder.png 大图标
-            if (large && folderLargeIcon != null) {
-                return folderLargeIcon;
-            }
-            return folderIcon;
-        }
-        if (large) {
-            Image big = getLargeFileIcon(item.getDisplayName());
-            if (big != null) return big;
-        }
-        return getFileIcon(item.getDisplayName());
-    }
-
-    /**
-     * 获取系统大尺寸文件夹图标（Windows ShellFolder 大图标）
-     */
-    private Image getLargeFolderIcon() {
-        return getLargeSystemFolderIcon();
-    }
-
-    /**
-     * 获取大尺寸文件图标（优先 fileTypes 目录，回退到系统大图标）
-     */
-    private Image getLargeFileIcon(String fileName) {
-        int dotIdx = fileName.lastIndexOf('.');
-        if (dotIdx > 0) {
-            String ext = fileName.substring(dotIdx + 1).toLowerCase();
-            // 优先使用 fileTypes 目录下的类型图标（大尺寸）
-            Image typeIcon = loadFileTypeIcon(ext, true);
-            if (typeIcon != null) return typeIcon;
-            // 回退到系统大图标
-            Image sysLarge = getLargeSystemFileIcon(ext);
-            if (sysLarge != null) return sysLarge;
-        }
-        Image defaultLarge = loadFileTypeIcon("bin", true);
-        return defaultLarge != null ? defaultLarge : defaultFileIcon;
-    }
-
-    private void createUI() {
         if (standalone) {
-            createStandaloneUI();
+            // 独立模式：使用基类标准 UI（路径栏、视图切换、图标/列表/列视图、状态栏）
+            super.initializeUI();
         } else {
+            // 侧边栏模式：紧凑布局（跟随终端、仅列表视图）
             createSidebarUI();
         }
     }
 
     /**
-     * 独立标签模式 UI：参考 S3FileBrowserPane 样式
-     * 路径输入框（占满宽度，蓝色边框）+ 视图切换按钮 + 上级/刷新/上传按钮
-     * 底部状态栏（连接状态 + 主机信息）
+     * 覆写为 no-op：基类构造期间调用时 standalone 尚未赋值，
+     * 实际 UI 初始化延迟到子类构造体（见上方构造函数）。
      */
-    private void createStandaloneUI() {
-        // 路径输入框（占满宽度，蓝色边框，参考 S3 样式）
-        pathField = new TextField("/");
-        pathField.setPrefHeight(25);
-        pathField.setMinWidth(0);
-        pathField.setPrefWidth(0);
-        pathField.setMaxWidth(Double.MAX_VALUE);
-        HBox.setHgrow(pathField, Priority.ALWAYS);
-        pathField.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-background-color: white; -fx-background-insets: 0; -fx-background-radius: 0; -fx-padding: 2 6; -fx-border-color: #3399ff; -fx-border-width: 1; -fx-border-insets: 0; -fx-border-radius: 0;");
-        pathField.setTooltip(new Tooltip("点击编辑路径，回车进入目录"));
-        pathField.setOnAction(e -> navigateTo(pathField.getText().trim()));
+    @Override
+    protected void initializeUI() {
+        // no-op — 由构造体按 standalone 标志分派
+    }
 
-        // 顶部路径导航栏（参考 S3 样式）
-        HBox pathBar = new HBox(8);
-        pathBar.setAlignment(Pos.CENTER_LEFT);
-        pathBar.setPadding(new Insets(6, 10, 6, 10));
-        pathBar.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #dddddd; -fx-border-width: 0 0 1 0;");
-        pathBar.getChildren().add(pathField);
+    // ==================== 钩子 ====================
 
-        // 视图切换按钮组（图标/列表/列视图，样式参考 S3）
-        ToggleGroup viewToggleGroup = new ToggleGroup();
+    @Override
+    protected boolean supportsColumnView() {
+        return standalone;  // 侧边栏模式不支持列视图
+    }
 
-        iconViewBtn = new ToggleButton("⊞");
-        iconViewBtn.setTooltip(new Tooltip("图标视图"));
-        iconViewBtn.setToggleGroup(viewToggleGroup);
-        iconViewBtn.setStyle("-fx-font-size: 14px; -fx-padding: 2 6; -fx-background-radius: 4 0 0 4; -fx-border-radius: 4 0 0 4;");
-        iconViewBtn.setOnAction(e -> switchViewMode(ViewMode.ICON));
-        pathBar.getChildren().add(iconViewBtn);
+    @Override
+    protected boolean supportsCreateFile() {
+        return true;
+    }
 
-        listViewBtn = new ToggleButton("≡");
-        listViewBtn.setTooltip(new Tooltip("列表视图"));
-        listViewBtn.setToggleGroup(viewToggleGroup);
-        listViewBtn.setSelected(true);
-        listViewBtn.setStyle("-fx-font-size: 14px; -fx-padding: 2 6; -fx-background-radius: 0; -fx-border-radius: 0;");
-        listViewBtn.setOnAction(e -> switchViewMode(ViewMode.LIST));
-        pathBar.getChildren().add(listViewBtn);
-
-        columnViewBtn = new ToggleButton("⫶");
-        columnViewBtn.setTooltip(new Tooltip("列视图（多级目录）"));
-        columnViewBtn.setToggleGroup(viewToggleGroup);
-        columnViewBtn.setStyle("-fx-font-size: 14px; -fx-padding: 2 6; -fx-background-radius: 0 4 4 0; -fx-border-radius: 0 4 4 0;");
-        columnViewBtn.setOnAction(e -> switchViewMode(ViewMode.COLUMN));
-        pathBar.getChildren().add(columnViewBtn);
-
-        Label sep = new Label("|");
-        sep.setStyle("-fx-text-fill: #cccccc; -fx-font-size: 11px;");
-        pathBar.getChildren().add(sep);
-
-        Button upBtn = new Button("↑ 上级");
-        upBtn.setStyle("-fx-font-size: 11px; -fx-padding: 3 8;");
-        upBtn.setOnAction(e -> {
-            if (currentPath != null && !currentPath.equals("/")) {
-                int lastSlash = currentPath.lastIndexOf('/');
-                String parent = lastSlash <= 0 ? "/" : currentPath.substring(0, lastSlash);
-                navigateTo(parent);
-            }
-        });
-        pathBar.getChildren().add(upBtn);
-
-        Button refreshBtn = new Button("⟳ 刷新");
-        refreshBtn.setStyle("-fx-font-size: 11px; -fx-padding: 3 8;");
-        refreshBtn.setOnAction(e -> refresh());
-        pathBar.getChildren().add(refreshBtn);
-
-        Button uploadBtn = new Button("↑ 上传");
-        uploadBtn.setStyle("-fx-font-size: 11px; -fx-padding: 3 8; -fx-text-fill: #07c160; -fx-border-color: #07c160; -fx-border-radius: 4; -fx-background-radius: 4;");
-        uploadBtn.setOnAction(e -> uploadFiles());
-        pathBar.getChildren().add(uploadBtn);
-
-        setTop(pathBar);
-
-        // 文件列表
-        fileTable = new TableView<>();
-        fileTable.setStyle("-fx-font-size: 12px; -fx-background-color: #fff;");
-        fileTable.getStyleClass().add("sftp-file-table");
-        fileTable.setPlaceholder(new Label("空目录"));
-        fileTable.setFixedCellSize(26);
-        fileTable.setMinHeight(80);
-        fileTable.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
-        fileTable.setItems(fileList);
-
-        TableColumn<FileItem, String> nameCol = new TableColumn<>("名称");
-        nameCol.setEditable(true);
-        nameCol.setCellValueFactory(new PropertyValueFactory<>("displayName"));
-        nameCol.setCellFactory(createEditableNameCellFactory());
-        nameCol.setPrefWidth(300);
-
-        TableColumn<FileItem, String> sizeCol = new TableColumn<>("大小");
-        sizeCol.setCellValueFactory(new PropertyValueFactory<>("displaySize"));
-        sizeCol.setPrefWidth(100);
-        sizeCol.setStyle("-fx-alignment: center-right;");
-
-        TableColumn<FileItem, String> timeCol = new TableColumn<>("修改时间");
-        timeCol.setCellValueFactory(new PropertyValueFactory<>("displayTime"));
-        timeCol.setPrefWidth(180);
-        timeCol.setStyle("-fx-alignment: center-left;");
-
-        TableColumn<FileItem, String> typeCol = new TableColumn<>("类型");
-        typeCol.setCellValueFactory(new PropertyValueFactory<>("displayType"));
-        typeCol.setPrefWidth(80);
-
-        fileTable.getColumns().addAll(nameCol, sizeCol, timeCol, typeCol);
-        fileTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
-
-        setupTableRowFactory();
-        fileTable.setContextMenu(createContextMenu());
-
-        // 初始化图标视图与列视图容器
-        initIconView();
-        initColumnView();
-
-        // 默认使用 currentViewMode（可由 setInitialViewMode 设置）
-        switchViewMode(currentViewMode);
-
-        // 底部状态栏（参考 S3 样式）
-        HBox statusBar = new HBox(8);
-        statusBar.setAlignment(Pos.CENTER_LEFT);
-        statusBar.setPadding(new Insets(4, 10, 4, 10));
-        statusBar.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #dddddd; -fx-border-width: 1 0 0 0;");
-        statusLabel = new Label("就绪");
-        statusLabel.setStyle("-fx-font-size: 11px;");
-        statusBar.getChildren().add(statusLabel);
-        setBottom(statusBar);
+    @Override
+    protected boolean isConnected() {
+        return sftpClient.isConnected();
     }
 
     /**
-     * 侧边栏模式 UI（原逻辑）
+     * 侧边栏模式禁用视图切换（仅列表视图）。
      */
+    @Override
+    protected void switchViewMode(ViewMode mode) {
+        if (!standalone) return;
+        super.switchViewMode(mode);
+    }
+
+    /**
+     * 侧边栏模式使用简化的右键菜单（无视图子菜单）。
+     */
+    @Override
+    protected ContextMenu createContextMenu() {
+        if (standalone) {
+            return super.createContextMenu();
+        }
+        return createSidebarContextMenu();
+    }
+
+    // ==================== 侧边栏 UI ====================
+
     private void createSidebarUI() {
-        // 顶部：路径栏 + 跟随终端
+        // 顶部：跟随终端 + 刷新 + 上传
         HBox topBar = new HBox(4);
         topBar.setStyle("-fx-background-color: #f5f5f5; -fx-padding: 4 6; -fx-alignment: center-left; -fx-border-color: #e0e0e0; -fx-border-width: 0 0 1 0;");
 
@@ -599,7 +144,7 @@ public class SFTPFileBrowser extends BorderPane {
 
         Button uploadBtn = new Button("↑");
         uploadBtn.setStyle("-fx-font-size: 12px; -fx-padding: 2 6; -fx-background-color: transparent; -fx-border-color: #ccc; -fx-border-radius: 3;");
-        uploadBtn.setOnAction(e -> uploadFiles());
+        uploadBtn.setOnAction(e -> handleUpload());
 
         topBar.getChildren().addAll(followTerminalCheck, spacer, refreshBtn, uploadBtn);
 
@@ -617,36 +162,31 @@ public class SFTPFileBrowser extends BorderPane {
         parentBtn.setGraphic(createNavIcon("↑", "#78909C", "#546E7A"));
         parentBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2; -fx-border-color: transparent; -fx-cursor: hand; -fx-border-radius: 3;");
         parentBtn.setTooltip(new Tooltip("上级目录"));
-        parentBtn.setOnAction(e -> {
-            if (currentPath != null && !currentPath.equals("/")) {
-                int lastSlash = currentPath.lastIndexOf('/');
-                String parent = lastSlash <= 0 ? "/" : currentPath.substring(0, lastSlash);
-                navigateTo(parent);
-            }
-        });
+        parentBtn.setOnAction(e -> navigateUp());
 
-        pathField = new TextField("/");
-        pathField.setStyle("-fx-font-size: 11px; -fx-padding: 3 6; -fx-background-color: #fff; -fx-border-color: #ddd; -fx-border-radius: 3;");
-        HBox.setHgrow(pathField, Priority.ALWAYS);
-        pathField.setOnAction(e -> navigateTo(pathField.getText().trim()));
+        sidebarPathField = new TextField("/");
+        sidebarPathField.setStyle("-fx-font-size: 11px; -fx-padding: 3 6; -fx-background-color: #fff; -fx-border-color: #ddd; -fx-border-radius: 3;");
+        HBox.setHgrow(sidebarPathField, Priority.ALWAYS);
+        sidebarPathField.setOnAction(e -> navigateTo(sidebarPathField.getText().trim()));
+        // 让基类 setCurrentPath() 同步更新侧边栏路径框
+        currentPathField = sidebarPathField;
 
-        pathBar.getChildren().addAll(rootBtn, parentBtn, pathField);
+        pathBar.getChildren().addAll(rootBtn, parentBtn, sidebarPathField);
 
         VBox topBox = new VBox(topBar, pathBar);
         topBox.setStyle("-fx-border-color: #e0e0e0; -fx-border-width: 0 0 1 0;");
         setTop(topBox);
 
-        // 文件列表
+        // 文件列表（仅名称 + 大小两列，高度随内容增长）
         fileTable = new TableView<>();
         fileTable.setStyle("-fx-font-size: 12px; -fx-background-color: #fff;");
         fileTable.getStyleClass().add("sftp-file-table");
         fileTable.setPlaceholder(new Label("空目录"));
         fileTable.setFixedCellSize(26);
-        // 侧边栏模式：高度随内容增长，不产生内部滚动条，由外层 rightPanelScroll 整体滚动
-        fileTable.prefHeightProperty().bind(javafx.beans.binding.Bindings.size(fileList).multiply(24).add(30));
+        fileTable.prefHeightProperty().bind(Bindings.size(fileData).multiply(24).add(30));
         fileTable.setMinHeight(80);
         fileTable.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
-        fileTable.setItems(fileList);
+        fileTable.setItems(fileData);
 
         TableColumn<FileItem, String> nameCol = new TableColumn<>("名称");
         nameCol.setEditable(true);
@@ -673,1160 +213,198 @@ public class SFTPFileBrowser extends BorderPane {
         setBottom(statusLabel);
     }
 
-    // ==================== 视图模式（图标/列表/列视图）====================
-
     /**
-     * 切换视图模式：更新中心区域显示对应视图
+     * 侧边栏模式的简化右键菜单（无视图子菜单）。
      */
-    private void switchViewMode(ViewMode mode) {
-        currentViewMode = mode;
-
-        // 同步切换按钮选中状态
-        if (iconViewBtn != null) iconViewBtn.setSelected(mode == ViewMode.ICON);
-        if (listViewBtn != null) listViewBtn.setSelected(mode == ViewMode.LIST);
-        if (columnViewBtn != null) columnViewBtn.setSelected(mode == ViewMode.COLUMN);
-
-        VBox centerBox = new VBox();
-
-        if (mode == ViewMode.ICON) {
-            rebuildIconView();
-            centerBox.getChildren().add(iconScrollPane);
-            VBox.setVgrow(iconScrollPane, Priority.ALWAYS);
-        } else if (mode == ViewMode.COLUMN) {
-            rebuildColumnView();
-            centerBox.getChildren().add(columnScrollPane);
-            VBox.setVgrow(columnScrollPane, Priority.ALWAYS);
-        } else {
-            centerBox.getChildren().add(fileTable);
-            VBox.setVgrow(fileTable, Priority.ALWAYS);
-        }
-
-        setCenter(centerBox);
-    }
-
-    /**
-     * 初始化图标视图容器（FlowPane + ScrollPane + 框选）
-     */
-    private void initIconView() {
-        iconFlowPane = new FlowPane();
-        iconFlowPane.setHgap(8);
-        iconFlowPane.setVgap(8);
-        iconFlowPane.setPadding(new Insets(12));
-        iconFlowPane.setStyle("-fx-background-color: white;");
-
-        // 框选矩形（不参与布局，覆盖在图标上方）
-        selectionRect = new javafx.scene.shape.Rectangle();
-        selectionRect.setFill(javafx.scene.paint.Color.rgb(51, 153, 255, 0.15));
-        selectionRect.setStroke(javafx.scene.paint.Color.rgb(51, 153, 255, 0.8));
-        selectionRect.setStrokeWidth(1);
-        selectionRect.setManaged(false);
-        selectionRect.setMouseTransparent(true);
-        selectionRect.setVisible(false);
-
-        iconScrollPane = new ScrollPane(iconFlowPane);
-        iconScrollPane.setFitToWidth(true);
-        iconScrollPane.setFitToHeight(true);
-        iconScrollPane.setStyle("-fx-background-color: white;");
-        iconScrollPane.setContextMenu(createContextMenu());
-
-        // 拖拽上传
-        iconScrollPane.setOnDragOver(e -> {
-            if (e.getDragboard().hasFiles()) {
-                e.acceptTransferModes(TransferMode.COPY);
-            }
-            e.consume();
-        });
-        iconScrollPane.setOnDragDropped(e -> {
-            Dragboard db = e.getDragboard();
-            boolean success = false;
-            if (db.hasFiles()) {
-                uploadLocalFiles(db.getFiles());
-                success = true;
-            }
-            e.setDropCompleted(success);
-            e.consume();
-        });
-
-        // 框选：在图标视图空白处按下鼠标开始框选
-        iconScrollPane.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, e -> {
-            if (e.getButton() != MouseButton.PRIMARY) return;
-            if (e.getTarget() instanceof VBox) return; // 点中图标项，交给图标项处理
-            // 空白处点击：清空选中并开始框选
-            if (!e.isControlDown() && !e.isShiftDown()) {
-                iconSelectedItems.clear();
-                refreshIconSelectionStyles();
-            }
-            javafx.geometry.Point2D p = iconFlowPane.screenToLocal(e.getScreenX(), e.getScreenY());
-            selStartX = p.getX();
-            selStartY = p.getY();
-            selectionRect.setX(selStartX);
-            selectionRect.setY(selStartY);
-            selectionRect.setWidth(0);
-            selectionRect.setHeight(0);
-            selectionRect.setVisible(true);
-            // 确保矩形在最上层
-            if (!iconFlowPane.getChildren().contains(selectionRect)) {
-                iconFlowPane.getChildren().add(selectionRect);
-            } else {
-                selectionRect.toFront();
-            }
-        });
-
-        iconScrollPane.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_DRAGGED, e -> {
-            if (!selectionRect.isVisible()) return;
-            javafx.geometry.Point2D p = iconFlowPane.screenToLocal(e.getScreenX(), e.getScreenY());
-            double nx = Math.min(selStartX, p.getX());
-            double ny = Math.min(selStartY, p.getY());
-            double nw = Math.abs(p.getX() - selStartX);
-            double nh = Math.abs(p.getY() - selStartY);
-            selectionRect.setX(nx);
-            selectionRect.setY(ny);
-            selectionRect.setWidth(nw);
-            selectionRect.setHeight(nh);
-            updateRubberBandSelection(nx, ny, nw, nh, e.isControlDown());
-        });
-
-        iconScrollPane.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_RELEASED, e -> {
-            selectionRect.setVisible(false);
-        });
-    }
-
-    /**
-     * 框选时更新选中项
-     */
-    private void updateRubberBandSelection(double x, double y, double w, double h, boolean additive) {
-        javafx.geometry.Bounds selBounds = new javafx.geometry.BoundingBox(x, y, w, h);
-        if (!additive) {
-            iconSelectedItems.clear();
-        }
-        for (javafx.scene.Node node : iconFlowPane.getChildren()) {
-            if (node instanceof VBox box) {
-                FileItem item = (FileItem) box.getProperties().get("fileItem");
-                if (item == null) continue;
-                // 使用 getBoundsInParent 获取相对于 iconFlowPane 的坐标，与选框坐标系一致
-                javafx.geometry.Bounds boxBounds = box.getBoundsInParent();
-                if (selBounds.intersects(boxBounds)) {
-                    iconSelectedItems.add(item);
-                } else if (!additive) {
-                    iconSelectedItems.remove(item);
-                }
-            }
-        }
-        refreshIconSelectionStyles();
-    }
-
-    /**
-     * 刷新所有图标项的选中样式
-     */
-    private void refreshIconSelectionStyles() {
-        for (javafx.scene.Node node : iconFlowPane.getChildren()) {
-            if (node instanceof VBox box) {
-                FileItem item = (FileItem) box.getProperties().get("fileItem");
-                if (item == null) continue;
-                applyIconSelectionStyle(box, iconSelectedItems.contains(item));
-            }
-        }
-    }
-
-    /**
-     * 应用图标项的选中/未选中样式
-     */
-    private void applyIconSelectionStyle(VBox box, boolean selected) {
-        if (selected) {
-            box.setStyle("-fx-background-color: rgba(51,153,255,0.12); -fx-background-radius: 6; -fx-cursor: hand; -fx-border-color: #3399ff; -fx-border-width: 1; -fx-border-radius: 6; -fx-border-insets: 0;");
-        } else {
-            box.setStyle("-fx-background-color: transparent; -fx-background-radius: 6; -fx-cursor: hand; -fx-border-color: transparent; -fx-border-width: 1; -fx-border-radius: 6; -fx-border-insets: 0;");
-        }
-    }
-
-    /**
-     * 重建图标视图：清空并填充所有文件项
-     */
-    private void rebuildIconView() {
-        if (iconFlowPane == null) return;
-        iconFlowPane.getChildren().clear();
-        iconSelectedItems.clear();
-        for (FileItem item : fileList) {
-            iconFlowPane.getChildren().add(createIconBox(item));
-        }
-        // 框选矩形最后添加，确保渲染在所有图标之上
-        iconFlowPane.getChildren().add(selectionRect);
-    }
-
-    /**
-     * 创建图标视图中的单个图标项
-     */
-    private VBox createIconBox(FileItem item) {
-        VBox box = new VBox(4);
-        box.setAlignment(Pos.TOP_CENTER);
-        box.setPrefWidth(90);
-        box.setPadding(new Insets(6, 4, 6, 4));
-        applyIconSelectionStyle(box, false);
-        box.getProperties().put("fileItem", item);
-
-        // 图标
-        ImageView iconView = new ImageView();
-        iconView.setImage(getIconForItem(item, true));
-        iconView.setFitWidth(48);
-        iconView.setFitHeight(48);
-        iconView.setPreserveRatio(true);
-        iconView.setSmooth(true);
-        box.getChildren().add(iconView);
-
-        // 名称
-        Label nameLabel = new Label(item.getDisplayName());
-        nameLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #333; -fx-alignment: CENTER;");
-        nameLabel.setWrapText(false);
-        nameLabel.setTextOverrun(javafx.scene.control.OverrunStyle.ELLIPSIS);
-        nameLabel.setMaxWidth(82);
-        nameLabel.setAlignment(Pos.CENTER);
-        box.getChildren().add(nameLabel);
-
-        // 记录点击前已选中的项（用于判断"已选中再点击"进入重命名编辑）
-        box.setOnMousePressed(e -> {
-            if (e.getButton() == MouseButton.PRIMARY) {
-                // 记录本次点击前该项是否已处于单选状态
-                clickedBeforeItem = (iconSelectedItems.size() == 1 && iconSelectedItems.contains(item)) ? item : null;
-                // 同步选中（支持 Ctrl/Shift 多选）
-                if (e.isControlDown()) {
-                    if (iconSelectedItems.contains(item)) {
-                        iconSelectedItems.remove(item);
-                    } else {
-                        iconSelectedItems.add(item);
-                    }
-                } else if (e.isShiftDown()) {
-                    iconSelectedItems.add(item);
-                } else {
-                    iconSelectedItems.clear();
-                    iconSelectedItems.add(item);
-                }
-                selectedItem = item;
-                refreshIconSelectionStyles();
-                e.consume();
-            }
-        });
-
-        // 鼠标点击：双击打开、已选中再单击进入重命名、右键选中（参考 S3）
-        box.setOnMouseClicked(e -> {
-            if (e.getButton() == MouseButton.PRIMARY) {
-                // 双击：取消重命名定时器，执行打开
-                if (e.getClickCount() == 2) {
-                    if (singleClickTimer != null) {
-                        singleClickTimer.stop();
-                        singleClickTimer = null;
-                    }
-                    if (editingItem != null) {
-                        cancelIconEdit();
-                    }
-                    if (item.isDirectory()) {
-                        navigateTo(item.getPath());
-                    } else {
-                        openWithLocalApp(item);
-                    }
-                    e.consume();
-                    return;
-                }
-
-                boolean ctrl = e.isControlDown();
-                boolean shift = e.isShiftDown();
-
-                // 单击：判断是否"已选中再点击"以进入重命名编辑
-                boolean wasAlreadySelected = !ctrl && !shift
-                        && clickedBeforeItem == item
-                        && iconSelectedItems.size() == 1
-                        && iconSelectedItems.contains(item)
-                        && editingItem == null;
-                if (wasAlreadySelected) {
-                    final FileItem itemToEdit = item;
-                    if (singleClickTimer != null) {
-                        singleClickTimer.stop();
-                    }
-                    singleClickTimer = new javafx.animation.Timeline(
-                            new javafx.animation.KeyFrame(javafx.util.Duration.millis(300), ae -> {
-                                if (editingItem == null
-                                        && iconSelectedItems.size() == 1
-                                        && iconSelectedItems.contains(itemToEdit)) {
-                                    startIconEdit(itemToEdit);
-                                }
-                                singleClickTimer = null;
-                            }));
-                    singleClickTimer.play();
-                    e.consume();
-                    return;
-                }
-                // 正常选择已在 mousePressed 中处理
-            } else if (e.getButton() == MouseButton.SECONDARY) {
-                // 右键时：如果当前没选中才选中它（保持多选状态不变）
-                if (!iconSelectedItems.contains(item)) {
-                    boolean append = e.isControlDown() || e.isShiftDown();
-                    if (!append) {
-                        iconSelectedItems.clear();
-                    }
-                    iconSelectedItems.add(item);
-                    selectedItem = item;
-                    refreshIconSelectionStyles();
-                }
-            }
-        });
-
-        // 拖拽下载
-        box.setOnDragDetected(e -> {
-            if (!item.isDirectory()) {
-                File tempFile = downloadToTemp(item);
-                if (tempFile != null) {
-                    Dragboard db = box.startDragAndDrop(TransferMode.COPY);
-                    ClipboardContent content = new ClipboardContent();
-                    content.putFiles(java.util.Collections.singletonList(tempFile));
-                    db.setContent(content);
-                }
-            }
-            e.consume();
-        });
-
-        return box;
-    }
-
-    /**
-     * 初始化列视图容器（HBox + ScrollPane）
-     */
-    private void initColumnView() {
-        columnContainer = new HBox();
-        columnContainer.setStyle("-fx-background-color: white;");
-
-        columnScrollPane = new ScrollPane(columnContainer);
-        columnScrollPane.setFitToHeight(true);
-        columnScrollPane.setFitToWidth(false);
-        columnScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
-        columnScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        columnScrollPane.setStyle("-fx-background-color: white;");
-        columnScrollPane.setContextMenu(createContextMenu());
-
-        // 拖拽上传
-        columnScrollPane.setOnDragOver(e -> {
-            if (e.getDragboard().hasFiles()) {
-                e.acceptTransferModes(TransferMode.COPY);
-            }
-            e.consume();
-        });
-        columnScrollPane.setOnDragDropped(e -> {
-            Dragboard db = e.getDragboard();
-            boolean success = false;
-            if (db.hasFiles()) {
-                uploadLocalFiles(db.getFiles());
-                success = true;
-            }
-            e.setDropCompleted(success);
-            e.consume();
-        });
-    }
-
-    /**
-     * 重建列视图：基于当前路径创建第一列
-     */
-    private void rebuildColumnView() {
-        if (columnContainer == null) return;
-        columnContainer.getChildren().clear();
-        columnListViews.clear();
-        columnItems.clear();
-        columnPaths.clear();
-
-        ObservableList<FileItem> colData = FXCollections.observableArrayList(fileList);
-        columnItems.add(colData);
-        columnPaths.add(currentPath != null ? currentPath : "/");
-        ListView<FileItem> lv = createColumnListView(0);
-        columnListViews.add(lv);
-        columnContainer.getChildren().add(lv);
-    }
-
-    /**
-     * 创建一列 ListView
-     */
-    private ListView<FileItem> createColumnListView(int colIndex) {
-        ListView<FileItem> lv = new ListView<>(columnItems.get(colIndex));
-        lv.setPrefWidth(220);
-        lv.setMinWidth(180);
-        lv.setMaxWidth(220);
-        lv.setStyle("-fx-background-color: white; -fx-background-insets: 0; -fx-padding: 0; -fx-border-color: transparent #e5e5e5 transparent transparent; -fx-border-width: 0 1 0 0; -fx-hbar-policy: NEVER;");
-
-        lv.setCellFactory(list -> new ListCell<FileItem>() {
-            {
-                setStyle("-fx-padding: 4 8;");
-            }
-
-            @Override
-            protected void updateItem(FileItem item, boolean empty) {
-                super.updateItem(item, empty);
-                if (empty || item == null) {
-                    setText(null);
-                    setGraphic(null);
-                } else {
-                    HBox row = new HBox(6);
-                    row.setAlignment(Pos.CENTER_LEFT);
-                    row.setMaxWidth(Double.MAX_VALUE);
-                    ImageView iv = new ImageView(getIconForItem(item, false));
-                    iv.setFitWidth(16);
-                    iv.setFitHeight(16);
-                    Label name = new Label(item.getDisplayName());
-                    name.setStyle("-fx-font-size: 12px; -fx-text-fill: #333;");
-                    name.setMaxWidth(Double.MAX_VALUE);
-                    name.setWrapText(false);
-                    name.setTextOverrun(javafx.scene.control.OverrunStyle.ELLIPSIS);
-                    HBox.setHgrow(name, Priority.ALWAYS);
-                    row.getChildren().addAll(iv, name);
-                    if (item.isDirectory()) {
-                        Label arrow = new Label("›");
-                        arrow.setStyle("-fx-text-fill: #999; -fx-font-size: 16px;");
-                        row.getChildren().add(arrow);
-                    }
-                    setGraphic(row);
-                    setText(null);
-                }
-            }
-        });
-
-        lv.getSelectionModel().selectedItemProperty().addListener((obs, old, val) -> {
-            if (val != null) {
-                selectedItem = val;
-                onColumnItemSelected(val, colIndex);
-            }
-        });
-
-        lv.setOnMouseClicked(e -> {
-            if (e.getButton() == MouseButton.PRIMARY && e.getClickCount() == 2) {
-                FileItem sel = lv.getSelectionModel().getSelectedItem();
-                if (sel != null) {
-                    if (sel.isDirectory()) {
-                        navigateTo(sel.getPath());
-                    } else {
-                        openWithLocalApp(sel);
-                    }
-                }
-            }
-        });
-
-        lv.setContextMenu(createContextMenu());
-        return lv;
-    }
-
-    /**
-     * 列内选中项变化：截断右侧列，若为目录则异步加载子目录到新列
-     */
-    private void onColumnItemSelected(FileItem item, int colIndex) {
-        truncateColumns(colIndex + 1);
-        if (item.isDirectory()) {
-            loadColumnAsync(item.getPath(), colIndex + 1);
-        }
-    }
-
-    /**
-     * 异步加载子目录到指定列
-     */
-    private void loadColumnAsync(String path, int colIndex) {
-        new Thread(() -> {
-            try {
-                sftpClient.cd(path);
-                String realPath = sftpClient.pwd();
-                List<SFTPClient.FileEntry> entries = sftpClient.listFiles(realPath);
-                ObservableList<FileItem> colData = FXCollections.observableArrayList();
-                for (SFTPClient.FileEntry entry : entries) {
-                    colData.add(new FileItem(entry.getName(), entry.getPath(), entry.isDirectory(), entry.getSize(), entry.getModifyTime()));
-                }
-                Platform.runLater(() -> {
-                    if (currentViewMode != ViewMode.COLUMN) return; // 已切换视图，丢弃
-                    truncateColumns(colIndex);
-                    columnItems.add(colData);
-                    columnPaths.add(realPath);
-                    ListView<FileItem> lv = createColumnListView(colIndex);
-                    columnListViews.add(lv);
-                    columnContainer.getChildren().add(lv);
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> statusLabel.setText("列视图加载失败: " + e.getMessage()));
-            }
-        }, "SFTP-Column").start();
-    }
-
-    /**
-     * 截断保留 [0, keepCount) 范围内的列
-     */
-    private void truncateColumns(int keepCount) {
-        while (columnListViews.size() > keepCount) {
-            int last = columnListViews.size() - 1;
-            columnContainer.getChildren().remove(columnListViews.get(last));
-            columnListViews.remove(last);
-            columnItems.remove(last);
-            columnPaths.remove(last);
-        }
-    }
-
-    /**
-     * 表格行工厂：单击选中、双击打开、已选中再单击进入重命名、右键选中、拖拽上传/下载
-     */
-    private void setupTableRowFactory() {
-        fileTable.setRowFactory(tv -> {
-            TableRow<FileItem> row = new TableRow<>();
-            row.setOnMouseClicked(event -> {
-                if (row.isEmpty()) return;
-                if (event.getButton() == MouseButton.SECONDARY) {
-                    // 右键时先选中该行再弹出菜单
-                    if (!fileTable.getSelectionModel().isSelected(row.getIndex())) {
-                        fileTable.getSelectionModel().select(row.getItem());
-                    }
-                    selectedItem = row.getItem();
-                    return;
-                }
-                if (event.getButton() != MouseButton.PRIMARY) return;
-
-                // 双击：取消重命名定时器，执行打开
-                if (event.getClickCount() == 2) {
-                    if (singleClickTimer != null) {
-                        singleClickTimer.stop();
-                        singleClickTimer = null;
-                    }
-                    if (editingItem != null) {
-                        cancelListEdit();
-                    }
-                    FileItem clicked = row.getItem();
-                    if (clicked != null) {
-                        if (clicked.isDirectory()) {
-                            navigateTo(clicked.getPath());
-                        } else {
-                            openWithLocalApp(clicked);
-                        }
-                    }
-                    event.consume();
-                    return;
-                }
-
-                // 单击：判断是否"已选中再点击"以进入重命名编辑
-                if (event.getClickCount() == 1 && !event.isControlDown() && !event.isShiftDown()) {
-                    int rowIdx = row.getIndex();
-                    boolean wasAlreadySelected = clickedBeforeItem != null
-                            && editingItem == null
-                            && fileTable.getSelectionModel().getSelectedIndices().size() == 1
-                            && fileTable.getSelectionModel().isSelected(rowIdx);
-                    if (wasAlreadySelected) {
-                        final int editRow = rowIdx;
-                        if (singleClickTimer != null) {
-                            singleClickTimer.stop();
-                        }
-                        singleClickTimer = new javafx.animation.Timeline(
-                                new javafx.animation.KeyFrame(javafx.util.Duration.millis(300), ae -> {
-                                    if (editingItem == null
-                                            && fileTable.getSelectionModel().getSelectedIndices().size() == 1
-                                            && fileTable.getSelectionModel().isSelected(editRow)) {
-                                        startListEdit(editRow);
-                                    }
-                                    singleClickTimer = null;
-                                }));
-                        singleClickTimer.play();
-                        event.consume();
-                        return;
-                    }
-                }
-
-                // 正常单击：记录主选中项
-                selectedItem = row.getItem();
-            });
-
-            // 拖拽：从远程拖到本地（下载到临时目录后拖出）
-            row.setOnDragDetected(e -> {
-                if (row.isEmpty()) return;
-                FileItem item = row.getItem();
-                if (!item.isDirectory()) {
-                    File tempFile = downloadToTemp(item);
-                    if (tempFile != null) {
-                        Dragboard db = row.startDragAndDrop(TransferMode.COPY);
-                        ClipboardContent content = new ClipboardContent();
-                        List<File> files = new ArrayList<>();
-                        files.add(tempFile);
-                        content.putFiles(files);
-                        db.setContent(content);
-                    }
-                }
-                e.consume();
-            });
-
-            // 拖拽：从本地拖到远程（上传）
-            row.setOnDragOver(e -> {
-                Dragboard db = e.getDragboard();
-                if (db.hasFiles()) {
-                    e.acceptTransferModes(TransferMode.COPY);
-                }
-                e.consume();
-            });
-
-            row.setOnDragDropped(e -> {
-                Dragboard db = e.getDragboard();
-                boolean success = false;
-                if (db.hasFiles()) {
-                    uploadLocalFiles(db.getFiles());
-                    success = true;
-                }
-                e.setDropCompleted(success);
-                e.consume();
-            });
-
-            return row;
-        });
-
-        // 记录点击前已选中的项（用于判断"已选中再点击"进入重命名编辑）
-        fileTable.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
-            if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 1) {
-                var selItems = fileTable.getSelectionModel().getSelectedItems();
-                if (selItems.size() == 1 && selItems.get(0) != null) {
-                    clickedBeforeItem = selItems.get(0);
-                } else {
-                    clickedBeforeItem = null;
-                }
-            }
-        });
-
-        // 整个表格也支持拖拽上传
-        fileTable.setOnDragOver(e -> {
-            Dragboard db = e.getDragboard();
-            if (db.hasFiles()) {
-                e.acceptTransferModes(TransferMode.COPY);
-            }
-            e.consume();
-        });
-
-        fileTable.setOnDragDropped(e -> {
-            Dragboard db = e.getDragboard();
-            boolean success = false;
-            if (db.hasFiles()) {
-                uploadLocalFiles(db.getFiles());
-                success = true;
-            }
-            e.setDropCompleted(success);
-            e.consume();
-        });
-    }
-
-    /**
-     * 名称列的可编辑单元格工厂：支持内联 TextField 重命名编辑（参考 S3 实现）
-     */
-    private javafx.util.Callback<TableColumn<FileItem, String>, TableCell<FileItem, String>> createEditableNameCellFactory() {
-        return col -> new TableCell<FileItem, String>() {
-            private TextField editField;
-
-            @Override
-            public void startEdit() {
-                super.startEdit();
-                if (isEmpty()) return;
-                final FileItem item = getTableView().getItems().get(getIndex());
-                editingItem = item;
-                editField = new TextField(item.getDisplayName());
-                editField.setStyle("-fx-padding: 0 4; -fx-font-size: 12px; -fx-background-color: white; -fx-border-color: #3399ff; -fx-border-radius: 0; -fx-background-radius: 0;");
-
-                editField.setOnAction(e -> commitRenameFromField(editField.getText()));
-                editField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
-                    if (!isNowFocused && editingItem == item) {
-                        commitRenameFromField(editField.getText());
-                    }
-                });
-                editField.setOnKeyReleased(e -> {
-                    if (e.getCode() == KeyCode.ESCAPE) {
-                        cancelListEdit();
-                    }
-                });
-
-                HBox box = new HBox(6);
-                box.setAlignment(Pos.CENTER_LEFT);
-                ImageView iv = new ImageView(getIconForItem(item, false));
-                iv.setFitWidth(16);
-                iv.setFitHeight(16);
-                iv.setPreserveRatio(true);
-                box.getChildren().add(iv);
-                box.getChildren().add(editField);
-                setText(null);
-                setGraphic(box);
-                editField.selectAll();
-                Platform.runLater(() -> editField.requestFocus());
-            }
-
-            @Override
-            public void commitEdit(String newValue) {
-                // 实际提交由 commitRenameFromField 处理
-            }
-
-            @Override
-            public void cancelEdit() {
-                super.cancelEdit();
-                editingItem = null;
-                fileTable.setEditable(false);
-                updateItem(getItem(), false);
-            }
-
-            private void commitRenameFromField(String newName) {
-                if (editingItem == null) {
-                    cancelListEdit();
-                    return;
-                }
-                FileItem item = editingItem;
-                commitRename(item, newName, () -> cancelListEdit(), () -> refresh());
-            }
-
-            @Override
-            protected void updateItem(String name, boolean empty) {
-                super.updateItem(name, empty);
-                if (empty || name == null) {
-                    setText(null);
-                    setGraphic(null);
-                } else if (!isEditing()) {
-                    setText(name);
-                    FileItem item = getTableView().getItems().get(getIndex());
-                    ImageView iv = new ImageView();
-                    iv.setFitWidth(16);
-                    iv.setFitHeight(16);
-                    iv.setImage(getIconForItem(item, false));
-                    if (iv.getImage() != null) setGraphic(iv);
-                }
-            }
-        };
-    }
-
-    private ContextMenu createContextMenu() {
+    private ContextMenu createSidebarContextMenu() {
         ContextMenu menu = new ContextMenu();
 
-        MenuItem uploadItem = new MenuItem("上传文件...");
-        uploadItem.setOnAction(e -> uploadFiles());
+        MenuItem openItem = new MenuItem("打开");
+        openItem.setOnAction(e -> {
+            FileItem selected = getSelectedItem();
+            if (selected != null) handleDoubleClick(selected);
+        });
 
-        MenuItem uploadDirItem = new MenuItem("上传到当前目录...");
-        uploadDirItem.setOnAction(e -> uploadFiles());
-
-        MenuItem downloadItem = new MenuItem("下载");
+        MenuItem downloadItem = new MenuItem("下载...");
         downloadItem.setOnAction(e -> {
             FileItem selected = getSelectedItem();
             if (selected != null && !selected.isDirectory()) {
-                downloadFile(selected);
-            }
-        });
-
-        MenuItem openLocalItem = new MenuItem("用本地应用打开");
-        openLocalItem.setOnAction(e -> {
-            FileItem selected = getSelectedItem();
-            if (selected != null && !selected.isDirectory()) {
-                openWithLocalApp(selected);
-            }
-        });
-
-        MenuItem deleteItem = new MenuItem("删除");
-        deleteItem.setOnAction(e -> {
-            FileItem selected = getSelectedItem();
-            if (selected != null) {
-                deleteEntry(selected);
+                handleDownload(selected);
             }
         });
 
         MenuItem mkdirItem = new MenuItem("新建目录");
-        mkdirItem.setOnAction(e -> mkdir());
+        mkdirItem.setOnAction(e -> handleMkdir());
 
-        MenuItem refreshItem = new MenuItem("刷新");
-        refreshItem.setOnAction(e -> refresh());
+        MenuItem createFileItem = new MenuItem("创建文件");
+        createFileItem.setOnAction(e -> handleCreateFile());
+
+        MenuItem uploadItem = new MenuItem("上传文件...");
+        uploadItem.setOnAction(e -> handleUpload());
+
+        MenuItem deleteItem = new MenuItem("删除");
+        deleteItem.setOnAction(e -> handleDeleteSelected());
 
         MenuItem renameItem = new MenuItem("重命名");
         renameItem.setOnAction(e -> handleRename());
 
-        menu.getItems().addAll(uploadItem, downloadItem, openLocalItem, new SeparatorMenuItem(),
-                mkdirItem, deleteItem, renameItem, new SeparatorMenuItem(), refreshItem);
+        MenuItem refreshItem = new MenuItem("刷新");
+        refreshItem.setOnAction(e -> refresh());
 
-        // 右键菜单显示时动态控制各项可见性
+        menu.getItems().addAll(openItem, downloadItem, new SeparatorMenuItem(),
+                mkdirItem, createFileItem, uploadItem, deleteItem, renameItem, new SeparatorMenuItem(), refreshItem);
+
         menu.setOnShowing(e -> {
-            FileItem selected = getSelectedItem();
-            boolean single = selected != null;
-            downloadItem.setVisible(single && !selected.isDirectory());
-            openLocalItem.setVisible(single && !selected.isDirectory());
-            deleteItem.setVisible(single);
-            renameItem.setVisible(single);
+            List<FileItem> selected = getSelectedItems();
+            boolean single = selected.size() == 1;
+            FileItem first = selected.isEmpty() ? null : selected.get(0);
+            openItem.setVisible(single && first != null);
+            downloadItem.setVisible(single && first != null && !first.isDirectory());
+            deleteItem.setVisible(!selected.isEmpty());
+            deleteItem.setText(selected.size() > 1 ? "删除(" + selected.size() + "项)" : "删除");
+            renameItem.setVisible(single && first != null);
+            createFileItem.setVisible(supportsCreateFile());
         });
+
         return menu;
     }
 
     /**
-     * 获取当前选中项（按当前视图模式分派，参考 S3 实现）
+     * 创建导航按钮图标（侧边栏根目录/上级目录按钮用）。
      */
-    private FileItem getSelectedItem() {
-        if (currentViewMode == ViewMode.LIST) {
-            return fileTable.getSelectionModel().getSelectedItem();
-        } else if (currentViewMode == ViewMode.COLUMN) {
-            for (ListView<FileItem> lv : columnListViews) {
-                FileItem sel = lv.getSelectionModel().getSelectedItem();
-                if (sel != null) return sel;
-            }
-            return selectedItem;
+    private ImageView createNavIcon(String type, String bgColor, String fgColor) {
+        int size = 18;
+        Canvas canvas = new Canvas(size, size);
+        GraphicsContext gc = canvas.getGraphicsContext2D();
+
+        if ("/".equals(type)) {
+            gc.setFill(Color.valueOf(bgColor));
+            gc.fillPolygon(new double[]{9, 2, 16}, new double[]{2, 9, 9}, 3);
+            gc.fillRect(4, 9, 10, 7);
+            gc.setFill(Color.valueOf(fgColor));
+            gc.fillRect(7, 11, 4, 5);
+        } else {
+            gc.setFill(Color.valueOf(bgColor));
+            gc.fillRoundRect(1, 5, 14, 9, 2, 2);
+            gc.fillRoundRect(1, 2, 6, 4, 2, 2);
+            gc.setFill(Color.valueOf(fgColor));
+            gc.fillPolygon(new double[]{8, 11.5, 14}, new double[]{3, 0, 3}, 3);
+            gc.fillRect(10.5, 3, 1.5, 5);
         }
-        return selectedItem;
+
+        Image img = canvas.snapshot(null, null);
+        ImageView iv = new ImageView(img);
+        iv.setFitWidth(16);
+        iv.setFitHeight(16);
+        return iv;
     }
 
-    /**
-     * 右键菜单"重命名"入口：按当前视图分派到对应的内联编辑
-     */
-    private void handleRename() {
-        FileItem selected = getSelectedItem();
-        if (selected == null) return;
-        if (currentViewMode == ViewMode.ICON) {
-            startIconEdit(selected);
-        } else if (currentViewMode == ViewMode.LIST) {
-            int idx = fileTable.getSelectionModel().getSelectedIndex();
-            if (idx >= 0) startListEdit(idx);
-        } else if (currentViewMode == ViewMode.COLUMN) {
-            startColumnEdit(selected);
-        }
+    // ==================== 抽象后端方法实现 ====================
+
+    @Override
+    protected void doRefresh() {
+        doNavigateTo(getCurrentPath());
     }
 
-    /** 列表视图：在指定行号上启动名称列内联编辑 */
-    private void startListEdit(int row) {
-        if (editingItem != null) return;
-        if (row < 0 || row >= fileTable.getItems().size()) return;
-        fileTable.setEditable(true);
-        fileTable.edit(row, fileTable.getColumns().get(0));
-    }
-
-    /** 取消列表视图编辑 */
-    private void cancelListEdit() {
-        editingItem = null;
-        fileTable.setEditable(false);
-        fileTable.edit(-1, null);
-    }
-
-    /**
-     * 图标视图：用 Popup 浮窗悬浮在名称 Label 上方编辑（参考 S3 实现）
-     */
-    private void startIconEdit(FileItem item) {
-        if (editingItem != null) return;
-        VBox box = null;
-        for (javafx.scene.Node node : iconFlowPane.getChildren()) {
-            if (node instanceof VBox v && item.equals(v.getProperties().get("fileItem"))) {
-                box = v;
-                break;
-            }
-        }
-        if (box == null) return;
-        editingItem = item;
-        // 编辑时图标不显示选中样式
-        applyIconSelectionStyle(box, false);
-
-        // 找到名称 Label（图标 ImageView 之后的第一个 Label）
-        Label nameLabel = null;
-        for (int i = 0; i < box.getChildren().size(); i++) {
-            if (box.getChildren().get(i) instanceof Label) {
-                nameLabel = (Label) box.getChildren().get(i);
-                break;
-            }
-        }
-        if (nameLabel == null) { editingItem = null; return; }
-
-        javafx.geometry.Bounds labelSceneBounds = nameLabel.localToScene(nameLabel.getBoundsInLocal());
-        javafx.scene.Scene scene = nameLabel.getScene();
-        if (scene == null || scene.getWindow() == null) { editingItem = null; return; }
-        javafx.stage.Window window = scene.getWindow();
-        double screenX = window.getX() + scene.getX() + labelSceneBounds.getMinX();
-        double screenY = window.getY() + scene.getY() + labelSceneBounds.getMinY();
-
-        iconEditField = new TextField(item.getDisplayName());
-        iconEditField.setStyle("-fx-padding: 0 6; -fx-font-size: 11px; -fx-background-color: white; -fx-border-color: #3399ff; -fx-border-width: 1.5; -fx-border-radius: 0; -fx-background-radius: 0;");
-        // 宽度按内容计算，允许比 Label 宽
-        javafx.scene.text.Text measureText = new javafx.scene.text.Text(item.getDisplayName());
-        measureText.setFont(javafx.scene.text.Font.font(11));
-        double contentWidth = measureText.getLayoutBounds().getWidth() + 20;
-        double labelW = nameLabel.getWidth();
-        if (labelW <= 0) labelW = nameLabel.prefWidth(-1);
-        double fieldWidth = Math.max(contentWidth, labelW);
-        double labelH = nameLabel.getHeight();
-        if (labelH <= 0) labelH = nameLabel.prefHeight(-1);
-        double fieldHeight = (labelH + 8) * 0.6;
-        iconEditField.setPrefWidth(fieldWidth);
-        iconEditField.setPrefHeight(fieldHeight);
-        iconEditField.setMinWidth(fieldWidth);
-        iconEditField.setAlignment(Pos.CENTER);
-
-        iconEditField.setOnAction(e -> commitRename(item, iconEditField.getText(), this::cancelIconEdit, this::refresh));
-        iconEditField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
-            if (!isNowFocused && editingItem == item) {
-                commitRename(item, iconEditField.getText(), this::cancelIconEdit, this::refresh);
-            }
-        });
-        iconEditField.setOnKeyReleased(e -> {
-            if (e.getCode() == KeyCode.ESCAPE) {
-                cancelIconEdit();
-            }
-        });
-
-        iconEditPopup = new javafx.stage.Popup();
-        iconEditPopup.setAutoFix(false);
-        iconEditPopup.setAutoHide(true);
-        iconEditPopup.setHideOnEscape(false);
-        double offsetX = (fieldWidth - labelW) / 2.0;
-        double offsetY = (labelH - fieldHeight) / 2.0;
-        iconEditPopup.getContent().add(iconEditField);
-        iconEditPopup.show(window, screenX - offsetX, screenY + offsetY);
-        iconEditField.selectAll();
-        Platform.runLater(() -> iconEditField.requestFocus());
-    }
-
-    /** 取消图标视图编辑：隐藏并移除 Popup，清除选中状态 */
-    private void cancelIconEdit() {
-        if (editingItem == null) return;
-        editingItem = null;
-        if (iconEditPopup != null) {
-            iconEditPopup.hide();
-            iconEditPopup = null;
-            iconEditField = null;
-        }
-        iconSelectedItems.clear();
-        refreshIconSelectionStyles();
-    }
-
-    /**
-     * 列视图：用 Popup 浮窗悬浮在选中单元格上方编辑（参考 S3 实现）
-     */
-    private void startColumnEdit(FileItem item) {
-        if (editingItem != null) return;
-        ListView<FileItem> targetLv = null;
-        int targetColIndex = -1;
-        for (int i = 0; i < columnListViews.size(); i++) {
-            ListView<FileItem> lv = columnListViews.get(i);
-            FileItem sel = lv.getSelectionModel().getSelectedItem();
-            if (item.equals(sel)) {
-                targetLv = lv;
-                targetColIndex = i;
-                break;
-            }
-        }
-        if (targetLv == null) return;
-
-        ListCell<FileItem> targetCell = null;
-        for (var node : targetLv.lookupAll(".list-cell")) {
-            if (node instanceof ListCell<?> c && item.equals(c.getItem())) {
-                @SuppressWarnings("unchecked")
-                ListCell<FileItem> cast = (ListCell<FileItem>) c;
-                targetCell = cast;
-                break;
-            }
-        }
-        if (targetCell == null) return;
-        editingItem = item;
-
-        javafx.geometry.Bounds cellSceneBounds = targetCell.localToScene(targetCell.getBoundsInLocal());
-        javafx.scene.Scene scene = targetCell.getScene();
-        if (scene == null || scene.getWindow() == null) { editingItem = null; return; }
-        javafx.stage.Window window = scene.getWindow();
-        double screenX = window.getX() + scene.getX() + cellSceneBounds.getMinX();
-        double screenY = window.getY() + scene.getY() + cellSceneBounds.getMinY();
-
-        iconEditField = new TextField(item.getDisplayName());
-        iconEditField.setStyle("-fx-padding: 0 6; -fx-font-size: 12px; -fx-background-color: white; -fx-border-color: #3399ff; -fx-border-width: 1.5; -fx-border-radius: 0; -fx-background-radius: 0;");
-        double cellW = targetCell.getWidth();
-        double cellH = targetCell.getHeight();
-        iconEditField.setPrefWidth(Math.max(cellW - 8, 80));
-        iconEditField.setPrefHeight(cellH * 0.6);
-        iconEditField.setMinWidth(80);
-
-        final int colIdx = targetColIndex;
-        iconEditField.setOnAction(e -> commitRename(item, iconEditField.getText(), this::cancelColumnEdit, () -> reloadColumn(colIdx)));
-        iconEditField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
-            if (!isNowFocused && editingItem == item) {
-                commitRename(item, iconEditField.getText(), this::cancelColumnEdit, () -> reloadColumn(colIdx));
-            }
-        });
-        iconEditField.setOnKeyReleased(e -> {
-            if (e.getCode() == KeyCode.ESCAPE) {
-                cancelColumnEdit();
-            }
-        });
-
-        iconEditPopup = new javafx.stage.Popup();
-        iconEditPopup.setAutoFix(false);
-        iconEditPopup.setAutoHide(true);
-        iconEditPopup.setHideOnEscape(false);
-        iconEditPopup.getContent().add(iconEditField);
-        iconEditPopup.show(window, screenX + 4, screenY + (cellH - cellH * 0.6) / 2.0);
-        iconEditField.selectAll();
-        Platform.runLater(() -> iconEditField.requestFocus());
-    }
-
-    /** 取消列视图编辑 */
-    private void cancelColumnEdit() {
-        if (editingItem == null) return;
-        editingItem = null;
-        if (iconEditPopup != null) {
-            iconEditPopup.hide();
-            iconEditPopup = null;
-            iconEditField = null;
-        }
-    }
-
-    /**
-     * 重载列视图指定列（重命名成功后刷新该列数据）
-     */
-    private void reloadColumn(int colIdx) {
-        if (colIdx < 0 || colIdx >= columnPaths.size()) {
-            refresh();
-            return;
-        }
-        loadColumnAsync(columnPaths.get(colIdx), colIdx);
-    }
-
-    /**
-     * 提交重命名：校验名称后异步执行 SFTP rename（参考 S3 实现，操作改为 SFTP）
-     */
-    private void commitRename(FileItem item, String newName, Runnable onCancel, Runnable onSuccess) {
-        if (editingItem == null) return;
-        // 去除目录名末尾的 "/"（SFTP 目录 displayName 带 "/"）
-        String name = newName == null ? "" : newName.trim();
-        if (name.endsWith("/")) {
-            name = name.substring(0, name.length() - 1);
-        }
-        if (name.isEmpty() || name.equals(item.getName())) {
-            onCancel.run();
-            return;
-        }
-        if (name.contains("/")) {
-            onCancel.run();
-            Platform.runLater(() -> {
-                Alert a = new Alert(Alert.AlertType.WARNING);
-                a.setTitle("重命名失败");
-                a.setHeaderText(null);
-                a.setContentText("名称不能包含 \"/\"");
-                DialogPositionUtil.centerOnOwner(a, this);
-                a.showAndWait();
-            });
-            return;
-        }
-
-        final FileItem editItem = item;
-        final String finalNewName = name;
-        // 先恢复 UI，再异步重命名
-        onCancel.run();
-
-        new Thread(() -> {
-            try {
-                String oldPath = editItem.getPath();
-                int lastSlash = oldPath.lastIndexOf('/');
-                String parent = lastSlash <= 0 ? "" : oldPath.substring(0, lastSlash);
-                String newPath = parent.isEmpty() ? "/" + finalNewName : parent + "/" + finalNewName;
-                sftpClient.rename(oldPath, newPath);
-                Platform.runLater(() -> {
-                    if (onSuccess != null) onSuccess.run();
-                });
-            } catch (Exception e) {
-                Platform.runLater(() -> {
-                    statusLabel.setText("重命名失败: " + e.getMessage());
-                    if (onSuccess != null) onSuccess.run();
-                });
-            }
-        }, "SFTP-Rename").start();
-    }
-
-    /**
-     * 导航到指定路径
-     */
-    public void navigateTo(String path) {
-        if (!sftpClient.isConnected()) {
-            statusLabel.setText("SFTP未连接");
-            return;
-        }
+    @Override
+    protected void doNavigateTo(String path) {
         new Thread(() -> {
             try {
                 sftpClient.cd(path);
                 String realPath = sftpClient.pwd();
                 List<SFTPClient.FileEntry> entries = sftpClient.listFiles(realPath);
+                List<FileItem> items = new ArrayList<>();
+                for (SFTPClient.FileEntry entry : entries) {
+                    items.add(new FileItem(entry.getName(), entry.getPath(),
+                            entry.isDirectory(), entry.getSize(), entry.getModifyTime()));
+                }
                 Platform.runLater(() -> {
-                    currentPath = realPath;
-                    pathField.setText(realPath);
-                    populateTable(entries);
-                    statusLabel.setText(entries.size() + " 个条目");
-                    // 刷新当前视图（图标/列视图需要重建）
-                    if (standalone) {
-                        if (currentViewMode == ViewMode.ICON) {
-                            rebuildIconView();
-                        } else if (currentViewMode == ViewMode.COLUMN) {
-                            rebuildColumnView();
-                        }
-                    }
+                    setCurrentPath(realPath);
+                    setFileList(items);
+                    if (upBtn != null) upBtn.setDisable("/".equals(realPath));
+                    setStatus(entries.size() + " 个条目");
                 });
             } catch (Exception e) {
-                Platform.runLater(() -> statusLabel.setText("错误: " + e.getMessage()));
+                Platform.runLater(() -> setStatus("错误: " + e.getMessage()));
             }
         }, "SFTP-Navigate").start();
     }
 
-    /**
-     * 刷新当前目录
-     */
-    public void refresh() {
-        navigateTo(currentPath);
+    @Override
+    protected void doRename(FileItem item, String newName) throws Exception {
+        String oldPath = item.getPath();
+        int lastSlash = oldPath.lastIndexOf('/');
+        String parent = lastSlash <= 0 ? "" : oldPath.substring(0, lastSlash);
+        String newPath = parent.isEmpty() ? "/" + newName : parent + "/" + newName;
+        sftpClient.rename(oldPath, newPath);
     }
 
-    /**
-     * 跟随终端目录变化
-     */
-    public void onTerminalCwdChanged(String newPath) {
-        if (followTerminal.get()) {
-            navigateTo(newPath);
-        }
-    }
-
-    /**
-     * 初始化连接并导航到home目录
-     */
-    public void initConnection() {
+    @Override
+    protected void doDelete(FileItem item) {
         new Thread(() -> {
             try {
-                if (!sftpClient.isConnected()) {
-                    sftpClient.connect(sshSession.getJschSession());
+                if (item.isDirectory()) {
+                    sftpClient.rmdir(item.getPath());
+                } else {
+                    sftpClient.rm(item.getPath());
                 }
-                String home = sftpClient.pwd();
-                Platform.runLater(() -> navigateTo(home));
+                Platform.runLater(this::refresh);
             } catch (Exception e) {
-                Platform.runLater(() -> statusLabel.setText("SFTP连接失败: " + e.getMessage()));
+                Platform.runLater(() -> setStatus("删除失败: " + e.getMessage()));
             }
-        }, "SFTP-Init").start();
+        }, "SFTP-Delete").start();
     }
 
-    /** 断开 SFTP 与 SSH 连接（标签关闭时调用） */
-    public void disconnect() {
-        try {
-            if (sftpClient != null) sftpClient.disconnect();
-        } catch (Exception ignored) {}
-        try {
-            if (sshSession != null) sshSession.disconnect();
-        } catch (Exception ignored) {}
-    }
-
-    private void populateTable(List<SFTPClient.FileEntry> entries) {
-        fileList.clear();
-        for (SFTPClient.FileEntry entry : entries) {
-            fileList.add(new FileItem(entry.getName(), entry.getPath(), entry.isDirectory(), entry.getSize(), entry.getModifyTime()));
-        }
-    }
-
-    /**
-     * 下载文件到本地
-     */
-    private void downloadFile(FileItem item) {
-        DirectoryChooser chooser = new DirectoryChooser();
-        chooser.setTitle("选择保存目录");
-        File dir = chooser.showDialog(getStage());
-        if (dir == null) return;
-
-        statusLabel.setText("下载中: " + item.getName());
+    @Override
+    protected void doMkdir(String fullPath) {
         new Thread(() -> {
             try {
-                String localPath = new File(dir, item.getName()).getAbsolutePath();
-                sftpClient.download(item.getPath(), localPath);
-                Platform.runLater(() -> statusLabel.setText("下载完成: " + item.getName()));
+                sftpClient.mkdir(fullPath);
+                Platform.runLater(this::refresh);
             } catch (Exception e) {
-                Platform.runLater(() -> statusLabel.setText("下载失败: " + e.getMessage()));
+                Platform.runLater(() -> setStatus("创建目录失败: " + e.getMessage()));
+            }
+        }, "SFTP-Mkdir").start();
+    }
+
+    @Override
+    protected void doUpload(List<File> files) {
+        setStatus("上传中...");
+        new Thread(() -> {
+            try {
+                String cwd = getCurrentPath();
+                for (File file : files) {
+                    String remotePath = cwd.endsWith("/") ? cwd + file.getName() : cwd + "/" + file.getName();
+                    sftpClient.upload(file.getAbsolutePath(), remotePath);
+                }
+                Platform.runLater(() -> {
+                    setStatus("上传完成");
+                    refresh();
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    setStatus("上传失败: " + e.getMessage());
+                    refresh();
+                });
+            }
+        }, "SFTP-Upload").start();
+    }
+
+    @Override
+    protected void doDownload(FileItem item, File localFile) {
+        setStatus("下载中: " + item.getName());
+        new Thread(() -> {
+            try {
+                sftpClient.download(item.getPath(), localFile.getAbsolutePath());
+                Platform.runLater(() -> setStatus("下载完成: " + item.getName()));
+            } catch (Exception e) {
+                Platform.runLater(() -> setStatus("下载失败: " + e.getMessage()));
             }
         }, "SFTP-Download").start();
     }
 
-    /**
-     * 下载文件到临时目录（用于拖拽下载）
-     */
-    private File downloadToTemp(FileItem item) {
+    @Override
+    protected File doDownloadToTemp(FileItem item) {
         try {
             File tempDir = new File(System.getProperty("java.io.tmpdir"), "tomato-sftp");
             if (!tempDir.exists()) tempDir.mkdirs();
@@ -1834,30 +412,73 @@ public class SFTPFileBrowser extends BorderPane {
             sftpClient.download(item.getPath(), tempFile.getAbsolutePath());
             return tempFile;
         } catch (Exception e) {
-            Platform.runLater(() -> statusLabel.setText("拖拽下载失败: " + e.getMessage()));
+            Platform.runLater(() -> setStatus("拖拽下载失败: " + e.getMessage()));
             return null;
         }
     }
+
+    @Override
+    protected void loadColumnAsync(String path, int colIndex) {
+        new Thread(() -> {
+            try {
+                sftpClient.cd(path);
+                String realPath = sftpClient.pwd();
+                List<SFTPClient.FileEntry> entries = sftpClient.listFiles(realPath);
+                List<FileItem> items = new ArrayList<>();
+                for (SFTPClient.FileEntry entry : entries) {
+                    items.add(new FileItem(entry.getName(), entry.getPath(),
+                            entry.isDirectory(), entry.getSize(), entry.getModifyTime()));
+                }
+                Platform.runLater(() -> addColumn(colIndex, realPath, items));
+            } catch (Exception e) {
+                Platform.runLater(() -> setStatus("列视图加载失败: " + e.getMessage()));
+            }
+        }, "SFTP-Column").start();
+    }
+
+    @Override
+    protected void handleCreateFile() {
+        TextInputDialog dialog = new TextInputDialog();
+        dialog.setTitle("创建文件");
+        dialog.setHeaderText("输入文件名称:");
+        DialogPositionUtil.centerOnOwner(dialog, this);
+        dialog.showAndWait().ifPresent(name -> {
+            String fileName = name.trim();
+            if (fileName.isEmpty()) return;
+            String cwd = getCurrentPath();
+            String fullPath = cwd.endsWith("/") ? cwd + fileName : cwd + "/" + fileName;
+            new Thread(() -> {
+                try {
+                    sftpClient.createEmptyFile(fullPath);
+                    Platform.runLater(this::refresh);
+                } catch (Exception e) {
+                    Platform.runLater(() -> setStatus("创建文件失败: " + e.getMessage()));
+                }
+            }, "SFTP-CreateFile").start();
+        });
+    }
+
+    // ==================== 本地编辑（覆盖基类空实现） ====================
 
     /**
      * 用本地应用打开文件：下载到临时目录后调用系统默认应用打开。
      * 文件修改后会自动上传到远程（直接保存或关闭时保存均生效）。
      */
-    private void openWithLocalApp(FileItem item) {
+    @Override
+    protected void openFileLocally(FileItem item) {
         String remotePath = item.getPath();
         File cachedFile = editCache.get(remotePath);
 
         if (cachedFile != null && cachedFile.exists()) {
-            // 已缓存，直接重新打开
             File localFile = cachedFile;
             new Thread(() -> {
                 openLocalFile(localFile);
-                Platform.runLater(() -> statusLabel.setText("已用本地应用打开: " + item.getName()));
+                Platform.runLater(() -> setStatus("已用本地应用打开: " + item.getName()));
             }, "SFTP-Open").start();
             return;
         }
 
-        statusLabel.setText("下载中: " + item.getName());
+        setStatus("下载中: " + item.getName());
         new Thread(() -> {
             try {
                 File editRoot = new File(System.getProperty("java.io.tmpdir"), "tomato-edit");
@@ -1870,11 +491,11 @@ public class SFTPFileBrowser extends BorderPane {
                 editLastModified.put(remotePath, initialModified);
 
                 openLocalFile(localFile);
-                Platform.runLater(() -> statusLabel.setText("已用本地应用打开: " + item.getName()));
+                Platform.runLater(() -> setStatus("已用本地应用打开: " + item.getName()));
 
                 startEditMonitor(item, localFile);
             } catch (Exception e) {
-                Platform.runLater(() -> statusLabel.setText("打开失败: " + e.getMessage()));
+                Platform.runLater(() -> setStatus("打开失败: " + e.getMessage()));
             }
         }, "SFTP-Edit").start();
     }
@@ -1897,7 +518,7 @@ public class SFTPFileBrowser extends BorderPane {
                 }
             }
         } catch (Exception e) {
-            Platform.runLater(() -> statusLabel.setText("无法打开本地应用: " + e.getMessage()));
+            Platform.runLater(() -> setStatus("无法打开本地应用: " + e.getMessage()));
         }
     }
 
@@ -1946,171 +567,57 @@ public class SFTPFileBrowser extends BorderPane {
     private void uploadEditToRemote(FileItem item, File localFile) {
         try {
             if (!sftpClient.isConnected()) {
-                Platform.runLater(() -> statusLabel.setText("SFTP未连接，无法保存远程: " + item.getName()));
+                Platform.runLater(() -> setStatus("SFTP未连接，无法保存远程: " + item.getName()));
                 return;
             }
             sftpClient.upload(localFile.getAbsolutePath(), item.getPath());
-            Platform.runLater(() -> statusLabel.setText("已保存到远程: " + item.getName()));
+            Platform.runLater(() -> setStatus("已保存到远程: " + item.getName()));
         } catch (Exception e) {
-            Platform.runLater(() -> statusLabel.setText("保存远程失败: " + e.getMessage()));
+            Platform.runLater(() -> setStatus("保存远程失败: " + e.getMessage()));
         }
     }
 
-    /**
-     * 上传本地文件
-     */
-    private void uploadFiles() {
-        FileChooser chooser = new FileChooser();
-        chooser.setTitle("选择要上传的文件");
-        List<File> files = chooser.showOpenMultipleDialog(getStage());
-        if (files == null || files.isEmpty()) return;
-        uploadLocalFiles(files);
-    }
+    // ==================== 连接管理（公共 API） ====================
 
-    private void uploadLocalFiles(List<File> files) {
-        statusLabel.setText("上传中...");
+    /**
+     * 初始化连接并导航到 home 目录
+     */
+    public void initConnection() {
         new Thread(() -> {
             try {
-                for (File file : files) {
-                    String remotePath = currentPath.endsWith("/") ? currentPath + file.getName() : currentPath + "/" + file.getName();
-                    sftpClient.upload(file.getAbsolutePath(), remotePath);
+                if (!sftpClient.isConnected()) {
+                    sftpClient.connect(sshSession.getJschSession());
                 }
-                Platform.runLater(() -> {
-                    statusLabel.setText("上传完成");
-                    refresh();
-                });
+                String home = sftpClient.pwd();
+                Platform.runLater(() -> navigateTo(home));
             } catch (Exception e) {
-                Platform.runLater(() -> {
-                    statusLabel.setText("上传失败: " + e.getMessage());
-                    refresh();
-                });
+                Platform.runLater(() -> setStatus("SFTP连接失败: " + e.getMessage()));
             }
-        }, "SFTP-Upload").start();
+        }, "SFTP-Init").start();
     }
 
-    private void deleteEntry(FileItem item) {
-        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-        alert.setTitle("删除确认");
-        alert.setHeaderText("确定要删除 \"" + item.getName() + "\" 吗？");
-        DialogPositionUtil.centerOnOwner(alert, this);
-        alert.showAndWait().ifPresent(btn -> {
-            if (btn == ButtonType.OK) {
-                new Thread(() -> {
-                    try {
-                        if (item.isDirectory()) {
-                            sftpClient.rmdir(item.getPath());
-                        } else {
-                            sftpClient.rm(item.getPath());
-                        }
-                        Platform.runLater(this::refresh);
-                    } catch (Exception e) {
-                        Platform.runLater(() -> statusLabel.setText("删除失败: " + e.getMessage()));
-                    }
-                }, "SFTP-Delete").start();
-            }
-        });
+    /**
+     * 断开 SFTP 与 SSH 连接（标签关闭时调用）
+     */
+    public void disconnect() {
+        try {
+            if (sftpClient != null) sftpClient.disconnect();
+        } catch (Exception ignored) {}
+        try {
+            if (sshSession != null) sshSession.disconnect();
+        } catch (Exception ignored) {}
     }
 
-    private void mkdir() {
-        TextInputDialog dialog = new TextInputDialog();
-        dialog.setTitle("新建目录");
-        dialog.setHeaderText("输入目录名称:");
-        DialogPositionUtil.centerOnOwner(dialog, this);
-        dialog.showAndWait().ifPresent(name -> {
-            if (!name.trim().isEmpty()) {
-                new Thread(() -> {
-                    try {
-                        String path = currentPath.endsWith("/") ? currentPath + name.trim() : currentPath + "/" + name.trim();
-                        sftpClient.mkdir(path);
-                        Platform.runLater(this::refresh);
-                    } catch (Exception e) {
-                        Platform.runLater(() -> statusLabel.setText("创建目录失败: " + e.getMessage()));
-                    }
-                }, "SFTP-Mkdir").start();
-            }
-        });
-    }
-
-    private Stage getStage() {
-        return (Stage) getScene().getWindow();
+    /**
+     * 跟随终端目录变化
+     */
+    public void onTerminalCwdChanged(String newPath) {
+        if (followTerminal.get()) {
+            navigateTo(newPath);
+        }
     }
 
     public BooleanProperty followTerminalProperty() {
         return followTerminal;
     }
-
-    public String getCurrentPath() {
-        return currentPath;
-    }
-
-    /**
-     * 文件列表数据模型
-     */
-    public static class FileItem {
-        private final String name;
-        private final String path;
-        private final boolean directory;
-        private final long size;
-        private final long modifyTime;
-
-        public FileItem(String name, String path, boolean directory, long size, long modifyTime) {
-            this.name = name;
-            this.path = path;
-            this.directory = directory;
-            this.size = size;
-            this.modifyTime = modifyTime;
-        }
-
-        public String getName() { return name; }
-        public String getPath() { return path; }
-        public boolean isDirectory() { return directory; }
-        public long getSize() { return size; }
-        public long getModifyTime() { return modifyTime; }
-
-        public String getDisplayName() {
-            return directory ? name + "/" : name;
-        }
-
-        public String getDisplaySize() {
-            if (directory) return "<DIR>";
-            if (size < 1024) return size + " B";
-            if (size < 1024 * 1024) return String.format("%.1f KB", size / 1024.0);
-            if (size < 1024 * 1024 * 1024) return String.format("%.1f MB", size / (1024.0 * 1024));
-            return String.format("%.1f GB", size / (1024.0 * 1024 * 1024));
-        }
-
-        public String getDisplayTime() {
-            if (modifyTime <= 0) return "";
-            return new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date(modifyTime * 1000));
-        }
-
-        public String getDisplayType() {
-            return directory ? "目录" : "文件";
-        }
-    }
-
-    /**
-     * 带图标的表格单元格
-     */
-    private class FileItemCell extends TableCell<FileItem, String> {
-        @Override
-        protected void updateItem(String item, boolean empty) {
-            super.updateItem(item, empty);
-            if (empty || item == null) {
-                setText(null);
-                setGraphic(null);
-            } else {
-                setText(item);
-                FileItem fileItem = getTableView().getItems().get(getIndex());
-                ImageView icon = new ImageView();
-                icon.setFitWidth(16);
-                icon.setFitHeight(16);
-                // 统一使用 getIconForItem 获取图标（与图标视图/列视图一致，目录用 folder.png）
-                Image img = getIconForItem(fileItem, false);
-                if (img != null) icon.setImage(img);
-                setGraphic(icon);
-            }
-        }
-    }
 }
-
