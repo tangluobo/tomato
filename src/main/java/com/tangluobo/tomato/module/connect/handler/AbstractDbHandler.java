@@ -1605,15 +1605,32 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 contextMenu.getItems().addAll(newBackupItem, newDirItem, new SeparatorMenuItem(), renameItem, deleteItem, new SeparatorMenuItem(), refreshItem);
             }
             case TABLE, VIEW -> {
-                MenuItem openTableItem = new MenuItem("打开表");
+                MenuItem openTableItem = new MenuItem("打开表", module.createMenuIcon("table_open.png"));
                 openTableItem.setOnAction(e -> handleTableDataDoubleClick(item, data));
-                MenuItem designItem = new MenuItem("设计表");
+                MenuItem designItem = new MenuItem("设计表", module.createMenuIcon("table_edit.png"));
                 designItem.setOnAction(e -> handleTableStructureDoubleClick(item, data));
-                MenuItem copyTableItem = new MenuItem("复制表");
+                MenuItem newTableItem = new MenuItem("新建表", module.createMenuIcon("table_add.png"));
+                TreeItem<String> parentItem = item.getParent();
+                DatabaseNodeData parentData = module.getDbNodeDataMap().get(parentItem);
+                newTableItem.setOnAction(e -> { if (parentData != null) handleNewTable(parentItem, parentData); });
+                MenuItem copyTableItem = new MenuItem("复制表", module.createMenuIcon("copy_tables.png"));
                 copyTableItem.setOnAction(e -> handleCopyTable(item, data));
-                MenuItem deleteItem = new MenuItem("删除");
+                MenuItem deleteItem = new MenuItem("删除表", module.createMenuIcon("table_drop.png"));
                 deleteItem.setOnAction(e -> module.deleteDbNodes());
-                contextMenu.getItems().addAll(openTableItem, designItem, new SeparatorMenuItem(), copyTableItem, new SeparatorMenuItem(), deleteItem);
+                MenuItem refreshItem = new MenuItem("刷新", module.createMenuIcon("refresh.png"));
+                refreshItem.setOnAction(e -> { if (parentData != null) refreshDbNode(parentItem, parentData); });
+                if (data.getType() == DatabaseNodeData.NodeType.TABLE) {
+                    MenuItem clearItem = new MenuItem("清空表", module.createMenuIcon("table_drop.png"));
+                    clearItem.setOnAction(e -> handleClearTables(List.of(data), null));
+                    MenuItem truncateItem = new MenuItem("截断表", module.createMenuIcon("table_drop.png"));
+                    truncateItem.setOnAction(e -> handleTruncateTables(List.of(data), null));
+                    contextMenu.getItems().addAll(openTableItem, designItem, newTableItem, new SeparatorMenuItem(),
+                            copyTableItem, new SeparatorMenuItem(), clearItem, truncateItem, new SeparatorMenuItem(),
+                            deleteItem, new SeparatorMenuItem(), refreshItem);
+                } else {
+                    contextMenu.getItems().addAll(openTableItem, designItem, newTableItem, new SeparatorMenuItem(),
+                            copyTableItem, new SeparatorMenuItem(), deleteItem, new SeparatorMenuItem(), refreshItem);
+                }
             }
             case QUERY -> {
                 MenuItem openQueryItem = new MenuItem("打开");
