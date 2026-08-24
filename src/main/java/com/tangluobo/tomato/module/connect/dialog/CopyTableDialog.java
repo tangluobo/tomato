@@ -3,6 +3,7 @@ package com.tangluobo.tomato.module.connect.dialog;
 import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import com.tangluobo.tomato.module.connect.service.DatabaseService;
+import com.tangluobo.tomato.module.connect.view.SqlEditorPane;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -88,7 +89,7 @@ public class CopyTableDialog {
     // 第二步 UI 组件
     private final VBox tableListContainer = new VBox(4);
     private final List<CheckBox> tableCheckBoxes = new ArrayList<>();
-    private TextArea sqlPreviewArea;
+    private SqlEditorPane sqlPreviewPane;
     private CheckBox addFilterCb;
     private CheckBox dropFilterCb;
     private CheckBox modifyFilterCb;
@@ -661,7 +662,7 @@ public class CopyTableDialog {
         Button copyBtn = new Button("复制 SQL");
         copyBtn.setStyle("-fx-background-color: #1890FF; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-height: 28px; -fx-pref-width: 90px;");
         copyBtn.setOnAction(e -> {
-            String sql = sqlPreviewArea.getText();
+            String sql = sqlPreviewPane.getText();
             if (sql == null || sql.isEmpty()) return;
             ClipboardContent content = new ClipboardContent();
             content.putString(sql);
@@ -686,17 +687,14 @@ public class CopyTableDialog {
                 new Label("过滤:"), dropFilterCb, addFilterCb, modifyFilterCb);
         HBox.setHgrow(toolbar, Priority.ALWAYS);
 
-        // SQL 预览区
-        sqlPreviewArea = new TextArea();
-        sqlPreviewArea.setEditable(false);
-        sqlPreviewArea.setWrapText(true);
-        sqlPreviewArea.setStyle("-fx-background-color: white; -fx-text-fill: #333; -fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 13px; -fx-border-color: #E5E5E5; -fx-border-radius: 4px;");
-        VBox.setVgrow(sqlPreviewArea, Priority.ALWAYS);
+        // SQL 预览区（只读，带行号 + 语法高亮）
+        sqlPreviewPane = new SqlEditorPane(false);
+        VBox.setVgrow(sqlPreviewPane, Priority.ALWAYS);
 
         stepTwoStatusLabel = new Label("加载中...");
         stepTwoStatusLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #666;");
 
-        rightBox.getChildren().addAll(rightTitle, toolbar, sqlPreviewArea, stepTwoStatusLabel);
+        rightBox.getChildren().addAll(rightTitle, toolbar, sqlPreviewPane, stepTwoStatusLabel);
 
         split.getItems().addAll(leftBox, rightBox);
         SplitPane.setResizableWithParent(leftBox, false);
@@ -778,13 +776,13 @@ public class CopyTableDialog {
         finalSelectedTables = selected;
 
         if (selected.isEmpty()) {
-            sqlPreviewArea.setText("-- 未选择表");
+            sqlPreviewPane.setText("-- 未选择表");
             stepTwoStatusLabel.setText("0 条 SQL，0 张表");
             lastTotalSqlCount = 0;
             return;
         }
 
-        sqlPreviewArea.setText("-- 生成中...");
+        sqlPreviewPane.setText("-- 生成中...");
         stepTwoStatusLabel.setText("生成中...");
 
         final boolean fAdd = includeAdd;
@@ -815,7 +813,7 @@ public class CopyTableDialog {
             } catch (Exception ex) {
                 String msg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
                 Platform.runLater(() -> {
-                    sqlPreviewArea.setText("-- 生成 SQL 失败: " + msg);
+                    sqlPreviewPane.setText("-- 生成 SQL 失败: " + msg);
                     stepTwoStatusLabel.setText("生成失败");
                 });
                 return;
@@ -823,7 +821,7 @@ public class CopyTableDialog {
             final int finalTotal = total;
             final String result = sb.toString();
             Platform.runLater(() -> {
-                sqlPreviewArea.setText(result.isEmpty() ? "-- 无 SQL" : result);
+                sqlPreviewPane.setText(result.isEmpty() ? "-- 无 SQL" : result);
                 lastTotalSqlCount = finalTotal;
                 stepTwoStatusLabel.setText("共 " + finalTotal + " 条 SQL，" + selected.size() + " 张表");
             });
