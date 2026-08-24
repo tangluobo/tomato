@@ -1765,25 +1765,9 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 module.getConnections(),
                 srcConfig, srcDb, srcSchema, java.util.Collections.singletonList(srcTable)
         );
+        // 注入执行器：用户点击「执行」时由 dialog 内部触发，进度/日志实时回显
+        dialog.setSyncExecutor(this::executeStructureSync);
         dialog.showAndWait();
-        if (!dialog.isConfirmed()) {
-            return;
-        }
-
-        ConnectionConfig dstConfig = dialog.getTargetConfig();
-        String dstDb = dialog.getTargetDatabase();
-        String dstSchema = dialog.getTargetSchema();
-        if (dstConfig == null || dstDb == null) {
-            return;
-        }
-
-        // 2. 后台执行结构同步（按 diff/新建分流）
-        executeStructureSync(srcConfig, srcDb, srcSchema,
-                dstConfig, dstDb, dstSchema,
-                dialog.getFinalSelectedTables(),
-                dialog.isCopyData(), dialog.isDropIfExists(),
-                dialog.isIncludeAdd(), dialog.isIncludeDrop(), dialog.isIncludeModify(),
-                null);
     }
 
     /** 判断系统剪贴板中是否有 TOMATO_COPY_TABLES 内容 */
@@ -1897,28 +1881,17 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 module.getConnections(),
                 srcConfig, srcDb, srcSchema, srcTables
         );
+        // 注入执行器：用户点击「执行」时由 dialog 内部触发，进度/日志实时回显
+        dialog.setSyncExecutor(this::executeStructureSync);
+        // 把粘贴流程的 onComplete 接到 dialog 关闭回调上（无论是否执行，dialog 关闭即视为流程结束）
+        if (onComplete != null) {
+            dialog.setOnCloseCallback(onComplete);
+        }
         // 若右键的是 DATABASE/TABLES_FOLDER 节点，预填目标为该节点对应的连接/数据库
         if (targetData != null && targetData.getConnectionConfig() != null && targetData.getDatabaseName() != null) {
             dialog.presetTarget(targetData.getConnectionConfig(), targetData.getDatabaseName(), targetData.getSchemaName());
         }
         dialog.showAndWait();
-        if (!dialog.isConfirmed()) {
-            return;
-        }
-
-        ConnectionConfig dstConfig = dialog.getTargetConfig();
-        String dstDb = dialog.getTargetDatabase();
-        String dstSchema = dialog.getTargetSchema();
-        if (dstConfig == null || dstDb == null) {
-            return;
-        }
-
-        executeStructureSync(srcConfig, srcDb, srcSchema,
-                dstConfig, dstDb, dstSchema,
-                dialog.getFinalSelectedTables(),
-                dialog.isCopyData(), dialog.isDropIfExists(),
-                dialog.isIncludeAdd(), dialog.isIncludeDrop(), dialog.isIncludeModify(),
-                onComplete);
     }
 
     /** 后台执行表粘贴/复制操作（同连接场景仍走原 copyTables 路径） */
@@ -1961,35 +1934,48 @@ public abstract class AbstractDbHandler implements ConnectHandler {
      *  - dropIfExists 或目标表不存在 → 复用 DatabaseService.copyTable（DROP+CREATE+可选数据）
      *  - 目标表已存在且 !dropIfExists → generateStructureSyncSql + executeSqlList（ALTER diff，不同步数据）
      * 目标表名与源表名相同（CopyTableDialog 中未提供目标表名编辑 UI，默认同名）。
+     * progressUpdater/logAppender 为 null 时退化为旧的弹窗模式（兼容直接调用）。
      */
     private void executeStructureSync(
             ConnectionConfig srcConfig, String srcDb, String srcSchema,
             ConnectionConfig dstConfig, String dstDb, String dstSchema,
             List<String> tables, boolean copyData, boolean dropIfExists,
             boolean includeAdd, boolean includeDrop, boolean includeModify,
+            CopyTableDialog.ProgressUpdater progressUpdater,
+            CopyTableDialog.LogAppender logAppender,
             Runnable onComplete) {
         new Thread(() -> {
+            int total = tables.size();
             int success = 0, failed = 0;
             List<String> errDetails = new ArrayList<>();
             Set<String> dstSet;
             try {
                 dstSet = new HashSet<>(DatabaseService.getTables(dstConfig, dstDb, dstSchema));
+                if (logAppender != null) logAppender.append("[INFO] 已加载目标表 " + dstSet.size() + " 张\n");
             } catch (Exception ex) {
                 String msg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
+                if (logAppender != null) logAppender.append("[ERROR] 加载目标表列表失败: " + msg + "\n");
                 Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR, "加载目标表列表失败: " + msg, ButtonType.OK);
-                    alert.setTitle("结构同步");
-                    alert.setHeaderText(null);
-                    alert.initOwner(module.getStage());
-                    alert.showAndWait();
+                    if (logAppender == null) {
+                        Alert alert = new Alert(Alert.AlertType.ERROR, "加载目标表列表失败: " + msg, ButtonType.OK);
+                        alert.setTitle("结构同步");
+                        alert.setHeaderText(null);
+                        alert.initOwner(module.getStage());
+                        alert.showAndWait();
+                    }
                     if (onComplete != null) onComplete.run();
                 });
                 return;
             }
-            for (String table : tables) {
+            for (int i = 0; i < tables.size(); i++) {
+                String table = tables.get(i);
+                double percent = total > 0 ? (double) i / (double) total : 0.0;
+                if (progressUpdater != null) progressUpdater.update(percent, "执行 " + (i + 1) + "/" + total + ": " + table);
+                if (logAppender != null) logAppender.append("[INFO] 处理表 " + (i + 1) + "/" + total + ": " + table + "\n");
                 try {
                     boolean dstExists = dstSet.contains(table);
                     if (dropIfExists || !dstExists) {
+                        if (logAppender != null) logAppender.append("  → 目标表不存在或要求删除重建，执行 copyTable\n");
                         DatabaseService.copyTable(srcConfig, srcDb, srcSchema, table,
                                 dstConfig, dstDb, dstSchema, table,
                                 true, copyData, dropIfExists);
@@ -1998,27 +1984,44 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                                 srcConfig, srcDb, srcSchema, table,
                                 dstConfig, dstDb, dstSchema, table,
                                 includeAdd, includeDrop, includeModify, false);
-                        if (!sqlList.isEmpty()) {
+                        if (sqlList.isEmpty()) {
+                            if (logAppender != null) logAppender.append("  → 无结构差异\n");
+                        } else {
+                            if (logAppender != null) {
+                                logAppender.append("  → 执行 " + sqlList.size() + " 条 ALTER:\n");
+                                for (String s : sqlList) logAppender.append("    " + s + ";\n");
+                            }
                             DatabaseService.executeSqlList(dstConfig, dstDb, dstSchema, sqlList);
                         }
                     }
                     success++;
+                    if (logAppender != null) logAppender.append("  → 成功\n");
                 } catch (Exception ex) {
                     failed++;
-                    errDetails.add(table + ": " + (ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName()));
+                    String err = table + ": " + (ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName());
+                    errDetails.add(err);
+                    if (logAppender != null) logAppender.append("[ERROR] " + err + "\n");
                 }
+            }
+            if (progressUpdater != null) progressUpdater.update(1.0, "完成: 成功 " + success + ", 失败 " + failed);
+            if (logAppender != null) {
+                logAppender.append("\n[INFO] ===== 执行完成 =====\n");
+                logAppender.append("[INFO] 成功: " + success + " 张, 失败: " + failed + " 张\n");
             }
             final int fSuccess = success, fFailed = failed;
             final String errMsg = String.join("\n", errDetails);
             Platform.runLater(() -> {
-                Alert.AlertType type = fFailed == 0 ? Alert.AlertType.INFORMATION : Alert.AlertType.WARNING;
-                String msg = "结构同步完成：成功 " + fSuccess + " 张，失败 " + fFailed + " 张";
-                if (!errMsg.isEmpty()) msg += "\n\n失败详情:\n" + errMsg;
-                Alert alert = new Alert(type, msg, ButtonType.OK);
-                alert.setTitle("结构同步");
-                alert.setHeaderText(null);
-                alert.initOwner(module.getStage());
-                alert.showAndWait();
+                // 若未提供日志回调，则保持旧的弹窗结果展示模式
+                if (logAppender == null) {
+                    Alert.AlertType type = fFailed == 0 ? Alert.AlertType.INFORMATION : Alert.AlertType.WARNING;
+                    String msg = "结构同步完成：成功 " + fSuccess + " 张，失败 " + fFailed + " 张";
+                    if (!errMsg.isEmpty()) msg += "\n\n失败详情:\n" + errMsg;
+                    Alert alert = new Alert(type, msg, ButtonType.OK);
+                    alert.setTitle("结构同步");
+                    alert.setHeaderText(null);
+                    alert.initOwner(module.getStage());
+                    alert.showAndWait();
+                }
                 refreshDbNodeForConfig(dstConfig, dstDb, dstSchema);
                 if (onComplete != null) onComplete.run();
             });

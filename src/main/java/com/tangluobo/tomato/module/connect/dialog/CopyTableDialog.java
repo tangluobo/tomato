@@ -95,12 +95,57 @@ public class CopyTableDialog {
     private CheckBox modifyFilterCb;
     private Label stepTwoStatusLabel;
     private int lastTotalSqlCount = 0;
+    private ProgressBar progressBar;
+    private Label progressLabel;
+    private SqlEditorPane logEditor;
+    private Button executeBtn;
+    private Button prevBtn;
+    private SyncExecutor syncExecutor;
+    private Runnable onCloseCallback;
+    private volatile boolean syncStarted = false;
+    private volatile boolean syncCompleted = false;
 
     // 第二步用户选择（供调用方执行）
     private List<String> finalSelectedTables = new ArrayList<>();
     private boolean includeAdd = true;
     private boolean includeDrop = true;
     private boolean includeModify = true;
+
+    // ==================== 同步执行相关接口 ====================
+
+    /**
+     * 结构同步执行器：由 AbstractDbHandler 注入，dialog 点击「执行」时调用。
+     * 实现方应在后台线程执行，通过 progressUpdater/logAppender 实时反馈进度与日志，
+     * 完成后调用 onComplete（在 JavaFX 线程）。
+     */
+    public interface SyncExecutor {
+        void execute(ConnectionConfig srcConfig, String srcDb, String srcSchema,
+                     ConnectionConfig dstConfig, String dstDb, String dstSchema,
+                     List<String> tables, boolean copyData, boolean dropIfExists,
+                     boolean includeAdd, boolean includeDrop, boolean includeModify,
+                     ProgressUpdater progressUpdater, LogAppender logAppender,
+                     Runnable onComplete);
+    }
+
+    /** 进度更新回调：percent∈[0,1]，message 为人类可读说明。 */
+    public interface ProgressUpdater {
+        void update(double percent, String message);
+    }
+
+    /** 日志追加回调：在 JavaFX 线程或后台线程均可调用，由实现方负责线程调度。 */
+    public interface LogAppender {
+        void append(String message);
+    }
+
+    /** 注入执行器（在 showAndWait 之前调用）。 */
+    public void setSyncExecutor(SyncExecutor executor) {
+        this.syncExecutor = executor;
+    }
+
+    /** 注入关闭回调：dialog 关闭时调用，用于把粘贴/复制流程的 onComplete 串联起来。 */
+    public void setOnCloseCallback(Runnable r) {
+        this.onCloseCallback = r;
+    }
 
     /**
      * 兼容旧 API 的单表构造方法。
@@ -391,6 +436,13 @@ public class CopyTableDialog {
         scene.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         dialogStage.setScene(scene);
         DialogPositionUtil.centerOnOwner(dialogStage, parent);
+
+        // dialog 关闭时触发 onCloseCallback，把粘贴/复制流程的 onComplete 串联起来
+        dialogStage.setOnHidden(e -> {
+            if (onCloseCallback != null) {
+                onCloseCallback.run();
+            }
+        });
 
         Platform.runLater(() -> onTargetConnChange(targetConnCombo.getValue()));
     }
@@ -683,18 +735,41 @@ public class CopyTableDialog {
         modifyFilterCb.setSelected(includeModify);
         modifyFilterCb.selectedProperty().addListener((obs, o, n) -> { includeModify = n; regeneratePreviewSql(); });
 
-        toolbar.getChildren().addAll(copyBtn, vSep,
-                new Label("过滤:"), dropFilterCb, addFilterCb, modifyFilterCb);
-        HBox.setHgrow(toolbar, Priority.ALWAYS);
-
-        // SQL 预览区（只读，带行号 + 语法高亮）
-        sqlPreviewPane = new SqlEditorPane(false);
-        VBox.setVgrow(sqlPreviewPane, Priority.ALWAYS);
-
         stepTwoStatusLabel = new Label("加载中...");
         stepTwoStatusLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #666;");
 
-        rightBox.getChildren().addAll(rightTitle, toolbar, sqlPreviewPane, stepTwoStatusLabel);
+        toolbar.getChildren().addAll(copyBtn, vSep,
+                new Label("过滤:"), dropFilterCb, addFilterCb, modifyFilterCb,
+                new Region(), stepTwoStatusLabel);
+        // 把 Region（倒数第 2 个）设为 ALWAYS，把 statusLabel 推到右侧
+        HBox.setHgrow(toolbar.getChildren().get(toolbar.getChildren().size() - 2), Priority.ALWAYS);
+
+        // SQL 预览区（只读，带行号 + 语法高亮）
+        sqlPreviewPane = new SqlEditorPane(false);
+
+        // ===== 进度 + 日志区 =====
+        Label logTitle = new Label("执行进度与日志");
+        logTitle.setFont(Font.font("System", FontWeight.NORMAL, 13));
+        logTitle.setTextFill(javafx.scene.paint.Color.valueOf("#1890FF"));
+        progressBar = new ProgressBar(0);
+        progressBar.setPrefWidth(220);
+        progressBar.setPrefHeight(14);
+        progressLabel = new Label("尚未执行");
+        progressLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #666;");
+        HBox progressBox = new HBox(10, progressBar, progressLabel);
+        progressBox.setAlignment(Pos.CENTER_LEFT);
+        logEditor = new SqlEditorPane(false);
+        VBox logBox = new VBox(6, logTitle, progressBox, logEditor);
+        VBox.setVgrow(logEditor, Priority.ALWAYS);
+
+        // 垂直分割：上 SQL 预览，下 进度/日志
+        SplitPane rightSplit = new SplitPane();
+        rightSplit.setOrientation(Orientation.VERTICAL);
+        rightSplit.setDividerPositions(0.5);
+        rightSplit.getItems().addAll(sqlPreviewPane, logBox);
+        VBox.setVgrow(rightSplit, Priority.ALWAYS);
+
+        rightBox.getChildren().addAll(rightTitle, toolbar, rightSplit);
 
         split.getItems().addAll(leftBox, rightBox);
         SplitPane.setResizableWithParent(leftBox, false);
@@ -719,15 +794,16 @@ public class CopyTableDialog {
         Button prevBtn = new Button("上一步");
         prevBtn.setStyle("-fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-height: 32px; -fx-pref-width: 100px;");
         prevBtn.setOnAction(e -> handlePrev());
+        this.prevBtn = prevBtn;
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        Button nextBtn = new Button("下一步");
-        nextBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-height: 32px; -fx-pref-width: 100px;");
-        nextBtn.setOnAction(e -> handleStepTwoNext());
+        executeBtn = new Button("执行");
+        executeBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-height: 32px; -fx-pref-width: 100px;");
+        executeBtn.setOnAction(e -> handleExecute());
 
-        bottom.getChildren().addAll(cancelBtn, prevBtn, spacer, nextBtn);
+        bottom.getChildren().addAll(cancelBtn, prevBtn, spacer, executeBtn);
         return bottom;
     }
 
@@ -828,8 +904,21 @@ public class CopyTableDialog {
         }, "DB-GenSyncSql").start();
     }
 
-    /** 第二步的「下一步」：弹执行确认，确认后 confirmed=true 关闭（实际执行由调用方做） */
-    private void handleStepTwoNext() {
+    /**
+     * 第二步「执行」按钮：收集选中表 → 弹确认 → 锁定 UI → 通过 syncExecutor
+     * 后台执行，进度/日志实时回显到 progressBar 和 logEditor；完成后按钮变为「关闭」。
+     */
+    private void handleExecute() {
+        if (syncExecutor == null) {
+            showAlert("未配置执行器，无法执行");
+            return;
+        }
+        if (syncStarted) {
+            // 执行完成后按钮已改名为「关闭」，此处由 onSyncComplete 中重新绑定的 handler 处理
+            return;
+        }
+
+        // 收集选中的表
         List<String> selected = new ArrayList<>();
         for (CheckBox cb : tableCheckBoxes) {
             if (cb.isSelected()) selected.add(cb.getText());
@@ -850,8 +939,57 @@ public class CopyTableDialog {
         alert.showAndWait();
         if (alert.getResult() != ButtonType.YES) return;
 
-        confirmed = true;
-        dialogStage.close();
+        // 锁定 UI
+        executeBtn.setDisable(true);
+        if (prevBtn != null) prevBtn.setDisable(true);
+        if (addFilterCb != null) addFilterCb.setDisable(true);
+        if (dropFilterCb != null) dropFilterCb.setDisable(true);
+        if (modifyFilterCb != null) modifyFilterCb.setDisable(true);
+        for (CheckBox cb : tableCheckBoxes) cb.setDisable(true);
+
+        syncStarted = true;
+        appendLog("[INFO] 开始执行结构同步：共 " + selected.size() + " 张表，"
+                + lastTotalSqlCount + " 条 SQL\n");
+        updateProgress(0, "执行中...");
+
+        syncExecutor.execute(
+                sourceConfig, sourceDatabase, sourceSchema,
+                targetConfig, targetDatabase, getTargetSchema(),
+                selected, copyData, dropIfExists,
+                includeAdd, includeDrop, includeModify,
+                this::updateProgress, this::appendLog,
+                () -> Platform.runLater(this::onSyncComplete));
+    }
+
+    /** 进度更新：在 JavaFX 线程更新进度条与状态文本。 */
+    private void updateProgress(double percent, String message) {
+        if (!Platform.isFxApplicationThread()) {
+            Platform.runLater(() -> {
+                progressBar.setProgress(percent);
+                progressLabel.setText(message);
+            });
+            return;
+        }
+        progressBar.setProgress(percent);
+        progressLabel.setText(message);
+    }
+
+    /** 日志追加：转发到 logEditor，由 SqlEditorPane 内部做线程调度与自动滚动。 */
+    private void appendLog(String message) {
+        if (message == null || message.isEmpty()) return;
+        logEditor.appendText(message);
+    }
+
+    /** 同步完成（成功或失败都会调用）：解除锁定，按钮变为「关闭」。 */
+    private void onSyncComplete() {
+        syncCompleted = true;
+        if (prevBtn != null) prevBtn.setDisable(false);
+        executeBtn.setText("关闭");
+        executeBtn.setDisable(false);
+        executeBtn.setOnAction(e -> {
+            confirmed = syncStarted && syncCompleted;
+            dialogStage.close();
+        });
     }
 
     private void showAlert(String msg) {

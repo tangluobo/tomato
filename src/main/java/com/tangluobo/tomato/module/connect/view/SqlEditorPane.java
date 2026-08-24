@@ -156,6 +156,13 @@ public class SqlEditorPane extends HBox {
             }
         });
 
+        // 裁剪子节点超出边界的视觉：行号 lineNumberBox 用 translateY 同步滚动，
+        // 不裁剪的话行号会向上溢出 SqlEditorPane 区域，覆盖上方工具栏/选项
+        javafx.scene.shape.Rectangle clipRect = new javafx.scene.shape.Rectangle();
+        clipRect.widthProperty().bind(widthProperty());
+        clipRect.heightProperty().bind(heightProperty());
+        setClip(clipRect);
+
         // 初始应用一次高亮（空文本时也设置默认样式）
         applyHighlighting();
     }
@@ -244,5 +251,32 @@ public class SqlEditorPane extends HBox {
     /** 聚焦编辑器 */
     public void requestFocus() {
         textArea.requestFocus();
+    }
+
+    /**
+     * 在末尾追加文本，并自动滚动到底部（用于日志输出场景）。
+     * 调用方应在 JavaFX 应用线程调用；若不在，会被调度到 JavaFX 线程异步追加。
+     */
+    public void appendText(String text) {
+        if (text == null || text.isEmpty()) return;
+        if (!javafx.application.Platform.isFxApplicationThread()) {
+            final String t = text;
+            javafx.application.Platform.runLater(() -> doAppend(t));
+            return;
+        }
+        doAppend(text);
+    }
+
+    private void doAppend(String text) {
+        int oldLen = textArea.getLength();
+        textArea.insertText(oldLen, text);
+        // 移动光标到末尾并请求跟随光标（自动滚到底部）
+        textArea.moveTo(oldLen + text.length());
+        textArea.requestFollowCaret();
+    }
+
+    /** 清空全部内容 */
+    public void clear() {
+        textArea.replaceText("");
     }
 }
