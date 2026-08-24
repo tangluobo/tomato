@@ -10,6 +10,7 @@ import com.tangluobo.tomato.module.connect.dialog.PasswordPromptDialog;
 import com.tangluobo.tomato.module.connect.dialog.SessionConfigDialog;
 import com.tangluobo.tomato.ssh.SFTPClient;
 import com.tangluobo.tomato.module.connect.AbstractFileBrowserPane;
+import com.tangluobo.tomato.ssh.ContainerInspectPane;
 import com.tangluobo.tomato.ssh.SFTPFileBrowser;
 import com.tangluobo.tomato.ssh.SSHSession;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
@@ -280,14 +281,18 @@ public class SshTerminalConnectHandler implements ConnectHandler {
      */
     private void populateContainerNodeMenu(ConnectModule module, ContextMenu contextMenu, TreeItem<String> item, DatabaseNodeData data) {
         ConnectionConfig config = data.getConnectionConfig();
+        // 属性（docker inspect 详情查看与参数修改），运行中/已停止均可用
+        MenuItem propsItem = new MenuItem("属性");
+        propsItem.setOnAction(e -> openContainerInspectTab(module, config, data.getName(), data.getPath()));
+
         if (!data.isOpened()) {
-            // 已停止：仅可启动
+            // 已停止：启动 | 属性
             MenuItem startItem = new MenuItem("启动");
             startItem.setOnAction(e -> execDockerAction(module, item, data, "start", "启动"));
-            contextMenu.getItems().add(startItem);
+            contextMenu.getItems().addAll(startItem, new SeparatorMenuItem(), propsItem);
             return;
         }
-        // 运行中：停止/重启/查看实时日志/进入终端
+        // 运行中：停止/重启 | 查看实时日志/进入终端 | 属性
         MenuItem stopItem = new MenuItem("停止");
         stopItem.setOnAction(e -> execDockerAction(module, item, data, "stop", "停止"));
 
@@ -301,7 +306,8 @@ public class SshTerminalConnectHandler implements ConnectHandler {
         terminalItem.setOnAction(e -> openContainerTerminalTab(module, config, data.getName(), data.getPath()));
 
         contextMenu.getItems().addAll(stopItem, restartItem,
-                new SeparatorMenuItem(), logsItem, terminalItem);
+                new SeparatorMenuItem(), logsItem, terminalItem,
+                new SeparatorMenuItem(), propsItem);
     }
 
     /**
@@ -454,6 +460,122 @@ public class SshTerminalConnectHandler implements ConnectHandler {
         String prefix = (dockerPrefix != null && !dockerPrefix.isEmpty()) ? dockerPrefix : "docker";
         String logsCmd = prefix + " logs -f --tail 100 " + containerName;
         createSshTerminalTab(module, config, containerName + " 日志", logsCmd);
+    }
+
+    /**
+     * 容器属性标签页：以独立标签页展示 docker inspect 详情。
+     * 建立 SSH 会话（复用跳板隧道引用计数）创建 ContainerInspectPane，
+     * 支持修改重启策略（--restart）与资源限制（--memory/--cpus/--cpu-shares）。
+     * 同一容器重复打开时激活已有标签页。
+     */
+    public void openContainerInspectTab(ConnectModule module, ConnectionConfig config, String containerName, String dockerPrefix) {
+        if (!module.ensureTabPaneInstalled()) return;
+
+        // 标签页唯一标识，避免重复打开
+        String tabId = "docker_inspect_" + config.getId() + "_" + containerName;
+        for (Tab t : module.getTerminalTabPane().getTabs()) {
+            if (tabId.equals(t.getUserData())) {
+                module.getTerminalTabPane().getSelectionModel().select(t);
+                module.showTerminalView();
+                return;
+            }
+        }
+
+        // 密码缺失时先弹出输入框（需在 FX 线程）
+        String password = ensurePasswordAvailable(module, config);
+        if (password == null) return;
+
+        Tab tab = new Tab(containerName + " 属性");
+        tab.setUserData(tabId);
+
+        try {
+            Image icon = new Image(getClass().getResourceAsStream("/images/connect/docker.png"));
+            if (icon != null) {
+                ImageView iv = new ImageView(icon);
+                iv.setFitWidth(16);
+                iv.setFitHeight(16);
+                tab.setGraphic(ConnectModule.createFixedSizeGraphic(iv));
+            }
+        } catch (Exception ignored) {}
+
+        // 占位内容，连接成功后替换
+        StackPane loading = new StackPane(new ProgressIndicator());
+        tab.setContent(loading);
+
+        ContextMenu tabContextMenu = new ContextMenu();
+        MenuItem sessionConfigItem = new MenuItem("会话配置");
+        sessionConfigItem.setOnAction(e -> {
+            Stage stage = (Stage) module.getTerminalTabPane().getScene().getWindow();
+            SessionConfigDialog.show(stage, config);
+            module.saveConnections();
+        });
+        MenuItem globalConfigItem = new MenuItem("全局配置");
+        globalConfigItem.setOnAction(e -> module.openSettingsTabWithSshSelected());
+        tabContextMenu.getItems().addAll(sessionConfigItem, globalConfigItem);
+        tab.setContextMenu(tabContextMenu);
+
+        module.getTerminalTabPane().getTabs().add(tab);
+        module.getTerminalTabPane().getSelectionModel().select(tab);
+        module.showTerminalView();
+
+        // 后台建立 SSH 会话 + 创建属性面板
+        new Thread(() -> {
+            int tunnelLocalPort = -1;
+            SSHSession sshSession = null;
+            try {
+                // 复用跳板隧道（引用计数 +1）
+                tunnelLocalPort = SshTunnelManager.resolve(config);
+
+                String host = config.getHost();
+                int port = config.getPort();
+                if (tunnelLocalPort != -1) {
+                    host = "localhost";
+                    port = tunnelLocalPort;
+                }
+
+                List<String> keyPaths = config.isUseKey() ? config.getPrivateKeyPaths() : null;
+                sshSession = new SSHSession(host, port, config.getUsername(), password, keyPaths);
+                sshSession.connect();
+
+                final SSHSession session = sshSession;
+                final int tunnelPort = tunnelLocalPort;
+
+                Platform.runLater(() -> {
+                    ContainerInspectPane pane = new ContainerInspectPane(session, containerName, dockerPrefix);
+                    tab.setContent(pane);
+                    pane.refresh();
+
+                    tab.setOnClosed(e -> {
+                        pane.disconnect();
+                        if (tunnelPort != -1) {
+                            SshTunnelManager.release(config);
+                        }
+                        if (module.getTerminalTabPane().getTabs().isEmpty()) {
+                            module.showWelcomeView();
+                        }
+                    });
+                });
+            } catch (Exception e) {
+                // 连接失败：释放资源
+                if (sshSession != null) try { sshSession.disconnect(); } catch (Exception ignored) {}
+                if (tunnelLocalPort != -1) {
+                    try { SshTunnelManager.release(config); } catch (Exception ignored) {}
+                }
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("连接失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("打开容器属性失败: " + e.getMessage());
+                    alert.showAndWait();
+                    // 移除加载占位标签页
+                    module.getTerminalTabPane().getTabs().remove(tab);
+                    if (module.getTerminalTabPane().getTabs().isEmpty()) {
+                        module.showWelcomeView();
+                    }
+                });
+                e.printStackTrace();
+            }
+        }, "Docker-InspectConnect").start();
     }
 
     /**
