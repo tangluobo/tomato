@@ -71,6 +71,7 @@ public class SqlEditorPane extends HBox {
     private final VirtualizedScrollPane<InlineCssTextArea> scrollPane;
     private final VBox lineNumberBox;
     private final List<Label> lineNumberLabels;
+    private final boolean syntaxHighlighting;
 
     private Consumer<String> onModified;
     private Runnable onRunRequest;
@@ -78,10 +79,20 @@ public class SqlEditorPane extends HBox {
 
     /** 默认可编辑 */
     public SqlEditorPane() {
-        this(true);
+        this(true, true);
     }
 
     public SqlEditorPane(boolean editable) {
+        this(editable, true);
+    }
+
+    /**
+     * @param editable 是否可编辑
+     * @param syntaxHighlighting 是否启用 SQL 语法高亮；日志输出场景应传 false，
+     *                            以便按级别着色的样式不被 SQL 高亮覆盖
+     */
+    public SqlEditorPane(boolean editable, boolean syntaxHighlighting) {
+        this.syntaxHighlighting = syntaxHighlighting;
         textArea = new InlineCssTextArea();
         textArea.setEditable(editable);
         textArea.setStyle(
@@ -129,7 +140,7 @@ public class SqlEditorPane extends HBox {
 
         // 内容变化：高亮 + 行号 + 修改回调
         textArea.textProperty().addListener((obs, oldVal, newVal) -> {
-            applyHighlighting();
+            if (syntaxHighlighting) applyHighlighting();
             updateLineNumbers(textArea.getParagraphs().size());
             if (onModified != null) onModified.accept(newVal);
         });
@@ -164,7 +175,7 @@ public class SqlEditorPane extends HBox {
         setClip(clipRect);
 
         // 初始应用一次高亮（空文本时也设置默认样式）
-        applyHighlighting();
+        if (syntaxHighlighting) applyHighlighting();
     }
 
     private void updateLineNumbers(int lineCount) {
@@ -258,18 +269,33 @@ public class SqlEditorPane extends HBox {
      * 调用方应在 JavaFX 应用线程调用；若不在，会被调度到 JavaFX 线程异步追加。
      */
     public void appendText(String text) {
+        appendText(text, null);
+    }
+
+    /**
+     * 在末尾追加文本，并对追加范围套用指定 CSS 样式（如 {@code "-fx-fill: #c62828;"}）。
+     * 样式仅在该 SqlEditorPane 未启用 SQL 语法高亮时才会生效（高亮会覆盖手动样式）。
+     *
+     * @param text  要追加的文本
+     * @param style InlineCssTextArea 的 CSS 样式串，传 null 或空串则不套样式
+     */
+    public void appendText(String text, String style) {
         if (text == null || text.isEmpty()) return;
         if (!javafx.application.Platform.isFxApplicationThread()) {
             final String t = text;
-            javafx.application.Platform.runLater(() -> doAppend(t));
+            final String s = style;
+            javafx.application.Platform.runLater(() -> doAppend(t, s));
             return;
         }
-        doAppend(text);
+        doAppend(text, style);
     }
 
-    private void doAppend(String text) {
+    private void doAppend(String text, String style) {
         int oldLen = textArea.getLength();
         textArea.insertText(oldLen, text);
+        if (style != null && !style.isEmpty()) {
+            textArea.setStyle(oldLen, oldLen + text.length(), style);
+        }
         // 移动光标到末尾并请求跟随光标（自动滚到底部）
         textArea.moveTo(oldLen + text.length());
         textArea.requestFollowCaret();

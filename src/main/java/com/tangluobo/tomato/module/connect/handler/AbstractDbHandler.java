@@ -1951,10 +1951,10 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             Set<String> dstSet;
             try {
                 dstSet = new HashSet<>(DatabaseService.getTables(dstConfig, dstDb, dstSchema));
-                if (logAppender != null) logAppender.append("[INFO] 已加载目标表 " + dstSet.size() + " 张\n");
+                if (logAppender != null) logAppender.append("INFO", "已加载目标表 " + dstSet.size() + " 张\n");
             } catch (Exception ex) {
                 String msg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
-                if (logAppender != null) logAppender.append("[ERROR] 加载目标表列表失败: " + msg + "\n");
+                if (logAppender != null) logAppender.append("ERROR", "加载目标表列表失败: " + msg + "\n");
                 Platform.runLater(() -> {
                     if (logAppender == null) {
                         Alert alert = new Alert(Alert.AlertType.ERROR, "加载目标表列表失败: " + msg, ButtonType.OK);
@@ -1971,11 +1971,11 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 String table = tables.get(i);
                 double percent = total > 0 ? (double) i / (double) total : 0.0;
                 if (progressUpdater != null) progressUpdater.update(percent, "执行 " + (i + 1) + "/" + total + ": " + table);
-                if (logAppender != null) logAppender.append("[INFO] 处理表 " + (i + 1) + "/" + total + ": " + table + "\n");
+                if (logAppender != null) logAppender.append("INFO", "处理表 " + (i + 1) + "/" + total + ": " + table + "\n");
                 try {
                     boolean dstExists = dstSet.contains(table);
                     if (dropIfExists || !dstExists) {
-                        if (logAppender != null) logAppender.append("  → 目标表不存在或要求删除重建，执行 copyTable\n");
+                        if (logAppender != null) logAppender.append("INFO", "  → 目标表不存在或要求删除重建，执行 copyTable\n");
                         DatabaseService.copyTable(srcConfig, srcDb, srcSchema, table,
                                 dstConfig, dstDb, dstSchema, table,
                                 true, copyData, dropIfExists);
@@ -1985,28 +1985,30 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                                 dstConfig, dstDb, dstSchema, table,
                                 includeAdd, includeDrop, includeModify, false);
                         if (sqlList.isEmpty()) {
-                            if (logAppender != null) logAppender.append("  → 无结构差异\n");
+                            if (logAppender != null) logAppender.append("INFO", "  → 无结构差异\n");
                         } else {
                             if (logAppender != null) {
-                                logAppender.append("  → 执行 " + sqlList.size() + " 条 ALTER:\n");
-                                for (String s : sqlList) logAppender.append("    " + s + ";\n");
+                                logAppender.append("INFO", "  → 执行 " + sqlList.size() + " 条 ALTER:\n");
+                                for (String s : sqlList) logAppender.append("SQL", "    " + s + ";\n");
                             }
                             DatabaseService.executeSqlList(dstConfig, dstDb, dstSchema, sqlList);
                         }
                     }
                     success++;
-                    if (logAppender != null) logAppender.append("  → 成功\n");
+                    if (logAppender != null) logAppender.append("SUCCESS", "  → 成功\n");
                 } catch (Exception ex) {
                     failed++;
                     String err = table + ": " + (ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName());
                     errDetails.add(err);
-                    if (logAppender != null) logAppender.append("[ERROR] " + err + "\n");
+                    if (logAppender != null) logAppender.append("ERROR", err + "\n");
                 }
             }
             if (progressUpdater != null) progressUpdater.update(1.0, "完成: 成功 " + success + ", 失败 " + failed);
             if (logAppender != null) {
-                logAppender.append("\n[INFO] ===== 执行完成 =====\n");
-                logAppender.append("[INFO] 成功: " + success + " 张, 失败: " + failed + " 张\n");
+                logAppender.append("INFO", "\n===== 执行完成 =====\n");
+                // 完成总结行按结果分级着色：全成功=绿，部分失败=橙，全失败=红
+                String summaryLevel = (failed == 0) ? "SUCCESS" : (success > 0 ? "WARN" : "ERROR");
+                logAppender.append(summaryLevel, "成功: " + success + " 张, 失败: " + failed + " 张\n");
             }
             final int fSuccess = success, fFailed = failed;
             final String errMsg = String.join("\n", errDetails);

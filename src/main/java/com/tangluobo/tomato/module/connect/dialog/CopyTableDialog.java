@@ -132,9 +132,12 @@ public class CopyTableDialog {
         void update(double percent, String message);
     }
 
-    /** 日志追加回调：在 JavaFX 线程或后台线程均可调用，由实现方负责线程调度。 */
+    /**
+     * 日志追加回调：在 JavaFX 线程或后台线程均可调用，由实现方负责线程调度。
+     * level 用于决定日志行的着色：INFO/SUCCESS/ERROR/WARN/SQL 等。
+     */
     public interface LogAppender {
-        void append(String message);
+        void append(String level, String message);
     }
 
     /** 注入执行器（在 showAndWait 之前调用）。 */
@@ -758,7 +761,7 @@ public class CopyTableDialog {
         progressLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #666;");
         HBox progressBox = new HBox(10, progressBar, progressLabel);
         progressBox.setAlignment(Pos.CENTER_LEFT);
-        logEditor = new SqlEditorPane(false);
+        logEditor = new SqlEditorPane(false, false);
         VBox logBox = new VBox(6, logTitle, progressBox, logEditor);
         VBox.setVgrow(logEditor, Priority.ALWAYS);
 
@@ -948,7 +951,7 @@ public class CopyTableDialog {
         for (CheckBox cb : tableCheckBoxes) cb.setDisable(true);
 
         syncStarted = true;
-        appendLog("[INFO] 开始执行结构同步：共 " + selected.size() + " 张表，"
+        appendLog("INFO", "开始执行结构同步：共 " + selected.size() + " 张表，"
                 + lastTotalSqlCount + " 条 SQL\n");
         updateProgress(0, "执行中...");
 
@@ -974,10 +977,24 @@ public class CopyTableDialog {
         progressLabel.setText(message);
     }
 
-    /** 日志追加：转发到 logEditor，由 SqlEditorPane 内部做线程调度与自动滚动。 */
-    private void appendLog(String message) {
+    /**
+     * 日志追加：按 level 选择不同颜色样式追加到 logEditor。
+     *  - INFO/SUCCESS/ERROR/WARN/SQL 等级别分别对应深灰/绿/红/橙/蓝
+     *  - 同步完成总结行根据成功/失败数量自动按级别着色
+     * 调用可在任意线程，SqlEditorPane 内部会做 JavaFX 线程调度。
+     */
+    private void appendLog(String level, String message) {
         if (message == null || message.isEmpty()) return;
-        logEditor.appendText(message);
+        String lvl = level == null ? "INFO" : level.toUpperCase();
+        String style;
+        switch (lvl) {
+            case "SUCCESS": style = "-fx-fill: #2e7d32;"; break; // 绿：成功
+            case "ERROR":   style = "-fx-fill: #c62828;"; break; // 红：失败
+            case "WARN":    style = "-fx-fill: #ef6c00;"; break; // 橙：警告
+            case "SQL":     style = "-fx-fill: #1565c0;"; break; // 蓝：SQL 详情
+            default:        style = "-fx-fill: #424242;"; break; // 深灰：普通信息
+        }
+        logEditor.appendText(message, style);
     }
 
     /** 同步完成（成功或失败都会调用）：解除锁定，按钮变为「关闭」。 */
