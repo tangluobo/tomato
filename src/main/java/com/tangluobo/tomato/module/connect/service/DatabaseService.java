@@ -3138,6 +3138,130 @@ public class DatabaseService {
     }
 
     /**
+     * 生成单表结构同步 SQL（CREATE 或 ALTER diff）。
+     * - dropIfExists=true → DROP TABLE IF EXISTS + CREATE TABLE（基于源表字段）
+     * - dropIfExists=false 且目标表不存在 → CREATE TABLE
+     * - dropIfExists=false 且目标表已存在 → ALTER diff（ADD/DROP/MODIFY，受 include* 筛选）
+     * @param includeAdd    ALTER 场景是否包含 ADD COLUMN（新增字段）
+     * @param includeDrop   ALTER 场景是否包含 DROP COLUMN（删除字段）
+     * @param includeModify ALTER 场景是否包含 MODIFY COLUMN（修改字段类型/属性）
+     * @param dropIfExists  true→DROP+CREATE；false→按目标表是否存在分支
+     * @return SQL 语句列表（按执行顺序）；目标表已存在且无 diff 时返回空列表
+     */
+    public static List<String> generateStructureSyncSql(
+            ConnectionConfig srcConfig, String srcDb, String srcSchema, String srcTable,
+            ConnectionConfig dstConfig, String dstDb, String dstSchema, String dstTable,
+            boolean includeAdd, boolean includeDrop, boolean includeModify,
+            boolean dropIfExists) throws Exception {
+        List<String> sqlList = new ArrayList<>();
+
+        // 取源表字段（LinkedHashMap，key 顺序即标准列标题顺序）
+        List<Map<String, String>> srcCols = getTableColumns(srcConfig, srcDb, srcSchema, srcTable);
+        List<String> columnTitles = srcCols.isEmpty()
+                ? new ArrayList<>()
+                : new ArrayList<>(srcCols.get(0).keySet());
+
+        // 判断目标表是否存在
+        List<String> dstTables = getTables(dstConfig, dstDb, dstSchema);
+        boolean dstExists = dstTables.contains(dstTable);
+
+        if (dropIfExists) {
+            sqlList.add("DROP TABLE IF EXISTS " + buildQualifiedTable(dstConfig, dstDb, dstSchema, dstTable));
+            sqlList.add(generateCreateTableSql(dstConfig, dstDb, dstSchema, dstTable, srcCols, null, ""));
+            return sqlList;
+        }
+
+        if (!dstExists) {
+            sqlList.add(generateCreateTableSql(dstConfig, dstDb, dstSchema, dstTable, srcCols, null, ""));
+            return sqlList;
+        }
+
+        // 目标表已存在 → ALTER diff
+        List<Map<String, String>> dstCols = getTableColumns(dstConfig, dstDb, dstSchema, dstTable);
+        Map<String, Map<String, String>> dstColByName = new LinkedHashMap<>();
+        for (Map<String, String> col : dstCols) {
+            dstColByName.put(col.get("字段名"), col);
+        }
+
+        // ADD：源有目标无（按源字段顺序，AFTER 前一个在目标库存在的源字段，尽量保持源顺序）
+        if (includeAdd) {
+            String afterCol = null;
+            for (int i = 0; i < srcCols.size(); i++) {
+                Map<String, String> srcCol = srcCols.get(i);
+                String colName = srcCol.get("字段名");
+                if (!dstColByName.containsKey(colName)) {
+                    // 用前一个源字段名作为 AFTER（仅当它在目标库已存在），否则 FIRST
+                    if (i > 0) {
+                        String prevName = srcCols.get(i - 1).get("字段名");
+                        afterCol = dstColByName.containsKey(prevName) ? prevName : null;
+                    } else {
+                        afterCol = null;
+                    }
+                    ObservableList<String> row = mapToRow(srcCol, columnTitles);
+                    sqlList.add(generateAddColumnSql(dstConfig, dstDb, dstSchema, dstTable,
+                            columnTitles, row, afterCol));
+                }
+            }
+        }
+
+        // DROP：源无目标有
+        if (includeDrop) {
+            Set<String> srcColNames = new HashSet<>();
+            for (Map<String, String> srcCol : srcCols) {
+                srcColNames.add(srcCol.get("字段名"));
+            }
+            for (Map<String, String> dstCol : dstCols) {
+                String colName = dstCol.get("字段名");
+                if (!srcColNames.contains(colName)) {
+                    sqlList.add(generateDropColumnSql(dstConfig, dstDb, dstSchema, dstTable, colName));
+                }
+            }
+        }
+
+        // MODIFY：同名字段属性变化（originalRow=目标，currentRow=源，把目标改成源的样子）
+        if (includeModify) {
+            for (Map<String, String> srcCol : srcCols) {
+                String colName = srcCol.get("字段名");
+                Map<String, String> dstCol = dstColByName.get(colName);
+                if (dstCol == null) continue;
+                ObservableList<String> currentRow = mapToRow(srcCol, columnTitles);
+                ObservableList<String> originalRow = mapToRow(dstCol, columnTitles);
+                sqlList.addAll(generateModifyColumnSql(dstConfig, dstDb, dstSchema, dstTable,
+                        columnTitles, originalRow, currentRow));
+            }
+        }
+
+        return sqlList;
+    }
+
+    /** 把字段 Map 按列标题顺序转为 ObservableList */
+    private static ObservableList<String> mapToRow(Map<String, String> col, List<String> columnTitles) {
+        ObservableList<String> row = FXCollections.observableArrayList();
+        for (String title : columnTitles) {
+            row.add(col.getOrDefault(title, ""));
+        }
+        return row;
+    }
+
+    /**
+     * 在目标库执行一组 SQL 语句（逐条执行，遇错抛出并停止）。
+     * 用于执行结构同步生成的 ALTER diff SQL 列表。
+     */
+    public static void executeSqlList(ConnectionConfig dstConfig, String dstDb, String dstSchema,
+                                      List<String> sqlList) throws Exception {
+        if (sqlList == null || sqlList.isEmpty()) return;
+        Connection conn = (dstConfig.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(dstConfig, dstDb)
+                : getConnection(dstConfig);
+        try (Statement stmt = conn.createStatement()) {
+            for (String sql : sqlList) {
+                if (sql == null || sql.trim().isEmpty()) continue;
+                stmt.execute(sql);
+            }
+        }
+    }
+
+    /**
      * 构造类型长度部分：(length) 或 (length,decimal)
      * 注意：日期时间类型（timestamp/datetime/date/time/year）的精度为小数秒（DECIMAL_DIGITS，0-6），
      * 不能使用 JDBC 的 COLUMN_SIZE（字符显示宽度，如 TIMESTAMP 返回 19），否则会生成无效的 TIMESTAMP(19) 导致保存失败。

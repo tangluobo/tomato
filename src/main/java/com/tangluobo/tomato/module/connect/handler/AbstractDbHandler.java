@@ -39,9 +39,11 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * 数据库连接处理器抽象基类。
@@ -1757,7 +1759,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             return;
         }
 
-        // 1. 打开数据传输配置对话框
+        // 1. 打开数据传输配置对话框（两步向导：第一步选目标，第二步预览结构同步 SQL）
         CopyTableDialog dialog = new CopyTableDialog(
                 module.getStage(),
                 module.getConnections(),
@@ -1771,45 +1773,17 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         ConnectionConfig dstConfig = dialog.getTargetConfig();
         String dstDb = dialog.getTargetDatabase();
         String dstSchema = dialog.getTargetSchema();
-        boolean copyStructure = dialog.isCopyStructure();
-        boolean copyData = dialog.isCopyData();
-        boolean dropIfExists = dialog.isDropIfExists();
-
         if (dstConfig == null || dstDb == null) {
             return;
         }
 
-        // 2. 后台执行复制操作（单表/多表统一走批量复制）
-        final List<String> srcTables = dialog.getSourceTables();
-        final List<String> dstTables = dialog.getTargetTables();
-        new Thread(() -> {
-            try {
-                DatabaseService.copyTables(
-                        srcConfig, srcDb, srcSchema, srcTables,
-                        dstConfig, dstDb, dstSchema, dstTables,
-                        copyStructure, copyData, dropIfExists
-                );
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.INFORMATION, "表复制成功！", ButtonType.OK);
-                    alert.setTitle("复制表");
-                    alert.setHeaderText(null);
-                    alert.initOwner(module.getStage());
-                    alert.showAndWait();
-
-                    // 刷新目标数据库节点
-                    refreshDbNodeForConfig(dstConfig, dstDb, dstSchema);
-                });
-            } catch (Exception ex) {
-                String errMsg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR, "表复制失败: " + errMsg, ButtonType.OK);
-                    alert.setTitle("复制表");
-                    alert.setHeaderText(null);
-                    alert.initOwner(module.getStage());
-                    alert.showAndWait();
-                });
-            }
-        }, "DB-CopyTable").start();
+        // 2. 后台执行结构同步（按 diff/新建分流）
+        executeStructureSync(srcConfig, srcDb, srcSchema,
+                dstConfig, dstDb, dstSchema,
+                dialog.getFinalSelectedTables(),
+                dialog.isCopyData(), dialog.isDropIfExists(),
+                dialog.isIncludeAdd(), dialog.isIncludeDrop(), dialog.isIncludeModify(),
+                null);
     }
 
     /** 判断系统剪贴板中是否有 TOMATO_COPY_TABLES 内容 */
@@ -1935,19 +1909,19 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         ConnectionConfig dstConfig = dialog.getTargetConfig();
         String dstDb = dialog.getTargetDatabase();
         String dstSchema = dialog.getTargetSchema();
-        boolean copyStructure = dialog.isCopyStructure();
-        boolean copyData = dialog.isCopyData();
-        boolean dropIfExists = dialog.isDropIfExists();
         if (dstConfig == null || dstDb == null) {
             return;
         }
 
-        executePasteTablesCopy(srcConfig, srcDb, srcSchema, dialog.getSourceTables(),
-                dstConfig, dstDb, dstSchema, dialog.getTargetTables(),
-                copyStructure, copyData, dropIfExists, onComplete);
+        executeStructureSync(srcConfig, srcDb, srcSchema,
+                dstConfig, dstDb, dstSchema,
+                dialog.getFinalSelectedTables(),
+                dialog.isCopyData(), dialog.isDropIfExists(),
+                dialog.isIncludeAdd(), dialog.isIncludeDrop(), dialog.isIncludeModify(),
+                onComplete);
     }
 
-    /** 后台执行表粘贴/复制操作 */
+    /** 后台执行表粘贴/复制操作（同连接场景仍走原 copyTables 路径） */
     private void executePasteTablesCopy(
             ConnectionConfig srcConfig, String srcDb, String srcSchema, List<String> srcTables,
             ConnectionConfig dstConfig, String dstDb, String dstSchema, List<String> dstTables,
@@ -1980,6 +1954,75 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 });
             }
         }, "DB-PasteTables").start();
+    }
+
+    /**
+     * 后台执行结构同步：
+     *  - dropIfExists 或目标表不存在 → 复用 DatabaseService.copyTable（DROP+CREATE+可选数据）
+     *  - 目标表已存在且 !dropIfExists → generateStructureSyncSql + executeSqlList（ALTER diff，不同步数据）
+     * 目标表名与源表名相同（CopyTableDialog 中未提供目标表名编辑 UI，默认同名）。
+     */
+    private void executeStructureSync(
+            ConnectionConfig srcConfig, String srcDb, String srcSchema,
+            ConnectionConfig dstConfig, String dstDb, String dstSchema,
+            List<String> tables, boolean copyData, boolean dropIfExists,
+            boolean includeAdd, boolean includeDrop, boolean includeModify,
+            Runnable onComplete) {
+        new Thread(() -> {
+            int success = 0, failed = 0;
+            List<String> errDetails = new ArrayList<>();
+            Set<String> dstSet;
+            try {
+                dstSet = new HashSet<>(DatabaseService.getTables(dstConfig, dstDb, dstSchema));
+            } catch (Exception ex) {
+                String msg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR, "加载目标表列表失败: " + msg, ButtonType.OK);
+                    alert.setTitle("结构同步");
+                    alert.setHeaderText(null);
+                    alert.initOwner(module.getStage());
+                    alert.showAndWait();
+                    if (onComplete != null) onComplete.run();
+                });
+                return;
+            }
+            for (String table : tables) {
+                try {
+                    boolean dstExists = dstSet.contains(table);
+                    if (dropIfExists || !dstExists) {
+                        DatabaseService.copyTable(srcConfig, srcDb, srcSchema, table,
+                                dstConfig, dstDb, dstSchema, table,
+                                true, copyData, dropIfExists);
+                    } else {
+                        List<String> sqlList = DatabaseService.generateStructureSyncSql(
+                                srcConfig, srcDb, srcSchema, table,
+                                dstConfig, dstDb, dstSchema, table,
+                                includeAdd, includeDrop, includeModify, false);
+                        if (!sqlList.isEmpty()) {
+                            DatabaseService.executeSqlList(dstConfig, dstDb, dstSchema, sqlList);
+                        }
+                    }
+                    success++;
+                } catch (Exception ex) {
+                    failed++;
+                    errDetails.add(table + ": " + (ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName()));
+                }
+            }
+            final int fSuccess = success, fFailed = failed;
+            final String errMsg = String.join("\n", errDetails);
+            Platform.runLater(() -> {
+                Alert.AlertType type = fFailed == 0 ? Alert.AlertType.INFORMATION : Alert.AlertType.WARNING;
+                String msg = "结构同步完成：成功 " + fSuccess + " 张，失败 " + fFailed + " 张";
+                if (!errMsg.isEmpty()) msg += "\n\n失败详情:\n" + errMsg;
+                Alert alert = new Alert(type, msg, ButtonType.OK);
+                alert.setTitle("结构同步");
+                alert.setHeaderText(null);
+                alert.initOwner(module.getStage());
+                alert.showAndWait();
+                refreshDbNodeForConfig(dstConfig, dstDb, dstSchema);
+                if (onComplete != null) onComplete.run();
+            });
+        }, "DB-StructureSync").start();
     }
 
     /**

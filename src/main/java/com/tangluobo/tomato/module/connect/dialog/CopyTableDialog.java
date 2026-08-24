@@ -12,6 +12,8 @@ import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.*;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
@@ -76,6 +78,29 @@ public class CopyTableDialog {
     /** 预设的目标数据库名（粘贴场景调用 presetTarget 后，onTargetConnChange 加载完成后优先匹配此值） */
     private String presetTargetDb;
 
+    // === 两步向导：根容器与第一步内容引用 ===
+    private BorderPane root;
+    private ScrollPane stepOneCenter;
+    private HBox stepOneBottom;
+    private VBox stepTwoCenter;
+    private HBox stepTwoBottom;
+
+    // 第二步 UI 组件
+    private final VBox tableListContainer = new VBox(4);
+    private final List<CheckBox> tableCheckBoxes = new ArrayList<>();
+    private TextArea sqlPreviewArea;
+    private CheckBox addFilterCb;
+    private CheckBox dropFilterCb;
+    private CheckBox modifyFilterCb;
+    private Label stepTwoStatusLabel;
+    private int lastTotalSqlCount = 0;
+
+    // 第二步用户选择（供调用方执行）
+    private List<String> finalSelectedTables = new ArrayList<>();
+    private boolean includeAdd = true;
+    private boolean includeDrop = true;
+    private boolean includeModify = true;
+
     /**
      * 兼容旧 API 的单表构造方法。
      */
@@ -128,7 +153,7 @@ public class CopyTableDialog {
         } catch (Exception ignored) {
         }
 
-        BorderPane root = new BorderPane();
+        root = new BorderPane();
         root.setPadding(new Insets(0));
         root.setStyle("-fx-background-color: white;");
 
@@ -357,6 +382,10 @@ public class CopyTableDialog {
         bottomBar.getChildren().addAll(saveConfigBtn, loadConfigMenu, optionsBtn, spacer, cancelBtn, nextBtn);
         root.setBottom(bottomBar);
 
+        // 保存第一步引用，便于第二步切回
+        stepOneCenter = centerScroll;
+        stepOneBottom = bottomBar;
+
         Scene scene = new Scene(root);
         scene.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         dialogStage.setScene(scene);
@@ -558,6 +587,271 @@ public class CopyTableDialog {
         }
         targetTable = targetTables.get(0);
 
+        // 切换到第二步（结构同步预览）
+        showStepTwo();
+    }
+
+    // ==================== 第二步：结构同步预览 ====================
+
+    /** 切换到第二步：构建左右分栏 + 异步加载源库所有表 */
+    private void showStepTwo() {
+        if (stepTwoCenter == null) {
+            stepTwoCenter = buildStepTwoCenter();
+            stepTwoBottom = buildStepTwoBottom();
+        }
+        root.setCenter(stepTwoCenter);
+        root.setBottom(stepTwoBottom);
+        loadSourceTables();
+    }
+
+    /** 切回第一步 */
+    private void handlePrev() {
+        root.setCenter(stepOneCenter);
+        root.setBottom(stepOneBottom);
+    }
+
+    /** 构建第二步主体：左右分栏（左：表勾选；右：SQL 预览 + 过滤 + 复制） */
+    private VBox buildStepTwoCenter() {
+        SplitPane split = new SplitPane();
+        split.setDividerPositions(0.35);
+        split.setStyle("-fx-background-color: white;");
+
+        // ===== 左侧：表勾选列表 =====
+        VBox leftBox = new VBox(8);
+        leftBox.setPadding(new Insets(15));
+        leftBox.setStyle("-fx-background-color: white;");
+        HBox leftHeader = new HBox(8);
+        leftHeader.setAlignment(Pos.CENTER_LEFT);
+        Label leftTitle = new Label("选择要同步的表");
+        leftTitle.setFont(Font.font("System", FontWeight.NORMAL, 14));
+        leftTitle.setTextFill(javafx.scene.paint.Color.valueOf("#1890FF"));
+        Button selectAllBtn = new Button("全选");
+        selectAllBtn.setStyle("-fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-height: 26px; -fx-pref-width: 60px;");
+        selectAllBtn.setOnAction(e -> {
+            for (CheckBox cb : tableCheckBoxes) cb.setSelected(true);
+        });
+        Button selectNoneBtn = new Button("全不选");
+        selectNoneBtn.setStyle("-fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-height: 26px; -fx-pref-width: 60px;");
+        selectNoneBtn.setOnAction(e -> {
+            for (CheckBox cb : tableCheckBoxes) cb.setSelected(false);
+        });
+        leftHeader.getChildren().addAll(leftTitle, new Region(), selectAllBtn, selectNoneBtn);
+        HBox.setHgrow(leftHeader.getChildren().get(1), Priority.ALWAYS);
+
+        ScrollPane tableScroll = new ScrollPane(tableListContainer);
+        tableScroll.setFitToWidth(true);
+        tableScroll.setStyle("-fx-background-color: white; -fx-background: white;");
+        tableScroll.getStyleClass().add("session-scroll-pane");
+        VBox.setVgrow(tableScroll, Priority.ALWAYS);
+
+        leftBox.getChildren().addAll(leftHeader, tableScroll);
+
+        // ===== 右侧：SQL 预览 + 工具栏 =====
+        VBox rightBox = new VBox(8);
+        rightBox.setPadding(new Insets(15));
+        rightBox.setStyle("-fx-background-color: white;");
+
+        Label rightTitle = new Label("结构同步 SQL 预览");
+        rightTitle.setFont(Font.font("System", FontWeight.NORMAL, 14));
+        rightTitle.setTextFill(javafx.scene.paint.Color.valueOf("#1890FF"));
+
+        // 工具栏：复制 + 过滤复选框
+        HBox toolbar = new HBox(15);
+        toolbar.setAlignment(Pos.CENTER_LEFT);
+        Button copyBtn = new Button("复制 SQL");
+        copyBtn.setStyle("-fx-background-color: #1890FF; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-height: 28px; -fx-pref-width: 90px;");
+        copyBtn.setOnAction(e -> {
+            String sql = sqlPreviewArea.getText();
+            if (sql == null || sql.isEmpty()) return;
+            ClipboardContent content = new ClipboardContent();
+            content.putString(sql);
+            Clipboard.getSystemClipboard().setContent(content);
+        });
+
+        Separator vSep = new Separator(Orientation.VERTICAL);
+        vSep.setPrefWidth(1);
+        vSep.setStyle("-fx-background-color: #E5E5E5;");
+
+        dropFilterCb = new CheckBox("删除字段");
+        dropFilterCb.setSelected(includeDrop);
+        dropFilterCb.selectedProperty().addListener((obs, o, n) -> { includeDrop = n; regeneratePreviewSql(); });
+        addFilterCb = new CheckBox("增加字段");
+        addFilterCb.setSelected(includeAdd);
+        addFilterCb.selectedProperty().addListener((obs, o, n) -> { includeAdd = n; regeneratePreviewSql(); });
+        modifyFilterCb = new CheckBox("修改字段类型");
+        modifyFilterCb.setSelected(includeModify);
+        modifyFilterCb.selectedProperty().addListener((obs, o, n) -> { includeModify = n; regeneratePreviewSql(); });
+
+        toolbar.getChildren().addAll(copyBtn, vSep,
+                new Label("过滤:"), dropFilterCb, addFilterCb, modifyFilterCb);
+        HBox.setHgrow(toolbar, Priority.ALWAYS);
+
+        // SQL 预览区
+        sqlPreviewArea = new TextArea();
+        sqlPreviewArea.setEditable(false);
+        sqlPreviewArea.setWrapText(true);
+        sqlPreviewArea.setStyle("-fx-background-color: white; -fx-text-fill: #333; -fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 13px; -fx-border-color: #E5E5E5; -fx-border-radius: 4px;");
+        VBox.setVgrow(sqlPreviewArea, Priority.ALWAYS);
+
+        stepTwoStatusLabel = new Label("加载中...");
+        stepTwoStatusLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #666;");
+
+        rightBox.getChildren().addAll(rightTitle, toolbar, sqlPreviewArea, stepTwoStatusLabel);
+
+        split.getItems().addAll(leftBox, rightBox);
+        SplitPane.setResizableWithParent(leftBox, false);
+
+        VBox wrapper = new VBox(split);
+        VBox.setVgrow(split, Priority.ALWAYS);
+        wrapper.setStyle("-fx-background-color: white;");
+        return wrapper;
+    }
+
+    /** 构建第二步底部按钮栏：取消 / 上一步 / 下一步 */
+    private HBox buildStepTwoBottom() {
+        HBox bottom = new HBox(10);
+        bottom.setPadding(new Insets(12, 20, 12, 20));
+        bottom.setAlignment(Pos.CENTER_LEFT);
+        bottom.setStyle("-fx-background-color: #F5F5F5; -fx-border-color: #E5E5E5; -fx-border-width: 1 0 0 0;");
+
+        Button cancelBtn = new Button("取消");
+        cancelBtn.setStyle("-fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-height: 32px; -fx-pref-width: 100px;");
+        cancelBtn.setOnAction(e -> { confirmed = false; dialogStage.close(); });
+
+        Button prevBtn = new Button("上一步");
+        prevBtn.setStyle("-fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-height: 32px; -fx-pref-width: 100px;");
+        prevBtn.setOnAction(e -> handlePrev());
+
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        Button nextBtn = new Button("下一步");
+        nextBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-height: 32px; -fx-pref-width: 100px;");
+        nextBtn.setOnAction(e -> handleStepTwoNext());
+
+        bottom.getChildren().addAll(cancelBtn, prevBtn, spacer, nextBtn);
+        return bottom;
+    }
+
+    /** 异步加载源库所有表，填充左侧勾选列表（刚选中的表勾选，其他不勾选） */
+    private void loadSourceTables() {
+        tableListContainer.getChildren().clear();
+        tableCheckBoxes.clear();
+        Label loading = new Label("加载中...");
+        loading.setStyle("-fx-text-fill: #999; -fx-padding: 10 0 0 0;");
+        tableListContainer.getChildren().add(loading);
+
+        new Thread(() -> {
+            List<String> tables;
+            try {
+                tables = DatabaseService.getTables(sourceConfig, sourceDatabase, sourceSchema);
+            } catch (Exception ex) {
+                String msg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
+                Platform.runLater(() -> {
+                    tableListContainer.getChildren().clear();
+                    tableListContainer.getChildren().add(new Label("加载失败: " + msg));
+                });
+                return;
+            }
+            Platform.runLater(() -> {
+                tableListContainer.getChildren().clear();
+                for (String t : tables) {
+                    CheckBox cb = new CheckBox(t);
+                    cb.setSelected(sourceTables.contains(t));
+                    cb.setStyle("-fx-font-size: 13px;");
+                    cb.selectedProperty().addListener((obs, o, n) -> regeneratePreviewSql());
+                    tableListContainer.getChildren().add(cb);
+                    tableCheckBoxes.add(cb);
+                }
+                regeneratePreviewSql();
+            });
+        }, "DB-LoadSrcTables").start();
+    }
+
+    /** 重新生成右侧 SQL 预览（合并所有选中表的结构同步 SQL） */
+    private void regeneratePreviewSql() {
+        // 收集选中的表
+        List<String> selected = new ArrayList<>();
+        for (CheckBox cb : tableCheckBoxes) {
+            if (cb.isSelected()) selected.add(cb.getText());
+        }
+        finalSelectedTables = selected;
+
+        if (selected.isEmpty()) {
+            sqlPreviewArea.setText("-- 未选择表");
+            stepTwoStatusLabel.setText("0 条 SQL，0 张表");
+            lastTotalSqlCount = 0;
+            return;
+        }
+
+        sqlPreviewArea.setText("-- 生成中...");
+        stepTwoStatusLabel.setText("生成中...");
+
+        final boolean fAdd = includeAdd;
+        final boolean fDrop = includeDrop;
+        final boolean fMod = includeModify;
+
+        new Thread(() -> {
+            StringBuilder sb = new StringBuilder();
+            int total = 0;
+            try {
+                for (String table : selected) {
+                    List<String> sqls = DatabaseService.generateStructureSyncSql(
+                            sourceConfig, sourceDatabase, sourceSchema, table,
+                            targetConfig, targetDatabase, getTargetSchema(), table,
+                            fAdd, fDrop, fMod, dropIfExists);
+                    sb.append("-- 表 ").append(table);
+                    if (sqls.isEmpty()) {
+                        sb.append("：无结构差异\n\n");
+                    } else {
+                        sb.append("\n");
+                        for (String sql : sqls) {
+                            sb.append(sql).append(";\n");
+                            total++;
+                        }
+                        sb.append("\n");
+                    }
+                }
+            } catch (Exception ex) {
+                String msg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
+                Platform.runLater(() -> {
+                    sqlPreviewArea.setText("-- 生成 SQL 失败: " + msg);
+                    stepTwoStatusLabel.setText("生成失败");
+                });
+                return;
+            }
+            final int finalTotal = total;
+            final String result = sb.toString();
+            Platform.runLater(() -> {
+                sqlPreviewArea.setText(result.isEmpty() ? "-- 无 SQL" : result);
+                lastTotalSqlCount = finalTotal;
+                stepTwoStatusLabel.setText("共 " + finalTotal + " 条 SQL，" + selected.size() + " 张表");
+            });
+        }, "DB-GenSyncSql").start();
+    }
+
+    /** 第二步的「下一步」：弹执行确认，确认后 confirmed=true 关闭（实际执行由调用方做） */
+    private void handleStepTwoNext() {
+        List<String> selected = new ArrayList<>();
+        for (CheckBox cb : tableCheckBoxes) {
+            if (cb.isSelected()) selected.add(cb.getText());
+        }
+        finalSelectedTables = selected;
+
+        if (selected.isEmpty()) {
+            showAlert("请至少选择一张表");
+            return;
+        }
+
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION,
+                "将执行 " + lastTotalSqlCount + " 条 SQL，影响 " + selected.size() + " 张表，是否继续？",
+                ButtonType.YES, ButtonType.NO);
+        alert.setTitle("执行确认");
+        alert.setHeaderText(null);
+        alert.initOwner(dialogStage);
+        alert.showAndWait();
+        if (alert.getResult() != ButtonType.YES) return;
+
         confirmed = true;
         dialogStage.close();
     }
@@ -593,6 +887,19 @@ public class CopyTableDialog {
     public boolean isCopyStructure() { return copyStructure; }
     public boolean isCopyData() { return copyData; }
     public boolean isDropIfExists() { return dropIfExists; }
+
+    /** 第二步用户最终选中的表列表（结构同步的实际目标） */
+    public List<String> getFinalSelectedTables() {
+        return finalSelectedTables != null && !finalSelectedTables.isEmpty()
+                ? new ArrayList<>(finalSelectedTables)
+                : new ArrayList<>(sourceTables);
+    }
+    /** ALTER diff 是否包含 ADD COLUMN（新增字段） */
+    public boolean isIncludeAdd() { return includeAdd; }
+    /** ALTER diff 是否包含 DROP COLUMN（删除字段） */
+    public boolean isIncludeDrop() { return includeDrop; }
+    /** ALTER diff 是否包含 MODIFY COLUMN（修改字段类型） */
+    public boolean isIncludeModify() { return includeModify; }
 
     /**
      * 预设目标连接/数据库（粘贴表场景：用户在目标数据库节点右键粘贴时调用）。
