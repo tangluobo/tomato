@@ -28,7 +28,7 @@ import com.sshtools.javardp.io.DefaultIO;
 import com.sshtools.javardp.keymapping.KeyCode_FileBased;
 import com.sshtools.javardp.layers.Rdp;
 import com.sshtools.javardp.rdp5.VChannels;
-import com.sshtools.javardp.rdp5.cliprdr.ClipChannel;
+import com.tangluobo.tomato.rdp.clipboard.FixedClipChannel;
 
 /**
  * RDP客户端封装类，基于com.sshtools:rdp库
@@ -57,6 +57,7 @@ public class RdpClient {
     private Consumer<Void> onConnected;
     private Consumer<Void> onFirstFrame;
     private Thread rdpThread;
+    private volatile boolean mapClipboard = true;
 
     /**
      * 嵌入式IContext实现，不创建独立窗口
@@ -142,21 +143,24 @@ public class RdpClient {
     /**
      * 连接到RDP服务器（异步，连接就绪后通过onConnected回调通知）
      *
-     * @param host     服务器地址
-     * @param port     服务器端口（通常3389）
-     * @param username 用户名
-     * @param password 密码
-     * @param domain   域名（可为null）
-     * @param width    桌面宽度
-     * @param height   桌面高度
-     * @param bpp      色深（16/24）
-     * @param useSsl   是否使用SSL/TLS加密（无TLS服务器需设为false）
+     * @param host         服务器地址
+     * @param port         服务器端口（通常3389）
+     * @param username     用户名
+     * @param password     密码
+     * @param domain       域名（可为null）
+     * @param width        桌面宽度
+     * @param height       桌面高度
+     * @param bpp          色深（16/24）
+     * @param useSsl       是否使用SSL/TLS加密（无TLS服务器需设为false）
+     * @param mapClipboard 是否启用剪贴板同步（本地与远程桌面互拷文本）
      */
     public void connect(String host, int port, String username, String password,
-                         String domain, int width, int height, int bpp, boolean useSsl) {
+                         String domain, int width, int height, int bpp, boolean useSsl,
+                         boolean mapClipboard) {
         if (connected) {
             throw new IllegalStateException("RDP客户端已连接，请先断开当前连接");
         }
+        this.mapClipboard = mapClipboard;
 
         // 启用RDP库调试日志（slf4j-jdk14桥接到java.util.logging）
         Logger sshtools = Logger.getLogger("com.sshtools");
@@ -174,7 +178,7 @@ public class RdpClient {
         options.setRdp5(true);
         options.setPacketEncryption(true);
         options.setBitmapCaching(true);
-        options.setMapClipboard(true);
+        options.setMapClipboard(mapClipboard);
         options.setLowLatency(true);
 
         // 调试：启用hex dump查看所有收发数据
@@ -247,14 +251,6 @@ public class RdpClient {
 
         // 创建虚拟通道
         VChannels channels = new VChannels(state);
-        ClipChannel clipChannel = new ClipChannel();
-        if (state.isRDP5()) {
-            try {
-                channels.register(clipChannel);
-            } catch (RdesktopException e) {
-                logger.log(Level.WARNING, "注册剪贴板通道失败: " + e.getMessage());
-            }
-        }
 
         // 创建嵌入式Context
         EmbeddedContext context = new EmbeddedContext();
@@ -263,8 +259,8 @@ public class RdpClient {
         canvas = new RdesktopCanvas(context, state);
         state.setCanvas(canvas);
 
-        // 注册剪贴板焦点监听
-        ((JComponent) canvas.getDisplay()).addFocusListener(clipChannel);
+        // 注册剪贴板同步通道（含焦点监听，焦点切换时同步本地/远程剪贴板内容）
+        registerClipboardChannel(state, canvas, channels);
 
         // 创建RDP层（使用RdpPatch修复rdp5_process加密bug）
         rdpLayer = new RdpPatch(context, state, channels);
@@ -377,6 +373,26 @@ public class RdpClient {
         }, 5000, 5000);
     }
 
+    /**
+     * 注册剪贴板同步虚拟通道（启用时）。
+     * 注意：回退重连路径会重建VChannels/Canvas，必须重新注册，否则回退后剪贴板同步失效。
+     */
+    private void registerClipboardChannel(State state, RdesktopCanvas canvas, VChannels channels) {
+        if (!mapClipboard || !state.isRDP5()) {
+            return;
+        }
+        try {
+            // FixedClipChannel：修复库内clipboard未初始化（远程粘贴不可用）及
+            // UnicodeHandler编码bug（中文乱码）、远程→本地格式选择问题
+            FixedClipChannel clipChannel = new FixedClipChannel();
+            channels.register(clipChannel);
+            ((JComponent) canvas.getDisplay()).addFocusListener(clipChannel);
+            logger.info("剪贴板同步通道已注册");
+        } catch (RdesktopException e) {
+            logger.log(Level.WARNING, "注册剪贴板通道失败: " + e.getMessage());
+        }
+    }
+
     private void notifyDisconnected(String reason) {
         connected = false;
         if (onDisconnected != null) {
@@ -429,6 +445,8 @@ public class RdpClient {
 
             // 重新创建RDP层
             VChannels channels = new VChannels(state);
+            // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
+            registerClipboardChannel(state, canvas, channels);
             rdpLayer = new RdpPatch(context, state, channels);
             configureFrameCallback((RdpPatch) rdpLayer);
 
@@ -483,6 +501,8 @@ public class RdpClient {
 
             // 重新创建RDP层
             VChannels channels = new VChannels(state);
+            // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
+            registerClipboardChannel(state, canvas, channels);
             rdpLayer = new RdpPatch(context, state, channels);
             configureFrameCallback((RdpPatch) rdpLayer);
 
@@ -554,6 +574,8 @@ public class RdpClient {
 
             // 重新创建RDP层
             VChannels channels = new VChannels(state);
+            // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
+            registerClipboardChannel(state, canvas, channels);
             rdpLayer = new RdpPatch(context, state, channels);
             configureFrameCallback((RdpPatch) rdpLayer);
 

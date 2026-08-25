@@ -113,10 +113,12 @@ public class RdpPane extends BorderPane {
 
     /**
      * 连接到RDP服务器
+     *
+     * @param mapClipboard 是否启用剪贴板同步（本地与远程桌面互拷文本）
      */
     public void connect(String host, int port, String username, String password,
                         String domain, int screenWidth, int screenHeight, int colorDepth,
-                        boolean useSsl) {
+                        boolean useSsl, boolean mapClipboard) {
         this.host = host;
         this.port = port;
         this.username = username;
@@ -195,7 +197,7 @@ public class RdpPane extends BorderPane {
         SwingUtilities.invokeLater(() -> {
             try {
                 rdpClient.connect(host, port, username, password, domain,
-                        screenWidth, screenHeight, colorDepth, useSsl);
+                        screenWidth, screenHeight, colorDepth, useSsl, mapClipboard);
             } catch (Exception e) {
                 logger.log(Level.SEVERE, "RDP连接失败: " + e.getMessage(), e);
                 Platform.runLater(() -> {

@@ -94,6 +94,6 @@ public class RdpConnectHandler implements ConnectHandler {
         String domain = config.getDomain();
 
         rdpPane.connect(config.getHost(), rdpPort, config.getUsername(), password,
-                domain, width, height, bpp, config.isUseSsl());
+                domain, width, height, bpp, config.isUseSsl(), config.isMapClipboard());
     }
 }
