@@ -1920,18 +1920,33 @@ public class TableDataView extends BorderPane {
             });
         }
 
-        /** 临时类型列编辑控件：文本框 + 右侧选择按钮（点击弹一层日期/时间选择器） */
-        private HBox createTemporalEditor() {
-            Button pickerBtn = new Button(buttonLabelForTemporal());
+        /** 临时类型列编辑控件：文本框 + 右侧日历图标按钮（点击弹一层日期/时间选择器） */
+        private javafx.scene.layout.StackPane createTemporalEditor() {
+            Button pickerBtn = new Button();
+            pickerBtn.setGraphic(createCalendarIcon());
             pickerBtn.setTooltip(new Tooltip("选择" + buttonLabelForTemporal()));
             pickerBtn.setFocusTraversable(false);
-            pickerBtn.setStyle("-fx-background-color: #f5f5f5; -fx-border-color: transparent transparent transparent #ccc; -fx-border-width: 0 0 0 1; -fx-background-radius: 0; -fx-padding: 0 8; -fx-font-size: 12px; -fx-text-fill: #333; -fx-cursor: hand;");
+            pickerBtn.setPrefWidth(26);
+            pickerBtn.setStyle("-fx-background-color: #f5f5f5; -fx-border-color: transparent transparent transparent #ccc; -fx-border-width: 0 0 0 1; -fx-background-radius: 0; -fx-padding: 0; -fx-cursor: hand;");
             pickerBtn.setOnAction(e -> showTemporalPopup());
-            HBox box = new HBox(textField, pickerBtn);
-            box.setSpacing(0);
-            box.setAlignment(Pos.CENTER_LEFT);
-            HBox.setHgrow(textField, Priority.ALWAYS);
-            return box;
+            textField.setMinWidth(0);
+            textField.setMaxWidth(Double.MAX_VALUE);
+            textField.setPadding(new javafx.geometry.Insets(0, 30, 0, 4));
+            javafx.scene.layout.StackPane stack = new javafx.scene.layout.StackPane(textField, pickerBtn);
+            stack.setStyle("-fx-background-color: #fff;");
+            javafx.scene.layout.StackPane.setAlignment(pickerBtn, Pos.CENTER_RIGHT);
+            javafx.scene.layout.StackPane.setAlignment(textField, Pos.CENTER_LEFT);
+            return stack;
+        }
+
+        /** 日历图标（用于选择按钮，替代文字） */
+        private javafx.scene.shape.SVGPath createCalendarIcon() {
+            javafx.scene.shape.SVGPath icon = new javafx.scene.shape.SVGPath();
+            icon.setContent("M20 3h-1V1h-2v2H7V1H5v2H4c-1.11 0-1.99.9-1.99 2L2 19c0 1.1.88 2 2 2h16c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H4V8h16v11z");
+            icon.setFill(javafx.scene.paint.Color.valueOf("#555"));
+            icon.setScaleX(0.62);
+            icon.setScaleY(0.62);
+            return icon;
         }
 
         private String buttonLabelForTemporal() {
