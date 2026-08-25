@@ -1388,6 +1388,30 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         module.showDataView();
     }
 
+    /**
+     * 刷新与指定表匹配的已打开数据视图 Tab（表结构变更后同步主键/列/数据）。
+     * 数据 Tab 的 tabId 规则：configId_database_schema_table（无 "struct_" 前缀）。
+     */
+    private void refreshMatchingDataTabs(DatabaseNodeData data, String changedTable) {
+        if (module.getTerminalTabPane() == null) return;
+        ConnectionConfig cfg = data.getConnectionConfig();
+        String prefix = cfg.getId() + "_" + data.getDatabaseName()
+                + (data.getSchemaName() != null ? "_" + data.getSchemaName() : "") + "_";
+        String matchOriginal = prefix + data.getName();
+        String matchChanged = changedTable != null ? prefix + changedTable : null;
+        for (Tab tab : module.getTerminalTabPane().getTabs()) {
+            Object userData = tab.getUserData();
+            if (!(userData instanceof String)) continue;
+            String tabId = (String) userData;
+            if (tabId.startsWith("struct_")) continue; // 跳过结构 Tab
+            if (tabId.equals(matchOriginal) || (matchChanged != null && tabId.equals(matchChanged))) {
+                if (tab.getContent() instanceof TableDataView) {
+                    ((TableDataView) tab.getContent()).refreshData();
+                }
+            }
+        }
+    }
+
     /** 打开数据：打开表/视图数据 Tab */
     public void handleTableDataDoubleClick(TreeItem<String> item, DatabaseNodeData data) {
         if (module.getTerminalTabPane() == null) return;
