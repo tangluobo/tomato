@@ -121,11 +121,12 @@ public class RdpIsoFix {
 
                 // === 核心修复：fast-path检测条件 ===
                 // 原始代码: if ((version & 3) == 0)
-                // 修正为:   if ((version & 1) == 0 && version != 3)
-                // 原因：bit 1是加密标志，bit 0=0才是fast-path的判断条件
-                // 加上 version != 3 避免将TPKT误判为fast-path
-                if ((version & 1) == 0 && version != 3) {
+                // action 在最低两位。仅 action=0 代表 fast-path；最高两位是安全标志。
+                // version=3 是 TPKT slow-path 的特例。
+                if ((version & 0x03) == 0 && version != 3) {
                     // Fast-path packet
+                    // The top two bits are Fast-Path security flags. 0x80 represents
+                    // FASTPATH_OUTPUT_ENCRYPTED; the low two bits carry the action.
                     boolean encrypted = (version & 0x80) != 0;
 
                     // SSL/HYBRID模式下忽略加密标志（TLS已处理加密）
@@ -134,7 +135,9 @@ public class RdpIsoFix {
                         encrypted = false;
                     }
 
-                    boolean shortform = (version & 0x02) != 0;
+                    // The outer Fast-Path header has already been consumed; do not derive
+                    // this legacy encryption-header flag from FASTPATH_OUTPUT_ENCRYPTED.
+                    boolean shortform = false;
 
                     logger.info("[FAST-PATH] version=0x" + String.format("%02x", version)
                             + ", length=" + length + ", encrypted=" + encrypted + ", shortform=" + shortform);
