@@ -45,6 +45,38 @@ public class SessionConfigDialog {
         scrollbackBox.getChildren().addAll(scrollbackField, useGlobal);
         grid.add(scrollbackBox, 1, row);
 
+        row++;
+        // 默认文件视图模式（会话级覆盖）
+        grid.add(new Label("默认文件视图:"), 0, row);
+        HBox fileViewBox = new HBox(8);
+        CheckBox fileViewUseGlobal = new CheckBox("使用全局配置");
+        fileViewUseGlobal.setSelected(config.getDefaultFileViewMode() == null);
+        ComboBox<String> fileViewCombo = new ComboBox<>();
+        fileViewCombo.getItems().addAll("图标视图", "详细列表", "多列列表");
+        String cfgViewMode = config.getDefaultFileViewMode();
+        String globalViewMode = GlobalConfig.getInstance().getSshDefaultFileViewMode();
+        String effective = cfgViewMode != null ? cfgViewMode : (globalViewMode != null ? globalViewMode : "LIST");
+        fileViewCombo.setValue(switch (effective.toUpperCase()) {
+            case "ICON" -> "图标视图";
+            case "COLUMN" -> "多列列表";
+            default -> "详细列表";
+        });
+        fileViewCombo.setDisable(fileViewUseGlobal.isSelected());
+        fileViewUseGlobal.selectedProperty().addListener((obs, oldV, newV) -> {
+            fileViewCombo.setDisable(newV);
+            if (!newV) {
+                String gvm = GlobalConfig.getInstance().getSshDefaultFileViewMode();
+                String ev = gvm != null ? gvm : "LIST";
+                fileViewCombo.setValue(switch (ev.toUpperCase()) {
+                    case "ICON" -> "图标视图";
+                    case "COLUMN" -> "多列列表";
+                    default -> "详细列表";
+                });
+            }
+        });
+        fileViewBox.getChildren().addAll(fileViewCombo, fileViewUseGlobal);
+        grid.add(fileViewBox, 1, row);
+
         dialog.getDialogPane().setContent(grid);
 
         // 按钮
@@ -63,6 +95,16 @@ public class SessionConfigDialog {
                     } catch (NumberFormatException e) {
                         config.setScrollbackLines(null);
                     }
+                }
+                if (fileViewUseGlobal.isSelected()) {
+                    config.setDefaultFileViewMode(null);
+                } else {
+                    String vm = switch (fileViewCombo.getValue()) {
+                        case "图标视图" -> "ICON";
+                        case "多列列表" -> "COLUMN";
+                        default -> "LIST";
+                    };
+                    config.setDefaultFileViewMode(vm);
                 }
                 return true;
             }

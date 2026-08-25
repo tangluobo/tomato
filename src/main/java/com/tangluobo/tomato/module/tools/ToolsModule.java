@@ -159,9 +159,9 @@ public class ToolsModule implements Module {
         Node hostsFileIcon = createHostsFileIcon();
         toolItems.add(new ToolItem("hosts_file", "Hosts文件管理", "管理和切换不同环境的Hosts配置", hostsFileIcon));
 
-        // 图片背景透明化工具
+        // 图标制作工具
         Node imageBgRemoverIcon = createImageBackgroundRemoverIcon();
-        toolItems.add(new ToolItem("image_background_remover", "图片背景透明化", "JPG/PNG白灰背景转透明PNG", imageBgRemoverIcon));
+        toolItems.add(new ToolItem("image_background_remover", "图标制作工具", "图片背景透明化与裁切生成图标", imageBgRemoverIcon));
 
         // Trae 会话管理工具
         Node traeSessionIcon = createTraeSessionIcon();

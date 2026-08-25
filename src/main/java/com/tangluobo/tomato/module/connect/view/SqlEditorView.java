@@ -180,6 +180,13 @@ public class SqlEditorView extends BorderPane {
         }
         editor = createdEditor;
 
+        // 接入编辑器快捷键回调（Ctrl+Enter 运行 / Ctrl+S 保存）
+        if (editor instanceof RichTextSqlEditor) {
+            RichTextSqlEditor rte = (RichTextSqlEditor) editor;
+            rte.getPane().setOnRunRequest(this::executeQuery);
+            rte.getPane().setOnSaveRequest(this::handleSave);
+        }
+
         // ---- 结果区域 ----
         resultTabPane = new TabPane();
         resultTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
@@ -1019,181 +1026,39 @@ public class SqlEditorView extends BorderPane {
     }
 
     /**
-     * 基于 RichTextFX InlineCssTextArea 的语法高亮编辑器
-     * 使用内联CSS字符串，不需要外部CSS文件
+     * 基于 {@link SqlEditorPane}（RichTextFX InlineCssTextArea + 行号 + 语法高亮）的编辑器实现。
+     * 实际能力委托给 {@link SqlEditorPane}，这里只做 {@link SqlEditor} 接口适配。
      */
-    private static class RichTextSqlEditor implements SqlEditor {
-        private final org.fxmisc.richtext.InlineCssTextArea textArea;
-        private final org.fxmisc.flowless.VirtualizedScrollPane<org.fxmisc.richtext.InlineCssTextArea> scrollPane;
-        private final javafx.scene.layout.HBox editorContainer;
-        private final javafx.scene.layout.VBox lineNumberBox;
-        private static final int MAX_LINES = 500;
-
-        // 内联CSS样式字符串，直接应用到文本段
-        private static final String STYLE_KEYWORD = "-fx-fill: #0000FF; -fx-font-weight: bold;";
-        private static final String STYLE_STRING = "-fx-fill: #A31515;";
-        private static final String STYLE_COMMENT = "-fx-fill: #6A9955; -fx-font-style: italic;";
-        private static final String STYLE_NUMBER = "-fx-fill: #098658;";
+    private static final class RichTextSqlEditor implements SqlEditor {
+        private final SqlEditorPane pane;
 
         RichTextSqlEditor(Runnable onModified) {
-            textArea = new org.fxmisc.richtext.InlineCssTextArea();
-            textArea.setStyle(
-                    "-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 13px; " +
-                            "-fx-background-color: white; -fx-padding: 0; -fx-text-fill: #333;"
-            );
-
-            scrollPane = new org.fxmisc.flowless.VirtualizedScrollPane<>(textArea);
-
-            lineNumberBox = new javafx.scene.layout.VBox();
-            lineNumberBox.setStyle("-fx-background-color: #f8f8f8; -fx-padding: 0;");
-            lineNumberBox.setPrefWidth(40);
-            lineNumberBox.setMinWidth(40);
-            lineNumberBox.setMaxWidth(40);
-            // 不驱动父布局高度，由父容器(HBox)分配空间后被动填充
-            lineNumberBox.setMinHeight(0);
-            lineNumberBox.setPrefHeight(0);
-
-            java.util.List<Label> lineNumberLabels = new java.util.ArrayList<>();
-            for (int i = 1; i <= MAX_LINES; i++) {
-                Label label = new Label(Integer.toString(i));
-                label.setStyle("-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 13px; " +
-                        "-fx-text-fill: #888888; -fx-alignment: CENTER_RIGHT; -fx-padding: 0 8 0 4;");
-                label.setVisible(false);
-                label.setManaged(false);
-                lineNumberLabels.add(label);
-                lineNumberBox.getChildren().add(label);
-            }
-            javafx.scene.layout.Region filler = new javafx.scene.layout.Region();
-            javafx.scene.layout.VBox.setVgrow(filler, javafx.scene.layout.Priority.ALWAYS);
-            lineNumberBox.getChildren().add(filler);
-
-            // 初始显示第1行
-            updateLineNumbers(lineNumberLabels, 1);
-
-            editorContainer = new javafx.scene.layout.HBox();
-            editorContainer.getChildren().addAll(lineNumberBox, scrollPane);
-            javafx.scene.layout.HBox.setHgrow(scrollPane, javafx.scene.layout.Priority.ALWAYS);
-            // 不驱动SplitPane分配，被动接受SplitPane给的空间
-            editorContainer.setMinHeight(0);
-            editorContainer.setPrefHeight(200);
-
-            textArea.estimatedScrollYProperty().addListener((obs, oldVal, newVal) -> {
-                lineNumberBox.setTranslateY(-newVal.doubleValue());
-            });
-
-            // 内容变化
-            textArea.textProperty().addListener((obs, oldVal, newVal) -> {
-                onModified.run();
-                applyHighlighting();
-                updateLineNumbers(lineNumberLabels, textArea.getParagraphs().size());
-            });
-
-            // Tab缩进
-            textArea.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
-                if (e.getCode() == KeyCode.TAB) {
-                    e.consume();
-                    textArea.insertText(textArea.getCaretPosition(), "    ");
-                }
-            });
-            // Ctrl+Enter 运行
-            textArea.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
-                if (e.isControlDown() && e.getCode() == KeyCode.ENTER) e.consume();
-            });
-            // Ctrl+S 保存
-            textArea.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
-                if (e.isControlDown() && e.getCode() == KeyCode.S) e.consume();
-            });
-
-            // 初始应用一次高亮（空文本时也设置默认样式）
-            applyHighlighting();
+            pane = new SqlEditorPane(true);
+            pane.setOnModified(t -> onModified.run());
         }
 
-        private static final String[] KEYWORDS = {
-                "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET",
-                "DELETE", "CREATE", "DROP", "ALTER", "TABLE", "INDEX", "VIEW", "DATABASE",
-                "AND", "OR", "NOT", "IN", "EXISTS", "BETWEEN", "LIKE", "IS", "NULL",
-                "JOIN", "INNER", "LEFT", "RIGHT", "OUTER", "FULL", "CROSS", "ON",
-                "GROUP", "BY", "ORDER", "HAVING", "LIMIT", "OFFSET", "UNION", "ALL",
-                "AS", "DISTINCT", "CASE", "WHEN", "THEN", "ELSE", "END",
-                "COUNT", "SUM", "AVG", "MIN", "MAX",
-                "PRIMARY", "KEY", "FOREIGN", "REFERENCES", "CONSTRAINT",
-                "DEFAULT", "CHECK", "UNIQUE", "AUTO_INCREMENT",
-                "IF", "CASCADE", "RENAME", "TO",
-                "BEGIN", "COMMIT", "ROLLBACK", "TRANSACTION",
-                "GRANT", "REVOKE", "PRIVILEGES",
-                "SHOW", "DESCRIBE", "EXPLAIN", "USE", "TRUNCATE",
-                "CHARACTER", "COLLATE", "REPLACE"
-        };
-
-        // 关键词不区分大小写
-        private static final String KEYWORD_PATTERN = "(?i)\\b(" + String.join("|", KEYWORDS) + ")\\b";
-        private static final java.util.regex.Pattern SYNTAX_PATTERN = java.util.regex.Pattern.compile(
-                "(?<KEYWORD>" + KEYWORD_PATTERN + ")" +
-                        "|(?<STRING>'[^']*')" +
-                        "|(?<COMMENT1>--[^\n]*)" +
-                        "|(?<COMMENT2>/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/)" +
-                        "|(?<NUMBER>\\b\\d+(\\.\\d+)?\\b)"
-        );
-
-        private static void updateLineNumbers(java.util.List<Label> labels, int lineCount) {
-            int visibleCount = Math.min(lineCount, labels.size());
-            for (int i = 0; i < labels.size(); i++) {
-                boolean show = i < visibleCount;
-                labels.get(i).setVisible(show);
-                labels.get(i).setManaged(show);
-            }
-        }
-
-        private void applyHighlighting() {
-            String text = textArea.getText();
-            if (text.isEmpty()) return;
-            try {
-                java.util.regex.Matcher matcher = SYNTAX_PATTERN.matcher(text);
-                int lastKwEnd = 0;
-                org.fxmisc.richtext.model.StyleSpansBuilder<String> spansBuilder =
-                        new org.fxmisc.richtext.model.StyleSpansBuilder<>();
-                while (matcher.find()) {
-                    String style;
-                    if (matcher.group("KEYWORD") != null) style = STYLE_KEYWORD;
-                    else if (matcher.group("STRING") != null) style = STYLE_STRING;
-                    else if (matcher.group("COMMENT1") != null) style = STYLE_COMMENT;
-                    else if (matcher.group("COMMENT2") != null) style = STYLE_COMMENT;
-                    else if (matcher.group("NUMBER") != null) style = STYLE_NUMBER;
-                    else style = "";
-                    if (matcher.start() > lastKwEnd) {
-                        spansBuilder.add("", matcher.start() - lastKwEnd);
-                    }
-                    spansBuilder.add(style, matcher.end() - matcher.start());
-                    lastKwEnd = matcher.end();
-                }
-                if (lastKwEnd < text.length()) {
-                    spansBuilder.add("", text.length() - lastKwEnd);
-                }
-                textArea.setStyleSpans(0, spansBuilder.create());
-            } catch (Exception e) {
-                System.err.println("SQL高亮异常: " + e.getMessage());
-                e.printStackTrace();
-            }
+        SqlEditorPane getPane() {
+            return pane;
         }
 
         @Override
         public javafx.scene.Node getNode() {
-            return editorContainer;
+            return pane;
         }
 
         @Override
         public String getText() {
-            return textArea.getText();
+            return pane.getText();
         }
 
         @Override
         public void setText(String text) {
-            textArea.replaceText(text);
+            pane.setText(text);
         }
 
         @Override
         public String getSelectedText() {
-            return textArea.getSelectedText();
+            return pane.getSelectedText();
         }
     }
 

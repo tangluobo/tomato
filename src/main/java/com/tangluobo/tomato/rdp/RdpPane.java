@@ -159,7 +159,7 @@ public class RdpPane extends BorderPane {
                         displayComponent.repaint();
                         displayComponent.requestFocusInWindow();
                     });
-                    updateStatus(ConnectionState.CONNECTED);
+                    // DISPLAY ready 仅说明协议握手已完成；等待首个 bitmap 后再显示已连接。
                 });
             });
             // 诊断日志已在RdpPatch.processBitmapUpdates中实现，此处不再重复
@@ -172,6 +172,8 @@ public class RdpPane extends BorderPane {
                 stateLabel.setText("已断开: " + reason);
             });
         });
+
+        rdpClient.setOnFirstFrame(v -> Platform.runLater(() -> updateStatus(ConnectionState.CONNECTED)));
 
         // 在EDT中初始化RDP连接（画布不在SwingNode中显示，直到onConnected回调）
         SwingUtilities.invokeLater(() -> {

@@ -23,6 +23,8 @@ public class ConnectionConfig {
     private String database;
     private String description;
     private Integer scrollbackLines;
+    // 会话级覆盖：默认文件视图模式（null=使用全局配置，"ICON"/"LIST"/"COLUMN"）
+    private String defaultFileViewMode;
 
     // 服务器配置（HTTP_SERVER/FTP_SERVER/SMB_SERVER 专用，保存共享目录、账号列表等完整配置）
     private ServerConfig serverConfig;
@@ -129,6 +131,9 @@ public class ConnectionConfig {
 
     public Integer getScrollbackLines() { return scrollbackLines; }
     public void setScrollbackLines(Integer scrollbackLines) { this.scrollbackLines = scrollbackLines; }
+
+    public String getDefaultFileViewMode() { return defaultFileViewMode; }
+    public void setDefaultFileViewMode(String defaultFileViewMode) { this.defaultFileViewMode = defaultFileViewMode; }
 
     public String getDomain() { return domain; }
     public void setDomain(String domain) { this.domain = domain; }

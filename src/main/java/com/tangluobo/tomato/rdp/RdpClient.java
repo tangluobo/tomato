@@ -3,7 +3,10 @@ package com.tangluobo.tomato.rdp;
 import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.URL;
+import java.nio.file.Paths;
 import java.security.cert.X509Certificate;
+import java.util.logging.FileHandler;
+import java.util.logging.SimpleFormatter;
 import java.util.function.Consumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -35,6 +38,16 @@ public class RdpClient {
 
     private static final Logger logger = Logger.getLogger(RdpClient.class.getName());
 
+    static {
+        try {
+            FileHandler handler = new FileHandler(Paths.get("rdp-debug.log").toAbsolutePath().toString(), true);
+            handler.setFormatter(new SimpleFormatter());
+            Logger.getLogger("").addHandler(handler);
+        } catch (Exception e) {
+            logger.log(Level.WARNING, "无法初始化 RDP 诊断日志", e);
+        }
+    }
+
     private volatile boolean connected = false;
     private volatile Rdp rdpLayer;
     private RdesktopCanvas canvas;
@@ -42,6 +55,7 @@ public class RdpClient {
     private Options options;
     private Consumer<String> onDisconnected;
     private Consumer<Void> onConnected;
+    private Consumer<Void> onFirstFrame;
     private Thread rdpThread;
 
     /**
@@ -254,6 +268,7 @@ public class RdpClient {
 
         // 创建RDP层（使用RdpPatch修复rdp5_process加密bug）
         rdpLayer = new RdpPatch(context, state, channels);
+        configureFrameCallback((RdpPatch) rdpLayer);
 
         // 核心修复1：通过反射替换Transport为RdpTransport
         // RdpTransport覆盖negotiateSSL()方法，强制使用TLS 1.2协议
@@ -263,10 +278,8 @@ public class RdpClient {
         // 因缺少SNI扩展而重置TLS连接
         RdpTlsFix.injectRdpTransport(rdpLayer, host);
 
-        // 核心修复2：通过反射替换ISO为RdpIso
-        // RdpIso修复ISO层的fast-path包检测条件：(version & 3) == 0 → (version & 1) == 0
-        // 原始条件在fast-path包加密标志位为1时（首字节0x02）无法识别fast-path包，
-        // 导致fast-path包（包含位图更新数据）被错误当作slow-path处理，画面黑屏。
+        // javardp 3.0.0 把带 FASTPATH_OUTPUT_ENCRYPTED 标志（0x02）的包误判为 slow-path。
+        // 替换接收器，使其按 action 位而不是完整低两位识别 fast-path。
         RdpIsoFix.injectRdpIso(rdpLayer);
 
         // 在新线程中执行RDP连接（connect+mainLoop是阻塞调用）
@@ -417,12 +430,13 @@ public class RdpClient {
             // 重新创建RDP层
             VChannels channels = new VChannels(state);
             rdpLayer = new RdpPatch(context, state, channels);
+            configureFrameCallback((RdpPatch) rdpLayer);
 
             // 注入RdpTransport（仅当服务器支持SSL时才需要）
             RdpTlsFix.injectRdpTransport(rdpLayer, host);
 
-            // 注入RdpIso（修复fast-path检测）
             RdpIsoFix.injectRdpIso(rdpLayer);
+
 
             logger.info("回退重连: " + host + ":" + port + " securityType=STANDARD");
             rdpLayer.connect(new DefaultIO(InetAddress.getByName(host), port),
@@ -470,12 +484,13 @@ public class RdpClient {
             // 重新创建RDP层
             VChannels channels = new VChannels(state);
             rdpLayer = new RdpPatch(context, state, channels);
+            configureFrameCallback((RdpPatch) rdpLayer);
 
             // 注入RdpTransport（强制TLS 1.2 + SNI，修复SSLSocket默认TLS 1.3被服务器Reset的问题）
             RdpTlsFix.injectRdpTransport(rdpLayer, host);
 
-            // 注入RdpIso（修复fast-path检测）
             RdpIsoFix.injectRdpIso(rdpLayer);
+
 
             logger.info("回退重连: " + host + ":" + port + " securityType=SSL");
             rdpLayer.connect(new DefaultIO(InetAddress.getByName(host), port),
@@ -540,12 +555,13 @@ public class RdpClient {
             // 重新创建RDP层
             VChannels channels = new VChannels(state);
             rdpLayer = new RdpPatch(context, state, channels);
+            configureFrameCallback((RdpPatch) rdpLayer);
 
             // 注入RdpTransport（强制TLS 1.2 + SNI + 全量密码套件）
             RdpTlsFix.injectRdpTransport(rdpLayer, host);
 
-            // 注入RdpIso（修复fast-path检测）
             RdpIsoFix.injectRdpIso(rdpLayer);
+
 
             logger.info("回退重连: " + host + ":" + port + " securityType=HYBRID (CredSSP/NLA)");
             rdpLayer.connect(new DefaultIO(InetAddress.getByName(host), port),
@@ -589,6 +605,20 @@ public class RdpClient {
      */
     public void setOnConnected(Consumer<Void> callback) {
         this.onConnected = callback;
+    }
+
+    /** Sets a callback that runs only after the first desktop bitmap is rendered. */
+    public void setOnFirstFrame(Consumer<Void> callback) {
+        this.onFirstFrame = callback;
+    }
+
+    private void configureFrameCallback(RdpPatch patch) {
+        patch.setOnFirstFrame(v -> {
+            Consumer<Void> callback = onFirstFrame;
+            if (callback != null) {
+                callback.accept(null);
+            }
+        });
     }
 
     /**

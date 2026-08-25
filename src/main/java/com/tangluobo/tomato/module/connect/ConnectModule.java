@@ -17,6 +17,9 @@ import com.tangluobo.tomato.module.connect.view.RocketmqDataView;
 import com.tangluobo.tomato.module.connect.view.SqlEditorView;
 import com.tangluobo.tomato.module.connect.view.ToolPane;
 import com.tangluobo.tomato.module.connect.view.ColorTransposeGamePane;
+import javafx.scene.SnapshotParameters;
+import javafx.scene.canvas.Canvas;
+import javafx.scene.canvas.GraphicsContext;
 import com.tangluobo.tomato.module.tools.ServerManagerPane;
 import com.tangluobo.tomato.module.tools.server.ServerConfig;
 import com.tangluobo.tomato.ssh.LocalTerminalPane;
@@ -31,6 +34,9 @@ import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.image.PixelReader;
+import javafx.scene.image.PixelWriter;
+import javafx.scene.image.WritableImage;
 import javafx.scene.input.*;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
@@ -102,11 +108,24 @@ public class ConnectModule implements Module {
     private Image aliyunDomainIcon;
     private Image localFileIcon;
     private Image mdFileIcon;
+    // SSH 服务管理子节点图标（终端/容器/服务/端口/文件）
+    private Image sshServiceTerminalIcon;
+    private Image sshServiceContainerIcon;
+    private Image sshServiceServiceIcon;
+    private Image sshServicePortIcon;
+    private Image sshServiceFileIcon;
+    // Docker 容器节点图标：运行中彩色 / 已停止灰色
+    private Image dockerContainerIcon;
+    private Image dockerContainerGrayIcon;
     private TextField searchField;
 
     // 内容区域
     private VBox contentArea;
     TabPane terminalTabPane;
+
+    // 设置面板：侧边栏回调 + 内层 TabPane（供 handler 打开并选中 SSH 终端子标签）
+    private java.util.function.Consumer<Boolean> sidebarToggleCallback;
+    private TabPane settingsInnerTabPane;
 
     @Override
     public String getName() {
@@ -213,6 +232,78 @@ public class ConnectModule implements Module {
         try { aliyunDomainIcon = new Image(getClass().getResourceAsStream("/images/connect/s3.png")); } catch (Exception e) { aliyunDomainIcon = null; }
         try { localFileIcon = new Image(getClass().getResourceAsStream("/images/connect/code.png")); } catch (Exception e) { localFileIcon = null; }
         try { mdFileIcon = new Image(getClass().getResourceAsStream("/images/connect/md.png")); } catch (Exception e) { mdFileIcon = null; }
+        // SSH 服务管理子节点图标：复用现有资源
+        try { sshServiceTerminalIcon = new Image(getClass().getResourceAsStream("/images/connect/shell.png")); } catch (Exception e) { sshServiceTerminalIcon = null; }
+        try { sshServiceContainerIcon = new Image(getClass().getResourceAsStream("/images/connect/docker.png")); } catch (Exception e) { sshServiceContainerIcon = null; }
+        try { sshServiceServiceIcon = new Image(getClass().getResourceAsStream("/images/connect/monitor.png")); } catch (Exception e) { sshServiceServiceIcon = null; }
+        try { sshServicePortIcon = createPortIconImage(); } catch (Exception e) { sshServicePortIcon = null; }
+        try { sshServiceFileIcon = new Image(getClass().getResourceAsStream("/images/connect/folder.png")); } catch (Exception e) { sshServiceFileIcon = null; }
+        // Docker 容器节点图标：运行中彩色；已停止灰色（由彩色版程序化去色生成，保留透明度）
+        try {
+            dockerContainerIcon = new Image(getClass().getResourceAsStream("/images/connect/docker.png"));
+            dockerContainerGrayIcon = createGrayImage(dockerContainerIcon);
+        } catch (Exception e) {
+            dockerContainerIcon = null;
+            dockerContainerGrayIcon = null;
+        }
+    }
+
+    /**
+     * 将彩色图标程序化转成灰色版本（保留透明度），用于容器"未启动"状态图标。
+     */
+    private Image createGrayImage(Image src) {
+        if (src == null || src.isError() || src.getPixelReader() == null
+                || (int) src.getWidth() <= 0 || (int) src.getHeight() <= 0) {
+            return null;
+        }
+        int w = (int) src.getWidth();
+        int h = (int) src.getHeight();
+        WritableImage out = new WritableImage(w, h);
+        PixelReader pr = src.getPixelReader();
+        PixelWriter pw = out.getPixelWriter();
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int argb = pr.getArgb(x, y);
+                int a = (argb >>> 24) & 0xFF;
+                int r = (argb >>> 16) & 0xFF;
+                int g = (argb >>> 8) & 0xFF;
+                int b = argb & 0xFF;
+                int gray = (r * 299 + g * 587 + b * 114) / 1000;
+                pw.setArgb(x, y, (a << 24) | (gray << 16) | (gray << 8) | gray);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 程序化绘制端口图标 Image（与 SSHTerminalPane 右下角端口按钮图标一致）。
+     */
+    private Image createPortIconImage() {
+        Canvas canvas = new Canvas(16, 16);
+        GraphicsContext gc = canvas.getGraphicsContext2D();
+        gc.clearRect(0, 0, 16, 16);
+
+        // 外框：网络端口插口
+        gc.setStroke(Color.valueOf("#4a90d9"));
+        gc.setLineWidth(1.2);
+        gc.strokeRoundRect(2, 3, 12, 10, 2, 2);
+
+        // 顶部接口线
+        gc.strokeLine(5, 3, 5, 1);
+        gc.strokeLine(8, 3, 8, 1);
+        gc.strokeLine(11, 3, 11, 1);
+
+        // 内部触点
+        gc.setFill(Color.valueOf("#4a90d9"));
+        gc.fillRoundRect(4, 6, 8, 4, 1, 1);
+
+        // 底部标识点
+        gc.setFill(Color.valueOf("#2d7d46"));
+        gc.fillOval(7, 11, 2, 2);
+
+        SnapshotParameters params = new SnapshotParameters();
+        params.setFill(Color.TRANSPARENT);
+        return canvas.snapshot(params, null);
     }
 
     /**
@@ -275,6 +366,13 @@ public class ConnectModule implements Module {
                 }
                 yield localFileIcon;
             }
+            case SSH_SERVICE_TERMINAL -> sshServiceTerminalIcon;
+            case SSH_SERVICE_CONTAINER -> sshServiceContainerIcon;
+            case SSH_SERVICE_SERVICE -> sshServiceServiceIcon;
+            case SSH_SERVICE_PORT -> sshServicePortIcon;
+            case SSH_SERVICE_FILE -> sshServiceFileIcon;
+            // 容器节点：运行中（opened=true）显示彩色图标，已停止显示灰色图标
+            case SSH_CONTAINER -> data.isOpened() ? dockerContainerIcon : dockerContainerGrayIcon;
         };
         if (icon != null) iv.setImage(icon);
         return iv;
@@ -1333,6 +1431,26 @@ public class ConnectModule implements Module {
                     ld.handleFileDoubleClick(this, item, data);
                 }
             }
+            case SSH_SERVICE_TERMINAL -> triggerConnect(data.getConnectionConfig());
+            case SSH_SERVICE_FILE -> {
+                ConnectHandler handler = createConnectHandler(data.getConnectionConfig());
+                if (handler instanceof SshTerminalConnectHandler ssh) {
+                    ssh.handleFileNodeDoubleClick(this, data.getConnectionConfig());
+                }
+            }
+            case SSH_SERVICE_CONTAINER -> {
+                ConnectHandler handler = createConnectHandler(data.getConnectionConfig());
+                if (handler instanceof SshTerminalConnectHandler ssh) {
+                    ssh.handleContainerFolderDoubleClick(this, item, data);
+                }
+            }
+            case SSH_CONTAINER -> {
+                ConnectHandler handler = createConnectHandler(data.getConnectionConfig());
+                if (handler instanceof SshTerminalConnectHandler ssh) {
+                    ssh.handleContainerNodeDoubleClick(this, item, data);
+                }
+            }
+            case SSH_SERVICE_SERVICE, SSH_SERVICE_PORT -> { /* TODO */ }
         }
     }
 
@@ -1711,12 +1829,29 @@ public class ConnectModule implements Module {
 
     /** 在右侧内容区以可关闭标签页形式打开"设置"界面 */
     public void openSettingsTab(java.util.function.Consumer<Boolean> onSidebarToggle) {
+        openSettingsTab(onSidebarToggle, false);
+    }
+
+    /** 供 handler 调用：打开设置并选中 SSH 终端子标签 */
+    public void openSettingsTabWithSshSelected() {
+        openSettingsTab(null, true);
+    }
+
+    private void openSettingsTab(java.util.function.Consumer<Boolean> onSidebarToggle, boolean selectSshTab) {
         if (!ensureTabPaneInstalled()) return;
+
+        if (onSidebarToggle != null) {
+            this.sidebarToggleCallback = onSidebarToggle;
+        }
 
         // 避免重复打开
         for (Tab t : terminalTabPane.getTabs()) {
             if ("__settings__".equals(t.getUserData())) {
                 terminalTabPane.getSelectionModel().select(t);
+                if (selectSshTab && settingsInnerTabPane != null
+                        && settingsInnerTabPane.getTabs().size() > 1) {
+                    settingsInnerTabPane.getSelectionModel().select(1);
+                }
                 return;
             }
         }
@@ -1736,6 +1871,7 @@ public class ConnectModule implements Module {
         TabPane settingsTabPane = new TabPane();
         settingsTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         settingsTabPane.setStyle("-fx-padding: 0; -fx-background-color: #ffffff;");
+        this.settingsInnerTabPane = settingsTabPane;
 
         // ===== 系统设置 Tab =====
         VBox systemRoot = new VBox();
@@ -1752,8 +1888,8 @@ public class ConnectModule implements Module {
         sidebarVisible.setStyle("-fx-font-size: 14px;");
         sidebarVisible.setSelected(GlobalConfig.getInstance().isSidebarVisible());
         sidebarVisible.selectedProperty().addListener((obs, wasSelected, isNowSelected) -> {
-            if (onSidebarToggle != null) {
-                onSidebarToggle.accept(isNowSelected);
+            if (sidebarToggleCallback != null) {
+                sidebarToggleCallback.accept(isNowSelected);
             }
         });
 
@@ -1822,15 +1958,54 @@ public class ConnectModule implements Module {
         fontSizeSpinner.setPrefWidth(100);
         GridPane.setConstraints(fontSizeSpinner, 1, 1);
 
-        sshGrid.getChildren().addAll(fontNameLabel, fontNameCombo, fontSizeLabel, fontSizeSpinner);
+        // 回滚行数配置（参考会话配置）
+        Label scrollbackLabel = new Label("回滚行数");
+        scrollbackLabel.setStyle("-fx-font-size: 14px;");
+        GridPane.setConstraints(scrollbackLabel, 0, 2);
 
-        // 预览
+        HBox scrollbackBox = new HBox(8);
+        TextField scrollbackField = new TextField(String.valueOf(GlobalConfig.getInstance().getScrollbackLines()));
+        scrollbackField.setPrefWidth(100);
+        Label scrollbackHint = new Label("(0=无限制)");
+        scrollbackHint.setStyle("-fx-font-size: 12px; -fx-text-fill: #888;");
+        scrollbackBox.getChildren().addAll(scrollbackField, scrollbackHint);
+        GridPane.setConstraints(scrollbackBox, 1, 2);
+
+        // 开启服务管理（默认勾选）：双击 SSH 节点时展开服务管理子节点
+        CheckBox sshServiceMgmtCheckBox = new CheckBox("开启服务管理");
+        sshServiceMgmtCheckBox.setStyle("-fx-font-size: 14px;");
+        sshServiceMgmtCheckBox.setSelected(GlobalConfig.getInstance().isSshServiceManagementEnabled());
+        GridPane.setConstraints(sshServiceMgmtCheckBox, 1, 3);
+
+        // 默认文件视图模式
+        Label fileViewModeLabel = new Label("默认文件视图");
+        fileViewModeLabel.setStyle("-fx-font-size: 14px;");
+        GridPane.setConstraints(fileViewModeLabel, 0, 4);
+        ComboBox<String> fileViewModeCombo = new ComboBox<>();
+        fileViewModeCombo.getItems().addAll("图标视图", "详细列表", "多列列表");
+        String currentFileViewMode = GlobalConfig.getInstance().getSshDefaultFileViewMode();
+        fileViewModeCombo.setValue(switch (currentFileViewMode == null ? "LIST" : currentFileViewMode.toUpperCase()) {
+            case "ICON" -> "图标视图";
+            case "COLUMN" -> "多列列表";
+            default -> "详细列表";
+        });
+        fileViewModeCombo.setPrefWidth(150);
+        GridPane.setConstraints(fileViewModeCombo, 1, 4);
+
+        sshGrid.getChildren().addAll(fontNameLabel, fontNameCombo, fontSizeLabel, fontSizeSpinner,
+                scrollbackLabel, scrollbackBox, sshServiceMgmtCheckBox, fileViewModeLabel, fileViewModeCombo);
+
+        // 预览（放在字体配置右边）
+        VBox previewBox = new VBox(8);
+        previewBox.setPadding(new Insets(20, 0, 0, 30));
         Label previewLabel = new Label("预览：");
-        previewLabel.setStyle("-fx-font-size: 14px; -fx-padding: 10 0 0 0;");
+        previewLabel.setStyle("-fx-font-size: 14px;");
         javafx.scene.text.Text previewText = new javafx.scene.text.Text("abcdefghijklmnopqrstuvwxyz 0123456789\nABCDEFGHIJKLMNOPQRSTUVWXYZ ~!@#$%^&*()");
         previewText.setFont(javafx.scene.text.Font.font(
                 GlobalConfig.getInstance().getSshTerminalFontName(),
                 GlobalConfig.getInstance().getSshTerminalFontSize()));
+        previewBox.getChildren().addAll(previewLabel, previewText);
+
         Runnable updatePreview = () -> {
             String f = fontNameCombo.getValue();
             Integer s = fontSizeSpinner.getValue();
@@ -1841,6 +2016,9 @@ public class ConnectModule implements Module {
         fontNameCombo.valueProperty().addListener((obs, o, n) -> updatePreview.run());
         fontSizeSpinner.valueProperty().addListener((obs, o, n) -> updatePreview.run());
 
+        HBox sshConfigBox = new HBox(20);
+        sshConfigBox.getChildren().addAll(sshGrid, previewBox);
+
         Button applyFontBtn = new Button("应用并保存");
         applyFontBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-width: 100px;");
         applyFontBtn.setOnAction(e -> {
@@ -1849,20 +2027,41 @@ public class ConnectModule implements Module {
             if (f == null || f.isBlank()) f = "monospace";
             if (s == null || s <= 0) s = 13;
 
+            int newScrollback;
+            try {
+                int val = Integer.parseInt(scrollbackField.getText().trim());
+                newScrollback = Math.max(0, val);
+            } catch (NumberFormatException ex) {
+                newScrollback = GlobalConfig.getInstance().getScrollbackLines();
+            }
+
             GlobalConfig cfg = GlobalConfig.getInstance();
             cfg.setSshTerminalFontName(f);
             cfg.setSshTerminalFontSize(s);
+            cfg.setScrollbackLines(newScrollback);
+            cfg.setSshServiceManagementEnabled(sshServiceMgmtCheckBox.isSelected());
+            String viewModeStr = switch (fileViewModeCombo.getValue()) {
+                case "图标视图" -> "ICON";
+                case "多列列表" -> "COLUMN";
+                default -> "LIST";
+            };
+            cfg.setSshDefaultFileViewMode(viewModeStr);
             cfg.save();
 
             // 应用到所有已打开的终端
             applyTerminalFontToAllTabs(f, s);
+            applyScrollbackToAllTabs(newScrollback);
         });
 
-        sshRoot.getChildren().addAll(sshTitle, sshGrid, previewLabel, previewText, applyFontBtn);
+        sshRoot.getChildren().addAll(sshTitle, sshConfigBox, applyFontBtn);
 
         Tab sshTab = new Tab("SSH终端");
         sshTab.setContent(sshRoot);
         settingsTabPane.getTabs().add(sshTab);
+
+        if (selectSshTab) {
+            settingsTabPane.getSelectionModel().select(sshTab);
+        }
 
         settingsTab.setContent(settingsTabPane);
         terminalTabPane.getTabs().add(settingsTab);
@@ -1878,6 +2077,26 @@ public class ConnectModule implements Module {
                 pane.updateTerminalFont(family, size);
             } else if (content instanceof com.tangluobo.tomato.ssh.LocalTerminalPane pane) {
                 pane.updateTerminalFont(family, size);
+            }
+        }
+    }
+
+    /** 将全局回滚行数应用到所有使用全局配置的终端（会话级覆盖不受影响） */
+    private void applyScrollbackToAllTabs(int scrollback) {
+        if (terminalTabPane == null) return;
+        for (Tab tab : terminalTabPane.getTabs()) {
+            Object content = tab.getContent();
+            Object userData = tab.getUserData();
+            if (userData instanceof String configId) {
+                ConnectionConfig config = findConnectionById(configId);
+                // 仅更新使用全局配置（scrollbackLines == null）的终端
+                if (config != null && config.getScrollbackLines() == null) {
+                    if (content instanceof com.tangluobo.tomato.ssh.SSHTerminalPane pane) {
+                        pane.setScrollbackLines(scrollback);
+                    } else if (content instanceof com.tangluobo.tomato.ssh.LocalTerminalPane pane) {
+                        pane.setScrollbackLines(scrollback);
+                    }
+                }
             }
         }
     }

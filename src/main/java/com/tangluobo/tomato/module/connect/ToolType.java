@@ -11,7 +11,7 @@ public enum ToolType {
     JSON_TOOL("json_tool", "JSON处理工具", "/images/connect/code.png"),
     DESKTOP_SHORTCUT("desktop_shortcut", "桌面快捷方式", "/images/connect/execute.png"),
     HOSTS_FILE("hosts_file", "Hosts文件管理", "/images/connect/server.png"),
-    IMAGE_BACKGROUND_REMOVER("image_background_remover", "图片背景透明化", "/images/connect/view.png"),
+    IMAGE_BACKGROUND_REMOVER("image_background_remover", "图标制作工具", "/images/connect/view.png"),
     TRAE_SESSION("trae_session", "Trae会话管理", "/images/connect/user.png"),
     RESOURCE_EXTRACTOR("resource_extractor", "资源图标提取", "/images/connect/monitor.png"),
     PORT_MAPPING("port_mapping", "端口映射", "/images/connect/connect.png"),

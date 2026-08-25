@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -32,6 +33,8 @@ public class RdpPatch extends Rdp {
     private volatile int lastReasonSeen = 0;
     private volatile int lastServerStatusSeen = 0;
     private volatile boolean refreshSent = false;
+    private volatile Consumer<Void> onFirstFrame;
+    private volatile boolean firstFrameReceived = false;
     private final java.util.List<String> pduHistory = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
 
     // 反射访问Rdp的private方法/字段
@@ -93,7 +96,10 @@ public class RdpPatch extends Rdp {
         int next;
 
         if (encryption) {
-            s.incrementPosition(shortform ? 6 : 7);
+            // FASTPATH_OUTPUT_ENCRYPTED carries an 8-byte dataSignature before the
+            // encrypted updates (MS-RDPBCGR 2.2.9.1.2). The previous 6/7-byte skip
+            // started decryption mid-signature and corrupted every bitmap update.
+            s.incrementPosition(8);
             byte[] data = new byte[s.size() - s.getPosition()];
             s.copyToByteArray(data, 0, s.getPosition(), data.length);
             byte[] packet = secureLayer.decrypt(data);
@@ -104,22 +110,21 @@ public class RdpPatch extends Rdp {
 
         while (s.getPosition() < s.getEnd()) {
             // 修复：正确解析 updateHeader 位域 (MS-RDPBCGR 2.2.9.1.2.1)
-            // updateHeader (1 byte):
-            //   updateCode (4 bits, bits 7-4 高4位) - 更新类型
-            //   fragmentation (2 bits, bits 3-2) - 分片标志
-            //   compression (2 bits, bits 1-0 低2位) - 压缩标志
-            //
-            // 原始 javardp 库直接 switch(整个字节)，导致 updateCode=1 (bitmap) 时
-            // 字节值=0x10 不匹配 case 1，fast-path bitmap 全部丢失 → 黑屏
+            // updateHeader (MS-RDPBCGR 2.2.9.1.2.1):
+            //   updateCode     = bits 0..3
+            //   fragmentation  = bits 4..5
+            //   compression    = bits 6..7
+            // 例如本次服务器发送的 0x01 表示 Bitmap update。此前把位域顺序
+            // 反了，错误地按 Orders 解析每一帧，导致所有桌面数据被丢弃。
             int updateHeader = s.get8();
-            int updateCode = (updateHeader >> 4) & 0x0F;
-            int fragmentation = (updateHeader >> 2) & 0x03;
-            int compression = updateHeader & 0x03;
+            int updateCode = updateHeader & 0x0F;
+            int fragmentation = (updateHeader >> 4) & 0x03;
+            int compression = (updateHeader >> 6) & 0x03;
 
-            // compression != 0 时，updateHeader 后存在 1 字节 compressionFlags
-            // 原始代码未处理此字段，会导致 length/next 解析错位
+            // 仅 FASTPATH_OUTPUT_COMPRESSION_USED (0x02) 表示 compressionFlags 存在。
+            // bit 0 只是保留位，不能据此读取额外字节。
             int compressionFlags = 0;
-            if (compression != 0) {
+            if (compression == 0x02) {
                 compressionFlags = s.get8();
             }
 
@@ -175,6 +180,14 @@ public class RdpPatch extends Rdp {
         logger.info(String.format("[BITMAP UPDATE #%d] n_updates=%d", count, n_updates));
         data.setPosition(pos);
         super.processBitmapUpdates(data);
+
+        if (!firstFrameReceived) {
+            firstFrameReceived = true;
+            Consumer<Void> callback = onFirstFrame;
+            if (callback != null) {
+                callback.accept(null);
+            }
+        }
 
         try {
             java.awt.image.BufferedImage bi = stateRef.getCanvas().getDisplay().getBufferedImage();
@@ -419,4 +432,9 @@ public class RdpPatch extends Rdp {
     public int getBitmapUpdateCount() { return bitmapUpdateCount.get(); }
     public int getRdp5PacketCount() { return rdp5PacketCount.get(); }
     public int getTotalPduCount() { return totalPduCount.get(); }
+
+    /** Invoked after the first bitmap update has been decoded into the canvas. */
+    public void setOnFirstFrame(Consumer<Void> callback) {
+        this.onFirstFrame = callback;
+    }
 }

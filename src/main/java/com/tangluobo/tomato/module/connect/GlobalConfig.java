@@ -27,6 +27,12 @@ public class GlobalConfig {
     private String sshTerminalFontName = "monospace";
     private double sshTerminalFontSize = 13.0;
 
+    // SSH 终端：双击 SSH 节点时是否展开服务管理子节点（终端/容器/服务/端口/文件）
+    private boolean sshServiceManagementEnabled = true;
+
+    // SSH 文件浏览器默认视图模式：ICON（图标视图）/ LIST（详细列表）/ COLUMN（多列列表，仿 macOS）
+    private String sshDefaultFileViewMode = "LIST";
+
     public int getScrollbackLines() {
         return scrollbackLines;
     }
@@ -73,6 +79,22 @@ public class GlobalConfig {
 
     public void setSshTerminalFontSize(double sshTerminalFontSize) {
         this.sshTerminalFontSize = sshTerminalFontSize;
+    }
+
+    public boolean isSshServiceManagementEnabled() {
+        return sshServiceManagementEnabled;
+    }
+
+    public void setSshServiceManagementEnabled(boolean sshServiceManagementEnabled) {
+        this.sshServiceManagementEnabled = sshServiceManagementEnabled;
+    }
+
+    public String getSshDefaultFileViewMode() {
+        return sshDefaultFileViewMode;
+    }
+
+    public void setSshDefaultFileViewMode(String sshDefaultFileViewMode) {
+        this.sshDefaultFileViewMode = sshDefaultFileViewMode;
     }
 
     private static GlobalConfig instance;

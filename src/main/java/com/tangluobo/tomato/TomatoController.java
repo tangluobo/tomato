@@ -394,6 +394,14 @@ public class TomatoController {
             }
         });
 
+        // 窗口控制按钮（设置/最小化/最大化/关闭）不可获取焦点：
+        // 避免点击最大化按钮后焦点停留在按钮上，按下 Enter 键触发 onMaximize 导致窗口被还原。
+        // 焦点应保留在内容区（如 SSH 终端、数据表）中，由内容控件处理回车事件。
+        settingsBtn.setFocusTraversable(false);
+        minimizeBtn.setFocusTraversable(false);
+        maximizeBtn.setFocusTraversable(false);
+        closeBtn.setFocusTraversable(false);
+
         rootPane.sceneProperty().addListener((obs, oldScene, newScene) -> {
             if (newScene != null) {
                 newScene.addEventFilter(MouseEvent.MOUSE_PRESSED, this::onMousePressed);

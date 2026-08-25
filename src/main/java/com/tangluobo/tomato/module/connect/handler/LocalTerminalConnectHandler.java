@@ -4,7 +4,6 @@ import com.tangluobo.tomato.module.connect.ConnectModule;
 import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import com.tangluobo.tomato.module.connect.GlobalConfig;
-import com.tangluobo.tomato.module.connect.dialog.GlobalConfigDialog;
 import com.tangluobo.tomato.module.connect.dialog.SessionConfigDialog;
 import javafx.scene.control.*;
 import javafx.stage.Stage;
@@ -48,13 +47,9 @@ public class LocalTerminalConnectHandler implements ConnectHandler {
             module.saveConnections();
         });
 
-        MenuItem globalConfigItem = new MenuItem("终端配置");
+        MenuItem globalConfigItem = new MenuItem("全局配置");
         globalConfigItem.setOnAction(e -> {
-            Stage stage = module.getStage();
-            GlobalConfigDialog.show(stage, GlobalConfigDialog.ConfigMode.SSH);
-            if (config.getScrollbackLines() == null) {
-                localTerminalPane.setScrollbackLines(GlobalConfig.getInstance().getScrollbackLines());
-            }
+            module.openSettingsTabWithSshSelected();
         });
 
         tabContextMenu.getItems().addAll(copySessionItem, new SeparatorMenuItem(), sessionConfigItem, globalConfigItem);

@@ -82,6 +82,7 @@ public class SSHTerminalPane extends BorderPane {
     private final Label connLabel;
     private final Label encodingLabel;
     private final Circle statusDot;
+    private final Button dockerBtn;
     private final Button portBtn;
     private final Button folderBtn;
     private final Button monitorBtn;
@@ -110,6 +111,10 @@ public class SSHTerminalPane extends BorderPane {
     // 端口视图
     private boolean portVisible = false;
     private PortPanel portPanel;
+
+    // Docker 容器视图
+    private boolean dockerVisible = false;
+    private DockerPanel dockerPanel;
 
     // 防止scrollbar↔render循环
     private boolean updatingScrollbar = false;
@@ -174,6 +179,13 @@ public class SSHTerminalPane extends BorderPane {
         monitorBtn.setTooltip(new Tooltip("监控"));
         monitorBtn.setOnAction(e -> toggleMonitor());
 
+        // Docker 容器管理开关按钮
+        dockerBtn = new Button();
+        dockerBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
+        dockerBtn.setGraphic(createDockerIcon(false));
+        dockerBtn.setTooltip(new Tooltip("Docker"));
+        dockerBtn.setOnAction(e -> toggleDocker());
+
         // 端口视图开关按钮
         portBtn = new Button();
         portBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
@@ -181,7 +193,7 @@ public class SSHTerminalPane extends BorderPane {
         portBtn.setTooltip(new Tooltip("端口"));
         portBtn.setOnAction(e -> togglePort());
 
-        statusBar.getChildren().addAll(statusDot, stateLabel, connLabel, encodingLabel, spacer, portBtn, folderBtn, monitorBtn);
+        statusBar.getChildren().addAll(statusDot, stateLabel, connLabel, encodingLabel, spacer, dockerBtn, portBtn, folderBtn, monitorBtn);
 
         // 终端区域 + 右侧滚动条
         scrollBar = new ScrollBar();
@@ -515,19 +527,44 @@ public class SSHTerminalPane extends BorderPane {
     }
 
     /**
-     * 重建右侧面板布局：按 fileBrowser → monitorPanel → portPanel 顺序排列。
+     * 切换 Docker 容器视图显示
+     */
+    private void toggleDocker() {
+        if (dockerVisible) {
+            // 关闭 Docker 视图
+            dockerVisible = false;
+            dockerBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand;");
+            dockerBtn.setGraphic(createDockerIcon(false));
+            rebuildRightPanel();
+        } else {
+            // 打开 Docker 视图
+            if (sshSession == null || !sshSession.isConnected()) return;
+            if (dockerPanel == null) {
+                dockerPanel = new DockerPanel(sshSession);
+            }
+            dockerVisible = true;
+            rebuildRightPanel();
+            dockerPanel.refresh();
+            dockerBtn.setStyle("-fx-background-color: #e0e0e0; -fx-padding: 2 4; -fx-border-color: transparent; -fx-cursor: hand; -fx-border-radius: 3;");
+            dockerBtn.setGraphic(createDockerIcon(true));
+        }
+    }
+
+    /**
+     * 重建右侧面板布局：按 fileBrowser → monitorPanel → portPanel → dockerPanel 顺序排列。
      * - 外层 rightPanelScroll 整体滚动；面板内部不加单独滚动条
-     * - monitorPanel 固定 prefHeight；fileBrowser/portPanel 高度随 TableView 内容增长
+     * - monitorPanel 固定 prefHeight；fileBrowser/portPanel/dockerPanel 高度随 TableView 内容增长
      * - 仅在 monitorPanel 与相邻面板之间插入 1px #E5E5E5 Region 分隔条，拖拽调整 monitorPanel 高度
      */
     private void rebuildRightPanel() {
         rightPanel.getChildren().clear();
 
-        // 按 fileBrowser → monitorPanel → portPanel 顺序收集可见面板
+        // 按 fileBrowser → monitorPanel → portPanel → dockerPanel 顺序收集可见面板
         java.util.List<javafx.scene.layout.Region> panels = new java.util.ArrayList<>();
         if (fileBrowserVisible && fileBrowser != null) panels.add(fileBrowser);
         if (monitorVisible && monitorPanel != null) panels.add(monitorPanel);
         if (portVisible && portPanel != null) panels.add(portPanel);
+        if (dockerVisible && dockerPanel != null) panels.add(dockerPanel);
 
         for (int i = 0; i < panels.size(); i++) {
             javafx.scene.layout.Region panel = panels.get(i);
@@ -602,6 +639,25 @@ public class SSHTerminalPane extends BorderPane {
      */
     public void requestTerminalFocus() {
         Platform.runLater(() -> terminalView.requestFocus());
+    }
+
+    /**
+     * 连接建立后向远端 shell 发送一条命令并回车执行
+     * （用于进入容器终端 docker exec、跟踪容器日志 docker logs -f 等场景）。
+     * 需在连接成功后调用；写入失败静默忽略（连接可能已断开）。
+     */
+    public void sendCommand(String command) {
+        try {
+            if (sshSession != null && sshSession.isConnected()) {
+                OutputStream os = sshSession.getOutputStream();
+                if (os != null) {
+                    os.write((command + "\r").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    os.flush();
+                }
+            }
+        } catch (IOException e) {
+            // 连接断开等异常：忽略
+        }
     }
 
     /**
@@ -711,6 +767,43 @@ public class SSHTerminalPane extends BorderPane {
         params.setFill(Color.TRANSPARENT);
         Image image = canvas.snapshot(params, null);
         ImageView iv = new ImageView(image);
+        iv.setFitWidth(16);
+        iv.setFitHeight(16);
+        iv.setOpacity(active ? 1.0 : 0.6);
+        return iv;
+    }
+
+    /**
+     * 创建 Docker 图标（程序化绘制：集装箱方块矩阵，Docker 品牌蓝 #2496ED）
+     * @param active 是否激活状态
+     */
+    private ImageView createDockerIcon(boolean active) {
+        Canvas canvas = new Canvas(16, 16);
+        GraphicsContext gc = canvas.getGraphicsContext2D();
+        gc.clearRect(0, 0, 16, 16);
+
+        // Docker 品牌蓝
+        String color = "#2496ED";
+        gc.setFill(Color.valueOf(color));
+
+        // 3列2行集装箱方块矩阵，每个方块 3x3，间距 1，起始 (2, 5)
+        double[][] blocks = {
+                {2, 5}, {6, 5}, {10, 5},
+                {2, 9}, {6, 9}, {10, 9}
+        };
+        for (double[] b : blocks) {
+            gc.fillRect(b[0], b[1], 3, 3);
+        }
+
+        // 顶部鲸鱼背脊线条（简化为顶部一条弧线）
+        gc.setStroke(Color.valueOf(color));
+        gc.setLineWidth(1.0);
+        gc.strokeLine(2, 3, 13, 3);
+
+        SnapshotParameters dockerParams = new SnapshotParameters();
+        dockerParams.setFill(Color.TRANSPARENT);
+        Image dockerImage = canvas.snapshot(dockerParams, null);
+        ImageView iv = new ImageView(dockerImage);
         iv.setFitWidth(16);
         iv.setFitHeight(16);
         iv.setOpacity(active ? 1.0 : 0.6);

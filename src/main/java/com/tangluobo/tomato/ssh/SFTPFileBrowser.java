@@ -1,217 +1,132 @@
 package com.tangluobo.tomato.ssh;
 
+import com.tangluobo.tomato.module.connect.AbstractFileBrowserPane;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.application.Platform;
-import javafx.beans.property.SimpleBooleanProperty;
+import javafx.beans.binding.Bindings;
 import javafx.beans.property.BooleanProperty;
-import javafx.collections.FXCollections;
-import javafx.collections.ObservableList;
+import javafx.beans.property.SimpleBooleanProperty;
+import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
-import javafx.scene.input.*;
 import javafx.scene.layout.*;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.paint.Color;
-import javafx.scene.text.Font;
-import javafx.embed.swing.SwingFXUtils;
-import javafx.stage.FileChooser;
-import javafx.stage.DirectoryChooser;
-import javafx.stage.Stage;
 
-import javax.swing.filechooser.FileSystemView;
 import java.awt.Desktop;
-import java.awt.image.BufferedImage;
 import java.io.File;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * SFTP文件浏览器组件
- * 支持浏览远程文件、上传/下载、拖拽操作、跟随终端目录
+ * SFTP文件浏览器组件（SSH终端侧边栏 / 独立标签模式）。
+ * <p>
+ * 通用 UI（视图模式、选中、重命名、右键菜单、图标）由 {@link AbstractFileBrowserPane} 提供，
+ * 本类只实现 SFTP 后端操作、侧边栏布局、跟随终端目录、本地编辑缓存等扩展能力。
  */
-public class SFTPFileBrowser extends BorderPane {
+public class SFTPFileBrowser extends AbstractFileBrowserPane {
 
     private final SFTPClient sftpClient;
     private final SSHSession sshSession;
 
-    // UI组件
-    private TextField pathField;
-    private CheckBox followTerminalCheck;
-    private TableView<FileItem> fileTable;
-    private Label statusLabel;
-    private final ObservableList<FileItem> fileList = FXCollections.observableArrayList();
+    /** 独立标签模式：全宽、支持图标/列视图、无跟随终端 */
+    private final boolean standalone;
 
     // 跟随终端目录
     private final BooleanProperty followTerminal = new SimpleBooleanProperty(true);
-    private String currentPath = "/";
-
-    // 图标
-    private final Image folderIcon;
-    private final Image defaultFileIcon;
-    private final java.util.Map<String, Image> systemIconCache = new java.util.HashMap<>();
-    private final File iconTempDir;
+    private CheckBox followTerminalCheck;
 
     // 本地编辑缓存：远程路径 -> 本地文件 / 已知最后修改时间
     private final Map<String, File> editCache = new ConcurrentHashMap<>();
     private final Map<String, Long> editLastModified = new ConcurrentHashMap<>();
 
+    // 侧边栏模式的路径输入框（独立于基类 currentPathField，样式更紧凑）
+    private TextField sidebarPathField;
+
+    // ==================== 构造 ====================
+
     public SFTPFileBrowser(SSHSession sshSession, SFTPClient sftpClient) {
+        this(sshSession, sftpClient, false);
+    }
+
+    /**
+     * @param standalone 独立标签模式：全宽、表格自滚动、无跟随终端、显示修改时间列
+     */
+    public SFTPFileBrowser(SSHSession sshSession, SFTPClient sftpClient, boolean standalone) {
+        super();  // 基类构造期间调用 initializeUI()（本类覆写为 no-op，延迟到构造体）
         this.sshSession = sshSession;
         this.sftpClient = sftpClient;
+        this.standalone = standalone;
 
-        // 创建临时目录用于获取系统图标
-        iconTempDir = new File(System.getProperty("java.io.tmpdir"), "tomato-icons");
-        if (!iconTempDir.exists()) iconTempDir.mkdirs();
-
-        // 获取系统文件夹图标
-        Image sysFolderIcon = getSystemFolderIcon();
-        folderIcon = sysFolderIcon != null ? sysFolderIcon : loadIcon("/images/connect/folder.png");
-
-        // 获取系统默认文件图标
-        Image sysFileIcon = getSystemFileIcon("txt");
-        defaultFileIcon = sysFileIcon != null ? sysFileIcon : createFileTypeIcon("?", "#9E9E9E");
-
-        setPrefWidth(280);
-        setMinWidth(200);
-        setMinHeight(200);
-        setStyle("-fx-background-color: #FFFFFF;");
-
-        createUI();
-    }
-
-    private Image loadIcon(String path) {
-        try {
-            return new Image(getClass().getResourceAsStream(path));
-        } catch (Exception e) {
-            return null;
+        if (!standalone) {
+            setPrefWidth(280);
+            setMinWidth(200);
         }
-    }
 
-    /**
-     * 获取系统文件夹图标
-     */
-    private Image getSystemFolderIcon() {
-        try {
-            javax.swing.Icon icon = FileSystemView.getFileSystemView().getSystemIcon(iconTempDir);
-            return swingIconToImage(icon);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /**
-     * 根据扩展名获取系统文件图标（通过创建临时文件获取）
-     */
-    private Image getSystemFileIcon(String ext) {
-        if (ext == null || ext.isEmpty()) return null;
-        ext = ext.toLowerCase();
-        // 先查缓存
-        if (systemIconCache.containsKey(ext)) return systemIconCache.get(ext);
-        try {
-            File tmp = new File(iconTempDir, "icon." + ext);
-            if (!tmp.exists()) tmp.createNewFile();
-            javax.swing.Icon icon = FileSystemView.getFileSystemView().getSystemIcon(tmp);
-            Image fxImage = swingIconToImage(icon);
-            if (fxImage != null) {
-                systemIconCache.put(ext, fxImage);
-                return fxImage;
-            }
-        } catch (Exception ignored) {}
-        return null;
-    }
-
-    /**
-     * Swing Icon 转 JavaFX Image
-     */
-    private Image swingIconToImage(javax.swing.Icon icon) {
-        if (icon == null) return null;
-        try {
-            BufferedImage bi = new BufferedImage(icon.getIconWidth(), icon.getIconHeight(), BufferedImage.TYPE_INT_ARGB);
-            java.awt.Graphics2D g = bi.createGraphics();
-            icon.paintIcon(null, g, 0, 0);
-            g.dispose();
-            return SwingFXUtils.toFXImage(bi, null);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /**
-     * 代码生成文件类型图标（后备方案）：圆角矩形背景 + 扩展名文字
-     */
-    private Image createFileTypeIcon(String label, String bgColor) {
-        int size = 16;
-        Canvas canvas = new Canvas(size, size);
-        GraphicsContext gc = canvas.getGraphicsContext2D();
-        gc.setFill(Color.valueOf(bgColor));
-        gc.fillRoundRect(0, 0, size, size, 3, 3);
-        gc.setFill(Color.WHITE);
-        gc.setFont(Font.font("SansSerif", 7));
-        javafx.scene.text.Text text = new javafx.scene.text.Text(label);
-        text.setFont(Font.font("SansSerif", 7));
-        double tw = text.getLayoutBounds().getWidth();
-        gc.fillText(label, (size - tw) / 2, size / 2 + 3);
-        return canvas.snapshot(null, null);
-    }
-
-    /**
-     * 创建导航按钮图标
-     */
-    private ImageView createNavIcon(String type, String bgColor, String fgColor) {
-        int size = 18;
-        Canvas canvas = new Canvas(size, size);
-        GraphicsContext gc = canvas.getGraphicsContext2D();
-
-        if ("/".equals(type)) {
-            // 根目录图标：带横线的房子形状
-            gc.setFill(Color.valueOf(bgColor));
-            // 房子三角屋顶
-            gc.fillPolygon(new double[]{9, 2, 16}, new double[]{2, 9, 9}, 3);
-            // 房子主体
-            gc.fillRect(4, 9, 10, 7);
-            // 门（留白）
-            gc.setFill(Color.valueOf(fgColor));
-            gc.fillRect(7, 11, 4, 5);
+        if (standalone) {
+            // 独立模式：使用基类标准 UI（路径栏、视图切换、图标/列表/列视图、状态栏）
+            super.initializeUI();
         } else {
-            // 上级目录图标：带箭头的文件夹
-            gc.setFill(Color.valueOf(bgColor));
-            gc.fillRoundRect(1, 5, 14, 9, 2, 2);
-            gc.fillRoundRect(1, 2, 6, 4, 2, 2);
-            // 上箭头
-            gc.setFill(Color.valueOf(fgColor));
-            gc.fillPolygon(new double[]{8, 11.5, 14}, new double[]{3, 0, 3}, 3);
-            gc.fillRect(10.5, 3, 1.5, 5);
+            // 侧边栏模式：紧凑布局（跟随终端、仅列表视图）
+            createSidebarUI();
         }
-
-        Image img = canvas.snapshot(null, null);
-        ImageView iv = new ImageView(img);
-        iv.setFitWidth(16);
-        iv.setFitHeight(16);
-        return iv;
     }
 
     /**
-     * 根据文件名获取对应图标（优先系统图标，后备生成图标）
+     * 覆写为 no-op：基类构造期间调用时 standalone 尚未赋值，
+     * 实际 UI 初始化延迟到子类构造体（见上方构造函数）。
      */
-    private Image getFileIcon(String fileName) {
-        int dotIdx = fileName.lastIndexOf('.');
-        if (dotIdx > 0) {
-            String ext = fileName.substring(dotIdx + 1).toLowerCase();
-            Image sysIcon = getSystemFileIcon(ext);
-            if (sysIcon != null) return sysIcon;
-        }
-        return defaultFileIcon;
+    @Override
+    protected void initializeUI() {
+        // no-op — 由构造体按 standalone 标志分派
     }
 
-    private void createUI() {
-        // 顶部：路径栏 + 跟随终端
+    // ==================== 钩子 ====================
+
+    @Override
+    protected boolean supportsColumnView() {
+        return standalone;  // 侧边栏模式不支持列视图
+    }
+
+    @Override
+    protected boolean supportsCreateFile() {
+        return true;
+    }
+
+    @Override
+    protected boolean isConnected() {
+        return sftpClient.isConnected();
+    }
+
+    /**
+     * 侧边栏模式禁用视图切换（仅列表视图）。
+     */
+    @Override
+    protected void switchViewMode(ViewMode mode) {
+        if (!standalone) return;
+        super.switchViewMode(mode);
+    }
+
+    /**
+     * 侧边栏模式使用简化的右键菜单（无视图子菜单）。
+     */
+    @Override
+    protected ContextMenu createContextMenu() {
+        if (standalone) {
+            return super.createContextMenu();
+        }
+        return createSidebarContextMenu();
+    }
+
+    // ==================== 侧边栏 UI ====================
+
+    private void createSidebarUI() {
+        // 顶部：跟随终端 + 刷新 + 上传
         HBox topBar = new HBox(4);
         topBar.setStyle("-fx-background-color: #f5f5f5; -fx-padding: 4 6; -fx-alignment: center-left; -fx-border-color: #e0e0e0; -fx-border-width: 0 0 1 0;");
 
@@ -229,7 +144,7 @@ public class SFTPFileBrowser extends BorderPane {
 
         Button uploadBtn = new Button("↑");
         uploadBtn.setStyle("-fx-font-size: 12px; -fx-padding: 2 6; -fx-background-color: transparent; -fx-border-color: #ccc; -fx-border-radius: 3;");
-        uploadBtn.setOnAction(e -> uploadFiles());
+        uploadBtn.setOnAction(e -> handleUpload());
 
         topBar.getChildren().addAll(followTerminalCheck, spacer, refreshBtn, uploadBtn);
 
@@ -247,38 +162,36 @@ public class SFTPFileBrowser extends BorderPane {
         parentBtn.setGraphic(createNavIcon("↑", "#78909C", "#546E7A"));
         parentBtn.setStyle("-fx-background-color: transparent; -fx-padding: 2; -fx-border-color: transparent; -fx-cursor: hand; -fx-border-radius: 3;");
         parentBtn.setTooltip(new Tooltip("上级目录"));
-        parentBtn.setOnAction(e -> {
-            if (currentPath != null && !currentPath.equals("/")) {
-                int lastSlash = currentPath.lastIndexOf('/');
-                String parent = lastSlash <= 0 ? "/" : currentPath.substring(0, lastSlash);
-                navigateTo(parent);
-            }
-        });
+        parentBtn.setOnAction(e -> navigateUp());
 
-        pathField = new TextField("/");
-        pathField.setStyle("-fx-font-size: 11px; -fx-padding: 3 6; -fx-background-color: #fff; -fx-border-color: #ddd; -fx-border-radius: 3;");
-        HBox.setHgrow(pathField, Priority.ALWAYS);
-        pathField.setOnAction(e -> navigateTo(pathField.getText().trim()));
+        sidebarPathField = new TextField("/");
+        sidebarPathField.setStyle("-fx-font-size: 11px; -fx-padding: 3 6; -fx-background-color: #fff; -fx-border-color: #ddd; -fx-border-radius: 3;");
+        HBox.setHgrow(sidebarPathField, Priority.ALWAYS);
+        sidebarPathField.setOnAction(e -> navigateTo(sidebarPathField.getText().trim()));
+        // 让基类 setCurrentPath() 同步更新侧边栏路径框
+        currentPathField = sidebarPathField;
 
-        pathBar.getChildren().addAll(rootBtn, parentBtn, pathField);
+        pathBar.getChildren().addAll(rootBtn, parentBtn, sidebarPathField);
 
         VBox topBox = new VBox(topBar, pathBar);
         topBox.setStyle("-fx-border-color: #e0e0e0; -fx-border-width: 0 0 1 0;");
+        setTop(topBox);
 
-        // 文件列表
+        // 文件列表（仅名称 + 大小两列，高度随内容增长）
         fileTable = new TableView<>();
-        fileTable.setStyle("-fx-font-size: 11px; -fx-background-color: #fff;");
+        fileTable.setStyle("-fx-font-size: 12px; -fx-background-color: #fff;");
         fileTable.getStyleClass().add("sftp-file-table");
         fileTable.setPlaceholder(new Label("空目录"));
-        fileTable.setFixedCellSize(24);
-        // 高度随内容增长，不产生内部滚动条，由外层 rightPanelScroll 整体滚动
-        fileTable.prefHeightProperty().bind(javafx.beans.binding.Bindings.size(fileList).multiply(24).add(30));
+        fileTable.setFixedCellSize(26);
+        fileTable.prefHeightProperty().bind(Bindings.size(fileData).multiply(24).add(30));
         fileTable.setMinHeight(80);
-        fileTable.setItems(fileList);
+        fileTable.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+        fileTable.setItems(fileData);
 
         TableColumn<FileItem, String> nameCol = new TableColumn<>("名称");
+        nameCol.setEditable(true);
         nameCol.setCellValueFactory(new PropertyValueFactory<>("displayName"));
-        nameCol.setCellFactory(col -> new FileItemCell());
+        nameCol.setCellFactory(createEditableNameCellFactory());
         nameCol.setPrefWidth(180);
 
         TableColumn<FileItem, String> sizeCol = new TableColumn<>("大小");
@@ -289,227 +202,196 @@ public class SFTPFileBrowser extends BorderPane {
         fileTable.getColumns().addAll(nameCol, sizeCol);
         fileTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
 
-        // 双击进入目录或用本地应用打开文件
-        fileTable.setRowFactory(tv -> {
-            TableRow<FileItem> row = new TableRow<>();
-            row.setOnMouseClicked(e -> {
-                if (e.getClickCount() == 2 && !row.isEmpty()) {
-                    FileItem item = row.getItem();
-                    if (item.isDirectory()) {
-                        navigateTo(item.getPath());
-                    } else {
-                        openWithLocalApp(item);
-                    }
-                }
-            });
-
-            // 拖拽：从远程拖到本地（下载到临时目录后拖出）
-            row.setOnDragDetected(e -> {
-                if (row.isEmpty()) return;
-                FileItem item = row.getItem();
-                if (!item.isDirectory()) {
-                    // 先下载到临时目录
-                    File tempFile = downloadToTemp(item);
-                    if (tempFile != null) {
-                        Dragboard db = row.startDragAndDrop(TransferMode.COPY);
-                        ClipboardContent content = new ClipboardContent();
-                        List<File> files = new ArrayList<>();
-                        files.add(tempFile);
-                        content.putFiles(files);
-                        db.setContent(content);
-                    }
-                }
-                e.consume();
-            });
-
-            // 拖拽：从本地拖到远程（上传）
-            row.setOnDragOver(e -> {
-                Dragboard db = e.getDragboard();
-                if (db.hasFiles()) {
-                    e.acceptTransferModes(TransferMode.COPY);
-                }
-                e.consume();
-            });
-
-            row.setOnDragDropped(e -> {
-                Dragboard db = e.getDragboard();
-                boolean success = false;
-                if (db.hasFiles()) {
-                    uploadLocalFiles(db.getFiles());
-                    success = true;
-                }
-                e.setDropCompleted(success);
-                e.consume();
-            });
-
-            return row;
-        });
-
-        // 整个表格也支持拖拽上传
-        fileTable.setOnDragOver(e -> {
-            Dragboard db = e.getDragboard();
-            if (db.hasFiles()) {
-                e.acceptTransferModes(TransferMode.COPY);
-            }
-            e.consume();
-        });
-
-        fileTable.setOnDragDropped(e -> {
-            Dragboard db = e.getDragboard();
-            boolean success = false;
-            if (db.hasFiles()) {
-                uploadLocalFiles(db.getFiles());
-                success = true;
-            }
-            e.setDropCompleted(success);
-            e.consume();
-        });
-
-        // 右键菜单
+        setupTableRowFactory();
         fileTable.setContextMenu(createContextMenu());
 
-        setTop(topBox);
         setCenter(fileTable);
 
         // 底部状态栏
         statusLabel = new Label("就绪");
         statusLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: #888; -fx-padding: 2 6;");
         setBottom(statusLabel);
+
+        // Ctrl+V 粘贴上传（侧边栏模式未调用基类 initializeUI，需手动注册）
+        setupKeyboardShortcuts();
     }
 
-    private ContextMenu createContextMenu() {
+    /**
+     * 侧边栏模式的简化右键菜单（无视图子菜单）。
+     */
+    private ContextMenu createSidebarContextMenu() {
         ContextMenu menu = new ContextMenu();
 
-        MenuItem uploadItem = new MenuItem("上传文件...");
-        uploadItem.setOnAction(e -> uploadFiles());
+        MenuItem openItem = new MenuItem("打开");
+        openItem.setOnAction(e -> {
+            FileItem selected = getSelectedItem();
+            if (selected != null) handleDoubleClick(selected);
+        });
 
-        MenuItem uploadDirItem = new MenuItem("上传到当前目录...");
-        uploadDirItem.setOnAction(e -> uploadFiles());
-
-        MenuItem downloadItem = new MenuItem("下载");
+        MenuItem downloadItem = new MenuItem("下载...");
         downloadItem.setOnAction(e -> {
-            FileItem selected = fileTable.getSelectionModel().getSelectedItem();
+            FileItem selected = getSelectedItem();
             if (selected != null && !selected.isDirectory()) {
-                downloadFile(selected);
-            }
-        });
-
-        MenuItem openLocalItem = new MenuItem("用本地应用打开");
-        openLocalItem.setOnAction(e -> {
-            FileItem selected = fileTable.getSelectionModel().getSelectedItem();
-            if (selected != null && !selected.isDirectory()) {
-                openWithLocalApp(selected);
-            }
-        });
-
-        MenuItem deleteItem = new MenuItem("删除");
-        deleteItem.setOnAction(e -> {
-            FileItem selected = fileTable.getSelectionModel().getSelectedItem();
-            if (selected != null) {
-                deleteEntry(selected);
+                handleDownload(selected);
             }
         });
 
         MenuItem mkdirItem = new MenuItem("新建目录");
-        mkdirItem.setOnAction(e -> mkdir());
+        mkdirItem.setOnAction(e -> handleMkdir());
+
+        MenuItem createFileItem = new MenuItem("创建文件");
+        createFileItem.setOnAction(e -> handleCreateFile());
+
+        MenuItem uploadItem = new MenuItem("上传文件...");
+        uploadItem.setOnAction(e -> handleUpload());
+
+        MenuItem deleteItem = new MenuItem("删除");
+        deleteItem.setOnAction(e -> handleDeleteSelected());
+
+        MenuItem renameItem = new MenuItem("重命名");
+        renameItem.setOnAction(e -> handleRename());
 
         MenuItem refreshItem = new MenuItem("刷新");
         refreshItem.setOnAction(e -> refresh());
 
-        menu.getItems().addAll(uploadItem, downloadItem, openLocalItem, new SeparatorMenuItem(), mkdirItem, deleteItem, new SeparatorMenuItem(), refreshItem);
+        menu.getItems().addAll(openItem, downloadItem, new SeparatorMenuItem(),
+                mkdirItem, createFileItem, uploadItem, deleteItem, renameItem, new SeparatorMenuItem(), refreshItem);
+
+        menu.setOnShowing(e -> {
+            List<FileItem> selected = getSelectedItems();
+            boolean single = selected.size() == 1;
+            FileItem first = selected.isEmpty() ? null : selected.get(0);
+            openItem.setVisible(single && first != null);
+            downloadItem.setVisible(single && first != null && !first.isDirectory());
+            deleteItem.setVisible(!selected.isEmpty());
+            deleteItem.setText(selected.size() > 1 ? "删除(" + selected.size() + "项)" : "删除");
+            renameItem.setVisible(single && first != null);
+            createFileItem.setVisible(supportsCreateFile());
+        });
+
         return menu;
     }
 
     /**
-     * 导航到指定路径
+     * 创建导航按钮图标（侧边栏根目录/上级目录按钮用）。
      */
-    public void navigateTo(String path) {
-        if (!sftpClient.isConnected()) {
-            statusLabel.setText("SFTP未连接");
-            return;
+    private ImageView createNavIcon(String type, String bgColor, String fgColor) {
+        int size = 18;
+        Canvas canvas = new Canvas(size, size);
+        GraphicsContext gc = canvas.getGraphicsContext2D();
+
+        if ("/".equals(type)) {
+            gc.setFill(Color.valueOf(bgColor));
+            gc.fillPolygon(new double[]{9, 2, 16}, new double[]{2, 9, 9}, 3);
+            gc.fillRect(4, 9, 10, 7);
+            gc.setFill(Color.valueOf(fgColor));
+            gc.fillRect(7, 11, 4, 5);
+        } else {
+            gc.setFill(Color.valueOf(bgColor));
+            gc.fillRoundRect(1, 5, 14, 9, 2, 2);
+            gc.fillRoundRect(1, 2, 6, 4, 2, 2);
+            gc.setFill(Color.valueOf(fgColor));
+            gc.fillPolygon(new double[]{8, 11.5, 14}, new double[]{3, 0, 3}, 3);
+            gc.fillRect(10.5, 3, 1.5, 5);
         }
+
+        Image img = canvas.snapshot(null, null);
+        ImageView iv = new ImageView(img);
+        iv.setFitWidth(16);
+        iv.setFitHeight(16);
+        return iv;
+    }
+
+    // ==================== 抽象后端方法实现 ====================
+
+    @Override
+    protected void doRefresh() {
+        doNavigateTo(getCurrentPath());
+    }
+
+    @Override
+    protected void doNavigateTo(String path) {
         new Thread(() -> {
             try {
                 sftpClient.cd(path);
                 String realPath = sftpClient.pwd();
                 List<SFTPClient.FileEntry> entries = sftpClient.listFiles(realPath);
+                List<FileItem> items = new ArrayList<>();
+                for (SFTPClient.FileEntry entry : entries) {
+                    items.add(new FileItem(entry.getName(), entry.getPath(),
+                            entry.isDirectory(), entry.getSize(), entry.getModifyTime()));
+                }
                 Platform.runLater(() -> {
-                    currentPath = realPath;
-                    pathField.setText(realPath);
-                    populateTable(entries);
-                    statusLabel.setText(entries.size() + " 个条目");
+                    setCurrentPath(realPath);
+                    setFileList(items);
+                    if (upBtn != null) upBtn.setDisable("/".equals(realPath));
+                    setStatus(entries.size() + " 个条目");
                 });
             } catch (Exception e) {
-                Platform.runLater(() -> statusLabel.setText("错误: " + e.getMessage()));
+                Platform.runLater(() -> setStatus("错误: " + e.getMessage()));
             }
         }, "SFTP-Navigate").start();
     }
 
-    /**
-     * 刷新当前目录
-     */
-    public void refresh() {
-        navigateTo(currentPath);
+    @Override
+    protected void doRename(FileItem item, String newName) throws Exception {
+        String oldPath = item.getPath();
+        int lastSlash = oldPath.lastIndexOf('/');
+        String parent = lastSlash <= 0 ? "" : oldPath.substring(0, lastSlash);
+        String newPath = parent.isEmpty() ? "/" + newName : parent + "/" + newName;
+        sftpClient.rename(oldPath, newPath);
     }
 
-    /**
-     * 跟随终端目录变化
-     */
-    public void onTerminalCwdChanged(String newPath) {
-        if (followTerminal.get()) {
-            navigateTo(newPath);
-        }
-    }
-
-    /**
-     * 初始化连接并导航到home目录
-     */
-    public void initConnection() {
+    @Override
+    protected void doDelete(FileItem item) {
         new Thread(() -> {
             try {
-                if (!sftpClient.isConnected()) {
-                    sftpClient.connect(sshSession.getJschSession());
+                if (item.isDirectory()) {
+                    sftpClient.rmdir(item.getPath());
+                } else {
+                    sftpClient.rm(item.getPath());
                 }
-                String home = sftpClient.pwd();
-                Platform.runLater(() -> navigateTo(home));
+                Platform.runLater(this::refresh);
             } catch (Exception e) {
-                Platform.runLater(() -> statusLabel.setText("SFTP连接失败: " + e.getMessage()));
+                Platform.runLater(() -> setStatus("删除失败: " + e.getMessage()));
             }
-        }, "SFTP-Init").start();
+        }, "SFTP-Delete").start();
     }
 
-    private void populateTable(List<SFTPClient.FileEntry> entries) {
-        fileList.clear();
-        for (SFTPClient.FileEntry entry : entries) {
-            fileList.add(new FileItem(entry.getName(), entry.getPath(), entry.isDirectory(), entry.getSize(), entry.getModifyTime()));
-        }
-    }
-
-    /**
-     * 下载文件到本地
-     */
-    private void downloadFile(FileItem item) {
-        DirectoryChooser chooser = new DirectoryChooser();
-        chooser.setTitle("选择保存目录");
-        File dir = chooser.showDialog(getStage());
-        if (dir == null) return;
-
-        statusLabel.setText("下载中: " + item.getName());
+    @Override
+    protected void doMkdir(String fullPath) {
         new Thread(() -> {
             try {
-                String localPath = new File(dir, item.getName()).getAbsolutePath();
-                sftpClient.download(item.getPath(), localPath);
-                Platform.runLater(() -> statusLabel.setText("下载完成: " + item.getName()));
+                sftpClient.mkdir(fullPath);
+                Platform.runLater(this::refresh);
             } catch (Exception e) {
-                Platform.runLater(() -> statusLabel.setText("下载失败: " + e.getMessage()));
+                Platform.runLater(() -> setStatus("创建目录失败: " + e.getMessage()));
+            }
+        }, "SFTP-Mkdir").start();
+    }
+
+    @Override
+    protected void doUploadSingle(File localFile) throws Exception {
+        String cwd = getCurrentPath();
+        String remotePath = cwd.endsWith("/") ? cwd + localFile.getName() : cwd + "/" + localFile.getName();
+        sftpClient.upload(localFile.getAbsolutePath(), remotePath);
+    }
+
+    @Override
+    protected void doDownload(FileItem item, File localFile) {
+        setStatus("下载中: " + item.getName());
+        new Thread(() -> {
+            try {
+                sftpClient.download(item.getPath(), localFile.getAbsolutePath());
+                Platform.runLater(() -> setStatus("下载完成: " + item.getName()));
+            } catch (Exception e) {
+                Platform.runLater(() -> setStatus("下载失败: " + e.getMessage()));
             }
         }, "SFTP-Download").start();
     }
 
-    /**
-     * 下载文件到临时目录（用于拖拽下载）
-     */
-    private File downloadToTemp(FileItem item) {
+    @Override
+    protected File doDownloadToTemp(FileItem item) {
         try {
             File tempDir = new File(System.getProperty("java.io.tmpdir"), "tomato-sftp");
             if (!tempDir.exists()) tempDir.mkdirs();
@@ -517,30 +399,73 @@ public class SFTPFileBrowser extends BorderPane {
             sftpClient.download(item.getPath(), tempFile.getAbsolutePath());
             return tempFile;
         } catch (Exception e) {
-            Platform.runLater(() -> statusLabel.setText("拖拽下载失败: " + e.getMessage()));
+            Platform.runLater(() -> setStatus("拖拽下载失败: " + e.getMessage()));
             return null;
         }
     }
+
+    @Override
+    protected void loadColumnAsync(String path, int colIndex) {
+        new Thread(() -> {
+            try {
+                sftpClient.cd(path);
+                String realPath = sftpClient.pwd();
+                List<SFTPClient.FileEntry> entries = sftpClient.listFiles(realPath);
+                List<FileItem> items = new ArrayList<>();
+                for (SFTPClient.FileEntry entry : entries) {
+                    items.add(new FileItem(entry.getName(), entry.getPath(),
+                            entry.isDirectory(), entry.getSize(), entry.getModifyTime()));
+                }
+                Platform.runLater(() -> addColumn(colIndex, realPath, items));
+            } catch (Exception e) {
+                Platform.runLater(() -> setStatus("列视图加载失败: " + e.getMessage()));
+            }
+        }, "SFTP-Column").start();
+    }
+
+    @Override
+    protected void handleCreateFile() {
+        TextInputDialog dialog = new TextInputDialog();
+        dialog.setTitle("创建文件");
+        dialog.setHeaderText("输入文件名称:");
+        DialogPositionUtil.centerOnOwner(dialog, this);
+        dialog.showAndWait().ifPresent(name -> {
+            String fileName = name.trim();
+            if (fileName.isEmpty()) return;
+            String cwd = getCurrentPath();
+            String fullPath = cwd.endsWith("/") ? cwd + fileName : cwd + "/" + fileName;
+            new Thread(() -> {
+                try {
+                    sftpClient.createEmptyFile(fullPath);
+                    Platform.runLater(this::refresh);
+                } catch (Exception e) {
+                    Platform.runLater(() -> setStatus("创建文件失败: " + e.getMessage()));
+                }
+            }, "SFTP-CreateFile").start();
+        });
+    }
+
+    // ==================== 本地编辑（覆盖基类空实现） ====================
 
     /**
      * 用本地应用打开文件：下载到临时目录后调用系统默认应用打开。
      * 文件修改后会自动上传到远程（直接保存或关闭时保存均生效）。
      */
-    private void openWithLocalApp(FileItem item) {
+    @Override
+    protected void openFileLocally(FileItem item) {
         String remotePath = item.getPath();
         File cachedFile = editCache.get(remotePath);
 
         if (cachedFile != null && cachedFile.exists()) {
-            // 已缓存，直接重新打开
             File localFile = cachedFile;
             new Thread(() -> {
                 openLocalFile(localFile);
-                Platform.runLater(() -> statusLabel.setText("已用本地应用打开: " + item.getName()));
+                Platform.runLater(() -> setStatus("已用本地应用打开: " + item.getName()));
             }, "SFTP-Open").start();
             return;
         }
 
-        statusLabel.setText("下载中: " + item.getName());
+        setStatus("下载中: " + item.getName());
         new Thread(() -> {
             try {
                 File editRoot = new File(System.getProperty("java.io.tmpdir"), "tomato-edit");
@@ -553,11 +478,11 @@ public class SFTPFileBrowser extends BorderPane {
                 editLastModified.put(remotePath, initialModified);
 
                 openLocalFile(localFile);
-                Platform.runLater(() -> statusLabel.setText("已用本地应用打开: " + item.getName()));
+                Platform.runLater(() -> setStatus("已用本地应用打开: " + item.getName()));
 
                 startEditMonitor(item, localFile);
             } catch (Exception e) {
-                Platform.runLater(() -> statusLabel.setText("打开失败: " + e.getMessage()));
+                Platform.runLater(() -> setStatus("打开失败: " + e.getMessage()));
             }
         }, "SFTP-Edit").start();
     }
@@ -580,7 +505,7 @@ public class SFTPFileBrowser extends BorderPane {
                 }
             }
         } catch (Exception e) {
-            Platform.runLater(() -> statusLabel.setText("无法打开本地应用: " + e.getMessage()));
+            Platform.runLater(() -> setStatus("无法打开本地应用: " + e.getMessage()));
         }
     }
 
@@ -629,164 +554,57 @@ public class SFTPFileBrowser extends BorderPane {
     private void uploadEditToRemote(FileItem item, File localFile) {
         try {
             if (!sftpClient.isConnected()) {
-                Platform.runLater(() -> statusLabel.setText("SFTP未连接，无法保存远程: " + item.getName()));
+                Platform.runLater(() -> setStatus("SFTP未连接，无法保存远程: " + item.getName()));
                 return;
             }
             sftpClient.upload(localFile.getAbsolutePath(), item.getPath());
-            Platform.runLater(() -> statusLabel.setText("已保存到远程: " + item.getName()));
+            Platform.runLater(() -> setStatus("已保存到远程: " + item.getName()));
         } catch (Exception e) {
-            Platform.runLater(() -> statusLabel.setText("保存远程失败: " + e.getMessage()));
+            Platform.runLater(() -> setStatus("保存远程失败: " + e.getMessage()));
         }
     }
 
-    /**
-     * 上传本地文件
-     */
-    private void uploadFiles() {
-        FileChooser chooser = new FileChooser();
-        chooser.setTitle("选择要上传的文件");
-        List<File> files = chooser.showOpenMultipleDialog(getStage());
-        if (files == null || files.isEmpty()) return;
-        uploadLocalFiles(files);
-    }
+    // ==================== 连接管理（公共 API） ====================
 
-    private void uploadLocalFiles(List<File> files) {
-        statusLabel.setText("上传中...");
+    /**
+     * 初始化连接并导航到 home 目录
+     */
+    public void initConnection() {
         new Thread(() -> {
             try {
-                for (File file : files) {
-                    String remotePath = currentPath.endsWith("/") ? currentPath + file.getName() : currentPath + "/" + file.getName();
-                    sftpClient.upload(file.getAbsolutePath(), remotePath);
+                if (!sftpClient.isConnected()) {
+                    sftpClient.connect(sshSession.getJschSession());
                 }
-                Platform.runLater(() -> {
-                    statusLabel.setText("上传完成");
-                    refresh();
-                });
+                String home = sftpClient.pwd();
+                Platform.runLater(() -> navigateTo(home));
             } catch (Exception e) {
-                Platform.runLater(() -> {
-                    statusLabel.setText("上传失败: " + e.getMessage());
-                    refresh();
-                });
+                Platform.runLater(() -> setStatus("SFTP连接失败: " + e.getMessage()));
             }
-        }, "SFTP-Upload").start();
+        }, "SFTP-Init").start();
     }
 
-    private void deleteEntry(FileItem item) {
-        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-        alert.setTitle("删除确认");
-        alert.setHeaderText("确定要删除 \"" + item.getName() + "\" 吗？");
-        DialogPositionUtil.centerOnOwner(alert, this);
-        alert.showAndWait().ifPresent(btn -> {
-            if (btn == ButtonType.OK) {
-                new Thread(() -> {
-                    try {
-                        if (item.isDirectory()) {
-                            sftpClient.rmdir(item.getPath());
-                        } else {
-                            sftpClient.rm(item.getPath());
-                        }
-                        Platform.runLater(this::refresh);
-                    } catch (Exception e) {
-                        Platform.runLater(() -> statusLabel.setText("删除失败: " + e.getMessage()));
-                    }
-                }, "SFTP-Delete").start();
-            }
-        });
+    /**
+     * 断开 SFTP 与 SSH 连接（标签关闭时调用）
+     */
+    public void disconnect() {
+        try {
+            if (sftpClient != null) sftpClient.disconnect();
+        } catch (Exception ignored) {}
+        try {
+            if (sshSession != null) sshSession.disconnect();
+        } catch (Exception ignored) {}
     }
 
-    private void mkdir() {
-        TextInputDialog dialog = new TextInputDialog();
-        dialog.setTitle("新建目录");
-        dialog.setHeaderText("输入目录名称:");
-        DialogPositionUtil.centerOnOwner(dialog, this);
-        dialog.showAndWait().ifPresent(name -> {
-            if (!name.trim().isEmpty()) {
-                new Thread(() -> {
-                    try {
-                        String path = currentPath.endsWith("/") ? currentPath + name.trim() : currentPath + "/" + name.trim();
-                        sftpClient.mkdir(path);
-                        Platform.runLater(this::refresh);
-                    } catch (Exception e) {
-                        Platform.runLater(() -> statusLabel.setText("创建目录失败: " + e.getMessage()));
-                    }
-                }, "SFTP-Mkdir").start();
-            }
-        });
-    }
-
-    private Stage getStage() {
-        return (Stage) getScene().getWindow();
+    /**
+     * 跟随终端目录变化
+     */
+    public void onTerminalCwdChanged(String newPath) {
+        if (followTerminal.get()) {
+            navigateTo(newPath);
+        }
     }
 
     public BooleanProperty followTerminalProperty() {
         return followTerminal;
     }
-
-    public String getCurrentPath() {
-        return currentPath;
-    }
-
-    /**
-     * 文件列表数据模型
-     */
-    public static class FileItem {
-        private final String name;
-        private final String path;
-        private final boolean directory;
-        private final long size;
-        private final long modifyTime;
-
-        public FileItem(String name, String path, boolean directory, long size, long modifyTime) {
-            this.name = name;
-            this.path = path;
-            this.directory = directory;
-            this.size = size;
-            this.modifyTime = modifyTime;
-        }
-
-        public String getName() { return name; }
-        public String getPath() { return path; }
-        public boolean isDirectory() { return directory; }
-        public long getSize() { return size; }
-        public long getModifyTime() { return modifyTime; }
-
-        public String getDisplayName() {
-            return directory ? name + "/" : name;
-        }
-
-        public String getDisplaySize() {
-            if (directory) return "<DIR>";
-            if (size < 1024) return size + " B";
-            if (size < 1024 * 1024) return String.format("%.1f KB", size / 1024.0);
-            if (size < 1024 * 1024 * 1024) return String.format("%.1f MB", size / (1024.0 * 1024));
-            return String.format("%.1f GB", size / (1024.0 * 1024 * 1024));
-        }
-    }
-
-    /**
-     * 带图标的表格单元格
-     */
-    private class FileItemCell extends TableCell<FileItem, String> {
-        @Override
-        protected void updateItem(String item, boolean empty) {
-            super.updateItem(item, empty);
-            if (empty || item == null) {
-                setText(null);
-                setGraphic(null);
-            } else {
-                setText(item);
-                FileItem fileItem = getTableView().getItems().get(getIndex());
-                ImageView icon = new ImageView();
-                icon.setFitWidth(14);
-                icon.setFitHeight(14);
-                if (fileItem.isDirectory()) {
-                    if (folderIcon != null) icon.setImage(folderIcon);
-                } else {
-                    icon.setImage(getFileIcon(fileItem.getName()));
-                }
-                setGraphic(icon);
-            }
-        }
-    }
 }
-

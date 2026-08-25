@@ -55,6 +55,8 @@ public class TableStructureView extends BorderPane {
     private java.util.function.Consumer<String> onTableCreated;
     /** 字段脏状态回调，参数为 dirty 状态（true=有未保存变更，false=已保存） */
     private java.util.function.Consumer<Boolean> onDirtyChange;
+    /** 表结构保存成功回调（由 AbstractDbHandler 设置，用于刷新已打开的同表数据视图） */
+    private java.util.function.Consumer<String> onTableStructureChanged;
 
     private TableView<ObservableList<String>> tableView;
     private ProgressIndicator loadingIndicator;
@@ -179,6 +181,11 @@ public class TableStructureView extends BorderPane {
     /** 设置字段脏状态回调（由 AbstractDbHandler 设置，用于在Tab标题前加/去 *） */
     public void setOnDirtyChange(java.util.function.Consumer<Boolean> callback) {
         this.onDirtyChange = callback;
+    }
+
+    /** 设置表结构保存成功回调（由 AbstractDbHandler 设置，用于刷新已打开的同表数据视图的主键与数据） */
+    public void setOnTableStructureChanged(java.util.function.Consumer<String> callback) {
+        this.onTableStructureChanged = callback;
     }
 
     /** 标记字段已修改：设置dirty=true并通知回调，若SQL预览已加载则刷新预览 */
@@ -1948,6 +1955,10 @@ public class TableStructureView extends BorderPane {
                         clearDirty();
                         if (sqlPreviewLoaded) loadSqlPreview();
                         statusLabel.setText("变更已保存");
+                        // 通知已打开的同表数据视图刷新（结构变更后主键/列/数据需重新加载）
+                        if (onTableStructureChanged != null) {
+                            onTableStructureChanged.accept(tableName);
+                        }
                     });
                 } catch (Exception e) {
                     // 事务已回滚，DB状态与保存前完全一致，无需刷新表结构。

@@ -29,7 +29,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 图片背景透明化工具面板
+ * 图标制作工具面板
  * 通过亮度阈值将白/灰背景像素转为透明，并保留彩色主体；
  * 边缘过渡区按亮度线性映射 alpha 以消除锯齿。
  *
@@ -52,6 +52,11 @@ public class ImageBackgroundRemoverPane extends VBox {
 
     // 自动裁切选项
     private CheckBox autoCropCheckBox;
+
+    // 边沿平滑选项
+    private CheckBox smoothEdgeCheckBox;
+    private Slider featherSlider;
+    private Label featherValueLabel;
 
     // 预览相关
     private VBox previewSection;
@@ -103,11 +108,11 @@ public class ImageBackgroundRemoverPane extends VBox {
         titleIcon.setFill(Color.web("#1976D2"));
         titleIcon.setScaleX(0.75);
         titleIcon.setScaleY(0.75);
-        Label titleLabel = new Label("图片背景透明化");
+        Label titleLabel = new Label("图标制作工具");
         titleLabel.setStyle("-fx-font-size: 16px; -fx-font-weight: bold; -fx-text-fill: #333;");
         Region titleSpacer = new Region();
         HBox.setHgrow(titleSpacer, Priority.ALWAYS);
-        Label subtitleLabel = new Label("JPG/PNG → 透明PNG（支持预览与裁切）");
+        Label subtitleLabel = new Label("JPG/PNG → 透明PNG图标（支持预览与裁切）");
         subtitleLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #999;");
         titleBar.getChildren().addAll(titleIcon, titleLabel, titleSpacer, subtitleLabel);
 
@@ -155,7 +160,7 @@ public class ImageBackgroundRemoverPane extends VBox {
         thresholdRow.getChildren().addAll(thresholdSlider, thresholdValueLabel);
         thresholdBox.getChildren().add(thresholdRow);
 
-        // 输出选项（自动裁切）
+        // 输出选项（自动裁切 + 边沿平滑）
         VBox optionBox = createSection("输出选项");
         HBox optionRow = new HBox(10);
         optionRow.setAlignment(Pos.CENTER_LEFT);
@@ -168,6 +173,41 @@ public class ImageBackgroundRemoverPane extends VBox {
         autoCropCheckBox.setOnAction(e -> schedulePreviewUpdate());
         optionRow.getChildren().add(autoCropCheckBox);
         optionBox.getChildren().add(optionRow);
+
+        // 边沿平滑行：复选框 + 羽化半径滑块
+        HBox smoothRow = new HBox(10);
+        smoothRow.setAlignment(Pos.CENTER_LEFT);
+        smoothRow.setMaxWidth(Double.MAX_VALUE);
+        smoothRow.setPadding(new Insets(10, 15, 10, 15));
+        smoothRow.setStyle("-fx-background-color: #f8f9fa; -fx-border-color: #e0e0e0; -fx-border-radius: 4; -fx-background-radius: 4;");
+        smoothEdgeCheckBox = new CheckBox("边沿平滑");
+        smoothEdgeCheckBox.setStyle("-fx-font-size: 13px; -fx-text-fill: #555;");
+        smoothEdgeCheckBox.setSelected(true);
+        smoothEdgeCheckBox.setOnAction(e -> {
+            featherSlider.setDisable(!smoothEdgeCheckBox.isSelected());
+            featherValueLabel.setDisable(!smoothEdgeCheckBox.isSelected());
+            schedulePreviewUpdate();
+        });
+        Label featherLabel = new Label("羽化半径:");
+        featherLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: #555;");
+        featherSlider = new Slider(1, 5, 2);
+        featherSlider.setShowTickLabels(true);
+        featherSlider.setShowTickMarks(true);
+        featherSlider.setMajorTickUnit(1);
+        featherSlider.setMinorTickCount(0);
+        featherSlider.setSnapToTicks(true);
+        featherSlider.setBlockIncrement(1);
+        HBox.setHgrow(featherSlider, Priority.ALWAYS);
+        featherValueLabel = new Label("2");
+        featherValueLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: #333; -fx-font-weight: bold;");
+        featherValueLabel.setPrefWidth(30);
+        featherValueLabel.setAlignment(Pos.CENTER_RIGHT);
+        featherSlider.valueProperty().addListener((obs, o, n) -> {
+            featherValueLabel.setText(String.valueOf((int) n.doubleValue()));
+            schedulePreviewUpdate();
+        });
+        smoothRow.getChildren().addAll(smoothEdgeCheckBox, featherLabel, featherSlider, featherValueLabel);
+        optionBox.getChildren().add(smoothRow);
 
         // 源文件/目录
         VBox sourceBox = createSourceSection();
@@ -467,6 +507,8 @@ public class ImageBackgroundRemoverPane extends VBox {
             return;
         }
         final int threshold = (int) thresholdSlider.getValue();
+        final boolean smooth = smoothEdgeCheckBox.isSelected();
+        final int featherRadius = (int) featherSlider.getValue();
 
         originalInfoLabel.setText("原图：加载中...");
         resultInfoLabel.setText("透明后：加载中...");
@@ -488,8 +530,8 @@ public class ImageBackgroundRemoverPane extends VBox {
                 }
                 final int srcW = src.getWidth();
                 final int srcH = src.getHeight();
-                // 预览始终基于完整透明化后的图（不应用 autoCrop）
-                BufferedImage result = processImage(src, threshold, false);
+                // 预览始终基于完整透明化后的图（不应用 autoCrop），但应用边沿平滑以便所见即所得
+                BufferedImage result = processImage(src, threshold, false, smooth, featherRadius);
 
                 final BufferedImage srcFinal = src;
                 final BufferedImage resultFinal = result;
@@ -775,6 +817,8 @@ public class ImageBackgroundRemoverPane extends VBox {
 
         final int threshold = (int) thresholdSlider.getValue();
         final boolean autoCrop = autoCropCheckBox.isSelected();
+        final boolean smooth = smoothEdgeCheckBox.isSelected();
+        final int featherRadius = (int) featherSlider.getValue();
         // 单文件模式：保存预览当前显示的图（所见即所得）
         // 用 final 引用直接保存，避免复制过程中丢失像素数据
         final BufferedImage imgToSave = (!isDirMode) ? currentTransparentImage : null;
@@ -803,8 +847,8 @@ public class ImageBackgroundRemoverPane extends VBox {
                         // 单文件模式：直接保存预览图（所见即所得）
                         savePng(imgToSave, outFile);
                     } else {
-                        // 目录模式：重新处理 + autoCrop
-                        removeBackground(srcFile, outFile, threshold, autoCrop);
+                        // 目录模式：重新处理 + autoCrop + 边沿平滑
+                        removeBackground(srcFile, outFile, threshold, autoCrop, smooth, featherRadius);
                     }
                     successCount++;
                 } catch (Exception e) {
@@ -841,8 +885,11 @@ public class ImageBackgroundRemoverPane extends VBox {
     /**
      * 亮度阈值法去背景。
      * 透明像素的 RGB 设为白色（0xFFFFFF），避免某些渲染器把透明区域显示为黑色。
+     *
+     * @param smooth  是否对边缘做羽化+颜色去污，使抠出的图标边缘更自然
+     * @param featherRadius 羽化半径（像素），仅在 smooth=true 时生效
      */
-    private BufferedImage processImage(BufferedImage src, int threshold, boolean crop) {
+    private BufferedImage processImage(BufferedImage src, int threshold, boolean crop, boolean smooth, int featherRadius) {
         int w = src.getWidth();
         int h = src.getHeight();
 
@@ -878,6 +925,11 @@ public class ImageBackgroundRemoverPane extends VBox {
             }
         }
 
+        // 边沿平滑：alpha 羽化 + 颜色去污（消除半透明像素残留的背景色）
+        if (smooth) {
+            dst = smoothEdges(dst, Math.max(1, featherRadius));
+        }
+
         if (crop) {
             BufferedImage cropped = cropTransparentBorder(dst);
             if (cropped != null) {
@@ -888,14 +940,127 @@ public class ImageBackgroundRemoverPane extends VBox {
     }
 
     /**
+     * 边沿平滑：对 alpha 通道做盒式模糊（羽化），并对半透明像素做颜色去污。
+     *  - 颜色去污：半透明像素的 RGB 往往混合了背景色，用其邻域内不透明像素的 RGB 均值替换，
+     *    消除边缘残留的背景色，使图标主体在任意背景下都不发白/发灰。
+     *  - 羽化：对 alpha 通道做可分离盒式模糊（水平+垂直），半径 r，使边缘由硬变软，过渡更柔和。
+     * 算法在阈值处理之后执行；r 越大边缘越柔和，但过大可能侵蚀细节。
+     */
+    private BufferedImage smoothEdges(BufferedImage img, int radius) {
+        int w = img.getWidth();
+        int h = img.getHeight();
+        int[] argb = new int[w * h];
+        img.getRGB(0, 0, w, h, argb, 0, w);
+
+        int[] alpha = new int[w * h];
+        int[] r = new int[w * h];
+        int[] g = new int[w * h];
+        int[] b = new int[w * h];
+        for (int i = 0; i < w * h; i++) {
+            int p = argb[i];
+            alpha[i] = (p >>> 24) & 0xFF;
+            r[i] = (p >> 16) & 0xFF;
+            g[i] = (p >> 8) & 0xFF;
+            b[i] = p & 0xFF;
+        }
+
+        int[] newR = decontaminateColor(r, alpha, w, h);
+        int[] newG = decontaminateColor(g, alpha, w, h);
+        int[] newB = decontaminateColor(b, alpha, w, h);
+        int[] newAlpha = boxBlurAlpha(alpha, w, h, radius);
+
+        int[] outArgb = new int[w * h];
+        for (int i = 0; i < w * h; i++) {
+            outArgb[i] = (newAlpha[i] << 24) | (newR[i] << 16) | (newG[i] << 8) | newB[i];
+        }
+        BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        out.setRGB(0, 0, w, h, outArgb, 0, w);
+        return out;
+    }
+
+    /**
+     * 颜色去污：对每个 alpha < 250 的像素，在其 (2*radius+1) 邻域内取不透明像素
+     * (alpha>=250) 的 RGB 均值替换原 RGB；若邻域内无不透明像素，保持原值。
+     * 半径 2，足以覆盖常见边缘过渡区。
+     */
+    private int[] decontaminateColor(int[] channel, int[] alpha, int w, int h) {
+        int[] result = new int[w * h];
+        int radius = 2;
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int idx = y * w + x;
+                if (alpha[idx] >= 250) {
+                    result[idx] = channel[idx];
+                    continue;
+                }
+                int x0 = Math.max(0, x - radius);
+                int x1 = Math.min(w - 1, x + radius);
+                int y0 = Math.max(0, y - radius);
+                int y1 = Math.min(h - 1, y + radius);
+                int sum = 0, count = 0;
+                for (int yy = y0; yy <= y1; yy++) {
+                    for (int xx = x0; xx <= x1; xx++) {
+                        int nIdx = yy * w + xx;
+                        if (alpha[nIdx] >= 250) {
+                            sum += channel[nIdx];
+                            count++;
+                        }
+                    }
+                }
+                result[idx] = count > 0 ? (sum / count) : channel[idx];
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 对 alpha 通道做可分离盒式模糊（先水平后垂直），近似高斯模糊，速度快。
+     * 半径 r，窗口宽度 2r+1，边缘按 clamp 处理。
+     */
+    private int[] boxBlurAlpha(int[] alpha, int w, int h, int radius) {
+        if (radius <= 0) return alpha.clone();
+        int[] tmp = new int[w * h];
+        int[] out = new int[w * h];
+        // 水平模糊
+        for (int y = 0; y < h; y++) {
+            int rowBase = y * w;
+            for (int x = 0; x < w; x++) {
+                int x0 = Math.max(0, x - radius);
+                int x1 = Math.min(w - 1, x + radius);
+                int sum = 0, count = 0;
+                for (int xx = x0; xx <= x1; xx++) {
+                    sum += alpha[rowBase + xx];
+                    count++;
+                }
+                tmp[rowBase + x] = sum / count;
+            }
+        }
+        // 垂直模糊
+        for (int y = 0; y < h; y++) {
+            int y0 = Math.max(0, y - radius);
+            int y1 = Math.min(h - 1, y + radius);
+            for (int x = 0; x < w; x++) {
+                int sum = 0, count = 0;
+                for (int yy = y0; yy <= y1; yy++) {
+                    sum += tmp[yy * w + x];
+                    count++;
+                }
+                out[y * w + x] = sum / count;
+            }
+        }
+        return out;
+    }
+
+    /**
      * 目录模式：重新处理源文件并保存。
      */
-    private void removeBackground(File srcFile, File outFile, int threshold, boolean autoCrop) throws Exception {
+    private void removeBackground(File srcFile, File outFile, int threshold, boolean autoCrop,
+                                   boolean smooth, int featherRadius) throws Exception {
         BufferedImage src = ImageIO.read(srcFile);
         if (src == null) {
             throw new IOException("无法读取图片: " + srcFile.getName());
         }
-        BufferedImage dst = processImage(src, threshold, autoCrop);
+        BufferedImage dst = processImage(src, threshold, autoCrop, smooth, featherRadius);
         savePng(dst, outFile);
     }
 

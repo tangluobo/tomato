@@ -518,12 +518,15 @@ public class DatabaseService {
             ResultSetMetaData metaData = rs.getMetaData();
             int columnCount = metaData.getColumnCount();
 
-            // 获取列名
+            // 获取列名与列类型（java.sql.Types，用于按类型渲染日期/时间/日期时间选择器）
             List<String> columnNames = new ArrayList<>();
+            List<Integer> columnTypes = new ArrayList<>();
             for (int i = 1; i <= columnCount; i++) {
                 columnNames.add(metaData.getColumnLabel(i));
+                columnTypes.add(metaData.getColumnType(i));
             }
             result.setColumnNames(columnNames);
+            result.setColumnTypes(columnTypes);
 
             // 获取数据行
             ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
@@ -2991,6 +2994,22 @@ public class DatabaseService {
     public static List<String> generateModifyColumnSql(ConnectionConfig config, String databaseName, String schemaName,
                                                        String tableName, List<String> columnTitles,
                                                        ObservableList<String> originalRow, ObservableList<String> currentRow) {
+        return generateModifyColumnSql(config, databaseName, schemaName, tableName, columnTitles,
+                originalRow, currentRow, null);
+    }
+
+    /**
+     * 生成修改列的ALTER SQL（带可选 MySQL 源端 COLUMN_TYPE）。
+     * <p>结构同步场景下，传入 {@code mysqlSrcColType}（从 information_schema.COLUMNS.COLUMN_TYPE 取的
+     * 完整类型字符串，如 {@code "varchar(50)"} / {@code "text"} / {@code "decimal(10,2)"}），
+     * 用于 MySQL MODIFY COLUMN 的列定义，避免 JDBC TYPE_NAME+COLUMN_SIZE 在不同 MySQL 版本/字符集下
+     * 报告不一致导致的误判与列宽收缩（典型症状：Data too long 截断错误）。</p>
+     * @param mysqlSrcColType 源端 COLUMN_TYPE；非 MySQL 或无值时传 null，回退到行数据重构
+     */
+    public static List<String> generateModifyColumnSql(ConnectionConfig config, String databaseName, String schemaName,
+                                                       String tableName, List<String> columnTitles,
+                                                       ObservableList<String> originalRow, ObservableList<String> currentRow,
+                                                       String mysqlSrcColType) {
         String pgSchema = schemaName != null ? schemaName : databaseName;
         String columnName = getValue(currentRow, columnTitles, "字段名");
         List<String> sqlList = new ArrayList<>();
@@ -3020,17 +3039,27 @@ public class DatabaseService {
         switch (config.getType()) {
             case MYSQL -> {
                 // MySQL: 任何列属性变化都用 MODIFY COLUMN（需完整列定义）
+                // 字符集/排序规则在 getTableColumns 中未真实填充（始终为 ""），跳过这两项比较；
+                // 否则会导致同结构列被误判为"字符集变化"，触发不必要的 MODIFY 并可能因
+                // type+typeSize 重构不准而收缩列宽（典型症状：Data too long 截断错误）。
                 if (typeChanged || nullableChanged || defaultChanged || commentChanged
                         || !getValue(currentRow, columnTitles, "无符号").equals(getValue(originalRow, columnTitles, "无符号"))
                         || !getValue(currentRow, columnTitles, "填充零").equals(getValue(originalRow, columnTitles, "填充零"))
-                        || !getValue(currentRow, columnTitles, "自增").equals(getValue(originalRow, columnTitles, "自增"))
-                        || !getValue(currentRow, columnTitles, "字符集").equals(getValue(originalRow, columnTitles, "字符集"))
-                        || !getValue(currentRow, columnTitles, "排序规则").equals(getValue(originalRow, columnTitles, "排序规则"))) {
+                        || !getValue(currentRow, columnTitles, "自增").equals(getValue(originalRow, columnTitles, "自增"))) {
                     StringBuilder sql = new StringBuilder();
                     sql.append("ALTER TABLE `").append(databaseName).append("`.`").append(tableName).append("` ");
-                    sql.append("MODIFY COLUMN `").append(columnName).append("` ").append(type).append(typeSize);
-                    if ("是".equals(getValue(currentRow, columnTitles, "无符号"))) sql.append(" UNSIGNED");
-                    if ("是".equals(getValue(currentRow, columnTitles, "填充零"))) sql.append(" ZEROFILL");
+                    sql.append("MODIFY COLUMN `").append(columnName).append("` ");
+                    // 优先使用源端 information_schema.COLUMNS.COLUMN_TYPE 完整类型字符串
+                    // （如 "varchar(50)" / "text" / "decimal(10,2)" / "int unsigned"），
+                    // 避免 JDBC TYPE_NAME+COLUMN_SIZE 在不同 MySQL 版本/字符集下重构不准
+                    // 而生成的列定义比实际窄，进而触发 Data too long 截断错误。
+                    if (mysqlSrcColType != null && !mysqlSrcColType.isEmpty()) {
+                        sql.append(mysqlSrcColType);
+                    } else {
+                        sql.append(type).append(typeSize);
+                        if ("是".equals(getValue(currentRow, columnTitles, "无符号"))) sql.append(" UNSIGNED");
+                        if ("是".equals(getValue(currentRow, columnTitles, "填充零"))) sql.append(" ZEROFILL");
+                    }
                     String cs = getValue(currentRow, columnTitles, "字符集");
                     if (cs != null && !cs.isEmpty()) sql.append(" CHARACTER SET ").append(cs);
                     String co = getValue(currentRow, columnTitles, "排序规则");
@@ -3138,9 +3167,195 @@ public class DatabaseService {
     }
 
     /**
+     * 生成单表结构同步 SQL（CREATE 或 ALTER diff）。
+     * - dropIfExists=true → DROP TABLE IF EXISTS + CREATE TABLE（基于源表字段）
+     * - dropIfExists=false 且目标表不存在 → CREATE TABLE
+     * - dropIfExists=false 且目标表已存在 → ALTER diff（ADD/DROP/MODIFY，受 include* 筛选）
+     * @param includeAdd    ALTER 场景是否包含 ADD COLUMN（新增字段）
+     * @param includeDrop   ALTER 场景是否包含 DROP COLUMN（删除字段）
+     * @param includeModify ALTER 场景是否包含 MODIFY COLUMN（修改字段类型/属性）
+     * @param dropIfExists  true→DROP+CREATE；false→按目标表是否存在分支
+     * @return SQL 语句列表（按执行顺序）；目标表已存在且无 diff 时返回空列表
+     */
+    public static List<String> generateStructureSyncSql(
+            ConnectionConfig srcConfig, String srcDb, String srcSchema, String srcTable,
+            ConnectionConfig dstConfig, String dstDb, String dstSchema, String dstTable,
+            boolean includeAdd, boolean includeDrop, boolean includeModify,
+            boolean dropIfExists) throws Exception {
+        List<String> sqlList = new ArrayList<>();
+
+        // 取源表字段（LinkedHashMap，key 顺序即标准列标题顺序）
+        List<Map<String, String>> srcCols = getTableColumns(srcConfig, srcDb, srcSchema, srcTable);
+        List<String> columnTitles = srcCols.isEmpty()
+                ? new ArrayList<>()
+                : new ArrayList<>(srcCols.get(0).keySet());
+
+        // 判断目标表是否存在
+        List<String> dstTables = getTables(dstConfig, dstDb, dstSchema);
+        boolean dstExists = dstTables.contains(dstTable);
+
+        if (dropIfExists) {
+            sqlList.add("DROP TABLE IF EXISTS " + buildQualifiedTable(dstConfig, dstDb, dstSchema, dstTable));
+            sqlList.add(generateCreateTableSql(dstConfig, dstDb, dstSchema, dstTable, srcCols, null, ""));
+            return sqlList;
+        }
+
+        if (!dstExists) {
+            sqlList.add(generateCreateTableSql(dstConfig, dstDb, dstSchema, dstTable, srcCols, null, ""));
+            return sqlList;
+        }
+
+        // 目标表已存在 → ALTER diff
+        List<Map<String, String>> dstCols = getTableColumns(dstConfig, dstDb, dstSchema, dstTable);
+        Map<String, Map<String, String>> dstColByName = new LinkedHashMap<>();
+        for (Map<String, String> col : dstCols) {
+            dstColByName.put(col.get("字段名"), col);
+        }
+
+        // ADD：源有目标无（按源字段顺序，AFTER 前一个在目标库存在的源字段，尽量保持源顺序）
+        if (includeAdd) {
+            String afterCol = null;
+            for (int i = 0; i < srcCols.size(); i++) {
+                Map<String, String> srcCol = srcCols.get(i);
+                String colName = srcCol.get("字段名");
+                if (!dstColByName.containsKey(colName)) {
+                    // 用前一个源字段名作为 AFTER（仅当它在目标库已存在），否则 FIRST
+                    if (i > 0) {
+                        String prevName = srcCols.get(i - 1).get("字段名");
+                        afterCol = dstColByName.containsKey(prevName) ? prevName : null;
+                    } else {
+                        afterCol = null;
+                    }
+                    ObservableList<String> row = mapToRow(srcCol, columnTitles);
+                    sqlList.add(generateAddColumnSql(dstConfig, dstDb, dstSchema, dstTable,
+                            columnTitles, row, afterCol));
+                }
+            }
+        }
+
+        // DROP：源无目标有
+        if (includeDrop) {
+            Set<String> srcColNames = new HashSet<>();
+            for (Map<String, String> srcCol : srcCols) {
+                srcColNames.add(srcCol.get("字段名"));
+            }
+            for (Map<String, String> dstCol : dstCols) {
+                String colName = dstCol.get("字段名");
+                if (!srcColNames.contains(colName)) {
+                    sqlList.add(generateDropColumnSql(dstConfig, dstDb, dstSchema, dstTable, colName));
+                }
+            }
+        }
+
+        // MODIFY：同名字段属性变化（originalRow=目标，currentRow=源，把目标改成源的样子）
+        if (includeModify) {
+            boolean isMysqlSrc = srcConfig.getType() == ConnectType.MYSQL;
+            for (Map<String, String> srcCol : srcCols) {
+                String colName = srcCol.get("字段名");
+                Map<String, String> dstCol = dstColByName.get(colName);
+                if (dstCol == null) continue;
+                ObservableList<String> currentRow = mapToRow(srcCol, columnTitles);
+                ObservableList<String> originalRow = mapToRow(dstCol, columnTitles);
+
+                // MySQL 路径：直接用 information_schema.COLUMNS.COLUMN_TYPE 做权威比较与生成，
+                // 避免 JDBC TYPE_NAME+COLUMN_SIZE 在不同 MySQL 版本/字符集下重构失真。
+                String mysqlSrcColType = null;
+                if (isMysqlSrc) {
+                    try {
+                        mysqlSrcColType = getMysqlColumnType(srcConfig, srcDb, srcTable, colName);
+                        String dstColType = getMysqlColumnType(dstConfig, dstDb, dstTable, colName);
+                        // 源/目标 COLUMN_TYPE 完全相等（大小写不敏感）且其他属性也一致 → 跳过
+                        if (mysqlSrcColType != null && mysqlSrcColType.equalsIgnoreCase(dstColType)
+                                && sameNullable(srcCol, dstCol)
+                                && sameDefault(srcCol, dstCol)
+                                && sameComment(srcCol, dstCol)
+                                && sameUnsigned(srcCol, dstCol)
+                                && sameZerofill(srcCol, dstCol)
+                                && sameAutoIncrement(srcCol, dstCol)) {
+                            continue;
+                        }
+                    } catch (Exception ignore) {
+                        // 查询失败（如表/列不存在、连接异常等）→ 回退到行数据比较
+                        mysqlSrcColType = null;
+                    }
+                }
+
+                sqlList.addAll(generateModifyColumnSql(dstConfig, dstDb, dstSchema, dstTable,
+                        columnTitles, originalRow, currentRow, mysqlSrcColType));
+            }
+        }
+
+        return sqlList;
+    }
+
+    /** 比较两个列 Map 的"非空"字段是否一致（null 视为 ""，统一比较） */
+    private static boolean sameNullable(Map<String, String> a, Map<String, String> b) {
+        return normalize(a.get("非空")).equals(normalize(b.get("非空")));
+    }
+
+    /** 比较两个列 Map 的"默认值"字段是否一致（null 视为 ""） */
+    private static boolean sameDefault(Map<String, String> a, Map<String, String> b) {
+        return normalize(a.get("默认值")).equals(normalize(b.get("默认值")));
+    }
+
+    /** 比较两个列 Map 的"注释"字段是否一致（null 视为 ""） */
+    private static boolean sameComment(Map<String, String> a, Map<String, String> b) {
+        return normalize(a.get("注释")).equals(normalize(b.get("注释")));
+    }
+
+    /** 比较两个列 Map 的"无符号"字段是否一致 */
+    private static boolean sameUnsigned(Map<String, String> a, Map<String, String> b) {
+        return normalize(a.get("无符号")).equals(normalize(b.get("无符号")));
+    }
+
+    /** 比较两个列 Map 的"填充零"字段是否一致 */
+    private static boolean sameZerofill(Map<String, String> a, Map<String, String> b) {
+        return normalize(a.get("填充零")).equals(normalize(b.get("填充零")));
+    }
+
+    /** 比较两个列 Map 的"自增"字段是否一致 */
+    private static boolean sameAutoIncrement(Map<String, String> a, Map<String, String> b) {
+        return normalize(a.get("自增")).equals(normalize(b.get("自增")));
+    }
+
+    /** null → ""，便于做 null-safe 等值比较 */
+    private static String normalize(String s) {
+        return s == null ? "" : s;
+    }
+
+    /** 把字段 Map 按列标题顺序转为 ObservableList */
+    private static ObservableList<String> mapToRow(Map<String, String> col, List<String> columnTitles) {
+        ObservableList<String> row = FXCollections.observableArrayList();
+        for (String title : columnTitles) {
+            row.add(col.getOrDefault(title, ""));
+        }
+        return row;
+    }
+
+    /**
+     * 在目标库执行一组 SQL 语句（逐条执行，遇错抛出并停止）。
+     * 用于执行结构同步生成的 ALTER diff SQL 列表。
+     */
+    public static void executeSqlList(ConnectionConfig dstConfig, String dstDb, String dstSchema,
+                                      List<String> sqlList) throws Exception {
+        if (sqlList == null || sqlList.isEmpty()) return;
+        Connection conn = (dstConfig.getType() == ConnectType.POSTGRESQL)
+                ? getConnection(dstConfig, dstDb)
+                : getConnection(dstConfig);
+        try (Statement stmt = conn.createStatement()) {
+            for (String sql : sqlList) {
+                if (sql == null || sql.trim().isEmpty()) continue;
+                stmt.execute(sql);
+            }
+        }
+    }
+
+    /**
      * 构造类型长度部分：(length) 或 (length,decimal)
      * 注意：日期时间类型（timestamp/datetime/date/time/year）的精度为小数秒（DECIMAL_DIGITS，0-6），
      * 不能使用 JDBC 的 COLUMN_SIZE（字符显示宽度，如 TIMESTAMP 返回 19），否则会生成无效的 TIMESTAMP(19) 导致保存失败。
+     * 同时跳过不接受长度的类型（TEXT/BLOB/JSON/GEOMETRY/ENUM/SET 等），
+     * 避免 JDBC 返回的 COLUMN_SIZE（如 TEXT 的 65535）被错误拼成 TEXT(65535) 导致 SQL 语法错误或列宽收缩。
      */
     private static String buildTypeSize(String type, String length, String decimal) {
         if (type != null) {
@@ -3149,6 +3364,17 @@ public class DatabaseService {
                 if (decimal != null && !decimal.isEmpty() && !"0".equals(decimal)) {
                     return "(" + decimal + ")";
                 }
+                return "";
+            }
+            // 以下类型不接受长度参数（即使 JDBC 返回 COLUMN_SIZE 也不应拼到类型定义里）
+            if (t.contains("text") || t.contains("blob")
+                    || t.equals("json") || t.equals("geometry")
+                    || t.equals("point") || t.equals("linestring")
+                    || t.equals("polygon") || t.equals("multipoint")
+                    || t.equals("multilinestring") || t.equals("multipolygon")
+                    || t.equals("geometrycollection")
+                    || t.equals("enum") || t.equals("set")
+                    || t.equals("bool") || t.equals("boolean")) {
                 return "";
             }
         }
