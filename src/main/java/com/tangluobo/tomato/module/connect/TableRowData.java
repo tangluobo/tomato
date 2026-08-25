@@ -9,6 +9,8 @@ import java.util.List;
  */
 public class TableRowData {
     private List<String> columnNames;
+    /** 每列的 java.sql.Types 类型（如 DATE/TIME/TIMESTAMP），用于按类型渲染单元格编辑组件 */
+    private List<Integer> columnTypes;
     private ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
     private long totalCount;
     private int page;
@@ -18,6 +20,9 @@ public class TableRowData {
 
     public List<String> getColumnNames() { return columnNames; }
     public void setColumnNames(List<String> columnNames) { this.columnNames = columnNames; }
+
+    public List<Integer> getColumnTypes() { return columnTypes; }
+    public void setColumnTypes(List<Integer> columnTypes) { this.columnTypes = columnTypes; }
 
     public ObservableList<ObservableList<String>> getRows() { return rows; }
     public void setRows(ObservableList<ObservableList<String>> rows) { this.rows = rows; }

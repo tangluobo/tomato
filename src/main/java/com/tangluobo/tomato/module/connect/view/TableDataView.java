@@ -20,8 +20,10 @@ import javafx.scene.control.skin.TableColumnHeader;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Arc;
 import javafx.scene.shape.ArcType;
@@ -77,6 +79,8 @@ public class TableDataView extends BorderPane {
 
     // 列名缓存（数据列，不含行选择器列）
     private List<String> dataColumnNames = new ArrayList<>();
+    // 列类型缓存（java.sql.Types，与 dataColumnNames 一一对应，不含行选择器列）
+    private List<Integer> dataColumnTypes = new ArrayList<>();
 
     // ---- 行状态追踪（延迟保存） ----
     /** 尚未持久化到数据库的新行 */
@@ -1400,8 +1404,9 @@ public class TableDataView extends BorderPane {
         newRows.clear();
         originalValuesMap.clear();
 
-        // 缓存数据列名
+        // 缓存数据列名与列类型
         dataColumnNames = new ArrayList<>(data.getColumnNames());
+        dataColumnTypes = (data.getColumnTypes() != null) ? new ArrayList<>(data.getColumnTypes()) : new ArrayList<>();
 
         // 创建行选择器列：选中行显示黑色实心三角箭头
         TableColumn<ObservableList<String>, String> selectorCol = new TableColumn<>();
@@ -1505,7 +1510,8 @@ public class TableDataView extends BorderPane {
                 }
                 return new javafx.beans.property.SimpleStringProperty("");
             });
-            col.setCellFactory(tc -> new EditableTableCell());
+            final int colSqlType = (colIndex < dataColumnTypes.size()) ? dataColumnTypes.get(colIndex) : java.sql.Types.OTHER;
+            col.setCellFactory(tc -> new EditableTableCell(colSqlType));
             col.setOnEditCommit(event -> {
                 ObservableList<String> row = event.getRowValue();
                 String oldValue = row.get(colIndex);
@@ -1740,6 +1746,8 @@ public class TableDataView extends BorderPane {
         private TextField textField;
         /** 标记用户是否按下了Escape键（真正取消编辑） */
         private boolean escapePressed = false;
+        /** 当前列的 java.sql.Types 类型，用于按类型渲染日期/时间/日期时间选择器 */
+        private final int sqlType;
         /**
          * 非编辑模式下用于显示文本的 Text 节点。
          * Labeled 的 setText 用 LOGICAL bounds（ascent+descent）居中，ascent > descent 导致视觉偏上；
@@ -1748,7 +1756,12 @@ public class TableDataView extends BorderPane {
         private final javafx.scene.text.Text displayText;
 
         public EditableTableCell() {
+            this(java.sql.Types.OTHER);
+        }
+
+        public EditableTableCell(int sqlType) {
             super();
+            this.sqlType = sqlType;
             getStyleClass().add("data-cell");
             setAlignment(Pos.CENTER_LEFT);
             displayText = new javafx.scene.text.Text();
@@ -1758,6 +1771,15 @@ public class TableDataView extends BorderPane {
             displayText.fillProperty().bind(textFillProperty());
         }
 
+        /** 日期列：仅选日期 */
+        private boolean isDateColumn() { return sqlType == java.sql.Types.DATE; }
+        /** 时间列：仅选时间 */
+        private boolean isTimeColumn() { return sqlType == java.sql.Types.TIME || sqlType == java.sql.Types.TIME_WITH_TIMEZONE; }
+        /** 日期时间列：日期+时间 */
+        private boolean isDateTimeColumn() { return sqlType == java.sql.Types.TIMESTAMP || sqlType == java.sql.Types.TIMESTAMP_WITH_TIMEZONE; }
+        /** 临时类型列（日期/时间/日期时间） */
+        private boolean isTemporalColumn() { return isDateColumn() || isTimeColumn() || isDateTimeColumn(); }
+
         @Override
         public void startEdit() {
             escapePressed = false;
@@ -1766,7 +1788,12 @@ public class TableDataView extends BorderPane {
                 createTextField();
             }
             setText(null);
-            setGraphic(textField);
+            // 日期/时间/日期时间列：文本框 + 右侧选择按钮（点击弹一层选择器）
+            if (isTemporalColumn()) {
+                setGraphic(createTemporalEditor());
+            } else {
+                setGraphic(textField);
+            }
             textField.setText(getItem() != null ? getItem() : "");
             textField.selectAll();
             textField.requestFocus();
@@ -1776,12 +1803,11 @@ public class TableDataView extends BorderPane {
 
         @Override
         public void cancelEdit() {
-            // 非Escape触发的cancel（如点击其他cell导致失焦），保留编辑值到数据模型
+            // 非Escape触发的cancel（如点击其他cell），保留编辑值到数据模型
             if (!escapePressed && textField != null) {
                 String newValue = textField.getText();
                 String currentValue = getItem() != null ? getItem() : "";
                 if (!newValue.equals(currentValue)) {
-                    // 直接更新数据模型，保留编辑值
                     updateCellData(newValue);
                 }
             }
@@ -1892,6 +1918,185 @@ public class TableDataView extends BorderPane {
                     commitEdit(textField.getText());
                 }
             });
+        }
+
+        /** 临时类型列编辑控件：文本框 + 右侧选择按钮（点击弹一层日期/时间选择器） */
+        private HBox createTemporalEditor() {
+            Button pickerBtn = new Button(buttonLabelForTemporal());
+            pickerBtn.setTooltip(new Tooltip("选择" + buttonLabelForTemporal()));
+            pickerBtn.setFocusTraversable(false);
+            pickerBtn.setStyle("-fx-background-color: #f5f5f5; -fx-border-color: transparent transparent transparent #ccc; -fx-border-width: 0 0 0 1; -fx-background-radius: 0; -fx-padding: 0 8; -fx-font-size: 12px; -fx-text-fill: #333; -fx-cursor: hand;");
+            pickerBtn.setOnAction(e -> showTemporalPopup());
+            HBox box = new HBox(textField, pickerBtn);
+            box.setSpacing(0);
+            box.setAlignment(Pos.CENTER_LEFT);
+            HBox.setHgrow(textField, Priority.ALWAYS);
+            return box;
+        }
+
+        private String buttonLabelForTemporal() {
+            if (isDateColumn()) return "日期";
+            if (isTimeColumn()) return "时间";
+            return "日期时间";
+        }
+
+        /** 弹一层日期/时间/日期时间选择器：直接内联日历+时间（无二级弹出），确定后填入文本框 */
+        private void showTemporalPopup() {
+            javafx.stage.Popup popup = new javafx.stage.Popup();
+            VBox content = new VBox(8);
+            content.setStyle("-fx-background-color: #fff; -fx-border-color: #999; -fx-border-width: 1; -fx-padding: 10; -fx-background-radius: 4; -fx-font-size: 12px;");
+            content.setPrefWidth(260);
+
+            // 解析初始值
+            java.time.LocalDate initDate = java.time.LocalDate.now();
+            int initH = 0, initM = 0, initS = 0;
+            String cur = textField.getText();
+            if (cur != null && !cur.trim().isEmpty() && !"NULL".equals(cur)) {
+                try {
+                    if (isDateColumn()) {
+                        initDate = java.time.LocalDate.parse(cur.trim());
+                    } else if (isTimeColumn()) {
+                        String[] p = cur.trim().split(":");
+                        if (p.length >= 1) initH = clamp(parseSafeInt(p[0]), 0, 23);
+                        if (p.length >= 2) initM = clamp(parseSafeInt(p[1]), 0, 59);
+                        if (p.length >= 3) initS = clamp(parseSafeInt(p[2]), 0, 59);
+                    } else if (isDateTimeColumn()) {
+                        java.time.LocalDateTime ldt = parseLenientDateTime(cur.trim());
+                        if (ldt != null) {
+                            initDate = ldt.toLocalDate();
+                            initH = ldt.getHour();
+                            initM = ldt.getMinute();
+                            initS = ldt.getSecond();
+                        }
+                    }
+                } catch (Exception ignore) {}
+            }
+
+            final java.time.LocalDate[] selectedDate = { isTimeColumn() ? null : initDate };
+            Spinner<Integer> hourSp = null, minSp = null, secSp = null;
+            if (isDateColumn() || isDateTimeColumn()) {
+                content.getChildren().add(buildInlineCalendar(initDate, selectedDate));
+            }
+            if (isTimeColumn() || isDateTimeColumn()) {
+                hourSp = new Spinner<>(0, 23, initH);
+                minSp = new Spinner<>(0, 59, initM);
+                secSp = new Spinner<>(0, 59, initS);
+                for (Spinner<Integer> sp : java.util.List.of(hourSp, minSp, secSp)) {
+                    sp.setEditable(true);
+                    sp.setPrefWidth(56);
+                    sp.getEditor().setStyle("-fx-padding: 0 2; -fx-alignment: CENTER;");
+                }
+                HBox timeBox = new HBox(4, new Label("时"), hourSp, new Label("分"), minSp, new Label("秒"), secSp);
+                timeBox.setAlignment(Pos.CENTER_LEFT);
+                content.getChildren().add(timeBox);
+            }
+
+            Button applyBtn = new Button("确定");
+            applyBtn.setStyle("-fx-background-color: #3592CB; -fx-text-fill: white; -fx-cursor: hand;");
+            final Spinner<Integer> fH = hourSp, fM = minSp, fS = secSp;
+            applyBtn.setOnAction(e -> {
+                String result = formatTemporal(selectedDate[0], fH, fM, fS);
+                if (!result.isEmpty()) {
+                    textField.setText(result);
+                    textField.positionCaret(result.length());
+                }
+                popup.hide();
+                textField.requestFocus();
+            });
+            HBox btnBox = new HBox(applyBtn);
+            btnBox.setAlignment(Pos.CENTER_RIGHT);
+            content.getChildren().add(btnBox);
+
+            popup.getContent().add(content);
+            popup.setAutoHide(true);
+            popup.setHideOnEscape(true);
+            Point2D anchor = textField.localToScreen(0, textField.getHeight());
+            if (anchor != null) {
+                popup.show(textField, anchor.getX(), anchor.getY() + 5);
+            } else {
+                popup.show(textField.getScene().getWindow());
+            }
+        }
+
+        /** 内联日历面板（一级弹窗内直接显示，可点日期、切月，不再触发二级弹出） */
+        private VBox buildInlineCalendar(java.time.LocalDate initial, final java.time.LocalDate[] selected) {
+            final java.time.LocalDate[] cursor = { initial.withDayOfMonth(1) };
+            VBox box = new VBox(4);
+            box.setStyle("-fx-background-color: white; -fx-alignment: center;");
+            Label monthLabel = new Label();
+            monthLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #333;");
+            Button prev = new Button("<");
+            Button next = new Button(">");
+            for (Button b : java.util.List.of(prev, next)) {
+                b.setStyle("-fx-background-color: #f0f0f0; -fx-border-color: #ccc; -fx-cursor: hand; -fx-padding: 0 6;");
+            }
+            HBox header = new HBox(8, prev, monthLabel, next);
+            header.setAlignment(Pos.CENTER);
+
+            javafx.scene.layout.GridPane grid = new javafx.scene.layout.GridPane();
+            grid.setHgap(2);
+            grid.setVgap(2);
+            grid.setAlignment(Pos.CENTER);
+
+            final Runnable[] render = new Runnable[1];
+            render[0] = () -> {
+                monthLabel.setText(cursor[0].getYear() + "-" + String.format("%02d", cursor[0].getMonthValue()));
+                grid.getChildren().clear();
+                String[] hs = {"日","一","二","三","四","五","六"};
+                for (int i = 0; i < 7; i++) {
+                    Label l = new Label(hs[i]);
+                    l.setPrefWidth(30);
+                    l.setAlignment(Pos.CENTER);
+                    l.setStyle("-fx-text-fill: #888;");
+                    grid.add(l, i, 0);
+                }
+                int startDay = cursor[0].getDayOfWeek().getValue() % 7;
+                int days = cursor[0].lengthOfMonth();
+                for (int d = 1; d <= days; d++) {
+                    final java.time.LocalDate date = cursor[0].withDayOfMonth(d);
+                    Button b = new Button(String.valueOf(d));
+                    b.setPrefSize(30, 24);
+                    boolean isSel = date.equals(selected[0]);
+                    b.setStyle(isSel
+                            ? "-fx-background-color: #3592CB; -fx-text-fill: white; -fx-border-color: #3592CB; -fx-cursor: hand; -fx-font-size: 11px;"
+                            : "-fx-background-color: white; -fx-text-fill: #333; -fx-border-color: #e0e0e0; -fx-cursor: hand; -fx-font-size: 11px;");
+                    b.setOnAction(ev -> { selected[0] = date; render[0].run(); });
+                    grid.add(b, (startDay + d - 1) % 7, (startDay + d - 1) / 7 + 1);
+                }
+            };
+            prev.setOnAction(e -> { cursor[0] = cursor[0].minusMonths(1); render[0].run(); });
+            next.setOnAction(e -> { cursor[0] = cursor[0].plusMonths(1); render[0].run(); });
+            render[0].run();
+            box.getChildren().addAll(header, grid);
+            return box;
+        }
+
+        /** 按列类型格式化选择器结果 */
+        private String formatTemporal(java.time.LocalDate date, Spinner<Integer> h, Spinner<Integer> m, Spinner<Integer> s) {
+            if (isDateColumn()) {
+                return date != null ? date.toString() : "";
+            }
+            if (isTimeColumn()) {
+                return String.format("%02d:%02d:%02d", h.getValue(), m.getValue(), s.getValue());
+            }
+            // 日期时间
+            String ds = date != null ? date.toString() : "";
+            return ds + " " + String.format("%02d:%02d:%02d", h.getValue(), m.getValue(), s.getValue());
+        }
+
+        private int clamp(int v, int min, int max) {
+            return Math.max(min, Math.min(max, v));
+        }
+
+        private int parseSafeInt(String s) {
+            try { return (int) Double.parseDouble(s.trim()); } catch (Exception e) { return 0; }
+        }
+
+        private java.time.LocalDateTime parseLenientDateTime(String s) {
+            try { return java.time.LocalDateTime.parse(s, java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")); } catch (Exception e) {}
+            try { return java.time.LocalDateTime.parse(s, java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.S")); } catch (Exception e) {}
+            try { return java.time.LocalDateTime.parse(s.replace(' ', 'T')); } catch (Exception e) {}
+            return null;
         }
     }
 }

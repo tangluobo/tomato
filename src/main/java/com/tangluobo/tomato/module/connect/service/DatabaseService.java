@@ -518,12 +518,15 @@ public class DatabaseService {
             ResultSetMetaData metaData = rs.getMetaData();
             int columnCount = metaData.getColumnCount();
 
-            // 获取列名
+            // 获取列名与列类型（java.sql.Types，用于按类型渲染日期/时间/日期时间选择器）
             List<String> columnNames = new ArrayList<>();
+            List<Integer> columnTypes = new ArrayList<>();
             for (int i = 1; i <= columnCount; i++) {
                 columnNames.add(metaData.getColumnLabel(i));
+                columnTypes.add(metaData.getColumnType(i));
             }
             result.setColumnNames(columnNames);
+            result.setColumnTypes(columnTypes);
 
             // 获取数据行
             ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
