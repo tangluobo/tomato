@@ -1984,7 +1984,9 @@ public class TableDataView extends BorderPane {
                 for (Spinner<Integer> sp : java.util.List.of(hourSp, minSp, secSp)) {
                     sp.setEditable(true);
                     sp.setPrefWidth(56);
-                    sp.getEditor().setStyle("-fx-padding: 0 2; -fx-alignment: CENTER;");
+                    sp.setPrefHeight(30);
+                    sp.setMinHeight(30);
+                    sp.getEditor().setStyle("-fx-padding: 0 2; -fx-alignment: CENTER; -fx-font-size: 13px;");
                 }
                 HBox timeBox = new HBox(4, new Label("时"), hourSp, new Label("分"), minSp, new Label("秒"), secSp);
                 timeBox.setAlignment(Pos.CENTER_LEFT);
