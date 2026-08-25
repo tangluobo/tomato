@@ -4,7 +4,9 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import javax.swing.JLabel;
+import javax.swing.JComponent;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
 
 import javafx.application.Platform;
@@ -29,6 +31,8 @@ public class RdpPane extends BorderPane {
 
     private RdpClient rdpClient;
     private SwingNode swingNode;
+    private volatile JScrollPane desktopScrollPane;
+    private volatile JComponent desktopDisplay;
 
     // 状态栏组件
     private Circle statusDot;
@@ -55,6 +59,10 @@ public class RdpPane extends BorderPane {
         // 中心：SwingNode嵌入RDP渲染
         swingNode = new SwingNode();
         setCenter(swingNode);
+        // SwingNode does not reliably propagate JavaFX layout changes to a nested
+        // JScrollPane. Keep the Swing viewport in sync so resize exposes/repaints
+        // the newly visible desktop area immediately.
+        swingNode.layoutBoundsProperty().addListener((obs, oldValue, newValue) -> resizeDesktopViewport());
 
         // 底部：状态栏
         HBox statusBar = createStatusBar();
@@ -135,7 +143,7 @@ public class RdpPane extends BorderPane {
 
         // 设置连接就绪回调 - 连接成功后才设置画布到SwingNode
         rdpClient.setOnConnected(v -> {
-            final javax.swing.JComponent displayComponent = rdpClient.getDisplayComponent();
+            final JComponent displayComponent = rdpClient.getDisplayComponent();
             if (displayComponent == null) {
                 logger.warning("RDP显示组件为null，无法显示");
                 Platform.runLater(() -> updateStatus(ConnectionState.ERROR));
@@ -147,13 +155,16 @@ public class RdpPane extends BorderPane {
             // 在EDT上用JScrollPane包装显示组件（WrappedImage实现了Scrollable）
             SwingUtilities.invokeLater(() -> {
                 displayComponent.setSize(displayComponent.getPreferredSize());
-                javax.swing.JScrollPane scrollPane = new javax.swing.JScrollPane(displayComponent);
+                JScrollPane scrollPane = new JScrollPane(displayComponent);
                 scrollPane.setBackground(java.awt.Color.BLACK);
                 scrollPane.getViewport().setBackground(java.awt.Color.BLACK);
                 scrollPane.setDoubleBuffered(true);
+                desktopDisplay = displayComponent;
+                desktopScrollPane = scrollPane;
                 // 在JavaFX Application Thread上设置SwingNode内容
                 Platform.runLater(() -> {
                     swingNode.setContent(scrollPane);
+                    resizeDesktopViewport();
                     SwingUtilities.invokeLater(() -> {
                         displayComponent.revalidate();
                         displayComponent.repaint();
@@ -198,6 +209,8 @@ public class RdpPane extends BorderPane {
             rdpClient.disconnect();
         }
         SwingUtilities.invokeLater(() -> swingNode.setContent(null));
+        desktopScrollPane = null;
+        desktopDisplay = null;
         updateStatus(ConnectionState.DISCONNECTED);
     }
 
@@ -215,6 +228,31 @@ public class RdpPane extends BorderPane {
         if (swingNode != null) {
             swingNode.requestFocus();
         }
+    }
+
+    private void resizeDesktopViewport() {
+        if (swingNode == null) {
+            return;
+        }
+        final int width = Math.max(1, (int) Math.ceil(swingNode.getLayoutBounds().getWidth()));
+        final int height = Math.max(1, (int) Math.ceil(swingNode.getLayoutBounds().getHeight()));
+        final JScrollPane scrollPane = desktopScrollPane;
+        final JComponent display = desktopDisplay;
+        if (scrollPane == null || display == null) {
+            return;
+        }
+        SwingUtilities.invokeLater(() -> {
+            java.awt.Dimension viewportSize = new java.awt.Dimension(width, height);
+            scrollPane.setPreferredSize(viewportSize);
+            scrollPane.setSize(viewportSize);
+            scrollPane.doLayout();
+            scrollPane.revalidate();
+            display.revalidate();
+            display.repaint();
+            scrollPane.getViewport().revalidate();
+            scrollPane.getViewport().repaint();
+            scrollPane.repaint();
+        });
     }
 
     private void updateStatus(ConnectionState state) {
