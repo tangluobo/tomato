@@ -914,7 +914,9 @@ public class FixedClipChannel extends ClipChannel {
             int n = dataLen - 4;
             if (n > 0) {
                 byte[] buf = new byte[n];
-                packet.copyToByteArray(buf, lastPacketStart + 12, 0, n);
+                // copyToByteArray(dst, dstOffset, srcOffset, length)：
+                // 源偏移=消息头(8)+streamId(4)后的数据起始（相对packet底层缓冲）
+                packet.copyToByteArray(buf, 0, lastPacketStart + 12, n);
                 downloadOut.write(buf);
                 downloadOff += n;
             }

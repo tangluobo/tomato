@@ -249,8 +249,8 @@ public class RdpClient {
             logger.log(Level.WARNING, "加载键盘映射失败: " + e.getMessage());
         }
 
-        // 创建虚拟通道
-        VChannels channels = new VChannels(state);
+        // 创建虚拟通道（FixedVChannels修复库分片重组NPE：大消息分片即断连）
+        VChannels channels = new FixedVChannels(state);
 
         // 创建嵌入式Context
         EmbeddedContext context = new EmbeddedContext();
@@ -443,8 +443,8 @@ public class RdpClient {
             canvas = new RdesktopCanvas(context, state);
             state.setCanvas(canvas);
 
-            // 重新创建RDP层
-            VChannels channels = new VChannels(state);
+            // 重新创建RDP层（FixedVChannels修复库分片重组NPE）
+            VChannels channels = new FixedVChannels(state);
             // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
             registerClipboardChannel(state, canvas, channels);
             rdpLayer = new RdpPatch(context, state, channels);
@@ -499,8 +499,8 @@ public class RdpClient {
             canvas = new RdesktopCanvas(context, state);
             state.setCanvas(canvas);
 
-            // 重新创建RDP层
-            VChannels channels = new VChannels(state);
+            // 重新创建RDP层（FixedVChannels修复库分片重组NPE）
+            VChannels channels = new FixedVChannels(state);
             // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
             registerClipboardChannel(state, canvas, channels);
             rdpLayer = new RdpPatch(context, state, channels);
@@ -572,8 +572,8 @@ public class RdpClient {
             canvas = new RdesktopCanvas(context, state);
             state.setCanvas(canvas);
 
-            // 重新创建RDP层
-            VChannels channels = new VChannels(state);
+            // 重新创建RDP层（FixedVChannels修复库分片重组NPE）
+            VChannels channels = new FixedVChannels(state);
             // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
             registerClipboardChannel(state, canvas, channels);
             rdpLayer = new RdpPatch(context, state, channels);
