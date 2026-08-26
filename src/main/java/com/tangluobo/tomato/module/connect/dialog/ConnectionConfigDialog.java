@@ -112,6 +112,7 @@ public class ConnectionConfigDialog {
     private ComboBox<String> rdpColorDepthCombo;
     private CheckBox rdpUseSslCheck;
     private CheckBox rdpMapClipboardCheck;
+    private CheckBox rdpEnableSoundCheck;
 
     // ===== 本地终端专属字段 =====
     private VBox localTerminalConfigContent;
@@ -1174,6 +1175,12 @@ public class ConnectionConfigDialog {
         rdpMapClipboardCheck.setSelected(true);
         rdpMapClipboardCheck.setTooltip(new Tooltip("启用后本地与远程桌面之间可以互相复制粘贴文本"));
         grid.add(rdpMapClipboardCheck, 1, row++);
+
+        // RDP专属字段：远程音频重定向
+        rdpEnableSoundCheck = new CheckBox("远程音频");
+        rdpEnableSoundCheck.setSelected(true);
+        rdpEnableSoundCheck.setTooltip(new Tooltip("启用后在本地播放远程桌面的声音（rdpsnd音频重定向）"));
+        grid.add(rdpEnableSoundCheck, 1, row++);
 
         grid.add(new Label("备注："), 0, row);
         simpleDescriptionField = new TextField();
@@ -2385,6 +2392,7 @@ public class ConnectionConfigDialog {
                 }
                 rdpUseSslCheck.setSelected(existingConfig.isUseSsl());
                 rdpMapClipboardCheck.setSelected(existingConfig.isMapClipboard());
+                rdpEnableSoundCheck.setSelected(existingConfig.isEnableSound());
             }
         }
     }
@@ -2622,6 +2630,8 @@ public class ConnectionConfigDialog {
                 config.setUseSsl(rdpUseSslCheck.isSelected());
                 // 剪贴板同步
                 config.setMapClipboard(rdpMapClipboardCheck.isSelected());
+                // 远程音频重定向
+                config.setEnableSound(rdpEnableSoundCheck.isSelected());
             }
         }
 

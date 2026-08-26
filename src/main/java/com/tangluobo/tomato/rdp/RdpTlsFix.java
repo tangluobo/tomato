@@ -130,7 +130,10 @@ public class RdpTlsFix {
             int count = sendPktCount.incrementAndGet();
             int savePos = buffer.getPosition();
             int avail = buffer.getEnd() - savePos;
-            int dumpLen = Math.min(avail, 8);
+            // 前10个包为协商阶段（X.224/MCS Connect Initial含Client Network Data），
+            // 完整dump用于诊断虚拟通道通告；其后仅打前8字节
+            // 前10个包或小包（≤100字节，如MCS join确认CJCF含result字段）完整dump
+            int dumpLen = Math.min(avail, (count <= 10 || avail <= 100) ? 600 : 8);
             StringBuilder hexSb = new StringBuilder("[SEND #" + count + "] len=" + buffer.getEnd() + " hex:");
             for (int i = 0; i < dumpLen; i++) {
                 hexSb.append(String.format(" %02x", buffer.get8()));
@@ -176,6 +179,33 @@ public class RdpTlsFix {
                 logger.warning("[CAPS-FIX] 修改capabilities失败: " + e.getMessage());
             }
 
+            // 版本号提升：MCS Connect Initial 中 CS_CORE 的 rdpVersion 被 javardp 硬编码为
+            // 0x00080004（RDP 5.0）。现代 Windows（Win10/11/Server2016+）服务器对 RDP 5.0
+            // 客户端不启动 rdpsnd 音频重定向组件（协商接受通道但永不发送音频数据，
+            // 连 SNDC_FORMATS 格式协商都没有）。改写为 0x00080007（RDP 6.0）——最保守的
+            // 现代版本，不触发 RDP8+ 的 UDP/图形管线扩展，仅让服务器按现代客户端对待。
+            if (count == 2) {
+                try {
+                    byte[] mcsData = new byte[buffer.getEnd()];
+                    buffer.copyToByteArray(mcsData, 0, 0, mcsData.length);
+                    // 定位 CS_CORE：tag(0xC001 LE = 01 c0) + len(2字节) + rdpVersion(04 00 08 00)
+                    for (int i = 0; i + 8 <= mcsData.length; i++) {
+                        if ((mcsData[i] & 0xFF) == 0x01 && (mcsData[i+1] & 0xFF) == 0xC0
+                                && (mcsData[i+4] & 0xFF) == 0x04 && (mcsData[i+5] & 0xFF) == 0x00
+                                && (mcsData[i+6] & 0xFF) == 0x08 && (mcsData[i+7] & 0xFF) == 0x00) {
+                            mcsData[i+4] = 0x07; // 0x00080007 = RDP 6.0
+                            buffer.setPosition(0);
+                            buffer.copyFromByteArray(mcsData, 0, 0, mcsData.length);
+                            buffer.setPosition(savePos);
+                            logger.info("[VER-FIX] rdpVersion 0x00080004(RDP5.0) → 0x00080007(RDP6.0) @offset " + i);
+                            break;
+                        }
+                    }
+                } catch (Exception e) {
+                    logger.warning("[VER-FIX] 修改rdpVersion失败: " + e.getMessage());
+                }
+            }
+
             super.sendPacket(buffer);
             logger.info("[SEND #" + count + "] flushed, out stream=" + getOut().getClass().getName());
         }
@@ -188,7 +218,12 @@ public class RdpTlsFix {
             if (result != null) {
                 int savePos = result.getPosition();
                 int avail = result.getEnd() - savePos;
-                int dumpLen = Math.min(avail, 8);
+                // 前10个包为协商阶段（MCS Connect Response含Server Network Data：
+                // 服务器实际接受的通道列表），完整dump用于诊断通道确认；
+                // 小包（≤100字节，含MCS join确认CJCF的result字段）也完整dump
+                // 大包dump前16字节：MCS SDIN头布局为 TPKT(4)+X224(3)+opcode(1)+initiator(2)+channelId(2)，
+                // channelId位于第9~10字节，8字节dump看不到通道号；16字节可确认音频(1005)数据是否到达
+                int dumpLen = Math.min(avail, (count <= 10 || avail <= 100) ? 600 : 16);
                 StringBuilder hexSb = new StringBuilder("[RECV #" + count + "] len=" + length + " totalAvail=" + avail + " hex:");
                 for (int i = 0; i < dumpLen; i++) {
                     hexSb.append(String.format(" %02x", result.get8()));

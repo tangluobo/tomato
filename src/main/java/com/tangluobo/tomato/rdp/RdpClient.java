@@ -29,6 +29,7 @@ import com.sshtools.javardp.keymapping.KeyCode_FileBased;
 import com.sshtools.javardp.layers.Rdp;
 import com.sshtools.javardp.rdp5.VChannels;
 import com.tangluobo.tomato.rdp.clipboard.FixedClipChannel;
+import com.tangluobo.tomato.rdp.sound.RdpSoundChannel;
 
 /**
  * RDP客户端封装类，基于com.sshtools:rdp库
@@ -58,6 +59,9 @@ public class RdpClient {
     private Consumer<Void> onFirstFrame;
     private Thread rdpThread;
     private volatile boolean mapClipboard = true;
+    private volatile boolean enableSound = true;
+    /** rdpsnd音频通道（断开时需停止播放线程） */
+    private RdpSoundChannel soundChannel;
 
     /**
      * 嵌入式IContext实现，不创建独立窗口
@@ -153,14 +157,16 @@ public class RdpClient {
      * @param bpp          色深（16/24）
      * @param useSsl       是否使用SSL/TLS加密（无TLS服务器需设为false）
      * @param mapClipboard 是否启用剪贴板同步（本地与远程桌面互拷文本）
+     * @param enableSound  是否启用远程音频重定向（rdpsnd通道，播放远程桌面声音）
      */
     public void connect(String host, int port, String username, String password,
                          String domain, int width, int height, int bpp, boolean useSsl,
-                         boolean mapClipboard) {
+                         boolean mapClipboard, boolean enableSound) {
         if (connected) {
             throw new IllegalStateException("RDP客户端已连接，请先断开当前连接");
         }
         this.mapClipboard = mapClipboard;
+        this.enableSound = enableSound;
 
         // 启用RDP库调试日志（slf4j-jdk14桥接到java.util.logging）
         Logger sshtools = Logger.getLogger("com.sshtools");
@@ -180,6 +186,18 @@ public class RdpClient {
         options.setBitmapCaching(true);
         options.setMapClipboard(mapClipboard);
         options.setLowLatency(true);
+
+        // 关键：启用音频重定向必须在 Client Info (TS_EXTENDED_INFO_PACKET) 中声明。
+        // performanceFlags 字段的高16位是 audioFlags：
+        //   0x0000 = 无音频重定向（服务器不启动 rdpsnd，连 SNDC_FORMATS 都不发）
+        //   0x0001 = AUDIO_REDIRECT
+        //   0x0002 = AUDIO_REDIRECT_PLAYBACK（音频重定向到客户端本地播放）
+        // javardp 默认 rdp5PerformanceFlags=0x6F，其高16位 audioFlags=0，
+        // 导致服务器认为客户端禁用了音频，从而不向 rdpsnd 通道发送任何数据。
+        // 需在默认值低16位 performanceFlags(0x006F) 基础上，置高16位 audioFlags=0x0002。
+        if (enableSound) {
+            options.setRdp5PerformanceFlags(0x0002006F);
+        }
 
         // 调试：启用hex dump查看所有收发数据
         options.setDebugHexdump(true);
@@ -261,6 +279,8 @@ public class RdpClient {
 
         // 注册剪贴板同步通道（含焦点监听，焦点切换时同步本地/远程剪贴板内容）
         registerClipboardChannel(state, canvas, channels);
+        // 注册音频重定向通道（rdpsnd，远程桌面声音在本地播放）
+        registerSoundChannel(state, channels);
 
         // 创建RDP层（使用RdpPatch修复rdp5_process加密bug）
         rdpLayer = new RdpPatch(context, state, channels);
@@ -393,6 +413,24 @@ public class RdpClient {
         }
     }
 
+    /**
+     * 注册音频重定向虚拟通道（rdpsnd）。
+     * 库本身不含音频通道实现，使用自研RdpSoundChannel（MS-RDPEA）。
+     * 注意：回退重连路径会重建VChannels，必须重新注册。
+     */
+    private void registerSoundChannel(State state, VChannels channels) {
+        if (!enableSound || !state.isRDP5()) {
+            return;
+        }
+        try {
+            soundChannel = new RdpSoundChannel();
+            channels.register(soundChannel);
+            logger.info("音频重定向通道(rdpsnd)已注册");
+        } catch (RdesktopException e) {
+            logger.log(Level.WARNING, "注册音频通道失败: " + e.getMessage());
+        }
+    }
+
     private void notifyDisconnected(String reason) {
         connected = false;
         if (onDisconnected != null) {
@@ -406,6 +444,10 @@ public class RdpClient {
     public void disconnect() {
         if (!connected && (rdpLayer == null || !rdpLayer.isConnected())) return;
         connected = false;
+        // 停止音频播放（释放音频设备与播放线程）
+        if (soundChannel != null) {
+            soundChannel.close();
+        }
         try {
             if (rdpLayer != null && rdpLayer.isConnected()) {
                 rdpLayer.disconnect();
@@ -447,6 +489,7 @@ public class RdpClient {
             VChannels channels = new FixedVChannels(state);
             // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
             registerClipboardChannel(state, canvas, channels);
+            registerSoundChannel(state, channels);
             rdpLayer = new RdpPatch(context, state, channels);
             configureFrameCallback((RdpPatch) rdpLayer);
 
@@ -503,6 +546,7 @@ public class RdpClient {
             VChannels channels = new FixedVChannels(state);
             // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
             registerClipboardChannel(state, canvas, channels);
+            registerSoundChannel(state, channels);
             rdpLayer = new RdpPatch(context, state, channels);
             configureFrameCallback((RdpPatch) rdpLayer);
 
@@ -576,6 +620,7 @@ public class RdpClient {
             VChannels channels = new FixedVChannels(state);
             // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
             registerClipboardChannel(state, canvas, channels);
+            registerSoundChannel(state, channels);
             rdpLayer = new RdpPatch(context, state, channels);
             configureFrameCallback((RdpPatch) rdpLayer);
 
