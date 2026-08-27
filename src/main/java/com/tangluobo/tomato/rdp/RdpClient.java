@@ -58,6 +58,7 @@ public class RdpClient {
     private Consumer<Void> onFirstFrame;
     private Thread rdpThread;
     private volatile boolean mapClipboard = true;
+    private volatile RdpsndChannel rdpsndChannel;
 
     /**
      * 嵌入式IContext实现，不创建独立窗口
@@ -69,6 +70,7 @@ public class RdpClient {
         @Override
         public void dispose() {
             connected = false;
+            shutdownSoundChannel();
         }
 
         @Override
@@ -262,6 +264,9 @@ public class RdpClient {
         // 注册剪贴板同步通道（含焦点监听，焦点切换时同步本地/远程剪贴板内容）
         registerClipboardChannel(state, canvas, channels);
 
+        // 注册音频重定向通道（远程声音通过rdpsnd重定向到本地播放）
+        registerSoundChannel(channels);
+
         // 创建RDP层（使用RdpPatch修复rdp5_process加密bug）
         rdpLayer = new RdpPatch(context, state, channels);
         configureFrameCallback((RdpPatch) rdpLayer);
@@ -298,6 +303,7 @@ public class RdpClient {
                 logger.info("RDP协议握手完成，进入主循环: " + host + ":" + port);
                 rdpLayer.mainLoop();
                 logger.info("RDP主循环正常退出");
+                shutdownSoundChannel();
             } catch (RdesktopDisconnectException e) {
                 logger.info("RDP连接断开: " + e.getMessage());
                 notifyDisconnected(e.getMessage() != null ? e.getMessage() : "连接已断开");
@@ -393,8 +399,35 @@ public class RdpClient {
         }
     }
 
+    /**
+     * 注册音频重定向虚拟通道（rdpsnd，MS-RDPEA）。
+     * javardp库本身无rdpsnd实现，由{@link RdpsndChannel}完整实现
+     * 格式协商、训练应答、两段式音频接收与WAVECONFIRM流控。
+     * 注意：回退重连路径会重建VChannels，必须重新注册。
+     */
+    private void registerSoundChannel(VChannels channels) {
+        shutdownSoundChannel(); // 重连路径：先释放旧通道的播放线程
+        try {
+            rdpsndChannel = new RdpsndChannel();
+            channels.register(rdpsndChannel);
+            logger.info("音频重定向通道(rdpsnd)已注册");
+        } catch (RdesktopException e) {
+            logger.log(Level.WARNING, "注册音频通道失败: " + e.getMessage());
+        }
+    }
+
+    /** 停止音频通道播放并释放资源（断开/重连时调用） */
+    private void shutdownSoundChannel() {
+        RdpsndChannel ch = rdpsndChannel;
+        rdpsndChannel = null;
+        if (ch != null) {
+            ch.shutdown();
+        }
+    }
+
     private void notifyDisconnected(String reason) {
         connected = false;
+        shutdownSoundChannel();
         if (onDisconnected != null) {
             onDisconnected.accept(reason);
         }
@@ -404,6 +437,7 @@ public class RdpClient {
      * 断开RDP连接
      */
     public void disconnect() {
+        shutdownSoundChannel();
         if (!connected && (rdpLayer == null || !rdpLayer.isConnected())) return;
         connected = false;
         try {
@@ -447,6 +481,7 @@ public class RdpClient {
             VChannels channels = new FixedVChannels(state);
             // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
             registerClipboardChannel(state, canvas, channels);
+            registerSoundChannel(channels);
             rdpLayer = new RdpPatch(context, state, channels);
             configureFrameCallback((RdpPatch) rdpLayer);
 
@@ -462,6 +497,7 @@ public class RdpClient {
             logger.info("Standard RDP Security连接成功，进入主循环");
             rdpLayer.mainLoop();
             logger.info("RDP主循环正常退出");
+            shutdownSoundChannel();
         } catch (RdesktopDisconnectException e) {
             logger.info("RDP连接断开: " + e.getMessage());
             notifyDisconnected(e.getMessage() != null ? e.getMessage() : "连接已断开");
@@ -503,6 +539,7 @@ public class RdpClient {
             VChannels channels = new FixedVChannels(state);
             // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
             registerClipboardChannel(state, canvas, channels);
+            registerSoundChannel(channels);
             rdpLayer = new RdpPatch(context, state, channels);
             configureFrameCallback((RdpPatch) rdpLayer);
 
@@ -526,6 +563,7 @@ public class RdpClient {
             logger.info("SSL/TLS连接成功，进入主循环");
             rdpLayer.mainLoop();
             logger.info("RDP主循环正常退出");
+            shutdownSoundChannel();
         } catch (RdesktopDisconnectException e) {
             logger.info("RDP连接断开: " + e.getMessage());
             notifyDisconnected(e.getMessage() != null ? e.getMessage() : "连接已断开");
@@ -576,6 +614,7 @@ public class RdpClient {
             VChannels channels = new FixedVChannels(state);
             // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
             registerClipboardChannel(state, canvas, channels);
+            registerSoundChannel(channels);
             rdpLayer = new RdpPatch(context, state, channels);
             configureFrameCallback((RdpPatch) rdpLayer);
 
@@ -597,6 +636,7 @@ public class RdpClient {
             logger.info("HYBRID (CredSSP/NLA) 连接成功，进入主循环");
             rdpLayer.mainLoop();
             logger.info("RDP主循环正常退出");
+            shutdownSoundChannel();
         } catch (RdesktopDisconnectException e) {
             logger.info("RDP连接断开: " + e.getMessage());
             notifyDisconnected(e.getMessage() != null ? e.getMessage() : "连接已断开");
