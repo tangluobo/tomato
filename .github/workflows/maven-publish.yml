@@ -147,14 +147,6 @@ jobs:
           sudo mv appimagetool /usr/local/bin/appimagetool
         shell: bash
 
-      - name: 处理前置依赖
-        run: |
-          git clone --depth 1 --branch v1.0.4 https://github.com/oyzh1994/base.git
-          cd base && mvn clean install -DskipTests && cd ..
-          git clone --depth 1 --branch v1.3.7 https://github.com/oyzh1994/fx-base.git
-          cd fx-base && mvn clean install -DskipTests && cd ..
-        shell: bash
-
       - name: 执行打包
         run: |
           if [ "${{ matrix.is_windows }}" = "true" ]; then
