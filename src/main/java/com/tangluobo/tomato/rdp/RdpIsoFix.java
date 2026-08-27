@@ -5,13 +5,13 @@ import java.lang.reflect.Field;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import com.sshtools.javardp.IContext;
-import com.sshtools.javardp.Packet;
-import com.sshtools.javardp.RdesktopException;
-import com.sshtools.javardp.State;
-import com.sshtools.javardp.layers.ISO;
-import com.sshtools.javardp.layers.MCS;
-import com.sshtools.javardp.layers.Transport;
+import com.tangluobo.tomato.rdp.IContext;
+import com.tangluobo.tomato.rdp.Packet;
+import com.tangluobo.tomato.rdp.RdesktopException;
+import com.tangluobo.tomato.rdp.State;
+import com.tangluobo.tomato.rdp.layers.ISO;
+import com.tangluobo.tomato.rdp.layers.MCS;
+import com.tangluobo.tomato.rdp.layers.Transport;
 
 /**
  * 修复javardp库ISO层的fast-path检测bug。
@@ -93,13 +93,15 @@ public class RdpIsoFix {
             next_packet:
             while (true) {
                 // 读取前4字节（TPKT header 或 fast-path header的开头）
-                logger.info("[RdpIso] 等待读取4字节header...");
+                logger.finest("[RdpIso] 等待读取4字节header...");
                 s = transport.receivePacket(null, 4);
                 if (s == null)
                     return null;
 
                 version = s.get8();
-                logger.info("[RdpIso] 收到header: version=0x" + String.format("%02x", version));
+                if (logger.isLoggable(Level.FINEST)) {
+                    logger.finest("[RdpIso] 收到header: version=0x" + String.format("%02x", version));
+                }
 
                 if (version == 3) {
                     // TPKT格式：version(1) + reserved(1) + length(2)
@@ -130,8 +132,8 @@ public class RdpIsoFix {
                     boolean encrypted = (version & 0x80) != 0;
 
                     // SSL/HYBRID模式下忽略加密标志（TLS已处理加密）
-                    if (encrypted && (stateRef.getSecurityType() == com.sshtools.javardp.SecurityType.SSL
-                            || stateRef.getSecurityType() == com.sshtools.javardp.SecurityType.HYBRID)) {
+                    if (encrypted && (stateRef.getSecurityType() == com.tangluobo.tomato.rdp.SecurityType.SSL
+                            || stateRef.getSecurityType() == com.tangluobo.tomato.rdp.SecurityType.HYBRID)) {
                         encrypted = false;
                     }
 
@@ -139,8 +141,10 @@ public class RdpIsoFix {
                     // this legacy encryption-header flag from FASTPATH_OUTPUT_ENCRYPTED.
                     boolean shortform = false;
 
-                    logger.info("[FAST-PATH] version=0x" + String.format("%02x", version)
-                            + ", length=" + length + ", encrypted=" + encrypted + ", shortform=" + shortform);
+                    if (logger.isLoggable(Level.FINEST)) {
+                        logger.finest("[FAST-PATH] version=0x" + String.format("%02x", version)
+                                + ", length=" + length + ", encrypted=" + encrypted + ", shortform=" + shortform);
+                    }
 
                     try {
                         MCS mcs = getParent();

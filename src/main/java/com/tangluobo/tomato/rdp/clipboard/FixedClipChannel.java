@@ -20,11 +20,11 @@ import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import com.sshtools.javardp.Packet;
-import com.sshtools.javardp.RdesktopException;
-import com.sshtools.javardp.rdp5.cliprdr.ClipChannel;
-import com.sshtools.javardp.rdp5.cliprdr.TextHandler;
-import com.sshtools.javardp.rdp5.cliprdr.TypeHandler;
+import com.tangluobo.tomato.rdp.Packet;
+import com.tangluobo.tomato.rdp.RdesktopException;
+import com.tangluobo.tomato.rdp.rdp5.cliprdr.ClipChannel;
+import com.tangluobo.tomato.rdp.rdp5.cliprdr.TextHandler;
+import com.tangluobo.tomato.rdp.rdp5.cliprdr.TypeHandler;
 
 /**
  * 修复+增强版剪贴板虚拟通道（cliprdr），基于MS-RDPECLIP规范。
@@ -174,7 +174,7 @@ public class FixedClipChannel extends ClipChannel {
             List<TypeHandler> replaced = new ArrayList<>();
             boolean replacedFlag = false;
             for (TypeHandler h : handlers) {
-                if (h instanceof com.sshtools.javardp.rdp5.cliprdr.UnicodeHandler) {
+                if (h instanceof com.tangluobo.tomato.rdp.rdp5.cliprdr.UnicodeHandler) {
                     replaced.add(unicodeHandler);
                     replacedFlag = true;
                 } else {

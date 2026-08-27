@@ -9,14 +9,14 @@ import java.util.function.Consumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import com.sshtools.javardp.IContext;
-import com.sshtools.javardp.OrderException;
-import com.sshtools.javardp.RdesktopDisconnectException;
-import com.sshtools.javardp.RdesktopException;
-import com.sshtools.javardp.SecurityType;
-import com.sshtools.javardp.State;
-import com.sshtools.javardp.layers.Rdp;
-import com.sshtools.javardp.rdp5.VChannels;
+import com.tangluobo.tomato.rdp.IContext;
+import com.tangluobo.tomato.rdp.OrderException;
+import com.tangluobo.tomato.rdp.RdesktopDisconnectException;
+import com.tangluobo.tomato.rdp.RdesktopException;
+import com.tangluobo.tomato.rdp.SecurityType;
+import com.tangluobo.tomato.rdp.State;
+import com.tangluobo.tomato.rdp.layers.Rdp;
+import com.tangluobo.tomato.rdp.rdp5.VChannels;
 
 /**
  * 修复版RDP层，覆盖关键方法添加修复和诊断日志。
@@ -55,11 +55,11 @@ public class RdpPatch extends Rdp {
         try {
             rm = Rdp.class.getDeclaredMethod("receive", int[].class);
             rm.setAccessible(true);
-            pm = Rdp.class.getDeclaredMethod("processPacket", int[].class, com.sshtools.javardp.Packet.class);
+            pm = Rdp.class.getDeclaredMethod("processPacket", int[].class, com.tangluobo.tomato.rdp.Packet.class);
             pm.setAccessible(true);
             im = Rdp.class.getDeclaredMethod("initData", int.class);
             im.setAccessible(true);
-            sm = Rdp.class.getDeclaredMethod("sendData", com.sshtools.javardp.Packet.class, int.class);
+            sm = Rdp.class.getDeclaredMethod("sendData", com.tangluobo.tomato.rdp.Packet.class, int.class);
             sm.setAccessible(true);
             sf = Rdp.class.getDeclaredField("stream");
             sf.setAccessible(true);
@@ -77,17 +77,19 @@ public class RdpPatch extends Rdp {
     }
 
     @Override
-    public void rdp5_process(com.sshtools.javardp.Packet s, boolean encryption, boolean shortform)
+    public void rdp5_process(com.tangluobo.tomato.rdp.Packet s, boolean encryption, boolean shortform)
             throws RdesktopException, OrderException {
         int pktNum = rdp5PacketCount.incrementAndGet();
         boolean isSSL = stateRef.getSecurityType() == SecurityType.SSL
                 || stateRef.getSecurityType() == SecurityType.HYBRID;
 
-        logger.info(String.format("[RDP5 #%d] encryption=%b, shortform=%b, securityType=%s, dataSize=%d",
-                pktNum, encryption, shortform, stateRef.getSecurityType(), s.getEnd() - s.getPosition()));
+        if (logger.isLoggable(Level.FINEST)) {
+            logger.finest(String.format("[RDP5 #%d] encryption=%b, shortform=%b, securityType=%s, dataSize=%d",
+                    pktNum, encryption, shortform, stateRef.getSecurityType(), s.getEnd() - s.getPosition()));
+        }
 
         if (encryption && isSSL) {
-            logger.info("[RDP5] Ignoring encryption flag for SSL/HYBRID");
+            logger.finest("[RDP5] Ignoring encryption flag for SSL/HYBRID");
             encryption = false;
         }
 
@@ -132,8 +134,10 @@ public class RdpPatch extends Rdp {
             next = s.getPosition() + length;
             type = updateCode; // 用 updateCode 作为 switch 类型
 
-            logger.info(String.format("[RDP5 #%d] updateHeader=0x%02x, updateCode=%d, frag=%d, comp=%d(compFlags=0x%02x), length=%d",
-                    pktNum, updateHeader, updateCode, fragmentation, compression, compressionFlags, length));
+            if (logger.isLoggable(Level.FINEST)) {
+                logger.finest(String.format("[RDP5 #%d] updateHeader=0x%02x, updateCode=%d, frag=%d, comp=%d(compFlags=0x%02x), length=%d",
+                        pktNum, updateHeader, updateCode, fragmentation, compression, compressionFlags, length));
+            }
 
             // 诊断：分片 bitmap update 警告（单片处理可能解析失败）
             if (type == 1 && fragmentation != 0) {
@@ -167,17 +171,19 @@ public class RdpPatch extends Rdp {
     }
 
     @Override
-    public void rdp5_process(com.sshtools.javardp.Packet s, boolean e)
+    public void rdp5_process(com.tangluobo.tomato.rdp.Packet s, boolean e)
             throws RdesktopException, OrderException {
         rdp5_process(s, e, false);
     }
 
     @Override
-    protected void processBitmapUpdates(com.sshtools.javardp.Packet data) throws RdesktopException {
+    protected void processBitmapUpdates(com.tangluobo.tomato.rdp.Packet data) throws RdesktopException {
         int count = bitmapUpdateCount.incrementAndGet();
         int pos = data.getPosition();
         int n_updates = data.getLittleEndian16();
-        logger.info(String.format("[BITMAP UPDATE #%d] n_updates=%d", count, n_updates));
+        if (logger.isLoggable(Level.FINEST)) {
+            logger.finest(String.format("[BITMAP UPDATE #%d] n_updates=%d", count, n_updates));
+        }
         data.setPosition(pos);
         super.processBitmapUpdates(data);
 
@@ -189,7 +195,7 @@ public class RdpPatch extends Rdp {
             }
         }
 
-        try {
+        if (logger.isLoggable(Level.FINEST)) try {
             java.awt.image.BufferedImage bi = stateRef.getCanvas().getDisplay().getBufferedImage();
             if (bi != null) {
                 int w = bi.getWidth(), h = bi.getHeight();
@@ -199,7 +205,7 @@ public class RdpPatch extends Rdp {
                 for (int x : xs) for (int y : ys) {
                     sb.append(String.format(" (%d,%d)=%06x", x, y, bi.getRGB(x, y) & 0xFFFFFF));
                 }
-                logger.info(sb.toString());
+                logger.finest(sb.toString());
             }
         } catch (Exception e) {
             logger.log(Level.WARNING, "采样BufferedImage失败: " + e.getMessage());
@@ -207,7 +213,7 @@ public class RdpPatch extends Rdp {
     }
 
     @Override
-    public void connect(com.sshtools.javardp.io.IO io, com.sshtools.javardp.CredentialProvider credentialProvider,
+    public void connect(com.tangluobo.tomato.rdp.io.IO io, com.tangluobo.tomato.rdp.CredentialProvider credentialProvider,
             String command, String directory) throws IOException, RdesktopException {
         logger.info("[CONNECT] Starting, securityType=" + stateRef.getSecurityType()
                 + ", rdp5=" + stateRef.isRDP5() + ", bpp=" + stateRef.getServerBpp()
@@ -254,13 +260,13 @@ public class RdpPatch extends Rdp {
         watchdog.start();
 
         int[] type = new int[1];
-        com.sshtools.javardp.Packet data;
+        com.tangluobo.tomato.rdp.Packet data;
         while (true) {
             // 调用private receive()
             data = null;
             lastReceiveEnterTime = System.currentTimeMillis();
             try {
-                data = (com.sshtools.javardp.Packet) receiveMethod.invoke(this, (Object) type);
+                data = (com.tangluobo.tomato.rdp.Packet) receiveMethod.invoke(this, (Object) type);
                 if (data == null) {
                     logger.info("[MAINLOOP] receive() returned null, exiting");
                     return;
@@ -379,7 +385,7 @@ public class RdpPatch extends Rdp {
                 refreshSent = true;
                 try {
                     logger.info("[REFRESH] 发送TS_REFRESH_RECT_PDU请求全屏刷新");
-                    com.sshtools.javardp.Packet refreshData = (com.sshtools.javardp.Packet) initDataMethod.invoke(this, 4);
+                    com.tangluobo.tomato.rdp.Packet refreshData = (com.tangluobo.tomato.rdp.Packet) initDataMethod.invoke(this, 4);
                     refreshData.set8(0); // numAreas = 0 (全屏刷新)
                     refreshData.set8(0); // pad
                     refreshData.setLittleEndian16(0); // pad
@@ -411,7 +417,7 @@ public class RdpPatch extends Rdp {
                     Object stream = streamField.get(this);
                     int nextPkt = nextPacketField.getInt(this);
                     if (stream != null) {
-                        com.sshtools.javardp.Packet p = (com.sshtools.javardp.Packet) stream;
+                        com.tangluobo.tomato.rdp.Packet p = (com.tangluobo.tomato.rdp.Packet) stream;
                         logger.info(String.format("[MAINLOOP] After PDU #%d: stream pos=%d end=%d, next_packet=%d, remaining=%d",
                                 pduCount, p.getPosition(), p.getEnd(), nextPkt, p.getEnd() - nextPkt));
                     }

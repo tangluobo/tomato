@@ -4,11 +4,11 @@ import java.io.IOException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import com.sshtools.javardp.Packet;
-import com.sshtools.javardp.RdesktopException;
-import com.sshtools.javardp.State;
-import com.sshtools.javardp.rdp5.VChannel;
-import com.sshtools.javardp.rdp5.VChannels;
+import com.tangluobo.tomato.rdp.Packet;
+import com.tangluobo.tomato.rdp.RdesktopException;
+import com.tangluobo.tomato.rdp.State;
+import com.tangluobo.tomato.rdp.rdp5.VChannel;
+import com.tangluobo.tomato.rdp.rdp5.VChannels;
 
 /**
  * 修复版虚拟通道集合（VChannels）。
@@ -68,6 +68,10 @@ public class FixedVChannels extends VChannels {
         // 虚拟通道chunk头：length(4，忽略) + flags(4)
         packet.getLittleEndian32();
         int flags = packet.getLittleEndian32();
+        // 诊断：记录到达的通道数据，确认服务器是否在给rdpsnd通道推送数据
+        logger.finest("channel_process: mcs=" + mcsChannel + " channel=" + channel.name()
+                + " flags=0x" + Integer.toHexString(flags) + " remain="
+                + (packet.getEnd() - packet.getPosition()));
 
         if ((flags & CHANNEL_FLAG_FIRST) != 0 && (flags & CHANNEL_FLAG_LAST) != 0) {
             // 单分片完整消息：直接处理（position已跳过chunk头）

@@ -14,22 +14,21 @@ import java.util.logging.Logger;
 import javax.net.ssl.X509TrustManager;
 import javax.swing.JComponent;
 
-import com.sshtools.javardp.CredentialProvider;
-import com.sshtools.javardp.DefaultCredentialsProvider;
-import com.sshtools.javardp.IContext;
-import com.sshtools.javardp.IContext.ReadyType;
-import com.sshtools.javardp.Options;
-import com.sshtools.javardp.RdesktopDisconnectException;
-import com.sshtools.javardp.RdesktopException;
-import com.sshtools.javardp.RdesktopLicenseException;
-import com.sshtools.javardp.State;
-import com.sshtools.javardp.graphics.RdesktopCanvas;
-import com.sshtools.javardp.io.DefaultIO;
-import com.sshtools.javardp.keymapping.KeyCode_FileBased;
-import com.sshtools.javardp.layers.Rdp;
-import com.sshtools.javardp.rdp5.VChannels;
+import com.tangluobo.tomato.rdp.CredentialProvider;
+import com.tangluobo.tomato.rdp.DefaultCredentialsProvider;
+import com.tangluobo.tomato.rdp.IContext;
+import com.tangluobo.tomato.rdp.IContext.ReadyType;
+import com.tangluobo.tomato.rdp.Options;
+import com.tangluobo.tomato.rdp.RdesktopDisconnectException;
+import com.tangluobo.tomato.rdp.RdesktopException;
+import com.tangluobo.tomato.rdp.RdesktopLicenseException;
+import com.tangluobo.tomato.rdp.State;
+import com.tangluobo.tomato.rdp.graphics.RdesktopCanvas;
+import com.tangluobo.tomato.rdp.io.DefaultIO;
+import com.tangluobo.tomato.rdp.keymapping.KeyCode_FileBased;
+import com.tangluobo.tomato.rdp.layers.Rdp;
+import com.tangluobo.tomato.rdp.rdp5.VChannels;
 import com.tangluobo.tomato.rdp.clipboard.FixedClipChannel;
-import com.tangluobo.tomato.rdp.sound.RdpSoundChannel;
 
 /**
  * RDP客户端封装类，基于com.sshtools:rdp库
@@ -41,8 +40,12 @@ public class RdpClient {
 
     static {
         try {
-            FileHandler handler = new FileHandler(Paths.get("rdp-debug.log").toAbsolutePath().toString(), true);
+            // RDP图形和音频都是高频数据，诊断日志必须限量滚动，不能让
+            // 同步文件I/O反过来阻塞协议接收线程。
+            String pattern = Paths.get("rdp-debug-%g.log").toAbsolutePath().toString();
+            FileHandler handler = new FileHandler(pattern, 16 * 1024 * 1024, 3, true);
             handler.setFormatter(new SimpleFormatter());
+            handler.setLevel(Level.INFO);
             Logger.getLogger("").addHandler(handler);
         } catch (Exception e) {
             logger.log(Level.WARNING, "无法初始化 RDP 诊断日志", e);
@@ -59,9 +62,7 @@ public class RdpClient {
     private Consumer<Void> onFirstFrame;
     private Thread rdpThread;
     private volatile boolean mapClipboard = true;
-    private volatile boolean enableSound = true;
-    /** rdpsnd音频通道（断开时需停止播放线程） */
-    private RdpSoundChannel soundChannel;
+    private volatile RdpsndChannel rdpsndChannel;
 
     /**
      * 嵌入式IContext实现，不创建独立窗口
@@ -73,6 +74,7 @@ public class RdpClient {
         @Override
         public void dispose() {
             connected = false;
+            shutdownSoundChannel();
         }
 
         @Override
@@ -157,23 +159,22 @@ public class RdpClient {
      * @param bpp          色深（16/24）
      * @param useSsl       是否使用SSL/TLS加密（无TLS服务器需设为false）
      * @param mapClipboard 是否启用剪贴板同步（本地与远程桌面互拷文本）
-     * @param enableSound  是否启用远程音频重定向（rdpsnd通道，播放远程桌面声音）
      */
     public void connect(String host, int port, String username, String password,
                          String domain, int width, int height, int bpp, boolean useSsl,
-                         boolean mapClipboard, boolean enableSound) {
+                         boolean mapClipboard) {
         if (connected) {
             throw new IllegalStateException("RDP客户端已连接，请先断开当前连接");
         }
         this.mapClipboard = mapClipboard;
-        this.enableSound = enableSound;
 
-        // 启用RDP库调试日志（slf4j-jdk14桥接到java.util.logging）
-        Logger sshtools = Logger.getLogger("com.sshtools");
-        sshtools.setLevel(Level.FINE);
+        // 生产连接只记录状态和错误；FINE/HexDump会在RDP收包线程同步生成
+        // 巨量文本，造成图形和音频包分钟级积压。
+        Logger sshtools = Logger.getLogger("com.tangluobo.tomato.rdp");
+        sshtools.setLevel(Level.INFO);
         Logger root = Logger.getLogger("");
         for (java.util.logging.Handler h : root.getHandlers()) {
-            h.setLevel(Level.FINE);
+            h.setLevel(Level.INFO);
         }
 
         // 创建配置
@@ -187,30 +188,18 @@ public class RdpClient {
         options.setMapClipboard(mapClipboard);
         options.setLowLatency(true);
 
-        // 关键：启用音频重定向必须在 Client Info (TS_EXTENDED_INFO_PACKET) 中声明。
-        // performanceFlags 字段的高16位是 audioFlags：
-        //   0x0000 = 无音频重定向（服务器不启动 rdpsnd，连 SNDC_FORMATS 都不发）
-        //   0x0001 = AUDIO_REDIRECT
-        //   0x0002 = AUDIO_REDIRECT_PLAYBACK（音频重定向到客户端本地播放）
-        // javardp 默认 rdp5PerformanceFlags=0x6F，其高16位 audioFlags=0，
-        // 导致服务器认为客户端禁用了音频，从而不向 rdpsnd 通道发送任何数据。
-        // 需在默认值低16位 performanceFlags(0x006F) 基础上，置高16位 audioFlags=0x0002。
-        if (enableSound) {
-            options.setRdp5PerformanceFlags(0x0002006F);
-        }
-
-        // 调试：启用hex dump查看所有收发数据
-        options.setDebugHexdump(true);
+        // 绝不能在正常会话中打开：每个屏幕/音频包都会同步写完整十六进制。
+        options.setDebugHexdump(false);
 
         // 配置安全类型
         // State构造函数取securityTypes列表的最后一个元素作为初始securityType，
         // 所以列表最后一个元素决定了优先选择的安全类型。
         // 详见State.java: securityType = options.getSecurityTypes().get(size - 1)
         options.getSecurityTypes().clear();
-        options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.STANDARD);
+        options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.STANDARD);
         if (useSsl) {
             // SSL在列表末尾会被优先选择；服务器不支持SSL时ISO协商会自动降级
-            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.SSL);
+            options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.SSL);
         }
 
         // 设置宽松的TrustManager：接受RDP服务器自签名证书
@@ -277,10 +266,14 @@ public class RdpClient {
         canvas = new RdesktopCanvas(context, state);
         state.setCanvas(canvas);
 
+        // Windows只在客户端声明RDPDR时启动RDPSND服务端。
+        registerRdpdrChannel(channels);
+
         // 注册剪贴板同步通道（含焦点监听，焦点切换时同步本地/远程剪贴板内容）
         registerClipboardChannel(state, canvas, channels);
-        // 注册音频重定向通道（rdpsnd，远程桌面声音在本地播放）
-        registerSoundChannel(state, channels);
+
+        // 注册音频重定向通道（保持MSTSC典型静态通道顺序）
+        registerSoundChannel(channels);
 
         // 创建RDP层（使用RdpPatch修复rdp5_process加密bug）
         rdpLayer = new RdpPatch(context, state, channels);
@@ -318,6 +311,7 @@ public class RdpClient {
                 logger.info("RDP协议握手完成，进入主循环: " + host + ":" + port);
                 rdpLayer.mainLoop();
                 logger.info("RDP主循环正常退出");
+                shutdownSoundChannel();
             } catch (RdesktopDisconnectException e) {
                 logger.info("RDP连接断开: " + e.getMessage());
                 notifyDisconnected(e.getMessage() != null ? e.getMessage() : "连接已断开");
@@ -414,25 +408,46 @@ public class RdpClient {
     }
 
     /**
-     * 注册音频重定向虚拟通道（rdpsnd）。
-     * 库本身不含音频通道实现，使用自研RdpSoundChannel（MS-RDPEA）。
+     * 注册RDPDR声明通道。Windows以该通道的存在作为启动RDPSND的前提。
+     */
+    private void registerRdpdrChannel(VChannels channels) {
+        try {
+            channels.register(new RdpdrChannel());
+            logger.info("设备重定向声明通道(rdpdr)已注册");
+        } catch (RdesktopException e) {
+            logger.log(Level.WARNING, "注册rdpdr通道失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 注册音频重定向虚拟通道（rdpsnd，MS-RDPEA）。
+     * javardp库本身无rdpsnd实现，由{@link RdpsndChannel}完整实现
+     * 格式协商、训练应答、两段式音频接收与WAVECONFIRM流控。
      * 注意：回退重连路径会重建VChannels，必须重新注册。
      */
-    private void registerSoundChannel(State state, VChannels channels) {
-        if (!enableSound || !state.isRDP5()) {
-            return;
-        }
+    private void registerSoundChannel(VChannels channels) {
+        shutdownSoundChannel(); // 重连路径：先释放旧通道的播放线程
         try {
-            soundChannel = new RdpSoundChannel();
-            channels.register(soundChannel);
+            rdpsndChannel = new RdpsndChannel();
+            channels.register(rdpsndChannel);
             logger.info("音频重定向通道(rdpsnd)已注册");
         } catch (RdesktopException e) {
             logger.log(Level.WARNING, "注册音频通道失败: " + e.getMessage());
         }
     }
 
+    /** 停止音频通道播放并释放资源（断开/重连时调用） */
+    private void shutdownSoundChannel() {
+        RdpsndChannel ch = rdpsndChannel;
+        rdpsndChannel = null;
+        if (ch != null) {
+            ch.shutdown();
+        }
+    }
+
     private void notifyDisconnected(String reason) {
         connected = false;
+        shutdownSoundChannel();
         if (onDisconnected != null) {
             onDisconnected.accept(reason);
         }
@@ -442,12 +457,9 @@ public class RdpClient {
      * 断开RDP连接
      */
     public void disconnect() {
+        shutdownSoundChannel();
         if (!connected && (rdpLayer == null || !rdpLayer.isConnected())) return;
         connected = false;
-        // 停止音频播放（释放音频设备与播放线程）
-        if (soundChannel != null) {
-            soundChannel.close();
-        }
         try {
             if (rdpLayer != null && rdpLayer.isConnected()) {
                 rdpLayer.disconnect();
@@ -471,9 +483,9 @@ public class RdpClient {
 
             // 重新配置：仅STANDARD安全类型
             options.getSecurityTypes().clear();
-            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.SSL);
+            options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.SSL);
             // 注意：STANDARD放在最后，这样State构造函数会选择STANDARD
-            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.STANDARD);
+            options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.STANDARD);
 
             // 重新创建状态
             RdpState rdpState = new RdpState(options);
@@ -487,9 +499,10 @@ public class RdpClient {
 
             // 重新创建RDP层（FixedVChannels修复库分片重组NPE）
             VChannels channels = new FixedVChannels(state);
+            registerRdpdrChannel(channels);
             // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
             registerClipboardChannel(state, canvas, channels);
-            registerSoundChannel(state, channels);
+            registerSoundChannel(channels);
             rdpLayer = new RdpPatch(context, state, channels);
             configureFrameCallback((RdpPatch) rdpLayer);
 
@@ -505,6 +518,7 @@ public class RdpClient {
             logger.info("Standard RDP Security连接成功，进入主循环");
             rdpLayer.mainLoop();
             logger.info("RDP主循环正常退出");
+            shutdownSoundChannel();
         } catch (RdesktopDisconnectException e) {
             logger.info("RDP连接断开: " + e.getMessage());
             notifyDisconnected(e.getMessage() != null ? e.getMessage() : "连接已断开");
@@ -529,8 +543,8 @@ public class RdpClient {
 
             // 重新配置：STANDARD在前，SSL在末尾（State构造函数取最后一个元素作为初始securityType）
             options.getSecurityTypes().clear();
-            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.STANDARD);
-            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.SSL);
+            options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.STANDARD);
+            options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.SSL);
 
             // 重新创建状态
             RdpState rdpState = new RdpState(options);
@@ -544,9 +558,10 @@ public class RdpClient {
 
             // 重新创建RDP层（FixedVChannels修复库分片重组NPE）
             VChannels channels = new FixedVChannels(state);
+            registerRdpdrChannel(channels);
             // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
             registerClipboardChannel(state, canvas, channels);
-            registerSoundChannel(state, channels);
+            registerSoundChannel(channels);
             rdpLayer = new RdpPatch(context, state, channels);
             configureFrameCallback((RdpPatch) rdpLayer);
 
@@ -570,6 +585,7 @@ public class RdpClient {
             logger.info("SSL/TLS连接成功，进入主循环");
             rdpLayer.mainLoop();
             logger.info("RDP主循环正常退出");
+            shutdownSoundChannel();
         } catch (RdesktopDisconnectException e) {
             logger.info("RDP连接断开: " + e.getMessage());
             notifyDisconnected(e.getMessage() != null ? e.getMessage() : "连接已断开");
@@ -603,8 +619,8 @@ public class RdpClient {
 
             // 重新配置：使用HYBRID（CredSSP/NLA）
             options.getSecurityTypes().clear();
-            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.STANDARD);
-            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.HYBRID);
+            options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.STANDARD);
+            options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.HYBRID);
 
             // 重新创建状态
             RdpState rdpState = new RdpState(options);
@@ -618,9 +634,10 @@ public class RdpClient {
 
             // 重新创建RDP层（FixedVChannels修复库分片重组NPE）
             VChannels channels = new FixedVChannels(state);
+            registerRdpdrChannel(channels);
             // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
             registerClipboardChannel(state, canvas, channels);
-            registerSoundChannel(state, channels);
+            registerSoundChannel(channels);
             rdpLayer = new RdpPatch(context, state, channels);
             configureFrameCallback((RdpPatch) rdpLayer);
 
@@ -642,6 +659,7 @@ public class RdpClient {
             logger.info("HYBRID (CredSSP/NLA) 连接成功，进入主循环");
             rdpLayer.mainLoop();
             logger.info("RDP主循环正常退出");
+            shutdownSoundChannel();
         } catch (RdesktopDisconnectException e) {
             logger.info("RDP连接断开: " + e.getMessage());
             notifyDisconnected(e.getMessage() != null ? e.getMessage() : "连接已断开");
