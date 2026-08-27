@@ -2,8 +2,8 @@ package com.tangluobo.tomato.rdp;
 
 import java.util.logging.Logger;
 
-import com.sshtools.javardp.Options;
-import com.sshtools.javardp.State;
+import com.tangluobo.tomato.rdp.Options;
+import com.tangluobo.tomato.rdp.State;
 
 /**
  * 修复版State，阻止processGeneralCaps错误禁用RDP5。

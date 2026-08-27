@@ -18,13 +18,13 @@ import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.X509TrustManager;
 
-import com.sshtools.javardp.RdesktopException;
-import com.sshtools.javardp.State;
-import com.sshtools.javardp.io.IO;
-import com.sshtools.javardp.io.IOSocket;
-import com.sshtools.javardp.io.SocketIO;
-import com.sshtools.javardp.layers.ISO;
-import com.sshtools.javardp.layers.Transport;
+import com.tangluobo.tomato.rdp.RdesktopException;
+import com.tangluobo.tomato.rdp.State;
+import com.tangluobo.tomato.rdp.io.IO;
+import com.tangluobo.tomato.rdp.io.IOSocket;
+import com.tangluobo.tomato.rdp.io.SocketIO;
+import com.tangluobo.tomato.rdp.layers.ISO;
+import com.tangluobo.tomato.rdp.layers.Transport;
 
 /**
  * 修复sshtools rdp库的TLS兼容性问题。
@@ -126,17 +126,20 @@ public class RdpTlsFix {
         }
 
         @Override
-        public void sendPacket(com.sshtools.javardp.Packet buffer) throws IOException {
+        public void sendPacket(com.tangluobo.tomato.rdp.Packet buffer) throws IOException {
             int count = sendPktCount.incrementAndGet();
             int savePos = buffer.getPosition();
-            int avail = buffer.getEnd() - savePos;
-            int dumpLen = Math.min(avail, 8);
-            StringBuilder hexSb = new StringBuilder("[SEND #" + count + "] len=" + buffer.getEnd() + " hex:");
-            for (int i = 0; i < dumpLen; i++) {
-                hexSb.append(String.format(" %02x", buffer.get8()));
+            if (logger.isLoggable(Level.FINEST)) {
+                int avail = buffer.getEnd() - savePos;
+                int dumpLen = Math.min(avail, 8);
+                StringBuilder hexSb = new StringBuilder("[SEND #" + count + "] len=" + buffer.getEnd() + " hex:");
+                for (int i = 0; i < dumpLen; i++) {
+                    hexSb.append(String.format(" %02x", buffer.get8()));
+                }
+                buffer.setPosition(savePos);
+                logger.finest(hexSb.toString());
             }
             buffer.setPosition(savePos);
-            logger.info(hexSb.toString());
 
             // 修改 ConfirmActive PDU 中的 General Capability Set。
             // 部分 Windows 服务器在未声明该能力时不会回退发送 slow-path 位图，
@@ -146,9 +149,12 @@ public class RdpTlsFix {
                 buffer.copyToByteArray(packet, 0, 0, packet.length);
                 // 只在大包(>150字节，ConfirmActive通常200+字节)中搜索和修改
                 if (packet.length > 150) {
+                    boolean modified = false;
+                    boolean isConfirmActive = false;
                     for (int i = 7; i < packet.length - 24; i++) {
                         if (packet[i] == 0x01 && packet[i+1] == 0x00 &&
                             packet[i+2] == 0x18 && packet[i+3] == 0x00) {
+                            isConfirmActive = true;
                             int generalCompressionTypes = (packet[i+12] & 0xff) | ((packet[i+13] & 0xff) << 8);
                             // General Capability Set: extraFlags is at offset 14, not 12.
                             // Offset 12 is generalCompressionTypes. Writing fast-path bits there
@@ -161,9 +167,7 @@ public class RdpTlsFix {
                             packet[i+15] = (byte)((newFlags >> 8) & 0xff);
                             packet[i+22] = 1; // refreshRectSupport = 1
                             packet[i+23] = 1; // suppressOutputSupport = 1
-                            buffer.setPosition(0);
-                            buffer.copyFromByteArray(packet, 0, 0, packet.length);
-                            buffer.setPosition(savePos);
+                            modified = true;
                             logger.info(String.format("[CAPS-FIX] General Caps at offset %d: "
                                     + "generalCompressionTypes=0x%04x, extraFlags 0x%04x→0x%04x, "
                                     + "refreshRect %d→1, suppressOutput %d→1",
@@ -171,21 +175,27 @@ public class RdpTlsFix {
                             break;
                         }
                     }
+                    if (modified) {
+                        buffer.setPosition(0);
+                        buffer.copyFromByteArray(packet, 0, 0, packet.length);
+                        buffer.setPosition(savePos);
+                    }
+
                 }
             } catch (Exception e) {
                 logger.warning("[CAPS-FIX] 修改capabilities失败: " + e.getMessage());
             }
 
             super.sendPacket(buffer);
-            logger.info("[SEND #" + count + "] flushed, out stream=" + getOut().getClass().getName());
+            logger.finest("[SEND #" + count + "] flushed");
         }
 
         @Override
-        public com.sshtools.javardp.Packet receivePacket(com.sshtools.javardp.Packet p, int length) throws IOException {
-            com.sshtools.javardp.Packet result = super.receivePacket(p, length);
+        public com.tangluobo.tomato.rdp.Packet receivePacket(com.tangluobo.tomato.rdp.Packet p, int length) throws IOException {
+            com.tangluobo.tomato.rdp.Packet result = super.receivePacket(p, length);
             int count = recvPktCount.incrementAndGet();
             // 诊断：记录Transport层收到的原始数据（前8字节用于判断是否为RDP5 fast-path）
-            if (result != null) {
+            if (result != null && logger.isLoggable(Level.FINEST)) {
                 int savePos = result.getPosition();
                 int avail = result.getEnd() - savePos;
                 int dumpLen = Math.min(avail, 8);
@@ -199,7 +209,7 @@ public class RdpTlsFix {
                 result.setPosition(savePos);
                 boolean isFastPath = (firstByte & 0x03) == 0;
                 hexSb.append(String.format(" firstByte=0x%02x fastPath=%b", firstByte, isFastPath));
-                logger.info(hexSb.toString());
+                logger.finest(hexSb.toString());
             }
             return result;
         }

@@ -35,6 +35,7 @@ public class ConnectionConfig {
     private int screenHeight = 768;
     private int colorDepth = 24;
     private boolean useSsl = true; // 是否使用SSL/TLS加密（无TLS服务器需设为false）
+    private boolean mapClipboard = true; // 是否启用剪贴板同步（本地与远程桌面互拷）
 
     // 本地终端配置
     private String terminalType; // Windows: "cmd" 或 "powershell"; Linux/macOS: "system"
@@ -149,6 +150,9 @@ public class ConnectionConfig {
 
     public boolean isUseSsl() { return useSsl; }
     public void setUseSsl(boolean useSsl) { this.useSsl = useSsl; }
+
+    public boolean isMapClipboard() { return mapClipboard; }
+    public void setMapClipboard(boolean mapClipboard) { this.mapClipboard = mapClipboard; }
 
     public String getTerminalType() { return terminalType; }
     public void setTerminalType(String terminalType) { this.terminalType = terminalType; }

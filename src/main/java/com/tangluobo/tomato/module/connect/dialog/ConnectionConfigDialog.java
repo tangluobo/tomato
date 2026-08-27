@@ -111,6 +111,7 @@ public class ConnectionConfigDialog {
     private ComboBox<String> rdpResolutionCombo;
     private ComboBox<String> rdpColorDepthCombo;
     private CheckBox rdpUseSslCheck;
+    private CheckBox rdpMapClipboardCheck;
 
     // ===== 本地终端专属字段 =====
     private VBox localTerminalConfigContent;
@@ -1167,6 +1168,12 @@ public class ConnectionConfigDialog {
         rdpUseSslCheck.setSelected(true);
         rdpUseSslCheck.setTooltip(new Tooltip("关闭后使用Standard RDP Security（无TLS），适用于未启用TLS的RDP服务器"));
         grid.add(rdpUseSslCheck, 1, row++);
+
+        // RDP专属字段：剪贴板同步
+        rdpMapClipboardCheck = new CheckBox("剪贴板同步");
+        rdpMapClipboardCheck.setSelected(true);
+        rdpMapClipboardCheck.setTooltip(new Tooltip("启用后本地与远程桌面之间可以互相复制粘贴文本"));
+        grid.add(rdpMapClipboardCheck, 1, row++);
 
         grid.add(new Label("备注："), 0, row);
         simpleDescriptionField = new TextField();
@@ -2377,6 +2384,7 @@ public class ConnectionConfigDialog {
                     rdpColorDepthCombo.setValue(bpp + "位");
                 }
                 rdpUseSslCheck.setSelected(existingConfig.isUseSsl());
+                rdpMapClipboardCheck.setSelected(existingConfig.isMapClipboard());
             }
         }
     }
@@ -2612,6 +2620,8 @@ public class ConnectionConfigDialog {
                 }
                 // SSL/TLS加密
                 config.setUseSsl(rdpUseSslCheck.isSelected());
+                // 剪贴板同步
+                config.setMapClipboard(rdpMapClipboardCheck.isSelected());
             }
         }
 
