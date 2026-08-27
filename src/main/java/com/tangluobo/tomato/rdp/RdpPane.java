@@ -20,6 +20,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.Tab;
+import javafx.scene.input.KeyCombination;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
@@ -61,6 +62,7 @@ public class RdpPane extends BorderPane {
     private HBox exitBar;                 // 顶部悬浮"退出全屏"按钮（mstsc风格）
     private PauseTransition hideExitBarTimer;
     private TranslateTransition exitBarSlide;
+    private java.awt.KeyEventDispatcher fullScreenKeyDispatcher; // 常驻拦截Ctrl+Shift+Enter切换全屏（Swing焦点场景，校验焦点在RDP画布）
 
     // 连接信息
     private String host;
@@ -71,6 +73,9 @@ public class RdpPane extends BorderPane {
     private int screenWidth;
     private int screenHeight;
     private int colorDepth;
+
+    /** 全屏切换快捷键：Ctrl+Shift+回车，按一次全屏、再按取消 */
+    private static final KeyCombination FULL_SCREEN_KEYS = KeyCombination.valueOf("Ctrl+Shift+Enter");
 
     public RdpPane() {
         rdpClient = new RdpClient();
@@ -85,6 +90,37 @@ public class RdpPane extends BorderPane {
         // JScrollPane. Keep the Swing viewport in sync so resize exposes/repaints
         // the newly visible desktop area immediately.
         swingNode.layoutBoundsProperty().addListener((obs, oldValue, newValue) -> resizeDesktopViewport());
+
+        // Ctrl+Shift+Enter切换全屏（FX焦点场景）：跟随所在Scene自动注册/注销加速键，
+        // tab内和全屏窗口内均生效；全屏进入/退出引起Scene变化时同样自动迁移
+        sceneProperty().addListener((obs, oldScene, newScene) -> {
+            if (oldScene != null) {
+                oldScene.getAccelerators().remove(FULL_SCREEN_KEYS);
+            }
+            if (newScene != null) {
+                newScene.getAccelerators().put(FULL_SCREEN_KEYS, this::toggleFullScreen);
+            }
+        });
+
+        // Ctrl+Shift+Enter切换全屏（Swing焦点场景）：焦点在RDP画布时按键进入AWT而非FX，
+        // 通过全局键分发器拦截并消费，避免被转发到远程桌面。常驻注册但校验焦点归属。
+        fullScreenKeyDispatcher = e -> {
+            if (e.getID() == java.awt.event.KeyEvent.KEY_PRESSED
+                    && e.isControlDown() && e.isShiftDown()
+                    && e.getKeyCode() == java.awt.event.KeyEvent.VK_ENTER) {
+                java.awt.Component focusOwner = java.awt.KeyboardFocusManager
+                        .getCurrentKeyboardFocusManager().getFocusOwner();
+                JComponent display = desktopDisplay;
+                if (display != null && focusOwner != null
+                        && (focusOwner == display || SwingUtilities.isDescendingFrom(focusOwner, display))) {
+                    Platform.runLater(this::toggleFullScreen);
+                    return true; // 消费该事件
+                }
+            }
+            return false;
+        };
+        java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager()
+                .addKeyEventDispatcher(fullScreenKeyDispatcher);
 
         // 底部：状态栏
         statusBar = createStatusBar();
@@ -242,6 +278,19 @@ public class RdpPane extends BorderPane {
         if (fullScreenStage != null) {
             exitFullScreen();
         }
+        // 注销常驻的全屏切换键分发器（组件销毁，避免泄漏）
+        if (fullScreenKeyDispatcher != null) {
+            try {
+                java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager()
+                        .removeKeyEventDispatcher(fullScreenKeyDispatcher);
+            } catch (Exception ignored) {
+            }
+            fullScreenKeyDispatcher = null;
+        }
+        // 从所在Scene注销全屏切换加速键
+        if (getScene() != null) {
+            getScene().getAccelerators().remove(FULL_SCREEN_KEYS);
+        }
         if (rdpClient != null) {
             rdpClient.disconnect();
         }
@@ -351,9 +400,13 @@ public class RdpPane extends BorderPane {
                 showExitBar();
             }
         });
+        // Ctrl+Shift+Enter切换全屏的加速键由sceneProperty监听器自动注册到本Scene
 
         fullScreenStage = new Stage();
         fullScreenStage.setFullScreen(true);
+        // 覆盖JavaFX默认的Esc退出全屏，改为Ctrl+Shift+Enter（与切换键一致）
+        fullScreenStage.setFullScreenExitKeyCombination(FULL_SCREEN_KEYS);
+        fullScreenStage.setFullScreenExitHint("按 Ctrl+Shift+Enter 退出全屏");
         fullScreenStage.setTitle(ownerTab.getText() != null ? ownerTab.getText() : "远程桌面");
         fullScreenStage.setScene(scene);
         // 全屏窗口定位到主窗口所在屏幕（多显示器时与tab所在屏一致）
@@ -483,6 +536,11 @@ public class RdpPane extends BorderPane {
                 scrollPane.getViewport().revalidate();
                 scrollPane.getViewport().repaint();
                 scrollPane.repaint();
+                // 关键：WrappedImage.update()按裁剪区增量绘制，尺寸放大后新暴露的
+                // 区域不会被自动调度重绘（SwingNode内非标准布局路径），表现为黑方块、
+                // 鼠标划过才逐块补画。paintImmediately同步整幅绘制，彻底消除黑块。
+                display.paintImmediately(0, 0, canvasSize.width, canvasSize.height);
+                scrollPane.paintImmediately(0, 0, canvasSize.width, canvasSize.height);
             });
             applyFullScreenScale();
             return;
