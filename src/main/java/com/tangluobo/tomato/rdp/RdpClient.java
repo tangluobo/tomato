@@ -261,10 +261,13 @@ public class RdpClient {
         canvas = new RdesktopCanvas(context, state);
         state.setCanvas(canvas);
 
+        // Windows只在客户端声明RDPDR时启动RDPSND服务端。
+        registerRdpdrChannel(channels);
+
         // 注册剪贴板同步通道（含焦点监听，焦点切换时同步本地/远程剪贴板内容）
         registerClipboardChannel(state, canvas, channels);
 
-        // 注册音频重定向通道（远程声音通过rdpsnd重定向到本地播放）
+        // 注册音频重定向通道（保持MSTSC典型静态通道顺序）
         registerSoundChannel(channels);
 
         // 创建RDP层（使用RdpPatch修复rdp5_process加密bug）
@@ -400,6 +403,18 @@ public class RdpClient {
     }
 
     /**
+     * 注册RDPDR声明通道。Windows以该通道的存在作为启动RDPSND的前提。
+     */
+    private void registerRdpdrChannel(VChannels channels) {
+        try {
+            channels.register(new RdpdrChannel());
+            logger.info("设备重定向声明通道(rdpdr)已注册");
+        } catch (RdesktopException e) {
+            logger.log(Level.WARNING, "注册rdpdr通道失败: " + e.getMessage());
+        }
+    }
+
+    /**
      * 注册音频重定向虚拟通道（rdpsnd，MS-RDPEA）。
      * javardp库本身无rdpsnd实现，由{@link RdpsndChannel}完整实现
      * 格式协商、训练应答、两段式音频接收与WAVECONFIRM流控。
@@ -479,6 +494,7 @@ public class RdpClient {
 
             // 重新创建RDP层（FixedVChannels修复库分片重组NPE）
             VChannels channels = new FixedVChannels(state);
+            registerRdpdrChannel(channels);
             // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
             registerClipboardChannel(state, canvas, channels);
             registerSoundChannel(channels);
@@ -537,6 +553,7 @@ public class RdpClient {
 
             // 重新创建RDP层（FixedVChannels修复库分片重组NPE）
             VChannels channels = new FixedVChannels(state);
+            registerRdpdrChannel(channels);
             // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
             registerClipboardChannel(state, canvas, channels);
             registerSoundChannel(channels);
@@ -612,6 +629,7 @@ public class RdpClient {
 
             // 重新创建RDP层（FixedVChannels修复库分片重组NPE）
             VChannels channels = new FixedVChannels(state);
+            registerRdpdrChannel(channels);
             // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
             registerClipboardChannel(state, canvas, channels);
             registerSoundChannel(channels);

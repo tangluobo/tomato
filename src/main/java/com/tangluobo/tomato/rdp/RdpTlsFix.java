@@ -178,12 +178,6 @@ public class RdpTlsFix {
                         buffer.setPosition(savePos);
                     }
 
-                    // 注：原 [CHDEF-FIX] 曾把 rdpsnd 通道 options 从大端翻转为小端，
-                    // 但同一 connect-initial 里 cliprdr 的 options 仍是库默认的大端编码
-                    // （setBigEndian32），且 cliprdr 通道验证可用。实测该服务器按大端解析
-                    // options，把 rdpsnd 单独翻成小端反而让 INITIALIZED 位丢失，导致
-                    // rdpsnd 音频服务不被加载（连接正常但服务器从不推送 SNDC_FORMATS/音频）。
-                    // 故移除该字节序修复，让 rdpsnd 与 cliprdr 使用一致的字节序。
                 }
             } catch (Exception e) {
                 logger.warning("[CAPS-FIX] 修改capabilities失败: " + e.getMessage());

@@ -74,10 +74,10 @@ public class RdpsndChannel extends VChannel {
     private static final int CLIENT_VERSION = 8;
 
     /** 协商版本达到此值后必须发送Quality Mode PDU（MS-RDPEA 3.2.5.1） */
-    private static final int VERSION_REQUIRES_QUALITY_MODE = 7;
+    private static final int VERSION_REQUIRES_QUALITY_MODE = 6;
 
-    /** wQualityMode=动态（FreeRDP默认值） */
-    private static final int QUALITY_MODE_DYNAMIC = 1;
+    /** MS-RDPEA: DYNAMIC_QUALITY=0（1是MEDIUM，2是HIGH） */
+    private static final int QUALITY_MODE_DYNAMIC = 0;
 
     /** 客户端最大可接受格式数（与rdesktop MAX_FORMATS一致） */
     private static final int MAX_FORMATS = 10;

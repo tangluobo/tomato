@@ -1002,8 +1002,10 @@ public class Secure implements Layer<Rdp> {
 				buffer.out_uint8p(channels.channel(i).name(), 8); // out_uint8a(s,
 				// g_channels[i].name,
 				// 8);
-				buffer.setBigEndian32(channels.channel(i).flags()); // out_uint32_be(s,
-				// g_channels[i].flags);
+				// CHANNEL_DEF.options is an RDP UINT32 and is encoded little-endian.
+				// Big-endian encoding turns 0xC0000000 into 0x000000C0 on the server,
+				// dropping CHANNEL_OPTION_INITIALIZED and preventing rdpsnd startup.
+				buffer.setLittleEndian32(channels.channel(i).flags());
 			}
 		}
 		buffer.markEnd();
