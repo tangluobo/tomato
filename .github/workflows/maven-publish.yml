@@ -150,9 +150,9 @@ jobs:
       - name: 执行打包
         run: |
           if [ "${{ matrix.is_windows }}" = "true" ]; then
-            mvn clean package ${{ matrix.pack_arg }}
+            mvn clean package -P${{ matrix.pack_arg }}
           else
-            mvn clean package ${{ matrix.pack_arg }}
+            mvn clean package -P${{ matrix.pack_arg }}
           fi
         shell: bash
 
