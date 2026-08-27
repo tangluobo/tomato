@@ -37,6 +37,8 @@ public class FixedVChannels extends VChannels {
     private byte[] fragmentBuffer;
     /** 当前缓冲所属的MCS通道ID（防多通道交叉污染） */
     private int fragmentMcsId = -1;
+    /** 各通道收到的数据包计数（诊断：确认音频通道是否有数据到达） */
+    private final java.util.Map<Integer, Integer> channelPacketCounts = new java.util.concurrent.ConcurrentHashMap<>();
 
     public FixedVChannels(State state) {
         super(state);
@@ -54,6 +56,13 @@ public class FixedVChannels extends VChannels {
         if (channel == null) {
             logger.warning("Data from unknown channel " + mcsChannel);
             return;
+        }
+
+        // 诊断：记录各通道数据包计数（每通道前2包和每100包打印一次）
+        int count = channelPacketCounts.merge(mcsChannel, 1, Integer::sum);
+        if (count <= 2 || count % 100 == 0) {
+            logger.info(String.format("[VCHAN] 通道%s(%s) 收到第%d个数据包, %d字节",
+                    mcsChannel, channel.name(), count, packet.getEnd() - packet.getPosition()));
         }
 
         // 虚拟通道chunk头：length(4，忽略) + flags(4)
