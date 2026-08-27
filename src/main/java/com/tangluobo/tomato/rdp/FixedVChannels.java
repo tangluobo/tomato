@@ -4,11 +4,11 @@ import java.io.IOException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import com.sshtools.javardp.Packet;
-import com.sshtools.javardp.RdesktopException;
-import com.sshtools.javardp.State;
-import com.sshtools.javardp.rdp5.VChannel;
-import com.sshtools.javardp.rdp5.VChannels;
+import com.tangluobo.tomato.rdp.Packet;
+import com.tangluobo.tomato.rdp.RdesktopException;
+import com.tangluobo.tomato.rdp.State;
+import com.tangluobo.tomato.rdp.rdp5.VChannel;
+import com.tangluobo.tomato.rdp.rdp5.VChannels;
 
 /**
  * 修复版虚拟通道集合（VChannels）。

@@ -17,7 +17,7 @@ module tomato {
     requires org.apache.commons.compress;
     requires org.apache.commons.codec;
     requires org.apache.commons.io;
-    requires rdp;
+    requires org.apache.commons.cli;
     requires org.bouncycastle.provider;
     requires org.bouncycastle.tls;
     requires minio;
@@ -35,7 +35,7 @@ module tomato {
     requires rocketmq.srvutil;
     requires kafka.clients;
     requires org.apache.commons.lang3;
-    requires slf4j.api;
+    requires org.slf4j;
     requires org.apache.xmlgraphics.batik.transcoder;
     requires org.apache.xmlgraphics.batik.codec;
     requires org.apache.xmlgraphics.batik.dom;

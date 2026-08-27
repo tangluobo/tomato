@@ -5,13 +5,13 @@ import java.lang.reflect.Field;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import com.sshtools.javardp.IContext;
-import com.sshtools.javardp.Packet;
-import com.sshtools.javardp.RdesktopException;
-import com.sshtools.javardp.State;
-import com.sshtools.javardp.layers.ISO;
-import com.sshtools.javardp.layers.MCS;
-import com.sshtools.javardp.layers.Transport;
+import com.tangluobo.tomato.rdp.IContext;
+import com.tangluobo.tomato.rdp.Packet;
+import com.tangluobo.tomato.rdp.RdesktopException;
+import com.tangluobo.tomato.rdp.State;
+import com.tangluobo.tomato.rdp.layers.ISO;
+import com.tangluobo.tomato.rdp.layers.MCS;
+import com.tangluobo.tomato.rdp.layers.Transport;
 
 /**
  * 修复javardp库ISO层的fast-path检测bug。
@@ -130,8 +130,8 @@ public class RdpIsoFix {
                     boolean encrypted = (version & 0x80) != 0;
 
                     // SSL/HYBRID模式下忽略加密标志（TLS已处理加密）
-                    if (encrypted && (stateRef.getSecurityType() == com.sshtools.javardp.SecurityType.SSL
-                            || stateRef.getSecurityType() == com.sshtools.javardp.SecurityType.HYBRID)) {
+                    if (encrypted && (stateRef.getSecurityType() == com.tangluobo.tomato.rdp.SecurityType.SSL
+                            || stateRef.getSecurityType() == com.tangluobo.tomato.rdp.SecurityType.HYBRID)) {
                         encrypted = false;
                     }
 

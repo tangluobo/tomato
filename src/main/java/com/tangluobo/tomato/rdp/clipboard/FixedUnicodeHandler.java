@@ -7,10 +7,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import com.sshtools.javardp.Packet;
-import com.sshtools.javardp.RdesktopException;
-import com.sshtools.javardp.rdp5.cliprdr.ClipInterface;
-import com.sshtools.javardp.rdp5.cliprdr.TypeHandler;
+import com.tangluobo.tomato.rdp.Packet;
+import com.tangluobo.tomato.rdp.RdesktopException;
+import com.tangluobo.tomato.rdp.rdp5.cliprdr.ClipInterface;
+import com.tangluobo.tomato.rdp.rdp5.cliprdr.TypeHandler;
 
 /**
  * 修复版 CF_UNICODETEXT 剪贴板格式处理器。

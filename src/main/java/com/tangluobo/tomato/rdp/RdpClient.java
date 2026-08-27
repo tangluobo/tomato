@@ -14,20 +14,20 @@ import java.util.logging.Logger;
 import javax.net.ssl.X509TrustManager;
 import javax.swing.JComponent;
 
-import com.sshtools.javardp.CredentialProvider;
-import com.sshtools.javardp.DefaultCredentialsProvider;
-import com.sshtools.javardp.IContext;
-import com.sshtools.javardp.IContext.ReadyType;
-import com.sshtools.javardp.Options;
-import com.sshtools.javardp.RdesktopDisconnectException;
-import com.sshtools.javardp.RdesktopException;
-import com.sshtools.javardp.RdesktopLicenseException;
-import com.sshtools.javardp.State;
-import com.sshtools.javardp.graphics.RdesktopCanvas;
-import com.sshtools.javardp.io.DefaultIO;
-import com.sshtools.javardp.keymapping.KeyCode_FileBased;
-import com.sshtools.javardp.layers.Rdp;
-import com.sshtools.javardp.rdp5.VChannels;
+import com.tangluobo.tomato.rdp.CredentialProvider;
+import com.tangluobo.tomato.rdp.DefaultCredentialsProvider;
+import com.tangluobo.tomato.rdp.IContext;
+import com.tangluobo.tomato.rdp.IContext.ReadyType;
+import com.tangluobo.tomato.rdp.Options;
+import com.tangluobo.tomato.rdp.RdesktopDisconnectException;
+import com.tangluobo.tomato.rdp.RdesktopException;
+import com.tangluobo.tomato.rdp.RdesktopLicenseException;
+import com.tangluobo.tomato.rdp.State;
+import com.tangluobo.tomato.rdp.graphics.RdesktopCanvas;
+import com.tangluobo.tomato.rdp.io.DefaultIO;
+import com.tangluobo.tomato.rdp.keymapping.KeyCode_FileBased;
+import com.tangluobo.tomato.rdp.layers.Rdp;
+import com.tangluobo.tomato.rdp.rdp5.VChannels;
 import com.tangluobo.tomato.rdp.clipboard.FixedClipChannel;
 
 /**
@@ -163,7 +163,7 @@ public class RdpClient {
         this.mapClipboard = mapClipboard;
 
         // 启用RDP库调试日志（slf4j-jdk14桥接到java.util.logging）
-        Logger sshtools = Logger.getLogger("com.sshtools");
+        Logger sshtools = Logger.getLogger("com.tangluobo.tomato.rdp");
         sshtools.setLevel(Level.FINE);
         Logger root = Logger.getLogger("");
         for (java.util.logging.Handler h : root.getHandlers()) {
@@ -189,10 +189,10 @@ public class RdpClient {
         // 所以列表最后一个元素决定了优先选择的安全类型。
         // 详见State.java: securityType = options.getSecurityTypes().get(size - 1)
         options.getSecurityTypes().clear();
-        options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.STANDARD);
+        options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.STANDARD);
         if (useSsl) {
             // SSL在列表末尾会被优先选择；服务器不支持SSL时ISO协商会自动降级
-            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.SSL);
+            options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.SSL);
         }
 
         // 设置宽松的TrustManager：接受RDP服务器自签名证书
@@ -429,9 +429,9 @@ public class RdpClient {
 
             // 重新配置：仅STANDARD安全类型
             options.getSecurityTypes().clear();
-            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.SSL);
+            options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.SSL);
             // 注意：STANDARD放在最后，这样State构造函数会选择STANDARD
-            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.STANDARD);
+            options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.STANDARD);
 
             // 重新创建状态
             RdpState rdpState = new RdpState(options);
@@ -486,8 +486,8 @@ public class RdpClient {
 
             // 重新配置：STANDARD在前，SSL在末尾（State构造函数取最后一个元素作为初始securityType）
             options.getSecurityTypes().clear();
-            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.STANDARD);
-            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.SSL);
+            options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.STANDARD);
+            options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.SSL);
 
             // 重新创建状态
             RdpState rdpState = new RdpState(options);
@@ -559,8 +559,8 @@ public class RdpClient {
 
             // 重新配置：使用HYBRID（CredSSP/NLA）
             options.getSecurityTypes().clear();
-            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.STANDARD);
-            options.getSecurityTypes().add(com.sshtools.javardp.SecurityType.HYBRID);
+            options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.STANDARD);
+            options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.HYBRID);
 
             // 重新创建状态
             RdpState rdpState = new RdpState(options);

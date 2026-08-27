@@ -18,13 +18,13 @@ import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.X509TrustManager;
 
-import com.sshtools.javardp.RdesktopException;
-import com.sshtools.javardp.State;
-import com.sshtools.javardp.io.IO;
-import com.sshtools.javardp.io.IOSocket;
-import com.sshtools.javardp.io.SocketIO;
-import com.sshtools.javardp.layers.ISO;
-import com.sshtools.javardp.layers.Transport;
+import com.tangluobo.tomato.rdp.RdesktopException;
+import com.tangluobo.tomato.rdp.State;
+import com.tangluobo.tomato.rdp.io.IO;
+import com.tangluobo.tomato.rdp.io.IOSocket;
+import com.tangluobo.tomato.rdp.io.SocketIO;
+import com.tangluobo.tomato.rdp.layers.ISO;
+import com.tangluobo.tomato.rdp.layers.Transport;
 
 /**
  * 修复sshtools rdp库的TLS兼容性问题。
@@ -126,7 +126,7 @@ public class RdpTlsFix {
         }
 
         @Override
-        public void sendPacket(com.sshtools.javardp.Packet buffer) throws IOException {
+        public void sendPacket(com.tangluobo.tomato.rdp.Packet buffer) throws IOException {
             int count = sendPktCount.incrementAndGet();
             int savePos = buffer.getPosition();
             int avail = buffer.getEnd() - savePos;
@@ -181,8 +181,8 @@ public class RdpTlsFix {
         }
 
         @Override
-        public com.sshtools.javardp.Packet receivePacket(com.sshtools.javardp.Packet p, int length) throws IOException {
-            com.sshtools.javardp.Packet result = super.receivePacket(p, length);
+        public com.tangluobo.tomato.rdp.Packet receivePacket(com.tangluobo.tomato.rdp.Packet p, int length) throws IOException {
+            com.tangluobo.tomato.rdp.Packet result = super.receivePacket(p, length);
             int count = recvPktCount.incrementAndGet();
             // 诊断：记录Transport层收到的原始数据（前8字节用于判断是否为RDP5 fast-path）
             if (result != null) {
