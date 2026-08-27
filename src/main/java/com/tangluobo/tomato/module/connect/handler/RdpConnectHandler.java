@@ -57,8 +57,15 @@ public class RdpConnectHandler implements ConnectHandler {
         Tab tab = new Tab(config.getName());
         tab.setContent(rdpPane);
         tab.setUserData(config.getId());
+        rdpPane.setOwnerTab(tab);
 
         ContextMenu tabContextMenu = new ContextMenu();
+
+        MenuItem fullScreenItem = new MenuItem("全屏");
+        fullScreenItem.setOnAction(e -> rdpPane.toggleFullScreen());
+        // 菜单打开时根据当前全屏状态更新文字
+        tabContextMenu.setOnShowing(e ->
+                fullScreenItem.setText(rdpPane.isFullScreen() ? "退出全屏" : "全屏"));
 
         MenuItem sessionConfigItem = new MenuItem("会话配置");
         sessionConfigItem.setOnAction(e -> {
@@ -67,7 +74,7 @@ public class RdpConnectHandler implements ConnectHandler {
             module.saveConnections();
         });
 
-        tabContextMenu.getItems().add(sessionConfigItem);
+        tabContextMenu.getItems().addAll(fullScreenItem, sessionConfigItem);
         tab.setContextMenu(tabContextMenu);
 
         tab.setOnClosed(e -> {
@@ -88,13 +95,41 @@ public class RdpConnectHandler implements ConnectHandler {
         module.showTerminalView();
 
         int rdpPort = config.getPort() > 0 ? config.getPort() : 3389;
-        int width = config.getScreenWidth() > 0 ? config.getScreenWidth() : 1024;
-        int height = config.getScreenHeight() > 0 ? config.getScreenHeight() : 768;
+        int width;
+        int height;
+        if (config.isFullscreen()) {
+            // 全屏模式：动态获取主窗口所在屏幕（无窗口时取主屏）大小作为分辨率
+            javafx.geometry.Rectangle2D bounds = resolveScreenBounds(module);
+            width = (int) Math.floor(bounds.getWidth());
+            height = (int) Math.floor(bounds.getHeight());
+        } else {
+            width = config.getScreenWidth() > 0 ? config.getScreenWidth() : 1024;
+            height = config.getScreenHeight() > 0 ? config.getScreenHeight() : 768;
+        }
         int bpp = config.getColorDepth() > 0 ? config.getColorDepth() : 24;
         String domain = config.getDomain();
 
         rdpPane.connect(config.getHost(), rdpPort, config.getUsername(), password,
                 domain, width, height, bpp, config.isUseSsl(), config.isMapClipboard(),
                 config.isEnableSound());
+    }
+
+    /**
+     * 获取主窗口所在屏幕的可视区域（全屏分辨率用）；无窗口时取主屏
+     */
+    private javafx.geometry.Rectangle2D resolveScreenBounds(ConnectModule module) {
+        try {
+            javafx.scene.Scene scene = module.getTerminalTabPane().getScene();
+            if (scene != null && scene.getWindow() != null) {
+                javafx.stage.Window window = scene.getWindow();
+                javafx.geometry.Rectangle2D windowBounds = new javafx.geometry.Rectangle2D(
+                        window.getX(), window.getY(), 1, 1);
+                for (javafx.stage.Screen screen : javafx.stage.Screen.getScreensForRectangle(windowBounds)) {
+                    return screen.getBounds();
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return javafx.stage.Screen.getPrimary().getBounds();
     }
 }

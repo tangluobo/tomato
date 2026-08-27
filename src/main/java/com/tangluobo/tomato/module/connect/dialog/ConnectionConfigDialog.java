@@ -1149,11 +1149,12 @@ public class ConnectionConfigDialog {
         // RDP专属字段：分辨率
         grid.add(new Label("分辨率："), 0, row);
         rdpResolutionCombo = new ComboBox<>();
-        rdpResolutionCombo.getItems().addAll("800x600", "1024x768", "1280x720", "1280x1024", "1920x1080");
+        rdpResolutionCombo.getItems().addAll("全屏", "800x600", "1024x768", "1280x720", "1280x1024", "1920x1080");
         rdpResolutionCombo.setEditable(true);
         rdpResolutionCombo.setPromptText("宽x高");
         rdpResolutionCombo.setPrefWidth(150);
         rdpResolutionCombo.setValue("1024x768");
+        rdpResolutionCombo.setTooltip(new Tooltip("选择\"全屏\"时自动获取当前屏幕大小作为连接分辨率"));
         grid.add(rdpResolutionCombo, 1, row++);
 
         // RDP专属字段：色深
@@ -2381,10 +2382,14 @@ public class ConnectionConfigDialog {
                 if (existingConfig.getDomain() != null) {
                     rdpDomainField.setText(existingConfig.getDomain());
                 }
-                int w = existingConfig.getScreenWidth();
-                int h = existingConfig.getScreenHeight();
-                if (w > 0 && h > 0) {
-                    rdpResolutionCombo.setValue(w + "x" + h);
+                if (existingConfig.isFullscreen()) {
+                    rdpResolutionCombo.setValue("全屏");
+                } else {
+                    int w = existingConfig.getScreenWidth();
+                    int h = existingConfig.getScreenHeight();
+                    if (w > 0 && h > 0) {
+                        rdpResolutionCombo.setValue(w + "x" + h);
+                    }
                 }
                 int bpp = existingConfig.getColorDepth();
                 if (bpp > 0) {
@@ -2614,12 +2619,21 @@ public class ConnectionConfigDialog {
                 config.setDomain(rdpDomainField.getText().trim());
                 // 解析分辨率
                 String resolution = rdpResolutionCombo.getValue();
-                if (resolution != null && resolution.contains("x")) {
-                    try {
-                        String[] parts = resolution.split("x");
-                        config.setScreenWidth(Integer.parseInt(parts[0].trim()));
-                        config.setScreenHeight(Integer.parseInt(parts[1].trim()));
-                    } catch (NumberFormatException ignored) {}
+                if ("全屏".equals(resolution)) {
+                    config.setFullscreen(true);
+                    // 同时记录当前屏幕大小（连接时会动态重新获取）
+                    javafx.geometry.Rectangle2D bounds = javafx.stage.Screen.getPrimary().getBounds();
+                    config.setScreenWidth((int) Math.floor(bounds.getWidth()));
+                    config.setScreenHeight((int) Math.floor(bounds.getHeight()));
+                } else {
+                    config.setFullscreen(false);
+                    if (resolution != null && resolution.contains("x")) {
+                        try {
+                            String[] parts = resolution.split("x");
+                            config.setScreenWidth(Integer.parseInt(parts[0].trim()));
+                            config.setScreenHeight(Integer.parseInt(parts[1].trim()));
+                        } catch (NumberFormatException ignored) {}
+                    }
                 }
                 // 解析色深
                 String colorDepth = rdpColorDepthCombo.getValue();

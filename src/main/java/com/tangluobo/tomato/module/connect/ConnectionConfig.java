@@ -33,6 +33,7 @@ public class ConnectionConfig {
     private String domain;
     private int screenWidth = 1024;
     private int screenHeight = 768;
+    private boolean fullscreen = false; // 全屏模式：连接时自动获取当前屏幕大小作为分辨率
     private int colorDepth = 24;
     private boolean useSsl = true; // 是否使用SSL/TLS加密（无TLS服务器需设为false）
     private boolean mapClipboard = true; // 是否启用剪贴板同步（本地与远程桌面互拷）
@@ -145,6 +146,9 @@ public class ConnectionConfig {
 
     public int getScreenHeight() { return screenHeight; }
     public void setScreenHeight(int screenHeight) { this.screenHeight = screenHeight; }
+
+    public boolean isFullscreen() { return fullscreen; }
+    public void setFullscreen(boolean fullscreen) { this.fullscreen = fullscreen; }
 
     public int getColorDepth() { return colorDepth; }
     public void setColorDepth(int colorDepth) { this.colorDepth = colorDepth; }
