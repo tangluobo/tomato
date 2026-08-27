@@ -14,15 +14,6 @@ import java.util.logging.Logger;
 import javax.net.ssl.X509TrustManager;
 import javax.swing.JComponent;
 
-import com.tangluobo.tomato.rdp.CredentialProvider;
-import com.tangluobo.tomato.rdp.DefaultCredentialsProvider;
-import com.tangluobo.tomato.rdp.IContext;
-import com.tangluobo.tomato.rdp.IContext.ReadyType;
-import com.tangluobo.tomato.rdp.Options;
-import com.tangluobo.tomato.rdp.RdesktopDisconnectException;
-import com.tangluobo.tomato.rdp.RdesktopException;
-import com.tangluobo.tomato.rdp.RdesktopLicenseException;
-import com.tangluobo.tomato.rdp.State;
 import com.tangluobo.tomato.rdp.graphics.RdesktopCanvas;
 import com.tangluobo.tomato.rdp.io.DefaultIO;
 import com.tangluobo.tomato.rdp.keymapping.KeyCode_FileBased;
@@ -159,10 +150,11 @@ public class RdpClient {
      * @param bpp          色深（16/24）
      * @param useSsl       是否使用SSL/TLS加密（无TLS服务器需设为false）
      * @param mapClipboard 是否启用剪贴板同步（本地与远程桌面互拷文本）
+     * @param enableSound
      */
     public void connect(String host, int port, String username, String password,
-                         String domain, int width, int height, int bpp, boolean useSsl,
-                         boolean mapClipboard) {
+                        String domain, int width, int height, int bpp, boolean useSsl,
+                        boolean mapClipboard, boolean enableSound) {
         if (connected) {
             throw new IllegalStateException("RDP客户端已连接，请先断开当前连接");
         }

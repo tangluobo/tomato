@@ -8,12 +8,12 @@ import java.util.logging.Logger;
 
 import javax.sound.sampled.AudioFormat;
 
-import com.sshtools.javardp.Packet;
-import com.sshtools.javardp.RdesktopException;
-import com.sshtools.javardp.rdp5.VChannel;
+import com.tangluobo.tomato.rdp.Packet;
+import com.tangluobo.tomato.rdp.RdesktopException;
+import com.tangluobo.tomato.rdp.rdp5.VChannel;
 
-import static com.sshtools.javardp.rdp5.VChannels.CHANNEL_OPTION_COMPRESS_RDP;
-import static com.sshtools.javardp.rdp5.VChannels.CHANNEL_OPTION_SHOW_PROTOCOL;
+import static com.tangluobo.tomato.rdp.rdp5.VChannels.CHANNEL_OPTION_COMPRESS_RDP;
+import static com.tangluobo.tomato.rdp.rdp5.VChannels.CHANNEL_OPTION_SHOW_PROTOCOL;
 
 /**
  * RDP音频重定向虚拟通道（rdpsnd），基于MS-RDPEA规范实现。
