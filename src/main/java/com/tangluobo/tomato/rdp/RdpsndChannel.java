@@ -8,6 +8,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -32,8 +33,7 @@ import com.tangluobo.tomato.rdp.rdp5.VChannel;
  * <ul>
  * <li>PDU头4字节：msgType(1) + bPad(1) + BodySize(2, 小端)</li>
  * <li>SNDC_FORMATS(0x07)：服务器连接后主动下发其格式列表，客户端回复
- *     dwFlags/dwVolume/dwPitch/wDGramPort为协议怪癖大端，其余小端；
- *     声明wVersion=2（v5.0协议，服务器据此使用SNDC_WAVE而非WAVE2）</li>
+ *     客户端根据本地能力回复支持的格式，并声明wVersion=8。</li>
  * <li>SNDC_TRAINING(0x06)：回显wTimeStamp+wPackSize</li>
  * <li>SNDC_WAVE(0x02)两段式：BodySize=8字节wave头+全部音频数据。
  *     第一个通道消息=PDU头+wave头(8)+前4字节音频；第二个通道消息
@@ -85,23 +85,20 @@ public class RdpsndChannel extends VChannel {
     /** 播放队列容量（块），超出丢弃最旧数据以保证低延迟 */
     private static final int QUEUE_CAPACITY = 64;
 
-    /** 协商失败兜底前等待服务器主动下发格式的秒数 */
-    private static final int NEGOTIATE_TIMEOUT_SECONDS = 5;
+    /** 首次协商完成后等待首个音频样本的时限。 */
+    private static final int FIRST_WAVE_TIMEOUT_SECONDS = 2;
 
     /** 协商成功后服务器将使用的格式列表（按服务器优先级排序） */
     private final List<AudioDef> negotiatedFormats = new ArrayList<>();
 
-    /**
-     * 格式协商已发生（收到服务器格式，或客户端已主动发起）。
-     * MS-RDPEA规范由客户端先发起；Windows服务器会主动下发，
-     * xrdp等实现则会等待客户端先发。
-     */
-    private volatile boolean formatsExchanged;
-
-    /** 主动格式协商定时器 */
-    private final ScheduledExecutorService negotiateTimer = Executors
+    /** 首个音频样本是否已到达；用于避免对正常播放会话重复重协商。 */
+    private volatile boolean receivedFirstWave;
+    /** 启动恢复只允许执行一次，避免服务端不支持时产生报文循环。 */
+    private volatile boolean startupRecoveryAttempted;
+    private volatile ScheduledFuture<?> firstWaveRecovery;
+    private final ScheduledExecutorService recoveryTimer = Executors
             .newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "rdpsnd-negotiate");
+                Thread t = new Thread(r, "rdpsnd-first-wave-recovery");
                 t.setDaemon(true);
                 return t;
             });
@@ -127,31 +124,6 @@ public class RdpsndChannel extends VChannel {
         playThread = new Thread(this::playLoop, "rdpsnd-player");
         playThread.setDaemon(true);
         playThread.start();
-    }
-
-    /**
-     * 通道启动钩子。Windows服务器连接后会主动下发格式协商，
-     * 若超时未收到（xrdp等实现等待客户端先发、或服务器端禁用音频），
-     * 由客户端主动发起一次格式协商兜底（符合MS-RDPEA客户端启动流程）。
-     */
-    @Override
-    protected void onStart() {
-        negotiateTimer.schedule(() -> {
-            try {
-                if (!formatsExchanged && !closed) {
-                    logger.info("rdpsnd: " + NEGOTIATE_TIMEOUT_SECONDS
-                            + "秒内未收到服务器格式协商，主动发起客户端格式协商");
-                    state.getCommLock().acquire();
-                    try {
-                        sendDefaultFormats();
-                    } finally {
-                        state.getCommLock().release();
-                    }
-                }
-            } catch (Exception e) {
-                logger.log(Level.WARNING, "rdpsnd: 主动格式协商失败: " + e.getMessage());
-            }
-        }, NEGOTIATE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
     }
 
     @Override
@@ -305,7 +277,6 @@ public class RdpsndChannel extends VChannel {
             logger.warning("rdpsnd: SNDC_FORMATS消息过短(" + body.length + "字节)");
             return;
         }
-        formatsExchanged = true; // 服务器已主动发起协商，取消主动兜底
         int count = le16(body, 14);
         int serverVersion = le16(body, 17);
         int negotiatedVersion = Math.min(serverVersion, CLIENT_VERSION);
@@ -340,10 +311,15 @@ public class RdpsndChannel extends VChannel {
         logger.info("rdpsnd: 服务器格式协商 version=" + serverVersion
                 + ", 格式数=" + count + ", 可播放PCM格式=" + negotiatedFormats.size()
                 + ", 协商版本=" + negotiatedVersion);
-        sendClientFormats();
-        if (negotiatedVersion >= VERSION_REQUIRES_QUALITY_MODE) {
-            sendQualityMode();
-        }
+        // 所有虚拟通道都共用同一个Transport。格式回复和Quality Mode必须连续写出，
+        // 否则可能与剪贴板或输入PDU交错，令服务端重新进入音频初始化。
+        sendWithCommLock(() -> {
+            sendClientFormats();
+            if (negotiatedVersion >= VERSION_REQUIRES_QUALITY_MODE) {
+                sendQualityMode();
+            }
+        });
+        scheduleFirstWaveRecovery(negotiatedVersion);
     }
 
     /**
@@ -365,7 +341,7 @@ public class RdpsndChannel extends VChannel {
 
     /**
      * 回复客户端格式列表（SNDC_FORMATS）。
-     * 整数字段均按协议使用小端编码，只有wDGramPort使用大端。
+     * 整数字段均按协议使用小端编码。
      */
     private void sendClientFormats() throws RdesktopException, java.io.IOException {
         int bodySize = 20 + 18 * negotiatedFormats.size();
@@ -376,7 +352,7 @@ public class RdpsndChannel extends VChannel {
         p.setLittleEndian32(TSSNDCAPS_ALIVE | TSSNDCAPS_VOLUME); // dwFlags
         p.setLittleEndian32(0xFFFFFFFF); // dwVolume（最大音量）
         p.setLittleEndian32(0); // dwPitch
-        p.setBigEndian16(0); // wDGramPort（不使用UDP）
+        p.setLittleEndian16(0); // wDGramPort（不使用UDP）
         p.setLittleEndian16(negotiatedFormats.size());
         p.set8(0); // cLastBlockConfirmed
         p.setLittleEndian16(CLIENT_VERSION); // wVersion
@@ -397,30 +373,6 @@ public class RdpsndChannel extends VChannel {
     }
 
     /**
-     * 主动发起格式协商：发送客户端默认支持的PCM格式列表。
-     * 服务器若支持音频重定向，将以SNDC_FORMATS回复并开始推送音频。
-     */
-    private synchronized void sendDefaultFormats() throws RdesktopException, java.io.IOException {
-        if (formatsExchanged || closed) {
-            return;
-        }
-        formatsExchanged = true;
-        negotiatedFormats.clear();
-        int[][] defs = {
-            {2, 44100, 16}, {1, 44100, 16}, {2, 22050, 16}, {1, 22050, 16},
-            {2, 16000, 16}, {1, 16000, 16}, {2, 11025, 16}, {1, 11025, 16},
-        };
-        for (int[] d : defs) {
-            int blockAlign = d[0] * d[2] / 8;
-            negotiatedFormats.add(new AudioDef(WAVE_FORMAT_PCM, d[0], d[1],
-                    d[1] * blockAlign, blockAlign, d[2]));
-        }
-        sendClientFormats();
-        logger.info("rdpsnd: 已主动发送客户端格式协商（若服务器支持音频将回应并开始推送；"
-                + "若始终无回应，请检查服务器端音频重定向是否启用）");
-    }
-
-    /**
      * 训练包（SNDC_TRAINING）：回显wTimeStamp与wPackSize，
      * 服务器据此测量往返延迟后开始推送音频。
      */
@@ -437,7 +389,7 @@ public class RdpsndChannel extends VChannel {
         p.setLittleEndian16(tick);
         p.setLittleEndian16(packsize);
         p.markEnd();
-        send_packet(p);
+        sendWithCommLock(() -> send_packet(p));
         logger.info("rdpsnd: 训练包已应答 tick=" + tick + " packsize=" + packsize);
     }
 
@@ -454,6 +406,8 @@ public class RdpsndChannel extends VChannel {
         int tick = le16(body, 0);
         int formatNo = le16(body, 2);
         int blockNo = body[4] & 0xFF;
+        receivedFirstWave = true;
+        cancelFirstWaveRecovery();
         if (formatNo < negotiatedFormats.size()) {
             byte[] waveData = Arrays.copyOfRange(body, waveHeaderLen, body.length);
             enqueue(negotiatedFormats.get(formatNo), waveData);
@@ -477,7 +431,70 @@ public class RdpsndChannel extends VChannel {
         p.set8(blockNo);
         p.set8(0);
         p.markEnd();
-        send_packet(p);
+        sendWithCommLock(() -> send_packet(p));
+    }
+
+    /** 要发送的rdpsnd PDU动作。 */
+    @FunctionalInterface
+    private interface ChannelSendAction {
+        void send() throws RdesktopException, java.io.IOException;
+    }
+
+    /**
+     * 将一个或一组rdpsnd PDU作为不可交错的传输操作发送。
+     * Secure/Transport并不保证多线程write原子性；剪贴板、输入和音频回调可并发发生。
+     */
+    private void sendWithCommLock(ChannelSendAction action)
+            throws RdesktopException, java.io.IOException {
+        try {
+            state.getCommLock().acquire();
+            try {
+                action.send();
+            } finally {
+                state.getCommLock().release();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RdesktopException("发送rdpsnd PDU时被中断", e);
+        }
+    }
+
+    /**
+     * 某些 Windows 音频栈在 RDP 连接时已有媒体流正在播放，会完成首轮协商却不
+     * 立刻绑定该流。若没有任何 Wave 数据到达，重发一次已协商的客户端能力以请求
+     * 服务端重新激活 rdpsnd；仅尝试一次，正常会话不会走到这里。
+     */
+    private synchronized void scheduleFirstWaveRecovery(int negotiatedVersion) {
+        if (closed || receivedFirstWave || startupRecoveryAttempted) {
+            return;
+        }
+        cancelFirstWaveRecovery();
+        firstWaveRecovery = recoveryTimer.schedule(() -> {
+            synchronized (RdpsndChannel.this) {
+                if (closed || receivedFirstWave || startupRecoveryAttempted) {
+                    return;
+                }
+                startupRecoveryAttempted = true;
+                try {
+                    logger.info("rdpsnd: 首次协商后未收到音频数据，重发一次能力确认以激活当前音频流");
+                    sendWithCommLock(() -> {
+                        sendClientFormats();
+                        if (negotiatedVersion >= VERSION_REQUIRES_QUALITY_MODE) {
+                            sendQualityMode();
+                        }
+                    });
+                } catch (Exception e) {
+                    logger.log(Level.WARNING, "rdpsnd: 首流恢复协商失败: " + e.getMessage(), e);
+                }
+            }
+        }, FIRST_WAVE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+    }
+
+    private synchronized void cancelFirstWaveRecovery() {
+        if (firstWaveRecovery != null) {
+            firstWaveRecovery.cancel(false);
+            firstWaveRecovery = null;
+        }
     }
 
     // =====================================================================
@@ -568,7 +585,8 @@ public class RdpsndChannel extends VChannel {
      */
     public void shutdown() {
         closed = true;
-        negotiateTimer.shutdownNow();
+        cancelFirstWaveRecovery();
+        recoveryTimer.shutdownNow();
         audioQueue.clear();
         if (playThread != null) {
             playThread.interrupt();
