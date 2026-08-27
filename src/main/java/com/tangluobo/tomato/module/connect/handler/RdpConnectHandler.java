@@ -3,6 +3,7 @@ package com.tangluobo.tomato.module.connect.handler;
 import com.tangluobo.tomato.module.connect.ConnectModule;
 import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.GlobalConfig;
 import com.tangluobo.tomato.module.connect.dialog.PasswordPromptDialog;
 import com.tangluobo.tomato.module.connect.dialog.SessionConfigDialog;
 import com.tangluobo.tomato.rdp.RdpPane;
@@ -53,6 +54,8 @@ public class RdpConnectHandler implements ConnectHandler {
         }
 
         RdpPane rdpPane = new RdpPane();
+        // 应用全屏切换快捷键：会话级覆盖优先，否则用全局配置
+        rdpPane.setFullScreenShortcut(resolveFullScreenShortcut(config));
 
         Tab tab = new Tab(config.getName());
         tab.setContent(rdpPane);
@@ -63,18 +66,24 @@ public class RdpConnectHandler implements ConnectHandler {
 
         MenuItem fullScreenItem = new MenuItem("全屏");
         fullScreenItem.setOnAction(e -> rdpPane.toggleFullScreen());
-        // 菜单打开时根据当前全屏状态更新文字
+        // 菜单打开时根据当前全屏状态和生效快捷键更新文字
         tabContextMenu.setOnShowing(e ->
-                fullScreenItem.setText(rdpPane.isFullScreen() ? "退出全屏" : "全屏"));
+                fullScreenItem.setText((rdpPane.isFullScreen() ? "退出全屏" : "全屏")
+                        + "（" + rdpPane.getFullScreenShortcutText() + "）"));
 
         MenuItem sessionConfigItem = new MenuItem("会话配置");
         sessionConfigItem.setOnAction(e -> {
             Stage stage = (Stage) module.getTerminalTabPane().getScene().getWindow();
             SessionConfigDialog.show(stage, config);
             module.saveConnections();
+            // 会话配置可能修改了全屏快捷键，重新应用到当前会话
+            rdpPane.setFullScreenShortcut(resolveFullScreenShortcut(config));
         });
 
-        tabContextMenu.getItems().addAll(fullScreenItem, sessionConfigItem);
+        MenuItem globalConfigItem = new MenuItem("全局配置");
+        globalConfigItem.setOnAction(e -> module.openSettingsTabWithRdpSelected());
+
+        tabContextMenu.getItems().addAll(fullScreenItem, sessionConfigItem, globalConfigItem);
         tab.setContextMenu(tabContextMenu);
 
         tab.setOnClosed(e -> {
@@ -112,6 +121,17 @@ public class RdpConnectHandler implements ConnectHandler {
         rdpPane.connect(config.getHost(), rdpPort, config.getUsername(), password,
                 domain, width, height, bpp, config.isUseSsl(), config.isMapClipboard(),
                 config.isEnableSound());
+    }
+
+    /**
+     * 解析生效的全屏切换快捷键：会话级覆盖优先，空则回退全局配置
+     */
+    private static String resolveFullScreenShortcut(ConnectionConfig config) {
+        String shortcut = config.getRdpFullScreenShortcut();
+        if (shortcut == null || shortcut.isBlank()) {
+            shortcut = GlobalConfig.getInstance().getRdpFullScreenShortcut();
+        }
+        return (shortcut == null || shortcut.isBlank()) ? "Ctrl+Shift+Enter" : shortcut;
     }
 
     /**

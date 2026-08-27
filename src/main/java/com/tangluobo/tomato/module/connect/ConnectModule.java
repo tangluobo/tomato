@@ -1829,15 +1829,20 @@ public class ConnectModule implements Module {
 
     /** 在右侧内容区以可关闭标签页形式打开"设置"界面 */
     public void openSettingsTab(java.util.function.Consumer<Boolean> onSidebarToggle) {
-        openSettingsTab(onSidebarToggle, false);
+        openSettingsTab(onSidebarToggle, false, false);
     }
 
     /** 供 handler 调用：打开设置并选中 SSH 终端子标签 */
     public void openSettingsTabWithSshSelected() {
-        openSettingsTab(null, true);
+        openSettingsTab(null, true, false);
     }
 
-    private void openSettingsTab(java.util.function.Consumer<Boolean> onSidebarToggle, boolean selectSshTab) {
+    /** 供 handler 调用：打开设置并选中远程桌面子标签 */
+    public void openSettingsTabWithRdpSelected() {
+        openSettingsTab(null, false, true);
+    }
+
+    private void openSettingsTab(java.util.function.Consumer<Boolean> onSidebarToggle, boolean selectSshTab, boolean selectRdpTab) {
         if (!ensureTabPaneInstalled()) return;
 
         if (onSidebarToggle != null) {
@@ -1848,9 +1853,8 @@ public class ConnectModule implements Module {
         for (Tab t : terminalTabPane.getTabs()) {
             if ("__settings__".equals(t.getUserData())) {
                 terminalTabPane.getSelectionModel().select(t);
-                if (selectSshTab && settingsInnerTabPane != null
-                        && settingsInnerTabPane.getTabs().size() > 1) {
-                    settingsInnerTabPane.getSelectionModel().select(1);
+                if (settingsInnerTabPane != null && (selectSshTab || selectRdpTab)) {
+                    selectSettingsInnerTab(selectRdpTab ? "远程桌面" : "SSH终端");
                 }
                 return;
             }
@@ -2059,8 +2063,63 @@ public class ConnectModule implements Module {
         sshTab.setContent(sshRoot);
         settingsTabPane.getTabs().add(sshTab);
 
+        // ===== 远程桌面 Tab =====
+        VBox rdpRoot = new VBox();
+        rdpRoot.setStyle("-fx-background-color: #ffffff; -fx-padding: 20;");
+        rdpRoot.setSpacing(15);
+
+        Label rdpTitle = new Label("远程桌面");
+        rdpTitle.setStyle("-fx-font-size: 20px; -fx-font-weight: bold;");
+
+        GridPane rdpGrid = new GridPane();
+        rdpGrid.setHgap(10);
+        rdpGrid.setVgap(12);
+        rdpGrid.setPadding(new Insets(20, 0, 0, 0));
+
+        Label rdpShortcutLabel = new Label("全屏快捷键");
+        rdpShortcutLabel.setStyle("-fx-font-size: 14px;");
+        GridPane.setConstraints(rdpShortcutLabel, 0, 0);
+
+        String globalRdpShortcut = GlobalConfig.getInstance().getRdpFullScreenShortcut();
+        TextField rdpShortcutField = new TextField(
+                globalRdpShortcut != null && !globalRdpShortcut.isBlank() ? globalRdpShortcut : "Ctrl+Shift+Enter");
+        rdpShortcutField.setPrefWidth(220);
+        rdpShortcutField.setPromptText("如 Ctrl+Alt+Enter");
+        GridPane.setConstraints(rdpShortcutField, 1, 0);
+
+        Label rdpShortcutHint = new Label("(切换全屏/退出全屏；连接可右键-会话配置单独覆盖)");
+        rdpShortcutHint.setStyle("-fx-font-size: 12px; -fx-text-fill: #888;");
+        GridPane.setConstraints(rdpShortcutHint, 2, 0);
+
+        rdpGrid.getChildren().addAll(rdpShortcutLabel, rdpShortcutField, rdpShortcutHint);
+
+        Button rdpApplyBtn = new Button("应用并保存");
+        rdpApplyBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-width: 100px;");
+        rdpApplyBtn.setOnAction(e -> {
+            String s = rdpShortcutField.getText().trim();
+            try {
+                javafx.scene.input.KeyCombination.valueOf(s);
+            } catch (IllegalArgumentException ex) {
+                new Alert(Alert.AlertType.WARNING, "无效的快捷键组合: " + s, ButtonType.OK).showAndWait();
+                return;
+            }
+            GlobalConfig cfg = GlobalConfig.getInstance();
+            cfg.setRdpFullScreenShortcut(s);
+            cfg.save();
+            // 应用到所有使用全局配置的RDP会话（会话级覆盖不受影响）
+            applyRdpShortcutToAllTabs(s);
+        });
+
+        rdpRoot.getChildren().addAll(rdpTitle, rdpGrid, rdpApplyBtn);
+
+        Tab rdpSettingsTab = new Tab("远程桌面");
+        rdpSettingsTab.setContent(rdpRoot);
+        settingsTabPane.getTabs().add(rdpSettingsTab);
+
         if (selectSshTab) {
             settingsTabPane.getSelectionModel().select(sshTab);
+        } else if (selectRdpTab) {
+            settingsTabPane.getSelectionModel().select(rdpSettingsTab);
         }
 
         settingsTab.setContent(settingsTabPane);
@@ -2097,6 +2156,35 @@ public class ConnectModule implements Module {
                         pane.setScrollbackLines(scrollback);
                     }
                 }
+            }
+        }
+    }
+
+    /** 将全局RDP全屏快捷键应用到所有使用全局配置的RDP会话（会话级覆盖不受影响） */
+    private void applyRdpShortcutToAllTabs(String shortcut) {
+        if (terminalTabPane == null) return;
+        for (Tab tab : terminalTabPane.getTabs()) {
+            Object content = tab.getContent();
+            Object userData = tab.getUserData();
+            if (content instanceof com.tangluobo.tomato.rdp.RdpPane pane
+                    && userData instanceof String configId) {
+                ConnectionConfig config = findConnectionById(configId);
+                // 仅更新使用全局配置（rdpFullScreenShortcut == null）的会话
+                if (config != null
+                        && (config.getRdpFullScreenShortcut() == null || config.getRdpFullScreenShortcut().isBlank())) {
+                    pane.setFullScreenShortcut(shortcut);
+                }
+            }
+        }
+    }
+
+    /** 选中设置页内指定标题的子标签 */
+    private void selectSettingsInnerTab(String tabTitle) {
+        if (settingsInnerTabPane == null) return;
+        for (Tab t : settingsInnerTabPane.getTabs()) {
+            if (tabTitle.equals(t.getText())) {
+                settingsInnerTabPane.getSelectionModel().select(t);
+                return;
             }
         }
     }

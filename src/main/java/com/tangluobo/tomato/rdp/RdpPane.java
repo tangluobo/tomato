@@ -76,8 +76,8 @@ public class RdpPane extends BorderPane {
     private int screenHeight;
     private int colorDepth;
 
-    /** 全屏切换快捷键：Ctrl+Shift+回车，按一次全屏、再按取消 */
-    private static final KeyCombination FULL_SCREEN_KEYS = KeyCombination.valueOf("Ctrl+Shift+Enter");
+    /** 全屏切换快捷键（默认Ctrl+Shift+回车，可通过 setFullScreenShortcut 动态修改） */
+    private volatile KeyCombination fullScreenKeys = KeyCombination.valueOf("Ctrl+Shift+Enter");
 
     public RdpPane() {
         rdpClient = new RdpClient();
@@ -93,23 +93,21 @@ public class RdpPane extends BorderPane {
         // the newly visible desktop area immediately.
         swingNode.layoutBoundsProperty().addListener((obs, oldValue, newValue) -> resizeDesktopViewport());
 
-        // Ctrl+Shift+Enter切换全屏（FX焦点场景）：跟随所在Scene自动注册/注销加速键，
+        // 全屏切换快捷键（FX焦点场景）：跟随所在Scene自动注册/注销加速键，
         // tab内和全屏窗口内均生效；全屏进入/退出引起Scene变化时同样自动迁移
         sceneProperty().addListener((obs, oldScene, newScene) -> {
             if (oldScene != null) {
-                oldScene.getAccelerators().remove(FULL_SCREEN_KEYS);
+                oldScene.getAccelerators().remove(fullScreenKeys);
             }
             if (newScene != null) {
-                newScene.getAccelerators().put(FULL_SCREEN_KEYS, this::toggleFullScreen);
+                newScene.getAccelerators().put(fullScreenKeys, this::toggleFullScreen);
             }
         });
 
-        // Ctrl+Shift+Enter切换全屏（Swing焦点场景）：焦点在RDP画布时按键进入AWT而非FX，
+        // 全屏切换快捷键（Swing焦点场景）：焦点在RDP画布时按键进入AWT而非FX，
         // 通过全局键分发器拦截并消费，避免被转发到远程桌面。常驻注册但校验焦点归属。
         fullScreenKeyDispatcher = e -> {
-            if (e.getID() == java.awt.event.KeyEvent.KEY_PRESSED
-                    && e.isControlDown() && e.isShiftDown()
-                    && e.getKeyCode() == java.awt.event.KeyEvent.VK_ENTER) {
+            if (matchesFullScreenKeys(e)) {
                 java.awt.Component focusOwner = java.awt.KeyboardFocusManager
                         .getCurrentKeyboardFocusManager().getFocusOwner();
                 JComponent display = desktopDisplay;
@@ -291,7 +289,7 @@ public class RdpPane extends BorderPane {
         }
         // 从所在Scene注销全屏切换加速键
         if (getScene() != null) {
-            getScene().getAccelerators().remove(FULL_SCREEN_KEYS);
+            getScene().getAccelerators().remove(fullScreenKeys);
         }
         if (rdpClient != null) {
             rdpClient.disconnect();
@@ -333,6 +331,69 @@ public class RdpPane extends BorderPane {
 
     public boolean isFullScreen() {
         return fullScreenStage != null;
+    }
+
+    /**
+     * 设置全屏切换快捷键（如 "Ctrl+Alt+Enter"），非法组合保持不变。
+     * 同步更新已注册的Scene加速键与全屏窗口的退出键。
+     */
+    public void setFullScreenShortcut(String shortcutText) {
+        String text = (shortcutText == null || shortcutText.isBlank())
+                ? "Ctrl+Shift+Enter" : shortcutText.trim();
+        KeyCombination newKeys;
+        try {
+            newKeys = KeyCombination.valueOf(text);
+        } catch (IllegalArgumentException e) {
+            return;
+        }
+        KeyCombination oldKeys = fullScreenKeys;
+        fullScreenKeys = newKeys;
+        // 重新注册当前Scene上的加速键
+        Scene scene = getScene();
+        if (scene != null) {
+            if (oldKeys != null) {
+                scene.getAccelerators().remove(oldKeys);
+            }
+            scene.getAccelerators().put(newKeys, this::toggleFullScreen);
+        }
+        // 全屏中则同步更新全屏窗口的退出键
+        Stage stage = fullScreenStage;
+        if (stage != null) {
+            stage.setFullScreenExitKeyCombination(newKeys);
+            stage.setFullScreenExitHint("按 " + newKeys.getName() + " 退出全屏");
+        }
+    }
+
+    /** 当前生效的全屏切换快捷键显示文本（用于菜单展示） */
+    public String getFullScreenShortcutText() {
+        KeyCombination keys = fullScreenKeys;
+        return keys != null ? keys.getName() : "Ctrl+Shift+Enter";
+    }
+
+    /**
+     * 判断AWT按键事件是否命中当前全屏切换快捷键。
+     * 将AWT事件转换为JavaFX KeyEvent后交给KeyCombination.match统一匹配，
+     * 保证快捷键修改后FX加速键与AWT拦截行为一致。
+     */
+    private boolean matchesFullScreenKeys(java.awt.event.KeyEvent e) {
+        if (e.getID() != java.awt.event.KeyEvent.KEY_PRESSED) {
+            return false;
+        }
+        KeyCombination keys = fullScreenKeys;
+        if (keys == null) {
+            return false;
+        }
+        try {
+            String keyText = java.awt.event.KeyEvent.getKeyText(e.getKeyCode());
+            javafx.scene.input.KeyCode code = javafx.scene.input.KeyCode.valueOf(
+                    keyText.replace(" ", "_").toUpperCase());
+            javafx.scene.input.KeyEvent fxEvent = new javafx.scene.input.KeyEvent(
+                    javafx.scene.input.KeyEvent.KEY_PRESSED, "", "", code,
+                    e.isShiftDown(), e.isControlDown(), e.isAltDown(), e.isMetaDown());
+            return keys.match(fxEvent);
+        } catch (IllegalArgumentException ex) {
+            return false; // 无法映射的按键不处理
+        }
     }
 
     /**
@@ -413,9 +474,9 @@ public class RdpPane extends BorderPane {
         // Ctrl+Shift+Enter切换全屏的加速键由sceneProperty监听器自动注册到本Scene
 
         fullScreenStage = new Stage();
-        // 覆盖JavaFX默认的Esc退出全屏，改为Ctrl+Shift+Enter（与切换键一致）
-        fullScreenStage.setFullScreenExitKeyCombination(FULL_SCREEN_KEYS);
-        fullScreenStage.setFullScreenExitHint("按 Ctrl+Shift+Enter 退出全屏");
+        // 覆盖JavaFX默认的Esc退出全屏，改为全屏切换快捷键（与切换键一致）
+        fullScreenStage.setFullScreenExitKeyCombination(fullScreenKeys);
+        fullScreenStage.setFullScreenExitHint("按 " + fullScreenKeys.getName() + " 退出全屏");
         fullScreenStage.setTitle(ownerTab.getText() != null ? ownerTab.getText() : "远程桌面");
         fullScreenStage.setScene(scene);
         // 全屏窗口定位到主窗口所在屏幕（多显示器时与tab所在屏一致）

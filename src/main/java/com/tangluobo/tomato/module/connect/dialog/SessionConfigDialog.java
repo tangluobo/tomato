@@ -77,6 +77,40 @@ public class SessionConfigDialog {
         fileViewBox.getChildren().addAll(fileViewCombo, fileViewUseGlobal);
         grid.add(fileViewBox, 1, row);
 
+        // RDP全屏切换快捷键（会话级覆盖，仅RDP连接显示）
+        boolean isRdp = config.getType() == com.tangluobo.tomato.module.connect.ConnectType.RDP;
+        final TextField rdpShortcutField;
+        final CheckBox rdpShortcutUseGlobal;
+        if (isRdp) {
+            row++;
+            grid.add(new Label("全屏快捷键:"), 0, row);
+            HBox rdpShortcutBox = new HBox(8);
+            rdpShortcutUseGlobal = new CheckBox("使用全局配置");
+            String sessionShortcut = config.getRdpFullScreenShortcut();
+            boolean useGlobalShortcut = sessionShortcut == null || sessionShortcut.isBlank();
+            rdpShortcutUseGlobal.setSelected(useGlobalShortcut);
+            String globalShortcut = GlobalConfig.getInstance().getRdpFullScreenShortcut();
+            String effectiveShortcut = useGlobalShortcut
+                    ? (globalShortcut != null && !globalShortcut.isBlank() ? globalShortcut : "Ctrl+Shift+Enter")
+                    : sessionShortcut;
+            rdpShortcutField = new TextField(effectiveShortcut);
+            rdpShortcutField.setPrefWidth(160);
+            rdpShortcutField.setPromptText("如 Ctrl+Alt+Enter");
+            rdpShortcutField.setDisable(useGlobalShortcut);
+            rdpShortcutUseGlobal.selectedProperty().addListener((obs, oldV, newV) -> {
+                rdpShortcutField.setDisable(newV);
+                if (!newV) {
+                    String gs = GlobalConfig.getInstance().getRdpFullScreenShortcut();
+                    rdpShortcutField.setText(gs != null && !gs.isBlank() ? gs : "Ctrl+Shift+Enter");
+                }
+            });
+            rdpShortcutBox.getChildren().addAll(rdpShortcutField, rdpShortcutUseGlobal);
+            grid.add(rdpShortcutBox, 1, row);
+        } else {
+            rdpShortcutField = null;
+            rdpShortcutUseGlobal = null;
+        }
+
         dialog.getDialogPane().setContent(grid);
 
         // 按钮
@@ -105,6 +139,20 @@ public class SessionConfigDialog {
                         default -> "LIST";
                     };
                     config.setDefaultFileViewMode(vm);
+                }
+                if (isRdp) {
+                    if (rdpShortcutUseGlobal.isSelected()) {
+                        config.setRdpFullScreenShortcut(null);
+                    } else {
+                        String s = rdpShortcutField.getText().trim();
+                        try {
+                            javafx.scene.input.KeyCombination.valueOf(s);
+                            config.setRdpFullScreenShortcut(s);
+                        } catch (IllegalArgumentException e) {
+                            new Alert(Alert.AlertType.WARNING, "无效的快捷键组合: " + s, ButtonType.OK).showAndWait();
+                            return null; // 保持对话框打开以便修改
+                        }
+                    }
                 }
                 return true;
             }

@@ -38,6 +38,7 @@ public class ConnectionConfig {
     private boolean useSsl = true; // 是否使用SSL/TLS加密（无TLS服务器需设为false）
     private boolean mapClipboard = true; // 是否启用剪贴板同步（本地与远程桌面互拷）
     private boolean enableSound = true; // 是否启用远程音频重定向（rdpsnd通道，远程声音在本地播放）
+    private String rdpFullScreenShortcut; // RDP全屏切换快捷键（会话级覆盖，null=使用全局配置）
 
     // 本地终端配置
     private String terminalType; // Windows: "cmd" 或 "powershell"; Linux/macOS: "system"
@@ -161,6 +162,9 @@ public class ConnectionConfig {
 
     public boolean isEnableSound() { return enableSound; }
     public void setEnableSound(boolean enableSound) { this.enableSound = enableSound; }
+
+    public String getRdpFullScreenShortcut() { return rdpFullScreenShortcut; }
+    public void setRdpFullScreenShortcut(String rdpFullScreenShortcut) { this.rdpFullScreenShortcut = rdpFullScreenShortcut; }
 
     public String getTerminalType() { return terminalType; }
     public void setTerminalType(String terminalType) { this.terminalType = terminalType; }

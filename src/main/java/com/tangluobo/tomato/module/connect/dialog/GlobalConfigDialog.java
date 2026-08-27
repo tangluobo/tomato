@@ -37,6 +37,7 @@ public class GlobalConfigDialog {
 
         boolean showScrollback = (mode == ConfigMode.ALL || mode == ConfigMode.SSH);
         boolean showTableFont = (mode == ConfigMode.ALL || mode == ConfigMode.TABLE);
+        boolean showRdpShortcut = (mode == ConfigMode.ALL);
 
         TextField scrollbackField;
         if (showScrollback) {
@@ -73,6 +74,20 @@ public class GlobalConfigDialog {
             fontNameBox = null;
         }
 
+        TextField rdpShortcutField;
+        if (showRdpShortcut) {
+            grid.add(new Label("RDP全屏快捷键:"), 0, row);
+            String globalShortcut = config.getRdpFullScreenShortcut();
+            rdpShortcutField = new TextField(
+                    globalShortcut != null && !globalShortcut.isBlank() ? globalShortcut : "Ctrl+Shift+Enter");
+            rdpShortcutField.setPrefWidth(160);
+            grid.add(rdpShortcutField, 1, row);
+            grid.add(new Label("(如 Ctrl+Alt+Enter)"), 2, row);
+            row++;
+        } else {
+            rdpShortcutField = null;
+        }
+
         dialog.getDialogPane().setContent(grid);
 
         ButtonType okBtn = new ButtonType("确定", ButtonBar.ButtonData.OK_DONE);
@@ -91,6 +106,17 @@ public class GlobalConfigDialog {
                 if (showTableFont && fontNameBox != null && fontSizeSpinner != null) {
                     config.setTableFontName(fontNameBox.getValue());
                     config.setTableFontSize(fontSizeSpinner.getValue());
+                }
+                if (showRdpShortcut && rdpShortcutField != null) {
+                    String s = rdpShortcutField.getText().trim();
+                    if (!s.isEmpty()) {
+                        try {
+                            javafx.scene.input.KeyCombination.valueOf(s);
+                            config.setRdpFullScreenShortcut(s);
+                        } catch (IllegalArgumentException ignored) {
+                            // 非法快捷键组合，保持原值
+                        }
+                    }
                 }
                 config.save();
                 return true;

@@ -33,6 +33,9 @@ public class GlobalConfig {
     // SSH 文件浏览器默认视图模式：ICON（图标视图）/ LIST（详细列表）/ COLUMN（多列列表，仿 macOS）
     private String sshDefaultFileViewMode = "LIST";
 
+    // RDP全屏切换快捷键（全局默认，连接配置可按会话覆盖）
+    private String rdpFullScreenShortcut = "Ctrl+Shift+Enter";
+
     public int getScrollbackLines() {
         return scrollbackLines;
     }
@@ -95,6 +98,14 @@ public class GlobalConfig {
 
     public void setSshDefaultFileViewMode(String sshDefaultFileViewMode) {
         this.sshDefaultFileViewMode = sshDefaultFileViewMode;
+    }
+
+    public String getRdpFullScreenShortcut() {
+        return rdpFullScreenShortcut;
+    }
+
+    public void setRdpFullScreenShortcut(String rdpFullScreenShortcut) {
+        this.rdpFullScreenShortcut = rdpFullScreenShortcut;
     }
 
     private static GlobalConfig instance;
