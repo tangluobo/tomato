@@ -16,8 +16,8 @@ import java.awt.KeyboardFocusManager;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.awt.event.InputEvent;
-import java.awt.event.InputMethodAdapter;
 import java.awt.event.InputMethodEvent;
+import java.awt.event.InputMethodListener;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
@@ -80,7 +80,7 @@ public class Input {
 	protected boolean serverAltDown = false;
 	KeyCode keys = null;
 	private FocusAdapter focusListener;
-	private InputMethodAdapter inputMethodListener;
+	private InputMethodListener inputMethodListener;
 	private RdesktopKeyAdapter keyListener;
 	private RdesktopMouseAdapter mouseListener;
 	private RdesktopMouseMotionAdapter mouseMotionListener;
@@ -131,7 +131,7 @@ public class Input {
 			((java.awt.Component) canvas.getDisplay()).addFocusListener(focusListener);
 		}
 		if (inputMethodListener == null && canvas.getDisplay() instanceof java.awt.Component) {
-			inputMethodListener = new InputMethodAdapter() {
+			inputMethodListener = new InputMethodListener() {
 				@Override
 				public void inputMethodTextChanged(InputMethodEvent e) {
 					AttributedCharacterIterator text = e.getText();
@@ -145,6 +145,11 @@ public class Input {
 						ch = text.next();
 					}
 					e.consume();
+				}
+
+				@Override
+				public void caretPositionChanged(InputMethodEvent e) {
+					// RDP画布没有本地文本插入光标，无需处理输入法候选位置变化。
 				}
 			};
 			java.awt.Component component = (java.awt.Component) canvas.getDisplay();
