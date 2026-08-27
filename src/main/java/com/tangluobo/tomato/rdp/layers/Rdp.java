@@ -103,7 +103,7 @@ public class Rdp implements Layer<Layer<?>> {
 	private static final int RDP_CAPLEN_ORDER = 88;
 	private static final int RDP_CAPLEN_POINTER = 10;
 	private static final int RDP_CAPLEN_SHARE = 8;
-	private static final int RDP_CAPLEN_SOUND = 6;
+	private static final int RDP_CAPLEN_SOUND = 8;
 	private static final int RDP_CAPLEN_VIRTUAL_CHANNELS = 12;
 	private static final int RDP_CAPSET_ACTIVATE = 0x07; // 7
 	private static final int RDP_CAPSET_BITMAP = 0x02; // 2
@@ -1280,7 +1280,8 @@ public class Rdp implements Layer<Layer<?>> {
 	private void sendSoundCaps(Packet data) {
 		data.setLittleEndian16(RDP_CAPSET_SOUND);
 		data.setLittleEndian16(RDP_CAPLEN_SOUND);
-		data.setLittleEndian16(1); /* supports beep */
+		data.setLittleEndian16(1); /* SOUND_BEEPS_FLAG */
+		data.setLittleEndian16(0); /* pad2OctetsA */
 	}
 
 	private void sendOffscreenBitmapCacheCaps(Packet data) {

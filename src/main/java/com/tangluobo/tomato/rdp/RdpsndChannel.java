@@ -17,9 +17,7 @@ import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.SourceDataLine;
 
-import com.sshtools.javardp.Packet;
-import com.sshtools.javardp.RdesktopException;
-import com.sshtools.javardp.rdp5.VChannel;
+import com.tangluobo.tomato.rdp.rdp5.VChannel;
 
 /**
  * rdpsnd音频重定向虚拟通道（MS-RDPEA客户端实现）。
@@ -184,6 +182,13 @@ public class RdpsndChannel extends VChannel {
             }
             byte[] data = new byte[avail];
             packet.copyToByteArray(data, 0, packet.getPosition(), avail);
+            // 诊断：记录任何到达rdpsnd通道的数据（用于确认服务器是否在推送音频）
+            StringBuilder hex = new StringBuilder();
+            int dumpLen = Math.min(data.length, 16);
+            for (int i = 0; i < dumpLen; i++) {
+                hex.append(String.format("%02x ", data[i]));
+            }
+            logger.info("rdpsnd: 收到通道数据 " + data.length + "字节: " + hex.toString().trim());
             processStream(data);
         } catch (Exception e) {
             logger.log(Level.WARNING, "rdpsnd: 处理消息失败: " + e.getMessage(), e);
@@ -211,8 +216,9 @@ public class RdpsndChannel extends VChannel {
                 }
             } else {
                 int local = offset;
-                // SNDC_WAVE/SNDC_WAVE2两段式：wave头+首4字节数据之后，
-                // 下一个通道消息的前4字节是重复的(timestamp+formatNo)，跳过。
+                // 只有SNDC_WAVE是两段式：WaveInfo中含首4字节音频，
+                // 后续Wave PDU的前4字节是bPad，需跳过。SNDC_WAVE2是单一PDU，
+                // 元数据后紧跟音频数据，不能跳过任何字节。
                 int waveInfoLen = waveInfoLength(pendingMsgType);
                 int take;
                 if (waveInfoLen > 0 && pendingBody.size() < waveInfoLen) {
@@ -240,17 +246,11 @@ public class RdpsndChannel extends VChannel {
     }
 
     /**
-     * SNDC_WAVE的"wave头+首4字节数据"长度（12）；SNDC_WAVE2为16（多4字节
-     * dwAudioTimeStamp）；其余消息返回0（无两段式特殊处理）。
+     * SNDC_WAVE的"wave头+首4字节数据"长度（12）。
+     * SNDC_WAVE2及其余消息都是单一PDU，返回0（无两段式特殊处理）。
      */
     private static int waveInfoLength(int msgType) {
-        if (msgType == SNDC_WAVE) {
-            return 12;
-        }
-        if (msgType == SNDC_WAVE2) {
-            return 16;
-        }
-        return 0;
+        return msgType == SNDC_WAVE ? 12 : 0;
     }
 
     private static final byte[] EMPTY_BODY = new byte[0];
@@ -359,8 +359,7 @@ public class RdpsndChannel extends VChannel {
 
     /**
      * 回复客户端格式列表（SNDC_FORMATS）。
-     * dwVolume/dwPitch/wDGramPort与每格式cbSize按协议规范用大端编码
-     * （rdesktop与FreeRDP一致的历史怪癖，其余字段小端）。
+     * 整数字段均按协议使用小端编码，只有wDGramPort使用大端。
      */
     private void sendClientFormats() throws RdesktopException, java.io.IOException {
         int bodySize = 20 + 18 * negotiatedFormats.size();
@@ -369,8 +368,8 @@ public class RdpsndChannel extends VChannel {
         p.set8(0);
         p.setLittleEndian16(bodySize);
         p.setLittleEndian32(TSSNDCAPS_ALIVE | TSSNDCAPS_VOLUME); // dwFlags
-        p.setBigEndian32(0xFFFFFFFF); // dwVolume（最大音量）
-        p.setBigEndian32(0); // dwPitch
+        p.setLittleEndian32(0xFFFFFFFF); // dwVolume（最大音量）
+        p.setLittleEndian32(0); // dwPitch
         p.setBigEndian16(0); // wDGramPort（不使用UDP）
         p.setLittleEndian16(negotiatedFormats.size());
         p.set8(0); // cLastBlockConfirmed
@@ -383,7 +382,7 @@ public class RdpsndChannel extends VChannel {
             p.setLittleEndian32(f.avgBytesPerSec);
             p.setLittleEndian16(f.blockAlign);
             p.setLittleEndian16(f.bits);
-            p.setBigEndian16(0); // cbSize
+            p.setLittleEndian16(0); // cbSize
         }
         p.markEnd();
         send_packet(p);

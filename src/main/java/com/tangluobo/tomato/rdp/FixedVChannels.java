@@ -59,6 +59,10 @@ public class FixedVChannels extends VChannels {
         // 虚拟通道chunk头：length(4，忽略) + flags(4)
         packet.getLittleEndian32();
         int flags = packet.getLittleEndian32();
+        // 诊断：记录到达的通道数据，确认服务器是否在给rdpsnd通道推送数据
+        logger.info("channel_process: mcs=" + mcsChannel + " channel=" + channel.name()
+                + " flags=0x" + Integer.toHexString(flags) + " remain="
+                + (packet.getEnd() - packet.getPosition()));
 
         if ((flags & CHANNEL_FLAG_FIRST) != 0 && (flags & CHANNEL_FLAG_LAST) != 0) {
             // 单分片完整消息：直接处理（position已跳过chunk头）

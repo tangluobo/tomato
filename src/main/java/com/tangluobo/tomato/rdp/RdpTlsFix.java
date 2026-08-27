@@ -172,76 +172,18 @@ public class RdpTlsFix {
                             break;
                         }
                     }
-                    // Sound Capability Set修复（音频重定向的关键前提）：
-                    // javardp的sendSoundCaps硬编码soundFlags=1(SOUND_BEEPS)，
-                    // 服务器据此认为客户端只支持beep提示音重定向（PLAY_SOUND PDU），
-                    // 永远不会启用rdpsnd音频虚拟通道（连接后不下发SNDC_FORMATS）。
-                    // 改为2(SOUND_REMOTE)声明音频在客户端播放，与rdesktop/FreeRDP
-                    // 启用音频时的行为一致（rdesktop: g_rdpsnd ? 2 : 1）。
-                    if (isConfirmActive) {
-                        // 模式: capabilitySetType=12(CAPSETTYPE_SOUND,LE) + lengthCapability=6(LE)
-                        //       + soundFlags=1(LE)，即 0c 00 06 00 01 00
-                        for (int i = 7; i < packet.length - 6; i++) {
-                            if (packet[i] == 0x0c && packet[i+1] == 0x00 &&
-                                packet[i+2] == 0x06 && packet[i+3] == 0x00 &&
-                                packet[i+4] == 0x01 && packet[i+5] == 0x00) {
-                                packet[i+4] = 0x02; // soundFlags: 1(SOUND_BEEPS) → 2(SOUND_REMOTE)
-                                modified = true;
-                                logger.info(String.format("[SOUND-FIX] Sound Caps at offset %d: "
-                                        + "soundFlags 0x0001(SOUND_BEEPS)→0x0002(SOUND_REMOTE)，"
-                                        + "启用rdpsnd音频重定向", i));
-                                break;
-                            }
-                        }
-                    }
                     if (modified) {
                         buffer.setPosition(0);
                         buffer.copyFromByteArray(packet, 0, 0, packet.length);
                         buffer.setPosition(savePos);
                     }
 
-                    // ===== [CHDEF-FIX] rdpsnd通道options字节序修复 =====
-                    // javardp的Secure层用setBigEndian32写connect-initial中channelDefArray
-                    // 的options，而MS-RDPBCGR规定该字段为小端。服务器按LE解析丢掉
-                    // INITIALIZED等关键位后不会加载rdpsnd音频服务（表现为MCS通道join
-                    // 成功但服务器从不发送任何音频数据）。此处将"rdpsnd\0\0"后的4字节
-                    // options从大端翻转为小端；cliprdr在原字节序下已验证工作，保持不动。
-                    {
-                        byte[] sndName = {'r', 'd', 'p', 's', 'n', 'd', 0, 0};
-                        for (int i = 0; i <= packet.length - 12; i++) {
-                            boolean match = true;
-                            for (int j = 0; j < 8; j++) {
-                                if (packet[i + j] != sndName[j]) {
-                                    match = false;
-                                    break;
-                                }
-                            }
-                            if (match && packet[i + 8] != 0) {
-                                // options首字节非0 → 大端编码（LE编码的0xC0000000首字节
-                                // 为0x00，此条件同时作为幂等保护）
-                                int beVal = ((packet[i + 8] & 0xFF) << 24)
-                                        | ((packet[i + 9] & 0xFF) << 16)
-                                        | ((packet[i + 10] & 0xFF) << 8)
-                                        | (packet[i + 11] & 0xFF);
-                                if ((beVal & 0x80000000) != 0) {
-                                    byte t = packet[i + 8];
-                                    packet[i + 8] = packet[i + 11];
-                                    packet[i + 11] = t;
-                                    t = packet[i + 9];
-                                    packet[i + 9] = packet[i + 10];
-                                    packet[i + 10] = t;
-                                    buffer.setPosition(0);
-                                    buffer.copyFromByteArray(packet, 0, 0, packet.length);
-                                    buffer.setPosition(savePos);
-                                    logger.info(String.format(
-                                            "[CHDEF-FIX] rdpsnd通道options字节序修正(BE→LE): 0x%08X → 0x%08X，"
-                                            + "服务器将正确识别INITIALIZED|ENCRYPT_RDP并加载音频服务",
-                                            beVal, Integer.reverseBytes(beVal)));
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    // 注：原 [CHDEF-FIX] 曾把 rdpsnd 通道 options 从大端翻转为小端，
+                    // 但同一 connect-initial 里 cliprdr 的 options 仍是库默认的大端编码
+                    // （setBigEndian32），且 cliprdr 通道验证可用。实测该服务器按大端解析
+                    // options，把 rdpsnd 单独翻成小端反而让 INITIALIZED 位丢失，导致
+                    // rdpsnd 音频服务不被加载（连接正常但服务器从不推送 SNDC_FORMATS/音频）。
+                    // 故移除该字节序修复，让 rdpsnd 与 cliprdr 使用一致的字节序。
                 }
             } catch (Exception e) {
                 logger.warning("[CAPS-FIX] 修改capabilities失败: " + e.getMessage());
