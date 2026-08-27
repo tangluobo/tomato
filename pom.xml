@@ -21,6 +21,8 @@
         <agent.exec.skip>false</agent.exec.skip>
         <!-- jpackage 打包类型：exe（Win 安装向导，需 WiX 3.x）/ rpm（Linux）/ msi / app-image（绿色目录） -->
         <jpackage.type>exe</jpackage.type>
+        <!-- macOS 要求第一段版本号大于 0；macOS Profile 会单独覆盖此值。 -->
+        <jpackage.app.version>${project.version}</jpackage.app.version>
         <!-- WiX 3.x binaries 目录（jpackage 生成 exe/msi 时查找 candle.exe/light.exe），
              指向项目内置的 packaging/wix314；也可用 WIX 环境变量或 PATH 覆盖 -->
         <jpackage.wixdir>${project.basedir}/packaging/wix314</jpackage.wixdir>
@@ -458,7 +460,7 @@
                                 <WIX>${jpackage.wixdir}</WIX>
                                 <PATH>${jpackage.wixdir}${path.separator}${env.PATH}</PATH>
                             </environmentVariables>
-                            <commandlineArgs>--type ${jpackage.type} --name ${project.name} --dest "${project.basedir}/dist" --input "${project.build.directory}/jpackage-input" --main-jar ${project.build.finalName}-jar-with-dependencies.jar --main-class ${mainClass} --app-version ${project.version} --vendor tangluobo --description "Tomato database and server connection tool" ${jpackage.platform.args}</commandlineArgs>
+                            <commandlineArgs>--type ${jpackage.type} --name ${project.name} --dest "${project.basedir}/dist" --input "${project.build.directory}/jpackage-input" --main-jar ${project.build.finalName}-jar-with-dependencies.jar --main-class ${mainClass} --app-version ${jpackage.app.version} --vendor tangluobo --description "Tomato database and server connection tool" ${jpackage.platform.args}</commandlineArgs>
                         </configuration>
                     </execution>
                 </executions>
@@ -582,8 +584,8 @@
         <profile><id>linux_AppImage</id><properties><agent.exec.skip>true</agent.exec.skip><jpackage.skip>false</jpackage.skip><jpackage.type>app-image</jpackage.type><jpackage.platform.args>--icon "${project.basedir}/src/main/resources/images/logo.png"</jpackage.platform.args></properties><build><plugins><plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-antrun-plugin</artifactId><version>3.1.0</version><executions><execution><id>archive-linux-appimage</id><phase>package</phase><goals><goal>run</goal></goals><configuration><target><exec executable="appimagetool"><arg value="${project.basedir}/dist/tomato"/><arg value="${project.basedir}/dist/tomato-linux-${os.arch}.AppImage"/></exec><delete dir="${project.basedir}/dist/tomato"/></target></configuration></execution></executions></plugin></plugins></build></profile>
         <profile><id>linux_image</id><properties><agent.exec.skip>true</agent.exec.skip><jpackage.skip>false</jpackage.skip><jpackage.type>app-image</jpackage.type><jpackage.platform.args>--icon "${project.basedir}/src/main/resources/images/logo.png"</jpackage.platform.args></properties><build><plugins><plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-antrun-plugin</artifactId><version>3.1.0</version><executions><execution><id>archive-linux-image</id><phase>package</phase><goals><goal>run</goal></goals><configuration><target><tar destfile="${project.basedir}/dist/tomato-linux-${os.arch}.tar.gz" compression="gzip" basedir="${project.basedir}/dist/tomato"/><delete dir="${project.basedir}/dist/tomato"/></target></configuration></execution></executions></plugin></plugins></build></profile>
 
-        <profile><id>macos_dmg</id><properties><agent.exec.skip>true</agent.exec.skip><jpackage.skip>false</jpackage.skip><jpackage.type>dmg</jpackage.type></properties></profile>
-        <profile><id>macos_pkg</id><properties><agent.exec.skip>true</agent.exec.skip><jpackage.skip>false</jpackage.skip><jpackage.type>pkg</jpackage.type></properties></profile>
-        <profile><id>macos_image</id><properties><agent.exec.skip>true</agent.exec.skip><jpackage.skip>false</jpackage.skip><jpackage.type>app-image</jpackage.type></properties><build><plugins><plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-antrun-plugin</artifactId><version>3.1.0</version><executions><execution><id>archive-macos-image</id><phase>package</phase><goals><goal>run</goal></goals><configuration><target><zip destfile="${project.basedir}/dist/tomato-Macos-${os.arch}.zip" basedir="${project.basedir}/dist/tomato.app"/><delete dir="${project.basedir}/dist/tomato.app"/></target></configuration></execution></executions></plugin></plugins></build></profile>
+        <profile><id>macos_dmg</id><properties><agent.exec.skip>true</agent.exec.skip><jpackage.skip>false</jpackage.skip><jpackage.type>dmg</jpackage.type><jpackage.app.version>1.0.5</jpackage.app.version></properties></profile>
+        <profile><id>macos_pkg</id><properties><agent.exec.skip>true</agent.exec.skip><jpackage.skip>false</jpackage.skip><jpackage.type>pkg</jpackage.type><jpackage.app.version>1.0.5</jpackage.app.version></properties></profile>
+        <profile><id>macos_image</id><properties><agent.exec.skip>true</agent.exec.skip><jpackage.skip>false</jpackage.skip><jpackage.type>app-image</jpackage.type><jpackage.app.version>1.0.5</jpackage.app.version></properties><build><plugins><plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-antrun-plugin</artifactId><version>3.1.0</version><executions><execution><id>archive-macos-image</id><phase>package</phase><goals><goal>run</goal></goals><configuration><target><zip destfile="${project.basedir}/dist/tomato-Macos-${os.arch}.zip" basedir="${project.basedir}/dist/tomato.app"/><delete dir="${project.basedir}/dist/tomato.app"/></target></configuration></execution></executions></plugin></plugins></build></profile>
     </profiles>
 </project>
