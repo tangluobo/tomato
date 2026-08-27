@@ -65,6 +65,7 @@ public class RdpPane extends BorderPane {
     private java.awt.KeyEventDispatcher fullScreenKeyDispatcher; // 常驻拦截Ctrl+Shift+Enter切换全屏（Swing焦点场景，校验焦点在RDP画布）
     private boolean fullScreenTransitioning; // 防止fullScreen/close监听器重入，造成视图留在已关闭的Scene中
     private long sceneRefreshGeneration;     // 丢弃快速连续切换产生的过期刷新任务
+    private PauseTransition viewportRefreshTimer; // 窗口缩放结束后补一次整幅同步刷新
 
     // 连接信息
     private String host;
@@ -684,6 +685,39 @@ public class RdpPane extends BorderPane {
             scrollPane.getViewport().repaint();
             scrollPane.repaint();
         });
+        scheduleViewportRefresh();
+    }
+
+    /**
+     * 窗口拖动期间resize事件非常密集，结束后再补一次同步整幅绘制，确保SwingNode
+     * 的离屏纹理和Swing组件最终尺寸一致，避免首次进入或调整窗口后的黑色方块。
+     */
+    private void scheduleViewportRefresh() {
+        if (!Platform.isFxApplicationThread()) {
+            Platform.runLater(this::scheduleViewportRefresh);
+            return;
+        }
+        if (viewportRefreshTimer == null) {
+            viewportRefreshTimer = new PauseTransition(Duration.millis(100));
+            viewportRefreshTimer.setOnFinished(e -> {
+                JScrollPane scrollPane = desktopScrollPane;
+                JComponent display = desktopDisplay;
+                if (scrollPane != null && display != null) {
+                    SwingUtilities.invokeLater(() -> repaintDesktopSynchronously(scrollPane, display));
+                }
+            });
+        }
+        viewportRefreshTimer.playFromStart();
+    }
+
+    /** 必须在Swing EDT调用。 */
+    private void repaintDesktopSynchronously(JScrollPane scrollPane, JComponent display) {
+        java.awt.Dimension canvasSize = display.getPreferredSize();
+        display.paintImmediately(0, 0, canvasSize.width, canvasSize.height);
+        int width = Math.max(1, scrollPane.getWidth());
+        int height = Math.max(1, scrollPane.getHeight());
+        scrollPane.paintImmediately(0, 0, width, height);
+        javax.swing.RepaintManager.currentManager(display).paintDirtyRegions();
     }
 
     /**
