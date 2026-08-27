@@ -216,10 +216,9 @@ public class RdpPane extends BorderPane {
             logger.info("RDP显示组件: " + displayComponent.getClass().getSimpleName()
                     + " size=" + displayComponent.getSize()
                     + " prefSize=" + displayComponent.getPreferredSize());
-            // 关键：禁用输入法。javardp的字符键依赖KEY_TYPED事件（keyChar查映射），
-            // 中文输入法会拦截/组合按键导致keyChar异常或缺失，出现按键错误。
-            // 禁用后按键直接透传AWT事件，不经过输入法（远程桌面客户端标准做法）。
-            displayComponent.enableInputMethods(false);
+            // 启用本地输入法；Input会把已提交文本转换为RDP Unicode键盘事件，
+            // 组合中的拼音仍只在本地输入法中处理，不会提前发送到远端。
+            displayComponent.enableInputMethods(true);
 
             // 在EDT上用JScrollPane包装显示组件（WrappedImage实现了Scrollable）
             SwingUtilities.invokeLater(() -> {
