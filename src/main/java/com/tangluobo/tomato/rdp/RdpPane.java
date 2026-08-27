@@ -63,6 +63,8 @@ public class RdpPane extends BorderPane {
     private PauseTransition hideExitBarTimer;
     private TranslateTransition exitBarSlide;
     private java.awt.KeyEventDispatcher fullScreenKeyDispatcher; // 常驻拦截Ctrl+Shift+Enter切换全屏（Swing焦点场景，校验焦点在RDP画布）
+    private boolean fullScreenTransitioning; // 防止fullScreen/close监听器重入，造成视图留在已关闭的Scene中
+    private long sceneRefreshGeneration;     // 丢弃快速连续切换产生的过期刷新任务
 
     // 连接信息
     private String host;
@@ -314,6 +316,10 @@ public class RdpPane extends BorderPane {
         if (swingNode != null) {
             swingNode.requestFocus();
         }
+        JComponent display = desktopDisplay;
+        if (display != null) {
+            SwingUtilities.invokeLater(display::requestFocusInWindow);
+        }
     }
 
     // ==================== 全屏支持 ====================
@@ -333,6 +339,9 @@ public class RdpPane extends BorderPane {
      * 切换全屏/窗口模式
      */
     public void toggleFullScreen() {
+        if (fullScreenTransitioning) {
+            return;
+        }
         if (fullScreenStage != null) {
             exitFullScreen();
         } else {
@@ -345,9 +354,10 @@ public class RdpPane extends BorderPane {
      * 鼠标靠近屏幕顶部边沿时滑出"退出全屏"悬浮按钮（mstsc风格）。
      */
     private void enterFullScreen() {
-        if (ownerTab == null || fullScreenStage != null) {
+        if (ownerTab == null || fullScreenStage != null || fullScreenTransitioning) {
             return;
         }
+        fullScreenTransitioning = true;
         // tab内容用占位面板顶替，保持tab结构不变
         ownerTab.setContent(new StackPane());
         // 全屏时隐藏状态栏，只显示远程桌面
@@ -403,7 +413,6 @@ public class RdpPane extends BorderPane {
         // Ctrl+Shift+Enter切换全屏的加速键由sceneProperty监听器自动注册到本Scene
 
         fullScreenStage = new Stage();
-        fullScreenStage.setFullScreen(true);
         // 覆盖JavaFX默认的Esc退出全屏，改为Ctrl+Shift+Enter（与切换键一致）
         fullScreenStage.setFullScreenExitKeyCombination(FULL_SCREEN_KEYS);
         fullScreenStage.setFullScreenExitHint("按 Ctrl+Shift+Enter 退出全屏");
@@ -425,15 +434,27 @@ public class RdpPane extends BorderPane {
         }
         // 用户按Esc等退出JavaFX全屏状态时，同步还原到tab
         fullScreenStage.fullScreenProperty().addListener((obs, was, is) -> {
-            if (!is) {
+            if (was && !is && !fullScreenTransitioning) {
                 exitFullScreen();
             }
         });
-        fullScreenStage.setOnCloseRequest(e -> exitFullScreen());
+        fullScreenStage.setOnCloseRequest(e -> {
+            e.consume();
+            exitFullScreen();
+        });
         fullScreenStage.show();
-        // 立即应用全屏视口（隐藏滚动条+缩放铺满），后续布局变化由layoutBounds监听器同步
-        resizeDesktopViewport();
-        requestRdpFocus();
+        // Stage必须先可见才能可靠进入全屏；在show()前setFullScreen会被部分JavaFX/Windows
+        // 组合忽略，表现为第一次只弹出普通窗口。
+        Platform.runLater(() -> {
+            Stage stage = fullScreenStage;
+            if (stage == null) {
+                fullScreenTransitioning = false;
+                return;
+            }
+            stage.setFullScreen(true);
+            fullScreenTransitioning = false;
+            refreshDesktopAfterSceneChange();
+        });
     }
 
     /**
@@ -444,6 +465,8 @@ public class RdpPane extends BorderPane {
         if (stage == null) {
             return;
         }
+        fullScreenTransitioning = true;
+        StackPane oldRoot = fullScreenRoot;
         fullScreenStage = null;
         fullScreenRoot = null;
         exitBar = null;
@@ -464,15 +487,58 @@ public class RdpPane extends BorderPane {
         // 恢复状态栏和tab内容
         setBottom(statusBar);
         setStyle(null);
+        // 先从旧Scene明确摘除，再放回Tab。否则SwingNode的原生焦点窗口仍可能指向
+        // 已关闭的全屏Stage，退出后看得见但鼠标键盘都无法操作。
+        if (oldRoot != null) {
+            oldRoot.getChildren().remove(this);
+        }
         if (ownerTab != null && ownerTab.getTabPane() != null) {
             ownerTab.setContent(this);
         }
         try {
-            stage.close();
+            // 清除处理器后关闭，避免WINDOW_CLOSE_REQUEST再次进入本方法。
+            stage.setOnCloseRequest(null);
+            stage.hide();
         } catch (Exception ignored) {
         }
-        resizeDesktopViewport();
-        requestRdpFocus();
+        fullScreenTransitioning = false;
+        refreshDesktopAfterSceneChange();
+    }
+
+    /**
+     * SwingNode跨Scene后重建其原生渲染表面，并在新Scene完成布局后整幅重绘。
+     * 单纯repaint只会提交Swing的脏区，多次切换时旧纹理中未标脏的区域会留下黑块。
+     */
+    private void refreshDesktopAfterSceneChange() {
+        final long generation = ++sceneRefreshGeneration;
+        final JScrollPane scrollPane = desktopScrollPane;
+        if (swingNode == null || scrollPane == null) {
+            requestRdpFocus();
+            return;
+        }
+
+        // 断开并在下一帧重新挂载，强制SwingNode为新的Window/Scene创建渲染表面。
+        swingNode.setContent(null);
+        Platform.runLater(() -> {
+            if (generation != sceneRefreshGeneration || swingNode == null) {
+                return;
+            }
+            swingNode.setContent(scrollPane);
+            applyCss();
+            layout();
+            resizeDesktopViewport();
+            requestRdpFocus();
+
+            // 再等一次布局稳定后同步提交整张远程桌面，覆盖增量脏区遗漏。
+            PauseTransition settle = new PauseTransition(Duration.millis(120));
+            settle.setOnFinished(e -> {
+                if (generation == sceneRefreshGeneration) {
+                    resizeDesktopViewport();
+                    requestRdpFocus();
+                }
+            });
+            settle.play();
+        });
     }
 
     private void showExitBar() {
