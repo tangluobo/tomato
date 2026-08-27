@@ -114,6 +114,8 @@ public class RdpPane extends BorderPane {
                 JComponent display = desktopDisplay;
                 if (display != null && focusOwner != null
                         && (focusOwner == display || SwingUtilities.isDescendingFrom(focusOwner, display))) {
+                    // 修饰键按下事件已发往远端；跨Scene后释放事件可能落不到旧组件。
+                    rdpClient.releaseRemoteModifierKeys();
                     Platform.runLater(this::toggleFullScreen);
                     return true; // 消费该事件
                 }
@@ -419,6 +421,7 @@ public class RdpPane extends BorderPane {
         if (ownerTab == null || fullScreenStage != null || fullScreenTransitioning) {
             return;
         }
+        rdpClient.releaseRemoteModifierKeys();
         fullScreenTransitioning = true;
         // tab内容用占位面板顶替，保持tab结构不变
         ownerTab.setContent(new StackPane());
@@ -527,6 +530,7 @@ public class RdpPane extends BorderPane {
         if (stage == null) {
             return;
         }
+        rdpClient.releaseRemoteModifierKeys();
         fullScreenTransitioning = true;
         StackPane oldRoot = fullScreenRoot;
         fullScreenStage = null;

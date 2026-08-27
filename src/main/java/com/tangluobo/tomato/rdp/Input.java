@@ -13,6 +13,8 @@
 package com.tangluobo.tomato.rdp;
 
 import java.awt.KeyboardFocusManager;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
@@ -73,6 +75,7 @@ public class Input {
 	protected boolean scrollLockOn = false;
 	protected boolean serverAltDown = false;
 	KeyCode keys = null;
+	private FocusAdapter focusListener;
 	private RdesktopKeyAdapter keyListener;
 	private RdesktopMouseAdapter mouseListener;
 	private RdesktopMouseMotionAdapter mouseMotionListener;
@@ -89,8 +92,8 @@ public class Input {
 		this.context = context;
 		this.state = state;
 		this.canvas = canvas;
-		addInputListeners();
 		pressedKeys = new Vector();
+		addInputListeners();
 		KeyboardFocusManager.getCurrentKeyboardFocusManager()
 				.setDefaultFocusTraversalKeys(KeyboardFocusManager.FORWARD_TRAVERSAL_KEYS, Collections.EMPTY_SET);
 		KeyboardFocusManager.getCurrentKeyboardFocusManager()
@@ -106,6 +109,22 @@ public class Input {
 			canvas.getDisplay().addMouseMotionListener(mouseMotionListener = new RdesktopMouseMotionAdapter());
 			canvas.getDisplay().addKeyListener(keyListener = new RdesktopKeyAdapter());
 		}
+		// SwingNode嵌入模式没有RdesktopFrame替画布转发窗口焦点事件。
+		// 直接监听显示组件，失焦时释放远端修饰键。
+		if (focusListener == null && canvas.getDisplay() instanceof java.awt.Component) {
+			focusListener = new FocusAdapter() {
+				@Override
+				public void focusGained(FocusEvent e) {
+					gainedFocus();
+				}
+
+				@Override
+				public void focusLost(FocusEvent e) {
+					lostFocus();
+				}
+			};
+			((java.awt.Component) canvas.getDisplay()).addFocusListener(focusListener);
+		}
 		canvas.getDisplay().addMouseWheelListener(new RdesktopMouseWheelAdapter());
 	}
 
@@ -113,35 +132,31 @@ public class Input {
 	 * Release any modifier keys that may be depressed.
 	 */
 	public void clearKeys() {
-		if (!modifiersValid)
-			return;
 		altDown = false;
 		ctrlDown = false;
-		if (lastKeyEvent == null)
-			return;
-		if (lastKeyEvent.isShiftDown())
-			sendScancode(getTime(), RDP_KEYRELEASE, 0x2a); // shift
-		if (lastKeyEvent.isAltDown() || serverAltDown) {
-			sendScancode(getTime(), RDP_KEYRELEASE, 0x38); // ALT
-			sendScancode(getTime(), RDP_KEYPRESS | KBD_FLAG_QUIET, 0x38); // ALT
-			sendScancode(getTime(), RDP_KEYRELEASE | KBD_FLAG_QUIET, 0x38); // l.alt
+		serverAltDown = false;
+		pressedKeys.clear();
+		// 失焦时最后一个事件未必仍带modifier标志。对未按下键发送KEYUP是幂等的，
+		// 因此统一释放左右修饰键，可靠纠正远端已卡住的状态。
+		if (state.getRdp() != null) {
+			sendScancode(getTime(), RDP_KEYRELEASE, 0x2a); // left Shift
+			sendScancode(getTime(), RDP_KEYRELEASE, 0x36); // right Shift
+			sendScancode(getTime(), RDP_KEYRELEASE, 0x1d); // left Ctrl
+			sendScancode(getTime(), RDP_KEYRELEASE, 0x1d | KeyCode.SCANCODE_EXTENDED); // right Ctrl
+			sendScancode(getTime(), RDP_KEYRELEASE, 0x38); // left Alt
+			sendScancode(getTime(), RDP_KEYRELEASE, 0x38 | KeyCode.SCANCODE_EXTENDED); // right Alt
 		}
-		if (lastKeyEvent.isControlDown()) {
-			sendScancode(getTime(), RDP_KEYRELEASE, 0x1d); // l.ctrl
-			// sendScancode(getTime(), RDP_KEYPRESS | KBD_FLAG_QUIET, 0x1d); //
-			// Ctrl
-			// sendScancode(getTime(), RDP_KEYRELEASE | KBD_FLAG_QUIET, 0x1d);
-			// // ctrl
-		}
-		if (lastKeyEvent != null && lastKeyEvent.isAltGraphDown())
-			sendScancode(getTime(), RDP_KEYRELEASE, 0x38 | KeyCode.SCANCODE_EXTENDED); // r.alt
+		lastKeyEvent = null;
+		modifiersValid = false;
 	}
 
 	/**
 	 * Handle the main canvas gaining focus. Check locking key states.
 	 */
 	public void gainedFocus() {
-		doLockKeys(); // ensure lock key states are correct
+		if (state.getRdp() != null) {
+			doLockKeys(); // ensure lock key states are correct
+		}
 	}
 
 	/**
@@ -391,6 +406,10 @@ public class Input {
 			mouseListener = null;
 			mouseMotionListener = null;
 			keyListener = null;
+		}
+		if (focusListener != null && canvas.getDisplay() instanceof java.awt.Component) {
+			((java.awt.Component) canvas.getDisplay()).removeFocusListener(focusListener);
+			focusListener = null;
 		}
 	}
 

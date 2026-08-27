@@ -670,6 +670,18 @@ public class RdpClient {
         return connected && rdpLayer != null && rdpLayer.isConnected();
     }
 
+    /** SwingNode跨窗口前主动复位远端修饰键，弥补偶发缺失的AWT失焦事件。 */
+    public void releaseRemoteModifierKeys() {
+        RdesktopCanvas currentCanvas = canvas;
+        if (currentCanvas != null) {
+            if (javax.swing.SwingUtilities.isEventDispatchThread()) {
+                currentCanvas.lostFocus();
+            } else {
+                javax.swing.SwingUtilities.invokeLater(currentCanvas::lostFocus);
+            }
+        }
+    }
+
     /**
      * 设置断开连接回调
      */
