@@ -83,11 +83,13 @@ public class RdpPatch extends Rdp {
         boolean isSSL = stateRef.getSecurityType() == SecurityType.SSL
                 || stateRef.getSecurityType() == SecurityType.HYBRID;
 
-        logger.info(String.format("[RDP5 #%d] encryption=%b, shortform=%b, securityType=%s, dataSize=%d",
-                pktNum, encryption, shortform, stateRef.getSecurityType(), s.getEnd() - s.getPosition()));
+        if (logger.isLoggable(Level.FINEST)) {
+            logger.finest(String.format("[RDP5 #%d] encryption=%b, shortform=%b, securityType=%s, dataSize=%d",
+                    pktNum, encryption, shortform, stateRef.getSecurityType(), s.getEnd() - s.getPosition()));
+        }
 
         if (encryption && isSSL) {
-            logger.info("[RDP5] Ignoring encryption flag for SSL/HYBRID");
+            logger.finest("[RDP5] Ignoring encryption flag for SSL/HYBRID");
             encryption = false;
         }
 
@@ -132,8 +134,10 @@ public class RdpPatch extends Rdp {
             next = s.getPosition() + length;
             type = updateCode; // 用 updateCode 作为 switch 类型
 
-            logger.info(String.format("[RDP5 #%d] updateHeader=0x%02x, updateCode=%d, frag=%d, comp=%d(compFlags=0x%02x), length=%d",
-                    pktNum, updateHeader, updateCode, fragmentation, compression, compressionFlags, length));
+            if (logger.isLoggable(Level.FINEST)) {
+                logger.finest(String.format("[RDP5 #%d] updateHeader=0x%02x, updateCode=%d, frag=%d, comp=%d(compFlags=0x%02x), length=%d",
+                        pktNum, updateHeader, updateCode, fragmentation, compression, compressionFlags, length));
+            }
 
             // 诊断：分片 bitmap update 警告（单片处理可能解析失败）
             if (type == 1 && fragmentation != 0) {
@@ -177,7 +181,9 @@ public class RdpPatch extends Rdp {
         int count = bitmapUpdateCount.incrementAndGet();
         int pos = data.getPosition();
         int n_updates = data.getLittleEndian16();
-        logger.info(String.format("[BITMAP UPDATE #%d] n_updates=%d", count, n_updates));
+        if (logger.isLoggable(Level.FINEST)) {
+            logger.finest(String.format("[BITMAP UPDATE #%d] n_updates=%d", count, n_updates));
+        }
         data.setPosition(pos);
         super.processBitmapUpdates(data);
 
@@ -189,7 +195,7 @@ public class RdpPatch extends Rdp {
             }
         }
 
-        try {
+        if (logger.isLoggable(Level.FINEST)) try {
             java.awt.image.BufferedImage bi = stateRef.getCanvas().getDisplay().getBufferedImage();
             if (bi != null) {
                 int w = bi.getWidth(), h = bi.getHeight();
@@ -199,7 +205,7 @@ public class RdpPatch extends Rdp {
                 for (int x : xs) for (int y : ys) {
                     sb.append(String.format(" (%d,%d)=%06x", x, y, bi.getRGB(x, y) & 0xFFFFFF));
                 }
-                logger.info(sb.toString());
+                logger.finest(sb.toString());
             }
         } catch (Exception e) {
             logger.log(Level.WARNING, "采样BufferedImage失败: " + e.getMessage());

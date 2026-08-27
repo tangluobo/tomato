@@ -93,13 +93,15 @@ public class RdpIsoFix {
             next_packet:
             while (true) {
                 // 读取前4字节（TPKT header 或 fast-path header的开头）
-                logger.info("[RdpIso] 等待读取4字节header...");
+                logger.finest("[RdpIso] 等待读取4字节header...");
                 s = transport.receivePacket(null, 4);
                 if (s == null)
                     return null;
 
                 version = s.get8();
-                logger.info("[RdpIso] 收到header: version=0x" + String.format("%02x", version));
+                if (logger.isLoggable(Level.FINEST)) {
+                    logger.finest("[RdpIso] 收到header: version=0x" + String.format("%02x", version));
+                }
 
                 if (version == 3) {
                     // TPKT格式：version(1) + reserved(1) + length(2)
@@ -139,8 +141,10 @@ public class RdpIsoFix {
                     // this legacy encryption-header flag from FASTPATH_OUTPUT_ENCRYPTED.
                     boolean shortform = false;
 
-                    logger.info("[FAST-PATH] version=0x" + String.format("%02x", version)
-                            + ", length=" + length + ", encrypted=" + encrypted + ", shortform=" + shortform);
+                    if (logger.isLoggable(Level.FINEST)) {
+                        logger.finest("[FAST-PATH] version=0x" + String.format("%02x", version)
+                                + ", length=" + length + ", encrypted=" + encrypted + ", shortform=" + shortform);
+                    }
 
                     try {
                         MCS mcs = getParent();

@@ -40,8 +40,12 @@ public class RdpClient {
 
     static {
         try {
-            FileHandler handler = new FileHandler(Paths.get("rdp-debug.log").toAbsolutePath().toString(), true);
+            // RDP图形和音频都是高频数据，诊断日志必须限量滚动，不能让
+            // 同步文件I/O反过来阻塞协议接收线程。
+            String pattern = Paths.get("rdp-debug-%g.log").toAbsolutePath().toString();
+            FileHandler handler = new FileHandler(pattern, 16 * 1024 * 1024, 3, true);
             handler.setFormatter(new SimpleFormatter());
+            handler.setLevel(Level.INFO);
             Logger.getLogger("").addHandler(handler);
         } catch (Exception e) {
             logger.log(Level.WARNING, "无法初始化 RDP 诊断日志", e);
@@ -164,12 +168,13 @@ public class RdpClient {
         }
         this.mapClipboard = mapClipboard;
 
-        // 启用RDP库调试日志（slf4j-jdk14桥接到java.util.logging）
+        // 生产连接只记录状态和错误；FINE/HexDump会在RDP收包线程同步生成
+        // 巨量文本，造成图形和音频包分钟级积压。
         Logger sshtools = Logger.getLogger("com.tangluobo.tomato.rdp");
-        sshtools.setLevel(Level.FINE);
+        sshtools.setLevel(Level.INFO);
         Logger root = Logger.getLogger("");
         for (java.util.logging.Handler h : root.getHandlers()) {
-            h.setLevel(Level.FINE);
+            h.setLevel(Level.INFO);
         }
 
         // 创建配置
@@ -183,8 +188,8 @@ public class RdpClient {
         options.setMapClipboard(mapClipboard);
         options.setLowLatency(true);
 
-        // 调试：启用hex dump查看所有收发数据
-        options.setDebugHexdump(true);
+        // 绝不能在正常会话中打开：每个屏幕/音频包都会同步写完整十六进制。
+        options.setDebugHexdump(false);
 
         // 配置安全类型
         // State构造函数取securityTypes列表的最后一个元素作为初始securityType，

@@ -129,14 +129,17 @@ public class RdpTlsFix {
         public void sendPacket(com.tangluobo.tomato.rdp.Packet buffer) throws IOException {
             int count = sendPktCount.incrementAndGet();
             int savePos = buffer.getPosition();
-            int avail = buffer.getEnd() - savePos;
-            int dumpLen = Math.min(avail, 8);
-            StringBuilder hexSb = new StringBuilder("[SEND #" + count + "] len=" + buffer.getEnd() + " hex:");
-            for (int i = 0; i < dumpLen; i++) {
-                hexSb.append(String.format(" %02x", buffer.get8()));
+            if (logger.isLoggable(Level.FINEST)) {
+                int avail = buffer.getEnd() - savePos;
+                int dumpLen = Math.min(avail, 8);
+                StringBuilder hexSb = new StringBuilder("[SEND #" + count + "] len=" + buffer.getEnd() + " hex:");
+                for (int i = 0; i < dumpLen; i++) {
+                    hexSb.append(String.format(" %02x", buffer.get8()));
+                }
+                buffer.setPosition(savePos);
+                logger.finest(hexSb.toString());
             }
             buffer.setPosition(savePos);
-            logger.info(hexSb.toString());
 
             // 修改 ConfirmActive PDU 中的 General Capability Set。
             // 部分 Windows 服务器在未声明该能力时不会回退发送 slow-path 位图，
@@ -184,7 +187,7 @@ public class RdpTlsFix {
             }
 
             super.sendPacket(buffer);
-            logger.info("[SEND #" + count + "] flushed, out stream=" + getOut().getClass().getName());
+            logger.finest("[SEND #" + count + "] flushed");
         }
 
         @Override
@@ -192,7 +195,7 @@ public class RdpTlsFix {
             com.tangluobo.tomato.rdp.Packet result = super.receivePacket(p, length);
             int count = recvPktCount.incrementAndGet();
             // 诊断：记录Transport层收到的原始数据（前8字节用于判断是否为RDP5 fast-path）
-            if (result != null) {
+            if (result != null && logger.isLoggable(Level.FINEST)) {
                 int savePos = result.getPosition();
                 int avail = result.getEnd() - savePos;
                 int dumpLen = Math.min(avail, 8);
@@ -206,7 +209,7 @@ public class RdpTlsFix {
                 result.setPosition(savePos);
                 boolean isFastPath = (firstByte & 0x03) == 0;
                 hexSb.append(String.format(" firstByte=0x%02x fastPath=%b", firstByte, isFastPath));
-                logger.info(hexSb.toString());
+                logger.finest(hexSb.toString());
             }
             return result;
         }

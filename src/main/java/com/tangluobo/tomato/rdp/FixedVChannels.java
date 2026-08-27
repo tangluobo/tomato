@@ -60,7 +60,7 @@ public class FixedVChannels extends VChannels {
         packet.getLittleEndian32();
         int flags = packet.getLittleEndian32();
         // 诊断：记录到达的通道数据，确认服务器是否在给rdpsnd通道推送数据
-        logger.info("channel_process: mcs=" + mcsChannel + " channel=" + channel.name()
+        logger.finest("channel_process: mcs=" + mcsChannel + " channel=" + channel.name()
                 + " flags=0x" + Integer.toHexString(flags) + " remain="
                 + (packet.getEnd() - packet.getPosition()));
 

@@ -188,7 +188,13 @@ public class RdpsndChannel extends VChannel {
             for (int i = 0; i < dumpLen; i++) {
                 hex.append(String.format("%02x ", data[i]));
             }
-            logger.info("rdpsnd: 收到通道数据 " + data.length + "字节: " + hex.toString().trim());
+            int msgType = data[0] & 0xFF;
+            String message = "rdpsnd: 收到通道数据 " + data.length + "字节: " + hex.toString().trim();
+            if (msgType == SNDC_WAVE || msgType == SNDC_WAVE2) {
+                logger.finest(message);
+            } else {
+                logger.info(message);
+            }
             processStream(data);
         } catch (Exception e) {
             logger.log(Level.WARNING, "rdpsnd: 处理消息失败: " + e.getMessage(), e);
