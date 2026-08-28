@@ -85,6 +85,9 @@ public class RdpsndChannel extends VChannel {
     /** 播放队列容量（块），超出丢弃最旧数据以保证低延迟 */
     private static final int QUEUE_CAPACITY = 64;
 
+    /** 无新音频达到该时长后释放输出设备，避免空转音频线周期性产生杂音。 */
+    private static final int PLAYBACK_IDLE_TIMEOUT_MILLIS = 1000;
+
     /** 首次协商完成后等待首个音频样本的时限。 */
     private static final int FIRST_WAVE_TIMEOUT_SECONDS = 2;
 
@@ -113,6 +116,8 @@ public class RdpsndChannel extends VChannel {
 
     // ===== 播放 =====
     private final BlockingQueue<AudioChunk> audioQueue = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
+    /** 让播放线程关闭SourceDataLine的控制消息。 */
+    private static final AudioChunk CLOSE_PLAYBACK = new AudioChunk(null, new byte[0]);
     private final Thread playThread;
     private volatile boolean closed;
     /** 播放线程持有的SourceDataLine（仅播放线程访问） */
@@ -501,7 +506,7 @@ public class RdpsndChannel extends VChannel {
     // 播放（独立线程，避免SourceDataLine阻塞RDP主循环）
     // =====================================================================
 
-    private void enqueue(AudioDef format, byte[] data) {
+    private synchronized void enqueue(AudioDef format, byte[] data) {
         if (closed) {
             return;
         }
@@ -516,16 +521,22 @@ public class RdpsndChannel extends VChannel {
         while (!closed) {
             AudioChunk chunk;
             try {
-                chunk = audioQueue.poll(1, TimeUnit.SECONDS);
+                chunk = audioQueue.poll(PLAYBACK_IDLE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
                 break;
             }
-            if (chunk != null) {
+            if (chunk == CLOSE_PLAYBACK) {
+                closeLine();
+            } else if (chunk != null) {
                 try {
                     playChunk(chunk);
                 } catch (Exception e) {
                     logger.log(Level.WARNING, "rdpsnd: 播放失败: " + e.getMessage());
                 }
+            } else {
+                // Windows并不保证媒体停止时立即发送SNDC_CLOSE。空闲时主动关闭
+                // SourceDataLine，避免设备在欠载状态持续输出最后一个非零采样。
+                closeLine();
             }
         }
         closeLine();
@@ -566,7 +577,8 @@ public class RdpsndChannel extends VChannel {
     private void closeLine() {
         if (line != null) {
             try {
-                line.drain();
+                line.stop();
+                line.flush();
                 line.close();
             } catch (Exception ignored) {
             }
@@ -575,9 +587,10 @@ public class RdpsndChannel extends VChannel {
         }
     }
 
-    /** 请求关闭播放管线（异步：播放线程排空队列后关闭line） */
-    private void closePlayback() {
+    /** 请求关闭播放管线；SourceDataLine仍只由播放线程访问。 */
+    private synchronized void closePlayback() {
         audioQueue.clear();
+        audioQueue.offer(CLOSE_PLAYBACK);
     }
 
     /**
