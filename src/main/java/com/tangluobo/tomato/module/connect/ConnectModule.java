@@ -1078,14 +1078,10 @@ public class ConnectModule implements Module {
             cell.setOnDragOver(event -> {
                 Dragboard db = event.getDragboard();
                 if (db.hasString() && db.getString().startsWith(DRAG_PREFIX)) {
-                    TreeItem<String> targetItem = cell.getTreeItem();
-                    if (targetItem == null || targetItem == root) {
+                    TreeItem<String> newParent = getConnectionDropParent(
+                            cell.getTreeItem(), event.getY(), cell.getHeight());
+                    if (newParent != null) {
                         event.acceptTransferModes(TransferMode.MOVE);
-                    } else {
-                        ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
-                        if (targetConfig != null && targetConfig.getType() == null) {
-                            event.acceptTransferModes(TransferMode.MOVE);
-                        }
                     }
                 }
                 event.consume();
@@ -1102,13 +1098,22 @@ public class ConnectModule implements Module {
                         }
                     } else if (s.startsWith(DRAG_PREFIX)) {
                         TreeItem<String> targetItem = cell.getTreeItem();
-                        if (targetItem == null || targetItem == root) {
-                            cell.setStyle("-fx-background-color: #e0e0e0;");
-                        } else {
+                        TreeItem<String> newParent = getConnectionDropParent(
+                                targetItem, event.getY(), cell.getHeight());
+                        if (newParent != null) {
                             ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
-                            if (targetConfig != null && targetConfig.getType() == null) {
+                            boolean droppingIntoFolder = targetConfig != null
+                                    && targetConfig.getType() == null
+                                    && newParent == targetItem;
+                            if (droppingIntoFolder) {
                                 cell.setStyle("-fx-background-color: #e0e0e0;");
+                            } else if (event.getY() < cell.getHeight() / 2) {
+                                cell.setStyle("-fx-border-color: #07c160 transparent transparent transparent; -fx-border-width: 2 0 0 0;");
+                            } else {
+                                cell.setStyle("-fx-border-color: transparent transparent #07c160 transparent; -fx-border-width: 0 0 2 0;");
                             }
+                        } else if (targetItem == null || targetItem == root) {
+                            cell.setStyle("-fx-background-color: #e0e0e0;");
                         }
                     }
                 }
@@ -1152,21 +1157,12 @@ public class ConnectModule implements Module {
                     } else if (s.startsWith(DRAG_PREFIX)) {
                         String dragId = s.substring(DRAG_PREFIX.length());
                         TreeItem<String> targetItem = cell.getTreeItem();
-
-                        TreeItem<String> newParent;
-                        if (targetItem == null || targetItem == root) {
-                            newParent = root;
-                        } else {
-                            ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
-                            if (targetConfig != null && targetConfig.getType() == null) {
-                                newParent = targetItem;
-                            } else {
-                                newParent = root;
-                            }
-                        }
+                        TreeItem<String> newParent = getConnectionDropParent(
+                                targetItem, event.getY(), cell.getHeight());
 
                         TreeItem<String> draggedItem = findItemById(root, dragId);
-                        if (draggedItem != null && draggedItem != newParent && !isDescendant(draggedItem, newParent)) {
+                        if (newParent != null && draggedItem != null
+                                && draggedItem != newParent && !isDescendant(draggedItem, newParent)) {
                             moveItem(draggedItem, newParent);
                             success = true;
                         }
@@ -1201,6 +1197,35 @@ public class ConnectModule implements Module {
             event.setDropCompleted(success);
             event.consume();
         });
+    }
+
+    /**
+     * 解析连接节点的投放父级：目录行中央表示放入该目录；行边缘或普通连接行
+     * 表示放到该行的同级位置，因此使用该行当前的父目录。
+     */
+    private TreeItem<String> getConnectionDropParent(TreeItem<String> targetItem, double y, double height) {
+        if (targetItem == null || targetItem == root || targetItem == bottomSpacer) {
+            return root;
+        }
+
+        ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
+        if (targetConfig == null) {
+            return null;
+        }
+
+        boolean folderCenter = targetConfig.getType() == null
+                && height > 0
+                && y >= height * 0.25
+                && y <= height * 0.75;
+        if (folderCenter) {
+            return targetItem;
+        }
+
+        TreeItem<String> parent = targetItem.getParent();
+        if (parent == null) {
+            return root;
+        }
+        return parent == root || itemConfigMap.containsKey(parent) ? parent : null;
     }
 
     /** 本地目录拖放目标是否有效：须为 LOCAL_DIR_FOLDER 或本地目录连接根，且与源同一连接、非自身/后代 */
