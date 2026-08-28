@@ -18,6 +18,7 @@ import com.tangluobo.tomato.rdp.graphics.RdesktopCanvas;
 import com.tangluobo.tomato.rdp.io.DefaultIO;
 import com.tangluobo.tomato.rdp.keymapping.KeyCode_FileBased;
 import com.tangluobo.tomato.rdp.layers.Rdp;
+import com.tangluobo.tomato.rdp.layers.nla.HResultException;
 import com.tangluobo.tomato.rdp.rdp5.VChannels;
 import com.tangluobo.tomato.rdp.clipboard.FixedClipChannel;
 
@@ -609,45 +610,22 @@ public class RdpClient {
      * HYBRID在TLS握手后进行CredSSP（NTLM/Kerberos）认证。
      */
     private void retryWithHybridSecurity(String host, int port, CredentialProvider dcp) {
+        Exception rawNtlmFailure = null;
         try {
-            // 断开之前的连接
-            if (rdpLayer != null && rdpLayer.isConnected()) {
-                try { rdpLayer.disconnect(); } catch (Exception ignored) {}
+            // 先使用已在现有服务器验证通过的裸NTLM格式。仅当服务器明确以
+            // 无效令牌/内部TLS警报拒绝时，才在一条全新的连接上改用SPNEGO。
+            try {
+                connectHybridAttempt(host, port, dcp, CredSspTokenMode.RAW_NTLM);
+            } catch (Exception e) {
+                if (!isCredSspTokenFormatFailure(e)) {
+                    throw e;
+                }
+                rawNtlmFailure = e;
+                logger.log(Level.WARNING,
+                        "HYBRID RAW_NTLM被服务器拒绝，使用全新连接回退到SPNEGO/NTLM: "
+                                + e.getMessage());
+                connectHybridAttempt(host, port, dcp, CredSspTokenMode.SPNEGO_NTLM);
             }
-
-            // 重新配置：使用HYBRID（CredSSP/NLA）
-            options.getSecurityTypes().clear();
-            options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.STANDARD);
-            options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.HYBRID);
-
-            // 重新创建状态
-            RdpState rdpState = new RdpState(options);
-            rdpState.lockRdp5();
-            state = rdpState;
-
-            // 重新创建画布
-            EmbeddedContext context = new EmbeddedContext();
-            canvas = new RdesktopCanvas(context, state);
-            state.setCanvas(canvas);
-
-            // 重新创建RDP层（FixedVChannels修复库分片重组NPE）
-            VChannels channels = new FixedVChannels(state);
-            registerRdpdrChannel(channels);
-            // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
-            registerClipboardChannel(state, canvas, channels);
-            registerSoundChannel(channels);
-            rdpLayer = new RdpPatch(context, state, channels);
-            configureFrameCallback((RdpPatch) rdpLayer);
-
-            // 注入RdpTransport（强制TLS 1.2 + SNI + 全量密码套件）
-            RdpTlsFix.injectRdpTransport(rdpLayer, host);
-
-            RdpIsoFix.injectRdpIso(rdpLayer);
-
-
-            logger.info("回退重连: " + host + ":" + port + " securityType=HYBRID (CredSSP/NLA)");
-            rdpLayer.connect(new DefaultIO(InetAddress.getByName(host), port),
-                    dcp, options.getCommand(), options.getDirectory());
 
             // HYBRID模式下connect()后也需设置licenceIssued=true（与SSL相同，TLS接收侧无Secure层header）
             if (!state.isLicenceIssued()) {
@@ -663,10 +641,76 @@ public class RdpClient {
             notifyDisconnected(e.getMessage() != null ? e.getMessage() : "连接已断开");
         } catch (Exception e) {
             logger.log(Level.SEVERE, "HYBRID (CredSSP/NLA) 重连也失败: " + e.getMessage(), e);
-            notifyDisconnected("连接失败（Standard、SSL和HYBRID均不可用）: " + e.getMessage());
+            String detail = rawNtlmFailure == null
+                    ? e.getMessage()
+                    : "RAW_NTLM=" + rawNtlmFailure.getMessage()
+                            + "；SPNEGO_NTLM=" + e.getMessage();
+            notifyDisconnected("连接失败（Standard、SSL和HYBRID均不可用）: " + detail);
         } finally {
             connected = false;
         }
+    }
+
+    /**
+     * 创建一套全新的HYBRID协议对象并执行一次连接。NTLM的RC4状态和消息序号
+     * 不能跨尝试复用，所以令牌格式回退必须走这里重新初始化整条连接。
+     */
+    private void connectHybridAttempt(String host, int port, CredentialProvider dcp,
+                                      CredSspTokenMode tokenMode) throws Exception {
+        if (rdpLayer != null) {
+            try { rdpLayer.disconnect(); } catch (Exception ignored) {}
+        }
+
+        options.setCredSspTokenMode(tokenMode);
+        options.getSecurityTypes().clear();
+        options.getSecurityTypes().add(SecurityType.STANDARD);
+        options.getSecurityTypes().add(SecurityType.HYBRID);
+
+        RdpState rdpState = new RdpState(options);
+        rdpState.lockRdp5();
+        state = rdpState;
+
+        EmbeddedContext context = new EmbeddedContext();
+        canvas = new RdesktopCanvas(context, state);
+        state.setCanvas(canvas);
+
+        VChannels channels = new FixedVChannels(state);
+        registerRdpdrChannel(channels);
+        registerClipboardChannel(state, canvas, channels);
+        registerSoundChannel(channels);
+        rdpLayer = new RdpPatch(context, state, channels);
+        configureFrameCallback((RdpPatch) rdpLayer);
+
+        RdpTlsFix.injectRdpTransport(rdpLayer, host);
+        RdpIsoFix.injectRdpIso(rdpLayer);
+
+        logger.info("回退重连: " + host + ":" + port
+                + " securityType=HYBRID (CredSSP/NLA), tokenFormat=" + tokenMode);
+        rdpLayer.connect(new DefaultIO(InetAddress.getByName(host), port),
+                dcp, options.getCommand(), options.getDirectory());
+    }
+
+    /** 只对令牌格式/封装不兼容进行第二次认证，避免密码错误时重复尝试。 */
+    private boolean isCredSspTokenFormatFailure(Throwable error) {
+        Throwable current = error;
+        for (int depth = 0; current != null && depth < 12; depth++) {
+            if (current instanceof HResultException hresult
+                    && hresult.getFacility() == 9 && hresult.getCode() == 0x0308) {
+                return true; // SEC_E_INVALID_TOKEN
+            }
+            String message = current.getMessage();
+            if (message != null) {
+                String normalized = message.toLowerCase(java.util.Locale.ROOT);
+                if (normalized.contains("internal_error")
+                        || normalized.contains("internal error")
+                        || normalized.contains("invalid token")
+                        || normalized.contains("unsupported spnego token")) {
+                    return true;
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     /**

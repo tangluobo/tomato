@@ -23,6 +23,7 @@ import com.tangluobo.tomato.rdp.HexDump;
 import com.tangluobo.tomato.rdp.Packet;
 import com.tangluobo.tomato.rdp.RdesktopCryptoException;
 import com.tangluobo.tomato.rdp.State;
+import com.tangluobo.tomato.rdp.CredSspTokenMode;
 import com.tangluobo.tomato.rdp.layers.Transport;
 
 public class NLA {
@@ -117,7 +118,12 @@ public class NLA {
 		
 		byte[] negotiateData = new NTLMNegotiate(ntlm).write().getBytes();
 		HexDump.encode(negotiateData, "NEG DATA");
-		TSRequest req = new TSRequest(negotiateData);
+		boolean requestedSpnego = state.getOptions().getCredSspTokenMode()
+				== CredSspTokenMode.SPNEGO_NTLM;
+		byte[] negotiateToken = requestedSpnego
+				? SpnegoToken.initial(negotiateData)
+				: negotiateData;
+		TSRequest req = new TSRequest(negotiateToken);
 		req.setVersion(CREDSSP_VERSION);
 		req.setClientNonce(clientNonce);
 		BerType send = req.write();
@@ -125,7 +131,8 @@ public class NLA {
 		send.encode(bos, true);
 		
 		// MS-NLMP - 2.2.1.1 NEGOTIATE_MESSAGE		
-		logger.info("Sending NTLM Negotiate");
+		logger.info("Sending NTLM Negotiate, tokenFormat="
+				+ (requestedSpnego ? "SPNEGO/NTLM" : "RAW_NTLM"));
 		ntlm.dumpFlags();
 		transport.sendPacket(new Packet(bos.getArray()));
 		
@@ -136,9 +143,20 @@ public class NLA {
 		logger.info("CredSSP server version=" + challengeRequest.getVersion()
 				+ ", effectiveVersion=" + peerVersion);
 		NTLMResponse response = new NTLMResponse(ntlm);
-		byte[] responseData = challengeRequest.getNegoData();
-		if (responseData == null || responseData.length == 0) {
+		byte[] challengeTokenData = challengeRequest.getNegoData();
+		if (challengeTokenData == null || challengeTokenData.length == 0) {
 			throw new IOException("CredSSP server did not return an NTLM challenge.");
+		}
+		SpnegoToken.Parsed challengeToken = SpnegoToken.parse(challengeTokenData);
+		boolean useSpnego = challengeToken.isWrapped();
+		byte[] responseData = challengeToken.getResponseToken();
+		if (responseData == null || responseData.length == 0) {
+			throw new IOException("SPNEGO response did not contain an NTLM challenge.");
+		}
+		if (requestedSpnego && !useSpnego) {
+			logger.info("CredSSP server returned raw NTLM; continuing in RAW_NTLM mode");
+		} else if (!requestedSpnego && useSpnego) {
+			logger.info("CredSSP server selected SPNEGO/NTLM; continuing in SPNEGO mode");
 		}
 		logger.info("Received NTLM Challenge");
 		HexDump.encode(responseData, "NTLM Challenge");
@@ -210,7 +228,16 @@ public class NLA {
 		byte[] clientBinding = peerVersion >= 5
 				? bindingHash(CLIENT_TO_SERVER_MAGIC, clientNonce, publicKey)
 				: publicKey;
-		TSRequest authenticateRequest = new TSRequest(authData);
+		byte[] authenticateToken = authData;
+		if (useSpnego) {
+			// RFC 4178 protects the exact DER-encoded MechTypeList. Signing it
+			// consumes NTLM send sequence 0, so PubKeyAuth correctly uses 1.
+			byte[] mechListMic = ntlm.signMessage(ntlm.getClientSignKey(),
+					SpnegoToken.mechTypes(), ntlm.getClientSeal());
+			authenticateToken = SpnegoToken.response(authData, mechListMic);
+			logger.info("Sending NTLM Authenticate with SPNEGO mechListMIC");
+		}
+		TSRequest authenticateRequest = new TSRequest(authenticateToken);
 		authenticateRequest.setVersion(CREDSSP_VERSION);
 		authenticateRequest.setClientNonce(clientNonce);
 		authenticateRequest.setPubKeyAuth(ntlm.encryptMessage(
@@ -227,6 +254,20 @@ public class NLA {
 		// TLS连接会继续承载RDP会话，读到EOF会永久阻塞。
 		TSRequest publicKeyResponse = new TSRequest(null);
 		publicKeyResponse.read(new BerInputStream(transport.getIn()).next());
+		if (useSpnego && publicKeyResponse.getNegoData() != null) {
+			SpnegoToken.Parsed finalToken = SpnegoToken.parse(publicKeyResponse.getNegoData());
+			if (!finalToken.isWrapped()) {
+				throw new IOException("CredSSP server returned an invalid final SPNEGO token.");
+			}
+			byte[] serverMechListMic = finalToken.getMechListMic();
+			if (serverMechListMic != null) {
+				// Verify before PubKeyAuth: the MIC occupies server receive
+				// sequence 0 and advances the shared server-to-client RC4 stream.
+				ntlm.verifySignature(ntlm.getServerSignKey(), SpnegoToken.mechTypes(),
+						serverMechListMic, ntlm.getServerSeal());
+				logger.info("Verified SPNEGO server mechListMIC");
+			}
+		}
 		byte[] sealedServerBinding = publicKeyResponse.getPubKeyAuth();
 		if (sealedServerBinding == null || sealedServerBinding.length == 0) {
 			throw new IOException("CredSSP server did not return pubKeyAuth.");

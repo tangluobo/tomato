@@ -71,6 +71,7 @@ public class Options {
 	private String cookie;
 	private List<SecurityType> securityTypes = new ArrayList<>(Arrays.asList(SecurityType.supported()));
 	private int lmCompatibility = 3;
+	private CredSspTokenMode credSspTokenMode = CredSspTokenMode.RAW_NTLM;
 	private CacheBackend persistentCacheBackend;
 	private KeyCode_FileBased keymap;
 	private X509TrustManager trustManager;
@@ -487,6 +488,17 @@ public class Options {
 
 	public void setLMCompatibility(int lmCompatibility) {
 		this.lmCompatibility = lmCompatibility;
+	}
+
+	public CredSspTokenMode getCredSspTokenMode() {
+		return credSspTokenMode;
+	}
+
+	public void setCredSspTokenMode(CredSspTokenMode credSspTokenMode) {
+		if (credSspTokenMode == null) {
+			throw new IllegalArgumentException("CredSSP token mode must not be null.");
+		}
+		this.credSspTokenMode = credSspTokenMode;
 	}
 
 	public void setSessionKeyEncryptionMethod(int sessionKeyEncryptionMethod) {
