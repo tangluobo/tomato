@@ -52,9 +52,11 @@ public class NTLMState implements NTLM {
 	private byte[] clientSealKey;
 	private byte[] serverSignKey;
 	private byte[] serverSealKey;
-	private int sequence;
+	private int sendSequence;
+	private int receiveSequence;
 	private Cipher clientSeal;
 	private Cipher serverSeal;
+	private Long ntlmV2TimestampFileTimeOverride;
 	private static final byte[] S8 = { (byte) 0x4b, (byte) 0x47, (byte) 0x53, (byte) 0x21, (byte) 0x40, (byte) 0x23, (byte) 0x24,
 			(byte) 0x25 };
 	static final long MILLISECONDS_BETWEEN_1970_AND_1601 = 11644473600000L;
@@ -64,11 +66,10 @@ public class NTLMState implements NTLM {
 				NTLMSSP_NEGOTIATE_56 
 				| NTLMSSP_NEGOTIATE_KEY_EXCH 
 				| NTLMSSP_NEGOTIATE_128 
-				//| NTLMSSP_NEGOTIATE_VERSION
+				| NTLMSSP_NEGOTIATE_VERSION
 				| NTLMSSP_NEGOTIATE_EXTENDED_SESSIONSECURITY 
 				| NTLMSSP_NEGOTIATE_ALWAYS_SIGN 
 				| NTLMSSP_NEGOTIATE_NTLM
-				| NTLMSSP_NEGOTIATE_LM_KEY 
 				| NTLMSSP_NEGOTIATE_SEAL 
 				| NTLMSSP_NEGOTIATE_SIGN 
 				| NTLMSSP_REQUEST_TARGET
@@ -82,7 +83,7 @@ public class NTLMState implements NTLM {
 	}
 
 	public int nextSequence() {
-		return sequence++;
+		return sendSequence++;
 	}
 
 	public Cipher getClientSeal() {
@@ -255,6 +256,89 @@ public class NTLMState implements NTLM {
 		} catch (InvalidKeyException e) {
 			throw new RdesktopCryptoException("Failed to encrypt message.", e);
 		}
+	}
+
+	public byte[] signMessage(byte[] key, byte[] bytes, Cipher seal) throws RdesktopCryptoException {
+		int seq = nextSequence();
+		try {
+			Mac mac = Mac.getInstance("HmacMD5");
+			mac.init(new SecretKeySpec(key, "HmacMD5"));
+			byte[] seqbytes = Utilities.intToBytes(seq);
+			mac.update(seqbytes);
+			mac.update(bytes);
+			byte[] digest = Utilities.padBytes(mac.doFinal(), 8);
+			return Utilities.concatenateBytes(Utilities.intToBytes(1), seal.update(digest), seqbytes);
+		} catch (NoSuchAlgorithmException e) {
+			throw new RdesktopCryptoException("Failed to sign message.", e);
+		} catch (InvalidKeyException e) {
+			throw new RdesktopCryptoException("Failed to sign message.", e);
+		}
+	}
+
+	public void verifySignature(byte[] key, byte[] bytes, byte[] signature, Cipher seal)
+			throws RdesktopCryptoException {
+		if (signature == null || signature.length != 16)
+			throw new RdesktopCryptoException("Invalid NTLM message signature.");
+		int version = littleEndianInt(signature, 0);
+		int messageSequence = littleEndianInt(signature, 12);
+		int expectedSequence = receiveSequence++;
+		if (version != 1 || messageSequence != expectedSequence)
+			throw new RdesktopCryptoException("Invalid NTLM message signature sequence.");
+		try {
+			byte[] checksum = seal.update(java.util.Arrays.copyOfRange(signature, 4, 12));
+			Mac mac = Mac.getInstance("HmacMD5");
+			mac.init(new SecretKeySpec(key, "HmacMD5"));
+			mac.update(Utilities.intToBytes(messageSequence));
+			mac.update(bytes);
+			byte[] expectedChecksum = Utilities.padBytes(mac.doFinal(), 8);
+			if (!MessageDigest.isEqual(expectedChecksum, checksum))
+				throw new RdesktopCryptoException("Invalid NTLM message signature checksum.");
+		} catch (NoSuchAlgorithmException e) {
+			throw new RdesktopCryptoException("Failed to verify message signature.", e);
+		} catch (InvalidKeyException e) {
+			throw new RdesktopCryptoException("Failed to verify message signature.", e);
+		}
+	}
+
+	public byte[] decryptMessage(byte[] key, byte[] sealed, Cipher seal) throws RdesktopCryptoException {
+		if (sealed == null || sealed.length < 16) {
+			throw new RdesktopCryptoException("Invalid NTLM sealed message.");
+		}
+		int version = littleEndianInt(sealed, 0);
+		int messageSequence = littleEndianInt(sealed, 12);
+		int expectedSequence = receiveSequence++;
+		if (version != 1 || messageSequence != expectedSequence) {
+			throw new RdesktopCryptoException("Invalid NTLM message signature sequence.");
+		}
+		try {
+			byte[] encryptedData = java.util.Arrays.copyOfRange(sealed, 16, sealed.length);
+			byte[] encryptedChecksum = java.util.Arrays.copyOfRange(sealed, 4, 12);
+			// NTLM with KEY_EXCH advances the RC4 stream over the message first,
+			// then over the eight-byte checksum.
+			byte[] plain = seal.update(encryptedData);
+			byte[] checksum = seal.update(encryptedChecksum);
+
+			Mac mac = Mac.getInstance("HmacMD5");
+			mac.init(new SecretKeySpec(key, "HmacMD5"));
+			mac.update(Utilities.intToBytes(messageSequence));
+			mac.update(plain);
+			byte[] expectedChecksum = Utilities.padBytes(mac.doFinal(), 8);
+			if (!MessageDigest.isEqual(expectedChecksum, checksum)) {
+				throw new RdesktopCryptoException("Invalid NTLM message signature checksum.");
+			}
+			return plain;
+		} catch (NoSuchAlgorithmException e) {
+			throw new RdesktopCryptoException("Failed to decrypt message.", e);
+		} catch (InvalidKeyException e) {
+			throw new RdesktopCryptoException("Failed to decrypt message.", e);
+		}
+	}
+
+	private int littleEndianInt(byte[] value, int offset) {
+		return (value[offset] & 0xff)
+				| ((value[offset + 1] & 0xff) << 8)
+				| ((value[offset + 2] & 0xff) << 16)
+				| ((value[offset + 3] & 0xff) << 24);
 	}
 
 	public Cipher initSeal(byte[] key) throws RdesktopCryptoException {
@@ -479,8 +563,11 @@ public class NTLMState implements NTLM {
 	}
 
 	public byte[] getNTLMv2Blob(byte[] nonce) throws IOException {
-		long nanos1601 = ((avPairs.getTimestamp() > 0 ? avPairs.getTimestamp() : System.currentTimeMillis())
-				+ MILLISECONDS_BETWEEN_1970_AND_1601) * 10000L;
+		long nanos1601 = ntlmV2TimestampFileTimeOverride != null
+				? ntlmV2TimestampFileTimeOverride
+				: avPairs != null && avPairs.hasTimestamp()
+				? avPairs.getTimestampFileTime()
+				: (System.currentTimeMillis() + MILLISECONDS_BETWEEN_1970_AND_1601) * 10000L;
 		Packet targetInfo = avPairs == null ? null : avPairs.write();
 		byte[] targetData = targetInfo == null ? NTLM.NULL_BYTES : targetInfo.getBytes();
 		// Blob
@@ -496,6 +583,10 @@ public class NTLMState implements NTLM {
 		if (targetData.length == 0)
 			p.setLittleEndian32(0); // AV_PAIR MsvAvEOL
 		return p.getBytes();
+	}
+
+	void setNtlmV2TimestampFileTimeOverride(long fileTime) {
+		this.ntlmV2TimestampFileTimeOverride = fileTime;
 	}
 
 	public String getDecodedString(byte[] data) {

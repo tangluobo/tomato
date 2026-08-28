@@ -6,12 +6,14 @@ import java.util.Arrays;
 import com.tangluobo.tomato.rdp.Packet;
 
 public class NTLMSingleHost implements PacketPayload {
+	public static final int LENGTH = 48;
 	private byte[] customData;
 	private byte[] machineId;
 
 	@Override
 	public Packet write() throws IOException {
-		Packet p = new Packet(44);
+		Packet p = new Packet(LENGTH);
+		p.setLittleEndian32(LENGTH);
 		p.setLittleEndian32(0); // z4
 		if (customData == null)
 			p.incrementPosition(8);
@@ -26,9 +28,14 @@ public class NTLMSingleHost implements PacketPayload {
 
 	@Override
 	public void read(Packet packet) throws IOException {
+		int size = packet.getLittleEndian32();
+		if (size < LENGTH)
+			throw new IOException("Invalid SINGLE_HOST_DATA size: " + size);
 		packet.getLittleEndian32(); // z4
+		customData = new byte[8];
 		packet.copyToByteArray(customData, 0, packet.getPosition(), 8);
 		packet.incrementPosition(8);
+		machineId = new byte[32];
 		packet.copyToByteArray(machineId, 0, packet.getPosition(), 32);
 		packet.incrementPosition(32);
 	}

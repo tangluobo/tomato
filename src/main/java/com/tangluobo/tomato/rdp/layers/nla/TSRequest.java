@@ -10,16 +10,15 @@ import com.tangluobo.tomato.rdp.jasn1.ber.types.BerType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.tangluobo.tomato.rdp.layers.nla.NLA.TSCredentials;
-
 public class TSRequest implements BerPayload {
 	static Logger logger = LoggerFactory.getLogger(TSRequest.class);
 	
-	private int version = 3;
+	private int version = 6;
 	private byte[] negoData = null;
-	private TSCredentials authInfo = null;
+	private byte[] authInfo = null;
 	private byte[] pubKeyAuth = null;
 	private Integer errorCode = null;
+	private byte[] clientNonce = null;
 
 	public TSRequest(byte[] negoData) {
 		this.negoData = negoData;
@@ -41,11 +40,11 @@ public class TSRequest implements BerPayload {
 		this.negoData = negoData;
 	}
 
-	public TSCredentials getAuthInfo() {
+	public byte[] getAuthInfo() {
 		return authInfo;
 	}
 
-	public void setAuthInfo(TSCredentials authInfo) {
+	public void setAuthInfo(byte[] authInfo) {
 		this.authInfo = authInfo;
 	}
 
@@ -65,6 +64,14 @@ public class TSRequest implements BerPayload {
 		this.errorCode = errorCode;
 	}
 
+	public byte[] getClientNonce() {
+		return clientNonce;
+	}
+
+	public void setClientNonce(byte[] clientNonce) {
+		this.clientNonce = clientNonce;
+	}
+
 	public void read(BerType type) throws IOException {
 		BerSequence seq = (BerSequence) type;
 		BerInteger errBer = seq.get(BerInteger.class, 4);
@@ -73,9 +80,19 @@ public class TSRequest implements BerPayload {
 		}
 		version = seq.get(BerInteger.class, 0).intValue();
 		BerSequence negoTokens = seq.get(BerSequence.class, 1);
-		BerSequence negoSeqs = negoTokens.get(BerSequence.class, 0);
-		BerOctetString negoToken = negoSeqs.get(BerOctetString.class, 0);
-		negoData = negoToken.value;
+		if (negoTokens != null) {
+			BerSequence negoSeqs = negoTokens.get(BerSequence.class, 0);
+			BerOctetString negoToken = negoSeqs.get(BerOctetString.class, 0);
+			negoData = negoToken.value;
+		} else {
+			negoData = null;
+		}
+		BerOctetString auth = seq.get(BerOctetString.class, 2);
+		authInfo = auth == null ? null : auth.value;
+		BerOctetString pubKey = seq.get(BerOctetString.class, 3);
+		pubKeyAuth = pubKey == null ? null : pubKey.value;
+		BerOctetString nonce = seq.get(BerOctetString.class, 5);
+		clientNonce = nonce == null ? null : nonce.value;
 	}
 
 	@Override
@@ -104,7 +121,7 @@ public class TSRequest implements BerPayload {
 			 * carries the message signature and then the encrypted data.
 			 */
 			logger.info(String.format("Added TSCredentials structure"));
-			seq.add(new BerContextSpecific(authInfo.write(), 2));
+			seq.add(new BerContextSpecific(new BerOctetString(authInfo), 2));
 		}
 		/*
 		 * pubKeyAuth: This field is used to assure that the public key that is
@@ -131,7 +148,13 @@ public class TSRequest implements BerPayload {
 		 */
 		if (errorCode != null) {
 			logger.info(String.format("Added errorCode structure"));
-			seq.add(new BerContextSpecific(new BerInteger(pubKeyAuth), 4));
+			seq.add(new BerContextSpecific(new BerInteger(errorCode), 4));
+		}
+		if (clientNonce != null) {
+			if (clientNonce.length != 32) {
+				throw new IOException("CredSSP clientNonce must be exactly 32 bytes.");
+			}
+			seq.add(new BerContextSpecific(new BerOctetString(clientNonce), 5));
 		}
 		return seq;
 	}

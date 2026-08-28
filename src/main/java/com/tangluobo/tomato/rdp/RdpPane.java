@@ -20,6 +20,8 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.Tab;
+import javafx.scene.control.TextField;
+import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCombination;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
@@ -51,7 +53,7 @@ public class RdpPane extends BorderPane {
     // 状态栏组件
     private HBox statusBar;
     private Circle statusDot;
-    private Label stateLabel;
+    private TextField stateTextField;
     private Label connLabel;
     private Label resolutionLabel;
 
@@ -144,10 +146,21 @@ public class RdpPane extends BorderPane {
         statusDot.setFill(Color.GRAY);
         bar.getChildren().add(statusDot);
 
-        // 状态标签
-        stateLabel = new Label("未连接");
-        stateLabel.setStyle("-fx-font-size: 11px;");
-        bar.getChildren().add(stateLabel);
+        // 使用只读文本框承载状态：长错误不会撑开状态栏，同时可以选择并复制。
+        stateTextField = new TextField("未连接");
+        stateTextField.setEditable(false);
+        stateTextField.setFocusTraversable(true);
+        stateTextField.setMinWidth(80);
+        stateTextField.setPrefWidth(220);
+        stateTextField.setMaxWidth(360);
+        stateTextField.setStyle("-fx-font-size: 11px; -fx-background-color: transparent; "
+                + "-fx-border-color: transparent; -fx-background-insets: 0; -fx-padding: 0;");
+        Tooltip fullStatus = new Tooltip();
+        fullStatus.textProperty().bind(stateTextField.textProperty());
+        fullStatus.setWrapText(true);
+        fullStatus.setMaxWidth(600);
+        stateTextField.setTooltip(fullStatus);
+        bar.getChildren().add(stateTextField);
 
         // 分隔
         Label sep1 = new Label("|");
@@ -251,7 +264,7 @@ public class RdpPane extends BorderPane {
         rdpClient.setOnDisconnected(reason -> {
             Platform.runLater(() -> {
                 updateStatus(ConnectionState.DISCONNECTED);
-                stateLabel.setText("已断开: " + reason);
+                stateTextField.setText("已断开: " + reason);
             });
         });
 
@@ -266,7 +279,7 @@ public class RdpPane extends BorderPane {
                 logger.log(Level.SEVERE, "RDP连接失败: " + e.getMessage(), e);
                 Platform.runLater(() -> {
                     updateStatus(ConnectionState.ERROR);
-                    stateLabel.setText("连接失败: " + e.getMessage());
+                    stateTextField.setText("连接失败: " + e.getMessage());
                 });
             }
         });
@@ -750,19 +763,19 @@ public class RdpPane extends BorderPane {
         switch (state) {
             case DISCONNECTED:
                 statusDot.setFill(Color.GRAY);
-                stateLabel.setText("未连接");
+                stateTextField.setText("未连接");
                 break;
             case CONNECTING:
                 statusDot.setFill(Color.ORANGE);
-                stateLabel.setText("连接中...");
+                stateTextField.setText("连接中...");
                 break;
             case CONNECTED:
                 statusDot.setFill(Color.GREEN);
-                stateLabel.setText("已连接");
+                stateTextField.setText("已连接");
                 break;
             case ERROR:
                 statusDot.setFill(Color.RED);
-                stateLabel.setText("连接失败");
+                stateTextField.setText("连接失败");
                 break;
         }
     }

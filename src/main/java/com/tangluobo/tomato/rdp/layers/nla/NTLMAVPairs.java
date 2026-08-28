@@ -38,6 +38,7 @@ public class NTLMAVPairs implements PacketPayload {
 	private String dnsTreeName;
 	private int flags;
 	private long timestamp;
+	private Long timestampFileTime;
 	private NTLMSingleHost singleHost;
 	private String targetName;
 	private byte[] channelHash;
@@ -51,9 +52,12 @@ public class NTLMAVPairs implements PacketPayload {
 	@Override
 	public Packet write() throws IOException {
 		Packet packet = new Packet(1024);
-		for (int avId : new int[] { MSV_AV_NB_COMPUTER_NAME, MSV_AV_NB_DOMAIN_NAME, MSV_AV_DNS_COMPUTER_NAME,
-				MSV_AV_DNS_DOMAIN_NAME, MSV_AV_DNS_TREE_NAME, MSV_AV_FLAGS, MSV_AV_TIMESTAMP, MSV_AV_SINGLE_HOST,
-				MSV_AV_TARGET_NAME, MSV_AV_CHANNEL_BINDINGS, }) {
+		// Rebuild AuthenticateTargetInfo in the same canonical order as Windows/
+		// FreeRDP. AV_PAIR order is nominally flexible, but some SSPI versions
+		// validate this token more strictly than the wire description requires.
+		for (int avId : new int[] { MSV_AV_NB_DOMAIN_NAME, MSV_AV_NB_COMPUTER_NAME, MSV_AV_DNS_DOMAIN_NAME,
+				MSV_AV_DNS_COMPUTER_NAME, MSV_AV_DNS_TREE_NAME, MSV_AV_TIMESTAMP, MSV_AV_FLAGS, MSV_AV_SINGLE_HOST,
+				MSV_AV_CHANNEL_BINDINGS, MSV_AV_TARGET_NAME, }) {
 			byte[] data = null;
 			switch (avId) {
 			case MSV_AV_NB_COMPUTER_NAME:
@@ -84,10 +88,12 @@ public class NTLMAVPairs implements PacketPayload {
 				}
 				break;
 			case MSV_AV_TIMESTAMP:
-				if (timestamp > 0) {
+				if (timestampFileTime != null) {
 					packet.setLittleEndian16(MSV_AV_TIMESTAMP);
 					packet.setLittleEndian16(8);
-					packet.setLittleEndian64((System.currentTimeMillis() + NTLMState.MILLISECONDS_BETWEEN_1970_AND_1601) * 10000L);
+					// Preserve every 100-nanosecond digit from the server. Converting
+					// FILETIME to milliseconds and back changes the NTLMv2 proof input.
+					packet.setLittleEndian64(timestampFileTime);
 				}
 				break;
 			case MSV_AV_SINGLE_HOST:
@@ -125,6 +131,7 @@ public class NTLMAVPairs implements PacketPayload {
 		dnsTreeName = null;
 		flags = 0;
 		timestamp = 0;
+		timestampFileTime = null;
 		singleHost = null;
 		targetName = null;
 		channelHash = null;
@@ -137,7 +144,7 @@ public class NTLMAVPairs implements PacketPayload {
 			logger.debug(String.format("Read %s (%d, %02x)", toName(id), id, id));
 			switch (id) {
 			case MSV_AV_EOL:
-				if (id != 0)
+				if (packet.getLittleEndian16() != 0)
 					throw new IOException("Protocol error.");
 				return;
 			case MSV_AV_NB_COMPUTER_NAME:
@@ -163,11 +170,18 @@ public class NTLMAVPairs implements PacketPayload {
 			case MSV_AV_TIMESTAMP:
 				if (packet.getLittleEndian16() != 8)
 					throw new IOException("Protocol error.");
-				timestamp = (packet.getLittleEndian64() / 10000L) - NTLMState.MILLISECONDS_BETWEEN_1970_AND_1601;
+				timestampFileTime = packet.getLittleEndian64();
+				timestamp = (timestampFileTime / 10000L) - NTLMState.MILLISECONDS_BETWEEN_1970_AND_1601;
 				break;
 			case MSV_AV_SINGLE_HOST:
+				int singleHostLength = packet.getLittleEndian16();
+				if (singleHostLength < NTLMSingleHost.LENGTH)
+					throw new IOException("Invalid MsvAvSingleHost length: " + singleHostLength);
+				byte[] singleHostBytes = new byte[singleHostLength];
+				packet.copyToByteArray(singleHostBytes, 0, packet.getPosition(), singleHostLength);
+				packet.incrementPosition(singleHostLength);
 				singleHost = new NTLMSingleHost();
-				singleHost.read(packet);
+				singleHost.read(new Packet(singleHostBytes).setPosition(0));
 				break;
 			case MSV_AV_TARGET_NAME:
 				targetName = readUnicodeString(packet, packet.getLittleEndian16());
@@ -267,8 +281,24 @@ public class NTLMAVPairs implements PacketPayload {
 		return timestamp;
 	}
 
+	public boolean hasTimestamp() {
+		return timestampFileTime != null;
+	}
+
+	public long getTimestampFileTime() {
+		if (timestampFileTime == null)
+			throw new IllegalStateException("MsvAvTimestamp is not present.");
+		return timestampFileTime;
+	}
+
 	public void setTimestamp(long timestamp) {
 		this.timestamp = timestamp;
+		this.timestampFileTime = (timestamp + NTLMState.MILLISECONDS_BETWEEN_1970_AND_1601) * 10000L;
+	}
+
+	void setTimestampFileTime(long timestampFileTime) {
+		this.timestampFileTime = timestampFileTime;
+		this.timestamp = (timestampFileTime / 10000L) - NTLMState.MILLISECONDS_BETWEEN_1970_AND_1601;
 	}
 
 	public NTLMSingleHost getSingleHost() {

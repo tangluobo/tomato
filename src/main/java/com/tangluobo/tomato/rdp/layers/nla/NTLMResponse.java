@@ -44,15 +44,17 @@ public class NTLMResponse implements PacketPayload {
 		ntlmp.fill(8); // reserved
 		if ((state.getFlags() & NTLM.NTLMSSP_NEGOTIATE_TARGET_INFO) != 0) {
 			byte[] avBytes = ntlmp.getOffsetArray();
-			state.setAvPairs(data.length == 0 ? null : new NTLMAVPairs(avBytes));
+			state.setAvPairs(avBytes.length == 0 ? null : new NTLMAVPairs(avBytes));
 			logger.debug(String.format("NTLM Target Info : %s", state.getAvPairs()));
 		}
 		if ((state.getFlags() & NTLM.NTLMSSP_NEGOTIATE_VERSION) != 0) {
 			Packet p = new Packet(8);
 			ntlmp.copyToPacket(p, ntlmp.getPosition(), 0, p.capacity());
 			ntlmp.incrementPosition(8);
-			state.getClientVersion().read(p);
-			logger.debug(String.format("NTLM Version : %s", state.getClientVersion()));
+			// Challenge中的Version描述服务器，不能覆盖客户端自身版本。
+			NTLMVersion serverVersion = new NTLMVersion();
+			serverVersion.read(p);
+			logger.debug(String.format("NTLM Server Version : %s", serverVersion));
 		}
 	}
 }

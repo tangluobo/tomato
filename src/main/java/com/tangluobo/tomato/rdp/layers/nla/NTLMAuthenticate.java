@@ -47,6 +47,18 @@ public class NTLMAuthenticate implements PacketPayload {
 		domain = creds.get(0);
 		user = creds.get(1);
 		password = creds.get(2) == null ? null : creds.get(2).toCharArray();
+		// Server-only target type bits are not emitted in AUTHENTICATE_MESSAGE.
+		// The OEM_*_SUPPLIED bits describe NEGOTIATE_MESSAGE fields and MUST be
+		// ignored in AUTHENTICATE_MESSAGE, so leave their negotiated values alone.
+		int authenticateFlags = state.getFlags();
+		// TARGET_TYPE_SERVER/TARGET_TYPE_DOMAIN describe the TargetName carried
+		// by the server's CHALLENGE_MESSAGE. MS-NLMP 2.2.2.5 says both bits must
+		// be ignored in an AUTHENTICATE_MESSAGE. Echoing either server-only bit
+		// makes Windows SSPI reject an otherwise well-formed token with
+		// SEC_E_INVALID_TOKEN (0x80090308).
+		authenticateFlags &= ~(NTLM.NTLMSSP_TARGET_TYPE_SERVER
+				| NTLM.NTLMSSP_TARGET_TYPE_DOMAIN);
+		state.setFlags(authenticateFlags);
 		/* Compute responses */
 		computeResponse();
 		/* Calculate key exchange key */
@@ -103,17 +115,16 @@ public class NTLMAuthenticate implements PacketPayload {
 				}
 				MessageDigest md5 = MessageDigest.getInstance("MD5");
 				md5.update(k);
-				md5.update("session key to client-to-server signing key magic constant\0".getBytes("US-ASCII"));
+				md5.update("session key to client-to-server sealing key magic constant\0".getBytes("US-ASCII"));
 				state.setClientSealKey(md5.digest());
 				md5 = MessageDigest.getInstance("MD5");
 				md5.update(k);
-				md5.update("session key to server-to-client signing key magic constant\0".getBytes("US-ASCII"));
+				md5.update("session key to server-to-client sealing key magic constant\0".getBytes("US-ASCII"));
 				state.setServerSealKey(md5.digest());
 			} catch (NoSuchAlgorithmException e) {
 				throw new RdesktopCryptoException("Failed to compute sign/seal keys.", e);
 			}
-		}
-		if ((state.getFlags() & NTLM.NTLMSSP_NEGOTIATE_LM_KEY) != 0
+		} else if ((state.getFlags() & NTLM.NTLMSSP_NEGOTIATE_LM_KEY) != 0
 				|| ((state.getFlags() & NTLM.NTLMSSP_NEGOTIATE_DATAGRAM) != 0 && state.getClientVersion() != null
 						&& state.getClientVersion().getRevision() >= NTLMVersion.NTLMSSP_REVISION_W2K3)) {
 			if ((state.getFlags() & NTLM.NTLMSSP_NEGOTIATE_56) != 0) {
@@ -212,7 +223,7 @@ public class NTLMAuthenticate implements PacketPayload {
 				 * present, the client SHOULD NOT send the LmChallengeResponse
 				 * and SHOULD send Z(24) instead.<45>
 				 */
-				if(state.getAvPairs().getTimestamp() > 0) {
+				if(state.getAvPairs().hasTimestamp()) {
 					lmResponse = new byte[24];
 				}
 				
@@ -289,50 +300,47 @@ public class NTLMAuthenticate implements PacketPayload {
 		byte[] domainBytes = state.getEncodedStringBytes(domain);
 		byte[] wsBytes = state.getEncodedStringBytes(state.getState().getWorkstationName());
 		byte[] userBytes = state.getEncodedStringBytes(user);
-		int pktlen = 80 + domainBytes.length + userBytes.length + lmResponse.length + ntResponse.length
-				+ state.getSessionBaseKey().length;
-		int off = 80;
-		if ((state.getFlags() & NTLM.NTLMSSP_NEGOTIATE_VERSION) != 0) {
-			off += 8;
-			pktlen += 8 + wsBytes.length;
-		}
+		boolean hasVersion = (state.getFlags() & NTLM.NTLMSSP_NEGOTIATE_VERSION) != 0;
+		boolean hasMic = state.getAvPairs() != null
+				&& (state.getAvPairs().getFlags() & NTLMAVPairs.MSV_AV_FLAG_INTEGRITY) != 0;
+		int headerLength = 64 + (hasVersion ? 8 : 0) + (hasMic ? 16 : 0);
+
+		// Keep the payload in the layout emitted by Windows/FreeRDP. The security
+		// buffers permit arbitrary ordering, but a canonical contiguous layout
+		// avoids strict SSPI token parsers rejecting otherwise legal offsets.
+		int domainOffset = headerLength;
+		int userOffset = domainOffset + domainBytes.length;
+		int workstationOffset = userOffset + userBytes.length;
+		int lmOffset = workstationOffset + wsBytes.length;
+		int ntOffset = lmOffset + lmResponse.length;
+		int sessionKeyOffset = ntOffset + ntResponse.length;
+		int pktlen = sessionKeyOffset + state.getEncryptedRandomSessionKey().length;
 		NTLMPacket packet = new NTLMPacket(pktlen);
 		packet.copyFromByteArray(NTLM.SIG, 0, 0, NTLM.SIG.length);
 		packet.incrementPosition(NTLM.SIG.length);
 		packet.setLittleEndian32(3);
-		off += packet.setOffsetArray(off, lmResponse);
-		off += packet.setOffsetArray(off, ntResponse);
-		off += packet.setOffsetArray(off, domainBytes);
-		off += packet.setOffsetArray(off, userBytes);
-		if ((state.getFlags() & NTLM.NTLMSSP_NEGOTIATE_VERSION) != 0)
-			/*
-			 * TODO Check this. Seems a bit weird. in MS-NLMP, section 3.1.5.1.2
-			 * it states ..
-			 * 
-			 * "If the NTLMSSP_NEGOTIATE_VERSION flag is set by the client
-			 * application, the Version field MUST be set to the current version
-			 * (section 2.2.2.10), and the Workstation field MUST be set to
-			 * NbMachineName."
-			 * 
-			 * .. however it's not exactly clear if a zero sized workstation
-			 * block should be used instead. Section 2.2.1.3 seems to imply that
-			 * is should, but this doesn't mention NTLMSSP_NEGOTIATE_VERSION
-			 * which is surprising.
-			 */
-			off += packet.setOffsetArray(off, wsBytes);
-		else
-			off += packet.setOffsetArray(off, NTLM.NULL_BYTES);
-		off += packet.setOffsetArray(off, state.getSessionBaseKey());
+		packet.setOffsetArray(lmOffset, lmResponse);
+		packet.setOffsetArray(ntOffset, ntResponse);
+		packet.setOffsetArray(domainOffset, domainBytes);
+		packet.setOffsetArray(userOffset, userBytes);
+		packet.setOffsetArray(workstationOffset, wsBytes);
+		// EncryptedRandomSessionKey is the wire field in AUTHENTICATE_MESSAGE.
+		// SessionBaseKey is key material and must never be sent directly.
+		packet.setOffsetArray(sessionKeyOffset, state.getEncryptedRandomSessionKey());
 		packet.setLittleEndian32(state.getFlags());
-		if ((state.getFlags() & NTLM.NTLMSSP_NEGOTIATE_VERSION) != 0)
+		if (hasVersion)
 			packet.setPacket(state.getClientVersion().write());
-		if (mic == null)
-			packet.fill(16); // MIC
-		else if (mic.length != 16) {
-			throw new IllegalStateException("MIC must be 16 bytes if it is set.");
-		} else
-			packet.setArray(mic);
-		packet.setPosition(off);
+		if (hasMic) {
+			if (mic == null)
+				packet.fill(16); // Zero MIC for the first serialization pass.
+			else if (mic.length != 16)
+				throw new IllegalStateException("MIC must be 16 bytes if it is set.");
+			else
+				packet.setArray(mic);
+		} else if (mic != null) {
+			throw new IllegalStateException("MIC was set without MsvAvFlags integrity bit.");
+		}
+		packet.setPosition(pktlen);
 		return packet;
 	}
 

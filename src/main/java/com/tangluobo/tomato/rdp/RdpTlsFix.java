@@ -257,6 +257,11 @@ public class RdpTlsFix {
             org.bouncycastle.tls.TlsClientProtocol protocol = new org.bouncycastle.tls.TlsClientProtocol(
                     tlsIn, tlsOut);
 
+            // CredSSP需要TLS服务器证书的SubjectPublicKey BIT STRING做通道绑定。
+            // BC流式IO不像SSLSocket那样能从SSLSession回取证书，因此在回调中保存。
+            final java.util.concurrent.atomic.AtomicReference<byte[]> serverPublicKey =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+
             // 创建TlsCrypto（Bouncy Castle原生加密实现）
             // 重写createCertificate(short, byte[])：返回BcTlsCertificate匿名子类，覆盖supportsKeyUsage()
             //
@@ -332,6 +337,23 @@ public class RdpTlsFix {
                                 org.bouncycastle.tls.TlsServerCertificate serverCertificate) throws java.io.IOException {
                             // 信任所有证书（RDP自签名证书）
                             logger.info("服务器证书已接收（信任所有）");
+                            try {
+                                byte[] certificateDer = serverCertificate.getCertificate()
+                                        .getCertificateAt(0).getEncoded();
+                                org.bouncycastle.asn1.x509.Certificate certificate =
+                                        org.bouncycastle.asn1.x509.Certificate.getInstance(certificateDer);
+                                byte[] publicKey = certificate.getSubjectPublicKeyInfo()
+                                        .getPublicKeyData().getBytes();
+                                if (publicKey.length == 0) {
+                                    throw new java.io.IOException("服务器证书公钥为空");
+                                }
+                                serverPublicKey.set(publicKey);
+                                logger.info("已提取CredSSP通道绑定公钥: " + publicKey.length + " 字节");
+                            } catch (java.io.IOException e) {
+                                throw e;
+                            } catch (Exception e) {
+                                throw new java.io.IOException("无法从TLS证书提取CredSSP公钥", e);
+                            }
                         }
 
                         @Override
@@ -358,7 +380,10 @@ public class RdpTlsFix {
                     bcIn.close();
                     bcOut.close();
                 }
-                @Override public byte[] getPublicKey() { return new byte[0]; }
+                @Override public byte[] getPublicKey() {
+                    byte[] key = serverPublicKey.get();
+                    return key == null ? null : key.clone();
+                }
                 @Override public String getAddress() { return hostname != null ? hostname : "unknown"; }
             };
         }

@@ -190,7 +190,8 @@ public class RdpClient {
         options.getSecurityTypes().clear();
         options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.STANDARD);
         if (useSsl) {
-            // SSL在列表末尾会被优先选择；服务器不支持SSL时ISO协商会自动降级
+            // 首次优先纯TLS，避免在服务器未强制NLA时也被选入HYBRID。
+            // 若服务器返回HYBRID_REQUIRED_BY_SERVER，catch分支会以CredSSP重连。
             options.getSecurityTypes().add(com.tangluobo.tomato.rdp.SecurityType.SSL);
         }
 
@@ -336,6 +337,11 @@ public class RdpClient {
                 if (useSsl && msg != null && msg.contains("SSL_NOT_ALLOWED_BY_SERVER")) {
                     logger.warning("服务器不支持SSL，回退到Standard RDP Security重连...");
                     retryWithStandardSecurity(host, port, dcp);
+                    return;
+                }
+                if (useSsl && msg != null && msg.contains("HYBRID_REQUIRED_BY_SERVER")) {
+                    logger.warning("服务器强制NLA，使用HYBRID（CredSSP）重连...");
+                    retryWithHybridSecurity(host, port, dcp);
                     return;
                 }
                 // SSL_REQUIRED_BY_SERVER错误：服务器要求SSL/TLS，回退到SSL/TLS加密重连
