@@ -14,6 +14,7 @@ import com.tangluobo.tomato.ssh.ContainerInspectPane;
 import com.tangluobo.tomato.ssh.SFTPFileBrowser;
 import com.tangluobo.tomato.ssh.SSHSession;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
+import com.tangluobo.tomato.ssh.StoragePanel;
 import javafx.application.Platform;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
@@ -47,7 +48,7 @@ public class SshTerminalConnectHandler implements ConnectHandler {
      * 双击 SSH 主机节点：
      * - 已展开（有子节点）则切换展开/收起状态；
      * - 否则打开 SSH 终端 tab，并在开启服务管理时在节点下添加
-     *   终端/容器/服务/端口/文件 五个子节点。
+     *   终端/容器/服务/端口/存储/文件子节点。
      */
     @Override
     public void handleHostDoubleClick(ConnectModule module, TreeItem<String> hostItem, ConnectionConfig config) {
@@ -62,7 +63,7 @@ public class SshTerminalConnectHandler implements ConnectHandler {
     }
 
     /**
-     * 在 SSH 主机节点下添加服务管理子节点：终端/容器/服务/端口/文件
+     * 在 SSH 主机节点下添加服务管理子节点：终端/容器/服务/端口/存储/文件
      */
     private void addServiceManagementNodes(ConnectModule module, TreeItem<String> hostItem, ConnectionConfig config) {
         Platform.runLater(() -> {
@@ -71,6 +72,7 @@ public class SshTerminalConnectHandler implements ConnectHandler {
             addServiceChild(module, hostItem, config, "容器", DatabaseNodeData.NodeType.SSH_SERVICE_CONTAINER);
             addServiceChild(module, hostItem, config, "服务", DatabaseNodeData.NodeType.SSH_SERVICE_SERVICE);
             addServiceChild(module, hostItem, config, "端口", DatabaseNodeData.NodeType.SSH_SERVICE_PORT);
+            addServiceChild(module, hostItem, config, "存储", DatabaseNodeData.NodeType.SSH_SERVICE_STORAGE);
             addServiceChild(module, hostItem, config, "文件", DatabaseNodeData.NodeType.SSH_SERVICE_FILE);
             hostItem.setExpanded(true);
             module.updateHostIcon(hostItem, config, true);
@@ -84,6 +86,28 @@ public class SshTerminalConnectHandler implements ConnectHandler {
         item.setGraphic(module.getDbNodeIcon(data));
         module.getDbNodeDataMap().put(item, data);
         hostItem.getChildren().add(item);
+    }
+
+    public void handleStorageNodeDoubleClick(ConnectModule module, ConnectionConfig config) {
+        if (!module.ensureTabPaneInstalled()) return;
+        String tabId = "storage_" + config.getId();
+        for (Tab existing : module.getTerminalTabPane().getTabs()) {
+            if (tabId.equals(existing.getUserData())) {
+                module.getTerminalTabPane().getSelectionModel().select(existing);
+                module.showTerminalView();
+                return;
+            }
+        }
+        String password = ensurePasswordAvailable(module, config);
+        if (password == null) return;
+        StoragePanel panel = new StoragePanel(command ->
+                withTempSession(config, password, session -> executeCommand(session, command)));
+        Tab tab = new Tab(config.getName() + " - 存储", panel);
+        tab.setUserData(tabId);
+        module.getTerminalTabPane().getTabs().add(tab);
+        module.getTerminalTabPane().getSelectionModel().select(tab);
+        module.showTerminalView();
+        panel.refresh();
     }
 
     /**

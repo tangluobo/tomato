@@ -113,6 +113,7 @@ public class ConnectModule implements Module {
     private Image sshServiceContainerIcon;
     private Image sshServiceServiceIcon;
     private Image sshServicePortIcon;
+    private Image sshServiceStorageIcon;
     private Image sshServiceFileIcon;
     // Docker 容器节点图标：运行中彩色 / 已停止灰色
     private Image dockerContainerIcon;
@@ -237,6 +238,7 @@ public class ConnectModule implements Module {
         try { sshServiceContainerIcon = new Image(getClass().getResourceAsStream("/images/connect/docker.png")); } catch (Exception e) { sshServiceContainerIcon = null; }
         try { sshServiceServiceIcon = new Image(getClass().getResourceAsStream("/images/connect/monitor.png")); } catch (Exception e) { sshServiceServiceIcon = null; }
         try { sshServicePortIcon = createPortIconImage(); } catch (Exception e) { sshServicePortIcon = null; }
+        try { sshServiceStorageIcon = new Image(getClass().getResourceAsStream("/images/connect/database.png")); } catch (Exception e) { sshServiceStorageIcon = null; }
         try { sshServiceFileIcon = new Image(getClass().getResourceAsStream("/images/connect/folder.png")); } catch (Exception e) { sshServiceFileIcon = null; }
         // Docker 容器节点图标：运行中彩色；已停止灰色（由彩色版程序化去色生成，保留透明度）
         try {
@@ -370,6 +372,7 @@ public class ConnectModule implements Module {
             case SSH_SERVICE_CONTAINER -> sshServiceContainerIcon;
             case SSH_SERVICE_SERVICE -> sshServiceServiceIcon;
             case SSH_SERVICE_PORT -> sshServicePortIcon;
+            case SSH_SERVICE_STORAGE -> sshServiceStorageIcon;
             case SSH_SERVICE_FILE -> sshServiceFileIcon;
             // 容器节点：运行中（opened=true）显示彩色图标，已停止显示灰色图标
             case SSH_CONTAINER -> data.isOpened() ? dockerContainerIcon : dockerContainerGrayIcon;
@@ -1476,6 +1479,12 @@ public class ConnectModule implements Module {
                 ConnectHandler handler = createConnectHandler(data.getConnectionConfig());
                 if (handler instanceof SshTerminalConnectHandler ssh) {
                     ssh.handleContainerFolderDoubleClick(this, item, data);
+                }
+            }
+            case SSH_SERVICE_STORAGE -> {
+                ConnectHandler handler = createConnectHandler(data.getConnectionConfig());
+                if (handler instanceof SshTerminalConnectHandler ssh) {
+                    ssh.handleStorageNodeDoubleClick(this, data.getConnectionConfig());
                 }
             }
             case SSH_CONTAINER -> {

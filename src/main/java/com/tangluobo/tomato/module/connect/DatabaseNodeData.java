@@ -45,6 +45,7 @@ public class DatabaseNodeData {
         SSH_SERVICE_CONTAINER,      // SSH 服务管理：容器
         SSH_SERVICE_SERVICE,        // SSH 服务管理：服务
         SSH_SERVICE_PORT,           // SSH 服务管理：端口
+        SSH_SERVICE_STORAGE,        // SSH 服务管理：存储
         SSH_SERVICE_FILE,           // SSH 服务管理：文件
         SSH_CONTAINER               // SSH 服务管理：单个 Docker 容器节点（opened=true 表示运行中）
     }
