@@ -2,6 +2,7 @@ package com.tangluobo.tomato.module.connect.handler;
 
 import com.tangluobo.tomato.module.connect.*;
 import com.tangluobo.tomato.module.connect.dialog.PasswordPromptDialog;
+import com.tangluobo.tomato.module.connect.dialog.CloudInstancePropertiesDialog;
 import com.tangluobo.tomato.module.connect.dialog.LetsEncryptDialog;
 import com.tangluobo.tomato.module.connect.service.AliyunService;
 import com.tangluobo.tomato.module.connect.service.LetsEncryptService;
@@ -129,16 +130,18 @@ public class AliyunConnectHandler implements ConnectHandler {
             try {
                 switch (productCode) {
                     case "ecs" -> {
-                        List<Map<String, Object>> instances = AliyunService.getEcsInstances(config, "cn-hangzhou");
+                        List<Map<String, Object>> instances = AliyunService.getEcsInstances(config);
                         Platform.runLater(() -> {
                             productItem.getChildren().clear();
                             for (Map<String, Object> instance : instances) {
                                 String name = (String) instance.getOrDefault("instanceName", instance.get("instanceId"));
                                 String status = (String) instance.getOrDefault("status", "");
-                                String displayName = name + " (" + status + ")";
+                                String displayName = name + " (" + instance.getOrDefault("regionId", "") + ", " + status + ")";
                                 TreeItem<String> instanceItem = new TreeItem<>(displayName);
-                                instanceItem.setGraphic(module.getDbNodeIcon(new DatabaseNodeData(DatabaseNodeData.NodeType.ALIYUN_ECS_INSTANCE, displayName, config, (String) instance.get("instanceId"))));
-                                module.getDbNodeDataMap().put(instanceItem, new DatabaseNodeData(DatabaseNodeData.NodeType.ALIYUN_ECS_INSTANCE, displayName, config, (String) instance.get("instanceId")));
+                                DatabaseNodeData instanceData = new DatabaseNodeData(DatabaseNodeData.NodeType.ALIYUN_ECS_INSTANCE, displayName, config, (String) instance.get("instanceId"));
+                                instanceData.setProperties(instance);
+                                instanceItem.setGraphic(module.getDbNodeIcon(instanceData));
+                                module.getDbNodeDataMap().put(instanceItem, instanceData);
                                 productItem.getChildren().add(instanceItem);
                             }
                             productItem.setExpanded(true);
@@ -248,6 +251,11 @@ public class AliyunConnectHandler implements ConnectHandler {
                 }
             }
             default -> {}
+        }
+        if (data.getType() == DatabaseNodeData.NodeType.ALIYUN_ECS_INSTANCE) {
+            MenuItem properties = new MenuItem("属性");
+            properties.setOnAction(e -> CloudInstancePropertiesDialog.show(data.getName(), data.getProperties()));
+            contextMenu.getItems().add(properties);
         }
     }
 

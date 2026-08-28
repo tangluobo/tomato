@@ -19,6 +19,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /** 腾讯云开放平台（TC3-HMAC-SHA256）客户端。 */
 public final class TencentCloudService {
@@ -60,9 +63,42 @@ public final class TencentCloudService {
             value.put("instanceName", text(item, "InstanceName"));
             value.put("status", text(item, "InstanceState"));
             value.put("instanceType", text(item, "InstanceType"));
+            value.put("region", region);
+            value.put("zone", text(item.path("Placement"), "Zone"));
+            value.put("cpu", item.path("CPU").asText());
+            value.put("memory", item.path("Memory").asText());
+            value.put("osName", text(item, "OsName"));
+            value.put("createdTime", text(item, "CreatedTime"));
+            value.put("expiredTime", text(item, "ExpiredTime"));
             value.put("privateIp", first(item.path("PrivateIpAddresses")));
             value.put("publicIp", first(item.path("PublicIpAddresses")));
             result.add(value);
+        }
+        return result;
+    }
+
+    /** 查询所有可用地域并汇总 CVM，避免只查询广州地域导致其他地域实例不可见。 */
+    public static List<Map<String, Object>> getCvmInstances(ConnectionConfig config) throws Exception {
+        JsonNode response = call(config, "cvm", "2017-03-12", "DescribeRegions", "ap-guangzhou", Map.of());
+        List<String> regions = new ArrayList<>();
+        for (JsonNode item : response.path("RegionSet")) {
+            String region = text(item, "Region");
+            String state = text(item, "RegionState");
+            if (region.isBlank() || (!state.isBlank() && !"AVAILABLE".equalsIgnoreCase(state))) continue;
+            regions.add(region);
+        }
+        List<Map<String, Object>> result = new ArrayList<>();
+        List<String> failedRegions = new ArrayList<>();
+        try (ExecutorService executor = Executors.newFixedThreadPool(Math.min(8, Math.max(1, regions.size())))) {
+            Map<String, Future<List<Map<String, Object>>>> tasks = new LinkedHashMap<>();
+            for (String region : regions) tasks.put(region, executor.submit(() -> getCvmInstances(config, region)));
+            for (Map.Entry<String, Future<List<Map<String, Object>>>> task : tasks.entrySet()) {
+                try { result.addAll(task.getValue().get()); }
+                catch (Exception e) { failedRegions.add(task.getKey()); }
+            }
+        }
+        if (result.isEmpty() && !failedRegions.isEmpty()) {
+            throw new IllegalStateException("无法查询 CVM 地域：" + String.join(", ", failedRegions));
         }
         return result;
     }

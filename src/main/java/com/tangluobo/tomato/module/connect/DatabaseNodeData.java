@@ -1,5 +1,8 @@
 package com.tangluobo.tomato.module.connect;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 /**
  * 数据库树节点的元数据，用于标识动态加载的节点类型（数据库、表、视图等）
  */
@@ -58,6 +61,7 @@ public class DatabaseNodeData {
     // SSH_CONTAINER 节点复用该字段存储 docker 命令前缀（"sudo -n docker" 或 "docker"）。
     private final String path;
     private boolean opened;
+    private Map<String, Object> properties = new LinkedHashMap<>();
 
     public DatabaseNodeData(NodeType type, String name, ConnectionConfig connectionConfig, String databaseName) {
         this(type, name, connectionConfig, databaseName, null, "");
@@ -85,4 +89,8 @@ public class DatabaseNodeData {
     public String getPath() { return path; }
     public boolean isOpened() { return opened; }
     public void setOpened(boolean opened) { this.opened = opened; }
+    public Map<String, Object> getProperties() { return properties; }
+    public void setProperties(Map<String, Object> properties) {
+        this.properties = properties == null ? new LinkedHashMap<>() : new LinkedHashMap<>(properties);
+    }
 }

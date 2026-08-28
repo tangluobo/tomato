@@ -19,6 +19,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * 阿里云服务，通过AK/SK进行OAuth2认证并获取可访问的云服务列表
@@ -160,6 +163,27 @@ public class AliyunService {
         } finally {
             client.shutdown();
         }
+    }
+
+    /** 并发查询全部可用地域的 ECS 实例。 */
+    public static List<Map<String, Object>> getEcsInstances(ConnectionConfig config) throws Exception {
+        List<Map<String, String>> regions = getRegions(config);
+        List<Map<String, Object>> result = new ArrayList<>();
+        List<String> failures = new ArrayList<>();
+        try (ExecutorService executor = Executors.newFixedThreadPool(Math.min(8, Math.max(1, regions.size())))) {
+            Map<String, Future<List<Map<String, Object>>>> tasks = new LinkedHashMap<>();
+            for (Map<String, String> region : regions) {
+                String id = region.get("regionId");
+                tasks.put(id, executor.submit(() -> getEcsInstances(config, id)));
+            }
+            for (Map.Entry<String, Future<List<Map<String, Object>>>> task : tasks.entrySet()) {
+                try { result.addAll(task.getValue().get()); }
+                catch (Exception e) { failures.add(task.getKey()); }
+            }
+        }
+        if (result.isEmpty() && !failures.isEmpty())
+            throw new IllegalStateException("无法查询 ECS 地域：" + String.join(", ", failures));
+        return result;
     }
 
     /**

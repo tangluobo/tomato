@@ -2,6 +2,7 @@ package com.tangluobo.tomato.module.connect.handler;
 
 import com.tangluobo.tomato.module.connect.*;
 import com.tangluobo.tomato.module.connect.dialog.PasswordPromptDialog;
+import com.tangluobo.tomato.module.connect.dialog.CloudInstancePropertiesDialog;
 import com.tangluobo.tomato.module.connect.service.TencentCloudService;
 import com.tangluobo.tomato.module.connect.view.AliyunDomainDataView;
 import javafx.application.Platform;
@@ -49,14 +50,16 @@ public class TencentCloudConnectHandler implements ConnectHandler {
         new Thread(() -> {
             try {
                 boolean cvm = "cvm".equals(data.getDatabaseName());
-                List<Map<String, Object>> values = cvm ? TencentCloudService.getCvmInstances(data.getConnectionConfig(), "ap-guangzhou") : TencentCloudService.getDomainList(data.getConnectionConfig());
+                List<Map<String, Object>> values = cvm ? TencentCloudService.getCvmInstances(data.getConnectionConfig()) : TencentCloudService.getDomainList(data.getConnectionConfig());
                 Platform.runLater(() -> {
                     item.getChildren().clear();
                     for (Map<String, Object> value : values) {
                         String name = String.valueOf(value.getOrDefault(cvm ? "instanceName" : "domainName", ""));
-                        if (cvm) name += " (" + value.getOrDefault("status", "") + ")";
+                        if (cvm) name += " (" + value.getOrDefault("region", "") + ", "
+                                + value.getOrDefault("status", "") + ")";
                         DatabaseNodeData.NodeType type = cvm ? DatabaseNodeData.NodeType.TENCENT_CVM_INSTANCE : DatabaseNodeData.NodeType.TENCENT_DOMAIN;
                         DatabaseNodeData d = new DatabaseNodeData(type, name, data.getConnectionConfig(), String.valueOf(value.getOrDefault("instanceId", "")));
+                        d.setProperties(value);
                         TreeItem<String> child = new TreeItem<>(name, module.getDbNodeIcon(d)); module.getDbNodeDataMap().put(child, d); item.getChildren().add(child);
                     }
                     item.setExpanded(true);
@@ -79,6 +82,11 @@ public class TencentCloudConnectHandler implements ConnectHandler {
     @Override public void populateNodeContextMenu(ConnectModule module, ContextMenu menu, TreeItem<String> item, DatabaseNodeData data) {
         if (data.getType() == DatabaseNodeData.NodeType.TENCENT_PRODUCT_FOLDER || data.getType() == DatabaseNodeData.NodeType.TENCENT_DOMAIN) {
             MenuItem refresh = new MenuItem("刷新"); refresh.setOnAction(e -> module.refreshDbNode(item, data)); menu.getItems().add(refresh);
+        }
+        if (data.getType() == DatabaseNodeData.NodeType.TENCENT_CVM_INSTANCE) {
+            MenuItem properties = new MenuItem("属性");
+            properties.setOnAction(e -> CloudInstancePropertiesDialog.show(data.getName(), data.getProperties()));
+            menu.getItems().add(properties);
         }
     }
 }
