@@ -2,8 +2,11 @@ package com.tangluobo.tomato.module.connect.handler;
 
 import com.tangluobo.tomato.module.connect.*;
 import com.tangluobo.tomato.module.connect.dialog.PasswordPromptDialog;
+import com.tangluobo.tomato.module.connect.dialog.LetsEncryptDialog;
 import com.tangluobo.tomato.module.connect.service.AliyunService;
+import com.tangluobo.tomato.module.connect.service.LetsEncryptService;
 import com.tangluobo.tomato.module.connect.view.AliyunDomainDataView;
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.application.Platform;
 import javafx.scene.control.*;
 import java.util.List;
@@ -194,7 +197,7 @@ public class AliyunConnectHandler implements ConnectHandler {
             }
         }
 
-        AliyunDomainDataView domainView = new AliyunDomainDataView(config, domainName);
+        AliyunDomainDataView domainView = new AliyunDomainDataView(config, domainName, module.getConnections());
 
         String tabTitle = "子域名(" + domainName + ")";
         javafx.scene.control.Tab tab = new javafx.scene.control.Tab(tabTitle);
@@ -238,8 +241,56 @@ public class AliyunConnectHandler implements ConnectHandler {
                 MenuItem refreshItem = new MenuItem("刷新");
                 refreshItem.setOnAction(e -> module.refreshDbNode(item, data));
                 contextMenu.getItems().add(refreshItem);
+                if (data.getType() == DatabaseNodeData.NodeType.ALIYUN_DOMAIN) {
+                    MenuItem certificateItem = new MenuItem("申请 Let's Encrypt 证书");
+                    certificateItem.setOnAction(e -> requestCertificate(module, data));
+                    contextMenu.getItems().add(certificateItem);
+                }
             }
             default -> {}
         }
+    }
+
+    private void requestCertificate(ConnectModule module, DatabaseNodeData data) {
+        LetsEncryptDialog.Result result = LetsEncryptDialog.show(
+                module.getTerminalTabPane(), data.getName(), module.getConnections(), true,
+                data.getConnectionConfig().getCertificateEmail());
+        if (result == null) return;
+
+        Alert progress = new Alert(Alert.AlertType.INFORMATION);
+        progress.setTitle("申请 Let's Encrypt 证书");
+        progress.setHeaderText("正在处理 " + data.getName());
+        progress.setContentText("准备申请…");
+        progress.getDialogPane().lookupButton(ButtonType.OK).setDisable(true);
+        DialogPositionUtil.centerOnOwner(progress, module.getTerminalTabPane());
+        progress.show();
+
+        new Thread(() -> {
+            try {
+                LetsEncryptService.issue(data.getConnectionConfig(), data.getName(), data.getName(),
+                        result.email(), result.wildcard(), result.storage(), result.bucket(), result.prefix(),
+                        result.serverTypes(), result.zipPackage(), result.keystorePassword(),
+                        result.certificateAuthority(), result.eabKid(), result.eabHmac(),
+                        message -> Platform.runLater(() -> progress.setContentText(message)));
+                Platform.runLater(() -> {
+                    progress.close();
+                    Alert success = new Alert(Alert.AlertType.INFORMATION,
+                            "证书申请成功，已保存到 " + result.bucket() + "/" + result.prefix(),
+                            ButtonType.OK);
+                    DialogPositionUtil.centerOnOwner(success, module.getTerminalTabPane());
+                    success.showAndWait();
+                });
+            } catch (Exception ex) {
+                Platform.runLater(() -> {
+                    progress.close();
+                    Alert error = new Alert(Alert.AlertType.ERROR);
+                    error.setTitle("证书申请失败");
+                    error.setHeaderText(data.getName());
+                    error.setContentText(ex.getMessage());
+                    DialogPositionUtil.centerOnOwner(error, module.getTerminalTabPane());
+                    error.showAndWait();
+                });
+            }
+        }, "LetsEncrypt-" + data.getName()).start();
     }
 }

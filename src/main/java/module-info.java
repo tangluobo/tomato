@@ -5,6 +5,7 @@ module tomato {
     requires com.google.gson;
     requires java.desktop;
     requires java.net.http;
+    requires java.naming;
     requires jdk.httpserver;
     requires com.jcraft.jsch;
     requires java.sql;
@@ -20,6 +21,7 @@ module tomato {
     requires org.apache.commons.cli;
     requires org.bouncycastle.provider;
     requires org.bouncycastle.tls;
+    requires org.shredzone.acme4j;
     requires minio;
     requires aliyun.sdk.oss;
     requires aliyun.java.sdk.core;

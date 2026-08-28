@@ -1,8 +1,11 @@
 package com.tangluobo.tomato.module.connect.view;
 
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.dialog.LetsEncryptDialog;
 import com.tangluobo.tomato.module.connect.service.AliyunService;
 import com.tangluobo.tomato.module.connect.service.DdnsService;
+import com.tangluobo.tomato.module.connect.service.LetsEncryptService;
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.animation.KeyFrame;
 import javafx.animation.KeyValue;
 import javafx.animation.Timeline;
@@ -39,14 +42,21 @@ public class AliyunDomainDataView extends BorderPane {
 
     private final ConnectionConfig config;
     private final String domainName;
+    private final List<ConnectionConfig> connections;
 
     private TableView<RecordItem> recordTable;
     private final ObservableList<RecordItem> recordItems = FXCollections.observableArrayList();
     private Label statusLabel;
 
     public AliyunDomainDataView(ConnectionConfig config, String domainName) {
+        this(config, domainName, List.of());
+    }
+
+    public AliyunDomainDataView(ConnectionConfig config, String domainName,
+                                List<ConnectionConfig> connections) {
         this.config = config;
         this.domainName = domainName;
+        this.connections = connections;
         initializeUI();
         loadRecords();
     }
@@ -66,12 +76,19 @@ public class AliyunDomainDataView extends BorderPane {
         refreshBtn.setStyle("-fx-font-size: 12px;");
         refreshBtn.setOnAction(e -> loadRecords());
 
+        Button certificateBtn = new Button("申请证书");
+        certificateBtn.setStyle("-fx-font-size: 12px; -fx-font-weight: bold; "
+                + "-fx-text-fill: white; -fx-background-color: #1677ff;");
+        certificateBtn.setTooltip(new Tooltip("自动申请 Let's Encrypt 证书并保存到 S3/OSS"));
+        certificateBtn.setOnAction(e -> requestCertificate());
+
         statusLabel = new Label("");
         statusLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #666;");
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        toolBar.getItems().addAll(titleLabel, spacer, addBtn, refreshBtn, new Separator(), statusLabel);
+        toolBar.getItems().addAll(titleLabel, spacer, certificateBtn, addBtn, refreshBtn,
+                new Separator(), statusLabel);
 
         recordTable = new TableView<>();
         recordTable.setStyle("-fx-font-size: 12px;");
@@ -156,19 +173,27 @@ public class AliyunDomainDataView extends BorderPane {
             }
         });
 
-        // 操作列：修改 / 删除
+        // 操作列：申请证书 / 修改 / 删除
         TableColumn<RecordItem, Void> actionCol = new TableColumn<>("操作");
-        actionCol.setPrefWidth(120);
+        actionCol.setPrefWidth(210);
         actionCol.setCellFactory(col -> new TableCell<>() {
             {
                 setStyle("-fx-alignment: center;");
             }
+            private final Button certBtn = new Button("申请证书");
             private final Button editBtn = new Button("修改");
             private final Button delBtn = new Button("删除");
-            private final HBox box = new HBox(4, editBtn, delBtn);
+            private final HBox box = new HBox(4, certBtn, editBtn, delBtn);
             {
+                certBtn.setStyle("-fx-font-size: 11px; -fx-text-fill: #1677ff;");
                 editBtn.setStyle("-fx-font-size: 11px;");
                 delBtn.setStyle("-fx-font-size: 11px; -fx-text-fill: #F44336;");
+                certBtn.setOnAction(e -> {
+                    TableRow<?> row = getTableRow();
+                    if (row != null && row.getItem() != null) {
+                        requestCertificate(toCertificateDomain((RecordItem) row.getItem()));
+                    }
+                });
                 editBtn.setOnAction(e -> {
                     TableRow<?> row = getTableRow();
                     if (row != null && row.getItem() != null) showRecordDialog((RecordItem) row.getItem());
@@ -195,6 +220,58 @@ public class AliyunDomainDataView extends BorderPane {
 
         setTop(toolBar);
         setCenter(centerBox);
+    }
+
+    private void requestCertificate() {
+        requestCertificate(domainName);
+    }
+
+    private void requestCertificate(String certificateDomain) {
+        boolean allowWildcard = !certificateDomain.startsWith("*.");
+        LetsEncryptDialog.Result result = LetsEncryptDialog.show(
+                this, certificateDomain, connections, allowWildcard, config.getCertificateEmail());
+        if (result == null) return;
+
+        Alert progress = new Alert(Alert.AlertType.INFORMATION);
+        progress.setTitle("申请 Let's Encrypt 证书");
+        progress.setHeaderText("正在处理 " + certificateDomain);
+        progress.setContentText("准备申请…");
+        progress.getDialogPane().lookupButton(ButtonType.OK).setDisable(true);
+        DialogPositionUtil.centerOnOwner(progress, this);
+        progress.show();
+
+        new Thread(() -> {
+            try {
+                LetsEncryptService.issue(config, certificateDomain, domainName,
+                        result.email(), result.wildcard(),
+                        result.storage(), result.bucket(), result.prefix(),
+                        result.serverTypes(), result.zipPackage(), result.keystorePassword(),
+                        result.certificateAuthority(), result.eabKid(), result.eabHmac(),
+                        message -> Platform.runLater(() -> progress.setContentText(message)));
+                Platform.runLater(() -> {
+                    progress.close();
+                    Alert success = new Alert(Alert.AlertType.INFORMATION,
+                            "证书申请成功，已保存到 " + result.bucket() + "/" + result.prefix(),
+                            ButtonType.OK);
+                    DialogPositionUtil.centerOnOwner(success, this);
+                    success.showAndWait();
+                    loadRecords();
+                });
+            } catch (Exception ex) {
+                Platform.runLater(() -> {
+                    progress.close();
+                    errorAlert("证书申请失败", ex);
+                });
+            }
+        }, "LetsEncrypt-" + certificateDomain).start();
+    }
+
+    private String toCertificateDomain(RecordItem item) {
+        String rr = item.getRr() == null ? "" : item.getRr().trim();
+        if (rr.isEmpty() || "@".equals(rr)) return domainName;
+        if (rr.endsWith(".")) rr = rr.substring(0, rr.length() - 1);
+        if (rr.equals(domainName) || rr.endsWith("." + domainName)) return rr;
+        return rr + "." + domainName;
     }
 
     private void loadRecords() {
@@ -310,6 +387,7 @@ public class AliyunDomainDataView extends BorderPane {
         Dialog<RecordForm> dialog = new Dialog<>();
         dialog.setTitle(isEdit ? "修改解析记录" : "添加解析记录");
         dialog.setHeaderText((isEdit ? "修改" : "添加") + " " + domainName + " 的解析记录");
+        DialogPositionUtil.centerOnOwner(dialog, this);
 
         GridPane grid = new GridPane();
         grid.setHgap(10);
@@ -405,6 +483,7 @@ public class AliyunDomainDataView extends BorderPane {
         confirm.setTitle("删除确认");
         confirm.setHeaderText("删除解析记录");
         confirm.setContentText("确定删除主机记录 \"" + item.getRr() + "\" (" + item.getType() + ") 吗？此操作不可撤销。");
+        DialogPositionUtil.centerOnOwner(confirm, this);
         confirm.showAndWait().ifPresent(btn -> {
             if (btn == ButtonType.OK) doDelete(item);
         });
@@ -436,6 +515,7 @@ public class AliyunDomainDataView extends BorderPane {
         textArea.setWrapText(true);
         textArea.setPrefSize(580, 220);
         alert.getDialogPane().setExpandableContent(textArea);
+        DialogPositionUtil.centerOnOwner(alert, this);
         alert.showAndWait();
     }
 

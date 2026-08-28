@@ -60,6 +60,9 @@ public class ConnectionConfig {
     private String endpoint; // 自定义端点URL（MinIO等S3兼容服务）
     private String publicAccessUrl; // S3/OSS 公共访问URL前缀（如 CDN 域名）
 
+    // 阿里云域名申请 Let's Encrypt 证书时默认填写的联系邮箱
+    private String certificateEmail;
+
     // Redis专属配置
     private boolean redisCluster = false; // 是否集群模式
     private String redisClusterNodes; // 集群节点，格式: host1:port1,host2:port2,...
@@ -196,6 +199,9 @@ public class ConnectionConfig {
 
     public String getPublicAccessUrl() { return publicAccessUrl; }
     public void setPublicAccessUrl(String publicAccessUrl) { this.publicAccessUrl = publicAccessUrl; }
+
+    public String getCertificateEmail() { return certificateEmail; }
+    public void setCertificateEmail(String certificateEmail) { this.certificateEmail = certificateEmail; }
 
     public boolean isRedisCluster() { return redisCluster; }
     public void setRedisCluster(boolean redisCluster) { this.redisCluster = redisCluster; }

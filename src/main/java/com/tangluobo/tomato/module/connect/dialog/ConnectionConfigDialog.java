@@ -192,6 +192,7 @@ public class ConnectionConfigDialog {
     private TextField aliyunAccessKeyField;
     private PasswordField aliyunSecretKeyField;
     private CheckBox aliyunSaveSecretKeyCheckBox;
+    private TextField aliyunCertificateEmailField;
     private TextField aliyunDescriptionField;
 
     // ===== 本地目录专属字段 =====
@@ -1798,6 +1799,12 @@ public class ConnectionConfigDialog {
         aliyunSecretBox.getChildren().addAll(aliyunSecretKeyField, aliyunSaveSecretKeyCheckBox);
         grid.add(aliyunSecretBox, 1, row++);
 
+        grid.add(new Label("证书邮箱："), 0, row);
+        aliyunCertificateEmailField = new TextField();
+        aliyunCertificateEmailField.setPromptText("Let's Encrypt 默认联系邮箱");
+        aliyunCertificateEmailField.setPrefWidth(280);
+        grid.add(aliyunCertificateEmailField, 1, row++);
+
         grid.add(new Label("备注："), 0, row);
         aliyunDescriptionField = new TextField();
         aliyunDescriptionField.setPromptText("备注信息");
@@ -2347,6 +2354,8 @@ public class ConnectionConfigDialog {
                 aliyunSecretKeyField.setText(existingConfig.getPassword());
             }
             aliyunSaveSecretKeyCheckBox.setSelected(existingConfig.isSavePassword());
+            aliyunCertificateEmailField.setText(existingConfig.getCertificateEmail() != null
+                    ? existingConfig.getCertificateEmail() : "");
             aliyunDescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
         } else if (isLocalDirectory) {
             localDirectoryNameField.setText(existingConfig.getName());
@@ -2573,6 +2582,7 @@ public class ConnectionConfigDialog {
             } else {
                 config.setPassword(null);
             }
+            config.setCertificateEmail(aliyunCertificateEmailField.getText().trim());
             config.setDescription(aliyunDescriptionField.getText().trim());
 
         } else if (isLocalDirectory) {
