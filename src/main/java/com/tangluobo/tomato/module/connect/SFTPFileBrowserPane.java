@@ -205,8 +205,19 @@ public class SFTPFileBrowserPane extends AbstractFileBrowserPane {
 
     @Override
     protected void doUploadSingle(File localFile) throws Exception {
-        String remotePath = joinPath(currentPath, localFile.getName());
+        doUploadSingle(localFile, localFile.getName());
+    }
+
+    @Override
+    protected void doUploadSingle(File localFile, String relativePath) throws Exception {
+        String remotePath = joinPath(currentPath, relativePath.replace('\\', '/'));
         sftpClient.upload(localFile.getAbsolutePath(), remotePath);
+    }
+
+    @Override
+    protected void doUploadDirectory(String relativePath) throws Exception {
+        String remotePath = joinPath(currentPath, relativePath.replace('\\', '/'));
+        if (!sftpClient.exists(remotePath)) sftpClient.mkdir(remotePath);
     }
 
     @Override

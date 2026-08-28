@@ -33,6 +33,11 @@ import javax.swing.filechooser.FileSystemView;
 import java.awt.Desktop;
 import java.awt.image.BufferedImage;
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -96,6 +101,8 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
     protected javafx.animation.Timeline singleClickTimer;
     protected Popup iconEditPopup;
     protected TextField iconEditField;
+    private Scene shortcutScene;
+    private javafx.event.EventHandler<KeyEvent> shortcutKeyFilter;
 
     // ==================== 上传进度对话框（Ctrl+V 粘贴上传 / 拖拽上传 / 菜单上传） ====================
     private Stage uploadProgressStage;
@@ -253,6 +260,32 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
 
         // Ctrl+V 粘贴上传快捷键
         setupKeyboardShortcuts();
+        setupRootDropTarget();
+    }
+
+    /** Capture drops before TableView/ListView skins can consume the native drag event. */
+    private void setupRootDropTarget() {
+        addEventFilter(DragEvent.DRAG_OVER, event -> {
+            if (!event.getDragboard().getContentTypes().isEmpty()) {
+                event.acceptTransferModes(TransferMode.COPY_OR_MOVE);
+                event.consume();
+            }
+        });
+        addEventFilter(DragEvent.DRAG_DROPPED, event -> {
+            boolean uploaded = uploadFilesFromClipboard(event.getDragboard());
+            event.setDropCompleted(uploaded);
+            if (!uploaded) {
+                setStatus("无法读取拖入的 ZIP 文件（格式: " + describeClipboardFormats(event.getDragboard()) + ")");
+            }
+            event.consume();
+        });
+    }
+
+    private String describeClipboardFormats(Clipboard clipboard) {
+        String value = clipboard.getContentTypes().stream()
+                .flatMap(format -> format.getIdentifiers().stream())
+                .collect(java.util.stream.Collectors.joining(", "));
+        return value.isEmpty() ? "未知" : value;
     }
 
     /**
@@ -337,7 +370,7 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
 
         // 拖拽上传
         iconScrollPane.setOnDragOver(e -> {
-            if (e.getDragboard().hasFiles()) {
+            if (hasUploadableFiles(e.getDragboard())) {
                 e.acceptTransferModes(TransferMode.COPY);
             }
             e.consume();
@@ -345,10 +378,7 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
         iconScrollPane.setOnDragDropped(e -> {
             Dragboard db = e.getDragboard();
             boolean success = false;
-            if (db.hasFiles()) {
-                doUpload(db.getFiles());
-                success = true;
-            }
+            success = uploadFilesFromClipboard(db);
             e.setDropCompleted(success);
             e.consume();
         });
@@ -425,7 +455,7 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
 
         // 拖拽上传
         columnScrollPane.setOnDragOver(e -> {
-            if (e.getDragboard().hasFiles()) {
+            if (hasUploadableFiles(e.getDragboard())) {
                 e.acceptTransferModes(TransferMode.COPY);
             }
             e.consume();
@@ -433,10 +463,7 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
         columnScrollPane.setOnDragDropped(e -> {
             Dragboard db = e.getDragboard();
             boolean success = false;
-            if (db.hasFiles()) {
-                doUpload(db.getFiles());
-                success = true;
-            }
+            success = uploadFilesFromClipboard(db);
             e.setDropCompleted(success);
             e.consume();
         });
@@ -907,7 +934,7 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
             // 拖拽：从本地拖到远程（上传）
             row.setOnDragOver(e -> {
                 Dragboard db = e.getDragboard();
-                if (db.hasFiles()) {
+                if (hasUploadableFiles(db)) {
                     e.acceptTransferModes(TransferMode.COPY);
                 }
                 e.consume();
@@ -916,10 +943,7 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
             row.setOnDragDropped(e -> {
                 Dragboard db = e.getDragboard();
                 boolean success = false;
-                if (db.hasFiles()) {
-                    doUpload(db.getFiles());
-                    success = true;
-                }
+                success = uploadFilesFromClipboard(db);
                 e.setDropCompleted(success);
                 e.consume();
             });
@@ -942,7 +966,7 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
         // 整个表格也支持拖拽上传
         fileTable.setOnDragOver(e -> {
             Dragboard db = e.getDragboard();
-            if (db.hasFiles()) {
+            if (hasUploadableFiles(db)) {
                 e.acceptTransferModes(TransferMode.COPY);
             }
             e.consume();
@@ -951,10 +975,7 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
         fileTable.setOnDragDropped(e -> {
             Dragboard db = e.getDragboard();
             boolean success = false;
-            if (db.hasFiles()) {
-                doUpload(db.getFiles());
-                success = true;
-            }
+            success = uploadFilesFromClipboard(db);
             e.setDropCompleted(success);
             e.consume();
         });
@@ -1143,7 +1164,7 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
             boolean copyPaste = supportsCopyPaste();
             copyItem.setVisible(copyPaste && !selected.isEmpty());
             copyItem.setText(selected.size() > 1 ? "复制(" + selected.size() + "项)" : "复制");
-            boolean clipboardHasFiles = Clipboard.getSystemClipboard().hasFiles();
+            boolean clipboardHasFiles = hasUploadableFiles(Clipboard.getSystemClipboard());
             pasteItem.setVisible(clipboardHasFiles || (copyPaste && hasCopyData()));
             pasteItem.setText(clipboardHasFiles ? "粘贴上传文件" : "粘贴");
 
@@ -1535,6 +1556,161 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
         doUpload(files);
     }
 
+    private static final String WINDOWS_VIRTUAL_FILE_MIME = "message/external-body";
+
+    /** JavaFX exposes Windows ZIP-folder entries as indexed FILECONTENTS data formats. */
+    protected boolean hasUploadableFiles(Clipboard clipboard) {
+        if (clipboard == null) return false;
+        if (clipboard.hasFiles() && clipboard.getFiles() != null && !clipboard.getFiles().isEmpty()) {
+            return true;
+        }
+        return clipboard.getContentTypes().stream().anyMatch(this::isWindowsVirtualFileFormat);
+    }
+
+    /**
+     * Resolves regular file-list data and Windows virtual FILECONTENTS data, then starts upload.
+     * Reading happens synchronously because virtual drag data is valid only during the drop call.
+     */
+    protected boolean uploadFilesFromClipboard(Clipboard clipboard) {
+        if (!hasUploadableFiles(clipboard)) return false;
+        try {
+            List<File> files = new ArrayList<>();
+            if (clipboard.hasFiles() && clipboard.getFiles() != null) {
+                files.addAll(clipboard.getFiles());
+            }
+            // Shell IDList retains the hierarchy of directories dragged out of ZIP folders.
+            // FILECONTENTS descriptors may enumerate only leaf files, which would flatten the
+            // tree before SFTP sees it, so prefer the Shell representation whenever available.
+            byte[] shellIdList = readShellIdList(clipboard);
+            if (shellIdList != null) {
+                return uploadWindowsVirtualFiles(shellIdList);
+            }
+            files.addAll(materializeWindowsVirtualFiles(clipboard));
+            if (files.isEmpty()) return false;
+            doUpload(files);
+            return true;
+        } catch (Exception ex) {
+            Alert alert = new Alert(Alert.AlertType.ERROR);
+            alert.setTitle("上传失败");
+            alert.setHeaderText("无法读取压缩包中的文件");
+            alert.setContentText(ex.getMessage() != null ? ex.getMessage() : ex.toString());
+            DialogPositionUtil.centerOnOwner(alert, this);
+            alert.showAndWait();
+            return false;
+        }
+    }
+
+    private byte[] readShellIdList(Clipboard clipboard) {
+        for (DataFormat format : clipboard.getContentTypes()) {
+            boolean shellIdList = format.getIdentifiers().stream()
+                    .anyMatch(id -> id.equalsIgnoreCase("Shell IDList Array"));
+            if (!shellIdList) continue;
+            Object value = clipboard.getContent(format);
+            if (value instanceof ByteBuffer buffer) {
+                ByteBuffer copy = buffer.slice();
+                byte[] bytes = new byte[copy.remaining()];
+                copy.get(bytes);
+                return bytes;
+            }
+            if (value instanceof byte[] bytes) return bytes;
+        }
+        return null;
+    }
+
+    private boolean isWindowsVirtualFileFormat(DataFormat format) {
+        return format.getIdentifiers().stream().anyMatch(id ->
+                id.toLowerCase(java.util.Locale.ROOT).startsWith(WINDOWS_VIRTUAL_FILE_MIME));
+    }
+
+    private List<File> materializeWindowsVirtualFiles(Clipboard clipboard) throws IOException {
+        List<DataFormat> formats = clipboard.getContentTypes().stream()
+                .filter(this::isWindowsVirtualFileFormat)
+                .sorted(java.util.Comparator.comparingInt(this::virtualFileIndex))
+                .toList();
+        if (formats.isEmpty()) return List.of();
+
+        Path root = Files.createTempDirectory("tomato-upload-");
+        List<File> files = new ArrayList<>(formats.size());
+        try {
+            for (DataFormat format : formats) {
+                Object value = clipboard.getContent(format);
+                if (value == null && formats.size() == 1 && virtualFileIndex(format) == 0) {
+                    // Several ZIP shell extensions expose a single FILECONTENTS stream with
+                    // lindex=-1. OpenJFX synthesizes an index=0 MIME and consequently receives
+                    // DV_E_FORMATETC. Ask Glass for the provider's advertised index explicitly.
+                    String fallbackId = WINDOWS_VIRTUAL_FILE_MIME
+                            + ";access-type=clipboard;index=-1";
+                    DataFormat fallback = DataFormat.lookupMimeType(fallbackId);
+                    if (fallback == null) fallback = new DataFormat(fallbackId);
+                    value = clipboard.getContent(fallback);
+                }
+                byte[] bytes;
+                if (value instanceof ByteBuffer buffer) {
+                    ByteBuffer copy = buffer.slice();
+                    bytes = new byte[copy.remaining()];
+                    copy.get(bytes);
+                } else if (value instanceof byte[] array) {
+                    bytes = array;
+                } else {
+                    continue;
+                }
+                String name = virtualFileName(format);
+                Path target = resolveVirtualFileTarget(root, name, virtualFileIndex(format));
+                Files.createDirectories(target.getParent());
+                Files.write(target, bytes);
+                Path uploadRoot = firstPathSegment(root, target);
+                File uploadFile = uploadRoot.toFile();
+                if (!files.contains(uploadFile)) files.add(uploadFile);
+            }
+            if (files.isEmpty()) {
+                deleteUploadTempDirectory(root);
+            }
+            return files;
+        } catch (IOException | RuntimeException ex) {
+            deleteUploadTempDirectory(root);
+            throw ex;
+        }
+    }
+
+    private int virtualFileIndex(DataFormat format) {
+        String id = virtualFileIdentifier(format);
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("(?:^|;)index=(\\d+)",
+                java.util.regex.Pattern.CASE_INSENSITIVE).matcher(id);
+        return matcher.find() ? Integer.parseInt(matcher.group(1)) : Integer.MAX_VALUE;
+    }
+
+    private String virtualFileName(DataFormat format) {
+        String id = virtualFileIdentifier(format);
+        java.util.regex.Matcher quoted = java.util.regex.Pattern.compile("(?:^|;)name=\"([^\"]*)\"",
+                java.util.regex.Pattern.CASE_INSENSITIVE).matcher(id);
+        String rawName = quoted.find() ? quoted.group(1) : "file-" + virtualFileIndex(format);
+        rawName = rawName.replace('\\', '/').trim();
+        return rawName.isEmpty() ? "file-" + virtualFileIndex(format) : rawName;
+    }
+
+    private Path resolveVirtualFileTarget(Path root, String descriptorName, int index) {
+        String relativeName = descriptorName.replace('\\', '/');
+        // ZIP providers may expose an absolute-looking name. It is still archive-relative here.
+        relativeName = relativeName.replaceFirst("^[A-Za-z]:", "");
+        while (relativeName.startsWith("/")) relativeName = relativeName.substring(1);
+        Path target = root.resolve(relativeName).normalize();
+        if (!target.startsWith(root) || target.equals(root)) {
+            target = root.resolve("file-" + index);
+        }
+        return target;
+    }
+
+    private Path firstPathSegment(Path root, Path target) {
+        Path relative = root.relativize(target);
+        return relative.getNameCount() > 1 ? root.resolve(relative.getName(0)) : target;
+    }
+
+    private String virtualFileIdentifier(DataFormat format) {
+        return format.getIdentifiers().stream()
+                .filter(id -> id.toLowerCase(java.util.Locale.ROOT).startsWith(WINDOWS_VIRTUAL_FILE_MIME))
+                .findFirst().orElse("");
+    }
+
     /**
      * 上传文件列表到当前远程目录：基类统一负责进度对话框、后台线程、逐文件调用
      * {@link #doUploadSingle(File)}，子类只需实现单文件同步上传（失败抛异常）。
@@ -1561,7 +1737,32 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
             alert.showAndWait();
             return;
         }
-        final int total = files.size();
+        final UploadFiles uploadFiles;
+        try {
+            // Windows Explorer exposes entries copied/dragged directly from a ZIP as temporary
+            // files.  Explorer may remove them as soon as this event handler returns, while the
+            // actual upload below deliberately runs on a background thread.  Take ownership of
+            // those files before returning from the drop/paste callback.
+            uploadFiles = stabilizeTemporaryUploadFiles(files);
+        } catch (IOException ex) {
+            Alert alert = new Alert(Alert.AlertType.ERROR);
+            alert.setTitle("上传失败");
+            alert.setHeaderText("无法读取压缩包中的文件");
+            alert.setContentText(ex.getMessage());
+            DialogPositionUtil.centerOnOwner(alert, this);
+            alert.showAndWait();
+            return;
+        }
+        final List<File> stableFiles = uploadFiles.files();
+        final List<UploadEntry> uploadEntries;
+        try {
+            uploadEntries = buildUploadEntries(stableFiles);
+        } catch (IOException ex) {
+            deleteUploadTempDirectory(uploadFiles.tempDirectory());
+            setStatus("读取上传目录失败: " + ex.getMessage());
+            return;
+        }
+        final int total = uploadEntries.size();
         uploadCancelled.set(false);
         showUploadProgressDialog(total);
         setStatus("上传中... (0/" + total + ")");
@@ -1570,9 +1771,14 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
             String lastError = null;
             for (int i = 0; i < total; i++) {
                 if (uploadCancelled.get()) break;
-                File file = files.get(i);
+                UploadEntry entry = uploadEntries.get(i);
+                File file = entry.file();
                 try {
-                    doUploadSingle(file);
+                    if (entry.directory()) {
+                        doUploadDirectory(entry.relativePath(), entry.emptyDirectory());
+                    } else {
+                        doUploadSingle(file, entry.relativePath());
+                    }
                     success++;
                 } catch (Exception ex) {
                     failed++;
@@ -1580,7 +1786,7 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
                     if (lastError == null) lastError = ex.toString();
                 }
                 final int done = success + failed;
-                final String name = file.getName();
+                final String name = entry.relativePath();
                 final long size = file.length();
                 Platform.runLater(() -> updateUploadProgress(done, total, name, size));
             }
@@ -1605,8 +1811,117 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
                 }
                 refresh();
             });
+            deleteUploadTempDirectory(uploadFiles.tempDirectory());
         }, "Upload").start();
     }
+
+    private List<UploadEntry> buildUploadEntries(List<File> roots) throws IOException {
+        List<UploadEntry> entries = new ArrayList<>();
+        for (File rootFile : roots) {
+            if (rootFile == null || !rootFile.exists()) continue;
+            Path root = rootFile.toPath();
+            if (Files.isDirectory(root)) {
+                Path parent = root.getParent();
+                try (var paths = Files.walk(root)) {
+                    for (Path path : paths.toList()) {
+                        String relative = parent.relativize(path).toString().replace(File.separatorChar, '/');
+                        boolean directory = Files.isDirectory(path);
+                        boolean emptyDirectory = false;
+                        if (directory) {
+                            try (var children = Files.list(path)) {
+                                emptyDirectory = children.findAny().isEmpty();
+                            }
+                        }
+                        entries.add(new UploadEntry(path.toFile(), relative, directory, emptyDirectory));
+                    }
+                }
+            } else {
+                entries.add(new UploadEntry(rootFile, rootFile.getName(), false, false));
+            }
+        }
+        return List.copyOf(entries);
+    }
+
+    /**
+     * Copies files supplied from the operating-system temp directory to a directory owned by
+     * this upload.  In particular this keeps Windows ZIP-folder virtual files alive after the
+     * drag/drop or clipboard operation has completed.  Ordinary files are uploaded in place.
+     */
+    private UploadFiles stabilizeTemporaryUploadFiles(List<File> files) throws IOException {
+        Path systemTemp = Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath().normalize();
+        Path uploadTemp = null;
+        List<File> stableFiles = new ArrayList<>(files.size());
+        try {
+            for (int i = 0; i < files.size(); i++) {
+                File file = files.get(i);
+                if (file == null) continue;
+                Path source = file.toPath().toAbsolutePath().normalize();
+                Path ownedRoot = findOwnedUploadRoot(source, systemTemp);
+                if (ownedRoot != null) {
+                    if (uploadTemp == null) uploadTemp = ownedRoot;
+                    stableFiles.add(file);
+                } else if ((Files.isRegularFile(source) || Files.isDirectory(source))
+                        && source.startsWith(systemTemp)) {
+                    if (uploadTemp == null) {
+                        uploadTemp = Files.createTempDirectory("tomato-upload-");
+                    }
+                    Path itemDirectory = Files.createDirectory(uploadTemp.resolve(Integer.toString(i)));
+                    Path stable = itemDirectory.resolve(file.getName());
+                    if (Files.isDirectory(source)) {
+                        copyDirectoryTree(source, stable);
+                    } else {
+                        Files.copy(source, stable, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                    stableFiles.add(stable.toFile());
+                } else {
+                    stableFiles.add(file);
+                }
+            }
+            return new UploadFiles(List.copyOf(stableFiles), uploadTemp);
+        } catch (IOException | RuntimeException ex) {
+            deleteUploadTempDirectory(uploadTemp);
+            throw ex;
+        }
+    }
+
+    private void copyDirectoryTree(Path source, Path target) throws IOException {
+        try (var paths = Files.walk(source)) {
+            for (Path path : paths.toList()) {
+                Path destination = target.resolve(source.relativize(path));
+                if (Files.isDirectory(path)) Files.createDirectories(destination);
+                else Files.copy(path, destination, StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
+    }
+
+    private Path findOwnedUploadRoot(Path source, Path systemTemp) {
+        Path current = source.getParent();
+        while (current != null && current.startsWith(systemTemp)) {
+            Path name = current.getFileName();
+            if (name != null && name.toString().startsWith("tomato-upload-")) return current;
+            if (current.equals(systemTemp)) break;
+            current = current.getParent();
+        }
+        return null;
+    }
+
+    private void deleteUploadTempDirectory(Path directory) {
+        if (directory == null) return;
+        try (var paths = Files.walk(directory)) {
+            paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ignored) {
+                    path.toFile().deleteOnExit();
+                }
+            });
+        } catch (IOException ignored) {
+            directory.toFile().deleteOnExit();
+        }
+    }
+
+    private record UploadFiles(List<File> files, Path tempDirectory) {}
+    private record UploadEntry(File file, String relativePath, boolean directory, boolean emptyDirectory) {}
 
     // ==================== 上传进度对话框 ====================
     private void showUploadProgressDialog(int total) {
@@ -1686,14 +2001,45 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
      * 在文本输入控件聚焦时由其自行处理，accelerator 不会被触发。
      */
     protected void setupKeyboardShortcuts() {
-        KeyCodeCombination copyCombo = new KeyCodeCombination(KeyCode.C, KeyCombination.SHORTCUT_DOWN);
-        KeyCodeCombination pasteCombo = new KeyCodeCombination(KeyCode.V, KeyCombination.SHORTCUT_DOWN);
-        this.sceneProperty().addListener((obs, oldScene, newScene) -> {
+        // Do not register these on Scene.getAccelerators(): every open S3/SFTP tab uses the
+        // same key combinations, so the last-created (possibly hidden) tab overwrites the active
+        // tab's handler.  A capture filter on this pane only runs when the key event belongs to
+        // the visible file browser.
+        shortcutKeyFilter = event -> {
+            if (!event.isShortcutDown() || event.isAltDown()) return;
+            if (!isActuallyVisible()) return;
+            Node focusOwner = getScene() != null ? getScene().getFocusOwner() : null;
+            if (focusOwner instanceof TextInputControl) return;
+            if (event.getCode() == KeyCode.C) {
+                handleCopy();
+                event.consume();
+            } else if (event.getCode() == KeyCode.V) {
+                handlePaste();
+                event.consume();
+            }
+        };
+        sceneProperty().addListener((obs, oldScene, newScene) -> {
+            if (shortcutScene != null) {
+                shortcutScene.removeEventFilter(KeyEvent.KEY_PRESSED, shortcutKeyFilter);
+            }
+            shortcutScene = newScene;
             if (newScene != null) {
-                newScene.getAccelerators().put(copyCombo, this::handleCopy);
-                newScene.getAccelerators().put(pasteCombo, this::handlePaste);
+                newScene.addEventFilter(KeyEvent.KEY_PRESSED, shortcutKeyFilter);
             }
         });
+        if (getScene() != null) {
+            shortcutScene = getScene();
+            shortcutScene.addEventFilter(KeyEvent.KEY_PRESSED, shortcutKeyFilter);
+        }
+    }
+
+    private boolean isActuallyVisible() {
+        Node node = this;
+        while (node != null) {
+            if (!node.isVisible()) return false;
+            node = node.getParent();
+        }
+        return getScene() != null && getScene().getWindow() != null && getScene().getWindow().isShowing();
     }
 
     /**
@@ -2116,6 +2462,19 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
      */
     protected abstract void doUploadSingle(File localFile) throws Exception;
 
+    /** Upload a file using its path relative to the dropped/copied root. */
+    protected void doUploadSingle(File localFile, String relativePath) throws Exception {
+        doUploadSingle(localFile);
+    }
+
+    /** Create one directory from a dropped/copied directory tree; default backends ignore it. */
+    protected void doUploadDirectory(String relativePath) throws Exception {}
+
+    /** Directory hook with empty-directory information (relevant to object stores). */
+    protected void doUploadDirectory(String relativePath, boolean emptyDirectory) throws Exception {
+        doUploadDirectory(relativePath);
+    }
+
     /**
      * 下载文件项到本地指定文件（子类负责内部异步执行，完成后更新状态栏）。
      */
@@ -2163,12 +2522,82 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
      */
     protected void handlePaste() {
         Clipboard clipboard = Clipboard.getSystemClipboard();
-        if (clipboard.hasFiles()) {
-            List<File> files = clipboard.getFiles();
-            if (files != null && !files.isEmpty()) {
-                doUpload(files);
-            }
+        if (clipboard.hasFiles() && clipboard.getFiles() != null && !clipboard.getFiles().isEmpty()) {
+            doUpload(clipboard.getFiles());
+            return;
         }
+        // Do not call JavaFX getContent() for virtual clipboard entries here. Some ZIP shell
+        // extensions block or return DV_E_FORMATETC. The OLE helper handles their real FORMATETC.
+        uploadWindowsShellClipboard();
+    }
+
+    /** Extracts indexed Windows OLE FILECONTENTS streams when JavaFX cannot expose them. */
+    protected boolean uploadWindowsShellClipboard() {
+        return uploadWindowsVirtualFiles(null);
+    }
+
+    private boolean uploadWindowsVirtualFiles(byte[] shellIdList) {
+        if (!System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win")) {
+            return false;
+        }
+        final Path root;
+        try {
+            root = Files.createTempDirectory("tomato-upload-");
+        } catch (IOException ex) {
+            return false;
+        }
+        setStatus("正在读取剪贴板文件...");
+        new Thread(() -> {
+            Path helperScript = null;
+            Path shellIdListFile = null;
+            try {
+                helperScript = Files.createTempFile("tomato-virtual-files-", ".ps1");
+                try (var resource = AbstractFileBrowserPane.class.getResourceAsStream(
+                        "/scripts/extract-windows-virtual-files.ps1")) {
+                    if (resource == null) throw new IOException("缺少虚拟文件提取组件");
+                    Files.copy(resource, helperScript, StandardCopyOption.REPLACE_EXISTING);
+                }
+                List<String> command = new ArrayList<>(List.of("powershell.exe", "-NoProfile",
+                        "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass", "-File",
+                        helperScript.toString(), "-Destination", root.toString()));
+                if (shellIdList != null) {
+                    shellIdListFile = Files.createTempFile("tomato-shell-id-list-", ".bin");
+                    Files.write(shellIdListFile, shellIdList);
+                    command.add("-ShellIdListFile");
+                    command.add(shellIdListFile.toString());
+                }
+                Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+                try (var input = process.getInputStream()) {
+                    input.readAllBytes(); // Drain output; errors are reported in Chinese below.
+                }
+                int exit = process.waitFor();
+                List<File> files;
+                try (var paths = Files.list(root)) {
+                    files = paths.map(Path::toFile).toList();
+                }
+                if (exit == 0 && !files.isEmpty()) {
+                    Platform.runLater(() -> doUpload(files));
+                } else {
+                    deleteUploadTempDirectory(root);
+                    Platform.runLater(() -> setStatus("无法读取 ZIP 中的剪贴板文件，请重新复制后再试"));
+                }
+            } catch (Exception ex) {
+                deleteUploadTempDirectory(root);
+                Platform.runLater(() -> setStatus("读取剪贴板失败: " + ex.getMessage()));
+            } finally {
+                if (helperScript != null) {
+                    try { Files.deleteIfExists(helperScript); } catch (IOException ignored) {
+                        helperScript.toFile().deleteOnExit();
+                    }
+                }
+                if (shellIdListFile != null) {
+                    try { Files.deleteIfExists(shellIdListFile); } catch (IOException ignored) {
+                        shellIdListFile.toFile().deleteOnExit();
+                    }
+                }
+            }
+        }, "Windows-Shell-Clipboard").start();
+        return true;
     }
     /** 上传前检查：返回非 null 表示不可上传（给出错误提示），返回 null 表示通过。 */
     protected String preUploadCheck() { return null; }

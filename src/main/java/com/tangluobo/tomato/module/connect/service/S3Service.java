@@ -308,6 +308,12 @@ public class S3Service {
             for (Result<Item> result : results) {
                 try {
                     Item item = result.get();
+                    // A zero-byte directory marker for the directory currently being viewed is
+                    // metadata for that directory, not one of its children. Showing it creates
+                    // a spurious empty directory inside every uploaded folder.
+                    if (prefix != null && !prefix.isEmpty() && item.objectName().equals(prefix)) {
+                        continue;
+                    }
                     S3ObjectInfo objInfo = new S3ObjectInfo();
                     objInfo.setKey(item.objectName());
                     // S3 没有"真正的目录"，目录是通过 key 中的 / 隐含的

@@ -421,12 +421,17 @@ public class S3FileBrowserPane extends AbstractFileBrowserPane {
 
     @Override
     protected void doUploadSingle(File localFile) throws Exception {
+        doUploadSingle(localFile, localFile.getName());
+    }
+
+    @Override
+    protected void doUploadSingle(File localFile, String relativePath) throws Exception {
         // 规范化前缀：保证带尾斜杠，避免把 key 拼成 "dir1file.txt"
         String prefix = currentPrefix != null ? currentPrefix : "";
         if (!prefix.isEmpty() && !prefix.endsWith("/")) {
             prefix = prefix + "/";
         }
-        String key = prefix + localFile.getName();
+        String key = prefix + relativePath.replace('\\', '/');
         long size = localFile.length();
         String contentType = java.net.URLConnection.guessContentTypeFromName(localFile.getName());
         if (contentType == null) contentType = "application/octet-stream";
@@ -437,6 +442,23 @@ public class S3FileBrowserPane extends AbstractFileBrowserPane {
                 S3Service.uploadFile(config, currentBucket, key, fis, size, contentType);
             }
         }
+    }
+
+    @Override
+    protected void doUploadDirectory(String relativePath) throws Exception {
+        String prefix = currentPrefix != null ? currentPrefix : "";
+        if (!prefix.isEmpty() && !prefix.endsWith("/")) prefix += "/";
+        String key = prefix + relativePath.replace('\\', '/');
+        if (!key.endsWith("/")) key += "/";
+        if (isAliyunOSS) OssService.createDirectory(config, currentBucket, key);
+        else S3Service.createDirectory(config, currentBucket, key);
+    }
+
+    @Override
+    protected void doUploadDirectory(String relativePath, boolean emptyDirectory) throws Exception {
+        // Non-empty S3 directories are represented naturally by their child object keys.
+        // Creating a marker for them makes the marker appear as an extra empty directory.
+        if (emptyDirectory) doUploadDirectory(relativePath);
     }
 
     @Override
@@ -1520,7 +1542,7 @@ public class S3FileBrowserPane extends AbstractFileBrowserPane {
     protected void handlePaste() {
         Clipboard clipboard = Clipboard.getSystemClipboard();
         // 优先处理本地文件粘贴上传
-        if (clipboard.hasFiles()) {
+        if (clipboard.hasFiles() && clipboard.getFiles() != null && !clipboard.getFiles().isEmpty()) {
             doUpload(clipboard.getFiles());
             return;
         }
@@ -1534,6 +1556,7 @@ public class S3FileBrowserPane extends AbstractFileBrowserPane {
             return;
         }
         if (!clipboard.hasContent(S3_COPY_FORMAT)) {
+            uploadWindowsShellClipboard();
             return;
         }
         String data = (String) clipboard.getContent(S3_COPY_FORMAT);
