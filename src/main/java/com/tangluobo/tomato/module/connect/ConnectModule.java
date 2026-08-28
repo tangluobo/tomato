@@ -352,9 +352,9 @@ public class ConnectModule implements Module {
             case KAFKA_TOPIC -> kafkaTopicItemIcon;
             case KAFKA_CONSUMER -> kafkaConsumerItemIcon;
             case KAFKA_BROKER -> kafkaBrokerItemIcon;
-            case ALIYUN_PRODUCT_FOLDER -> aliyunProductIcon;
-            case ALIYUN_ECS_INSTANCE -> aliyunEcsIcon;
-            case ALIYUN_DOMAIN -> aliyunDomainIcon;
+            case ALIYUN_PRODUCT_FOLDER, TENCENT_PRODUCT_FOLDER -> aliyunProductIcon;
+            case ALIYUN_ECS_INSTANCE, TENCENT_CVM_INSTANCE -> aliyunEcsIcon;
+            case ALIYUN_DOMAIN, TENCENT_DOMAIN -> aliyunDomainIcon;
             case LOCAL_DIR_FOLDER -> folderIcon;
             case LOCAL_DIR_FILE -> {
                 String n = data.getName();
@@ -1419,6 +1419,15 @@ public class ConnectModule implements Module {
                     al.handleAliyunDomainDoubleClick(this, item, data);
                 }
             }
+            case TENCENT_PRODUCT_FOLDER -> {
+                ConnectHandler handler = createConnectHandler(data.getConnectionConfig());
+                if (handler instanceof TencentCloudConnectHandler tc) tc.handleProductFolderDoubleClick(this, item, data);
+            }
+            case TENCENT_CVM_INSTANCE -> { /* TODO: show CVM instance detail */ }
+            case TENCENT_DOMAIN -> {
+                ConnectHandler handler = createConnectHandler(data.getConnectionConfig());
+                if (handler instanceof TencentCloudConnectHandler tc) tc.openDomain(this, data);
+            }
             case LOCAL_DIR_FOLDER -> {
                 ConnectHandler ldH = createConnectHandler(data.getConnectionConfig());
                 if (ldH instanceof LocalDirectoryConnectHandler ld) {
@@ -1636,6 +1645,7 @@ public class ConnectModule implements Module {
         if (type == ConnectType.ROCKETMQ) return new RocketmqConnectHandler();
         if (type == ConnectType.KAFKA) return new KafkaConnectHandler();
         if (type == ConnectType.ALIYUN) return new AliyunConnectHandler();
+        if (type == ConnectType.TENCENT_CLOUD) return new TencentCloudConnectHandler();
         if (type == ConnectType.LOCAL_TERMINAL) return new LocalTerminalConnectHandler();
         if (type == ConnectType.LOCAL_DIRECTORY) return new LocalDirectoryConnectHandler();
         if (type == ConnectType.S3 || type == ConnectType.ALIYUN_OSS) return new S3ConnectHandler();
@@ -2239,6 +2249,10 @@ public class ConnectModule implements Module {
                 if (handler instanceof AliyunConnectHandler al) {
                     al.refreshDbNode(this, item, data);
                 }
+            }
+            case TENCENT_PRODUCT_FOLDER, TENCENT_DOMAIN -> {
+                ConnectHandler handler = createConnectHandler(config);
+                if (handler instanceof TencentCloudConnectHandler tc) tc.refreshDbNode(this, item, data);
             }
             case LOCAL_DIR_FOLDER -> {
                 ConnectHandler handler = createConnectHandler(config);

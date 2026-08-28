@@ -33,6 +33,9 @@ public class DatabaseNodeData {
         ALIYUN_PRODUCT_FOLDER,      // 阿里云产品文件夹（如ECS、RDS等）
         ALIYUN_ECS_INSTANCE,        // 阿里云ECS实例
         ALIYUN_DOMAIN,              // 阿里云域名
+        TENCENT_PRODUCT_FOLDER,     // 腾讯云产品文件夹
+        TENCENT_CVM_INSTANCE,       // 腾讯云 CVM 实例
+        TENCENT_DOMAIN,             // 腾讯云 DNSPod 域名
         LOCAL_DIR_FOLDER,           // 本地目录文件夹
         LOCAL_DIR_FILE,             // 本地目录文件
         SSH_SERVICE_TERMINAL,       // SSH 服务管理：终端

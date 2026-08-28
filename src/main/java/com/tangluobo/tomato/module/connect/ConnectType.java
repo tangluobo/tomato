@@ -10,6 +10,7 @@ public enum ConnectType {
     ORACLE("Oracle", "Oracle数据库", "/images/connect/oracle.png", Category.DATABASE),
     S3("S3", "S3存储", "/images/connect/s3.png", Category.OTHERS),
     ALIYUN("Aliyun", "阿里云", "/images/connect/aliyun.png", Category.OTHERS),
+    TENCENT_CLOUD("TencentCloud", "腾讯云", "/images/connect/monitor.png", Category.OTHERS),
     ALIYUN_OSS("AliyunOSS", "阿里云OSS", "/images/connect/aliyun_oss.png", Category.OTHERS),
     REDIS("Redis", "Redis", "/images/connect/redis.png", Category.DATABASE),
     ROCKETMQ("RocketMQ", "RocketMQ", "/images/connect/rocketmq.png", Category.MESSAGE_QUEUE),

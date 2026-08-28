@@ -1,10 +1,12 @@
 package com.tangluobo.tomato.module.connect.view;
 
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.dialog.LetsEncryptDialog;
 import com.tangluobo.tomato.module.connect.service.AliyunService;
 import com.tangluobo.tomato.module.connect.service.DdnsService;
 import com.tangluobo.tomato.module.connect.service.LetsEncryptService;
+import com.tangluobo.tomato.module.connect.service.TencentCloudService;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.animation.KeyFrame;
 import javafx.animation.KeyValue;
@@ -279,7 +281,9 @@ public class AliyunDomainDataView extends BorderPane {
         recordItems.clear();
         new Thread(() -> {
             try {
-                List<Map<String, Object>> records = AliyunService.getDomainRecords(config, domainName);
+                List<Map<String, Object>> records = config.getType() == ConnectType.TENCENT_CLOUD
+                        ? TencentCloudService.getDomainRecords(config, domainName)
+                        : AliyunService.getDomainRecords(config, domainName);
                 Platform.runLater(() -> {
                     for (Map<String, Object> record : records) {
                         recordItems.add(new RecordItem(
@@ -355,11 +359,13 @@ public class AliyunDomainDataView extends BorderPane {
     }
 
     private void updateRecordValue(RecordItem item, String newValue) throws Exception {
-        AliyunService.updateDomainRecord(config, item.getRecordId(),
-                item.getRr(), item.getType(), newValue,
-                parseLongSafe(item.getTtl()),
-                (item.getLine() == null || item.getLine().isEmpty()) ? null : item.getLine(),
-                null);
+        if (config.getType() == ConnectType.TENCENT_CLOUD) {
+            TencentCloudService.updateDomainRecord(config, domainName, item.getRecordId(), item.getRr(), item.getType(),
+                    newValue, parseLongSafe(item.getTtl()), item.getLine(), null);
+        } else {
+            AliyunService.updateDomainRecord(config, item.getRecordId(), item.getRr(), item.getType(), newValue,
+                    parseLongSafe(item.getTtl()), item.getLine(), null);
+        }
     }
 
     private static Long parseLongSafe(String s) {
@@ -456,8 +462,9 @@ public class AliyunDomainDataView extends BorderPane {
         statusLabel.setText("添加中...");
         new Thread(() -> {
             try {
-                AliyunService.addDomainRecord(config, domainName, form.rr, form.type, form.value,
-                        form.ttl, form.line, form.priority);
+                if (config.getType() == ConnectType.TENCENT_CLOUD)
+                    TencentCloudService.addDomainRecord(config, domainName, form.rr, form.type, form.value, form.ttl, form.line, form.priority);
+                else AliyunService.addDomainRecord(config, domainName, form.rr, form.type, form.value, form.ttl, form.line, form.priority);
                 Platform.runLater(() -> { statusLabel.setText("添加成功"); loadRecords(); });
             } catch (Exception e) {
                 Platform.runLater(() -> { statusLabel.setText("添加失败"); errorAlert("添加解析记录失败", e); });
@@ -469,8 +476,9 @@ public class AliyunDomainDataView extends BorderPane {
         statusLabel.setText("修改中...");
         new Thread(() -> {
             try {
-                AliyunService.updateDomainRecord(config, item.getRecordId(), form.rr, form.type, form.value,
-                        form.ttl, form.line, form.priority);
+                if (config.getType() == ConnectType.TENCENT_CLOUD)
+                    TencentCloudService.updateDomainRecord(config, domainName, item.getRecordId(), form.rr, form.type, form.value, form.ttl, form.line, form.priority);
+                else AliyunService.updateDomainRecord(config, item.getRecordId(), form.rr, form.type, form.value, form.ttl, form.line, form.priority);
                 Platform.runLater(() -> { statusLabel.setText("修改成功"); loadRecords(); });
             } catch (Exception e) {
                 Platform.runLater(() -> { statusLabel.setText("修改失败"); errorAlert("修改解析记录失败", e); });
@@ -494,7 +502,9 @@ public class AliyunDomainDataView extends BorderPane {
         disableDdns(item); // 删除时同步关闭其 DDNS
         new Thread(() -> {
             try {
-                AliyunService.deleteDomainRecord(config, item.getRecordId());
+                if (config.getType() == ConnectType.TENCENT_CLOUD)
+                    TencentCloudService.deleteDomainRecord(config, domainName, item.getRecordId());
+                else AliyunService.deleteDomainRecord(config, item.getRecordId());
                 Platform.runLater(() -> { statusLabel.setText("删除成功"); loadRecords(); });
             } catch (Exception e) {
                 Platform.runLater(() -> { statusLabel.setText("删除失败"); errorAlert("删除解析记录失败", e); });

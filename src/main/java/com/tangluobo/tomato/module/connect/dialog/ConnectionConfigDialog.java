@@ -2095,7 +2095,7 @@ public class ConnectionConfigDialog {
         boolean isRedis = selectedType == ConnectType.REDIS;
         boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
         boolean isKafka = selectedType == ConnectType.KAFKA;
-        boolean isAliyun = selectedType == ConnectType.ALIYUN;
+        boolean isAliyun = selectedType == ConnectType.ALIYUN || selectedType == ConnectType.TENCENT_CLOUD;
         boolean isLocalDirectory = selectedType == ConnectType.LOCAL_DIRECTORY;
         boolean isSimple = !isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis && !isRocketmq && !isKafka && !isAliyun && !isLocalDirectory;
 
@@ -2128,6 +2128,11 @@ public class ConnectionConfigDialog {
         kafkaTabPane.setManaged(isKafka);
         aliyunConfigContent.setVisible(isAliyun);
         aliyunConfigContent.setManaged(isAliyun);
+        if (isAliyun) {
+            boolean tencent = selectedType == ConnectType.TENCENT_CLOUD;
+            aliyunAccessKeyField.setPromptText(tencent ? "腾讯云 SecretId" : "阿里云 AccessKey ID");
+            aliyunSecretKeyField.setPromptText(tencent ? "腾讯云 SecretKey" : "阿里云 AccessKey Secret");
+        }
         localDirectoryConfigContent.setVisible(isLocalDirectory);
         localDirectoryConfigContent.setManaged(isLocalDirectory);
 
@@ -2189,7 +2194,7 @@ public class ConnectionConfigDialog {
         boolean isRedis = selectedType == ConnectType.REDIS;
         boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
         boolean isKafka = selectedType == ConnectType.KAFKA;
-        boolean isAliyun = selectedType == ConnectType.ALIYUN;
+        boolean isAliyun = selectedType == ConnectType.ALIYUN || selectedType == ConnectType.TENCENT_CLOUD;
         boolean isLocalDirectory = selectedType == ConnectType.LOCAL_DIRECTORY;
 
         if (isLocalTerminal) {
@@ -2432,7 +2437,7 @@ public class ConnectionConfigDialog {
         boolean isRedis = selectedType == ConnectType.REDIS;
         boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
         boolean isKafka = selectedType == ConnectType.KAFKA;
-        boolean isAliyun = selectedType == ConnectType.ALIYUN;
+        boolean isAliyun = selectedType == ConnectType.ALIYUN || selectedType == ConnectType.TENCENT_CLOUD;
         boolean isLocalDirectory = selectedType == ConnectType.LOCAL_DIRECTORY;
 
         if (isLocalTerminal) {
@@ -2673,7 +2678,7 @@ public class ConnectionConfigDialog {
         boolean isRedis = selectedType == ConnectType.REDIS;
         boolean isRocketmq = selectedType == ConnectType.ROCKETMQ;
         boolean isKafka = selectedType == ConnectType.KAFKA;
-        boolean isAliyun = selectedType == ConnectType.ALIYUN;
+        boolean isAliyun = selectedType == ConnectType.ALIYUN || selectedType == ConnectType.TENCENT_CLOUD;
         boolean isLocalDirectory = selectedType == ConnectType.LOCAL_DIRECTORY;
 
         if (isLocalTerminal) {
@@ -2968,6 +2973,7 @@ public class ConnectionConfigDialog {
             case ORACLE -> 1521;
             case S3 -> 9000;
             case ALIYUN -> 0;
+            case TENCENT_CLOUD -> 0;
             case ALIYUN_OSS -> 443;
             case REDIS -> 6379;
             case ROCKETMQ -> 8080;

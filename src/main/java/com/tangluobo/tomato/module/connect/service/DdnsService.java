@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import com.tangluobo.tomato.module.connect.ConfigManager;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.ConnectType;
 
 import java.lang.reflect.Type;
 import java.net.URI;
@@ -186,8 +187,11 @@ public class DdnsService {
                     continue;
                 }
                 try {
-                    AliyunService.updateDomainRecord(config, entry.recordId, entry.rr, entry.type, ip,
-                            parseLong(entry.ttl), nullIfEmpty(entry.line), null);
+                    if (config.getType() == ConnectType.TENCENT_CLOUD)
+                        TencentCloudService.updateDomainRecord(config, entry.domainName, entry.recordId, entry.rr,
+                                entry.type, ip, parseLong(entry.ttl), nullIfEmpty(entry.line), null);
+                    else AliyunService.updateDomainRecord(config, entry.recordId, entry.rr, entry.type, ip,
+                                parseLong(entry.ttl), nullIfEmpty(entry.line), null);
                     System.out.println("[DDNS] 已更新 " + entry.rr + "." + entry.domainName + " → " + ip);
                 } catch (Exception e) {
                     String msg = e.getMessage();

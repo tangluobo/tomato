@@ -82,8 +82,9 @@ public final class LetsEncryptService {
             String rr = toRelativeRecord(recordName, dnsZone);
             String digest = challenge.getDigest();
             progress.accept("正在添加 DNS TXT 记录：" + recordName);
-            String recordId = AliyunService.addDomainRecord(
-                    aliyun, dnsZone, rr, "TXT", digest, 600L, null, null);
+            String recordId = aliyun.getType() == ConnectType.TENCENT_CLOUD
+                    ? TencentCloudService.addDomainRecord(aliyun, dnsZone, rr, "TXT", digest, 600L, null, null)
+                    : AliyunService.addDomainRecord(aliyun, dnsZone, rr, "TXT", digest, 600L, null, null);
             try {
                 waitForDns(recordName, digest, progress);
                 progress.accept("正在验证域名所有权…");
@@ -94,7 +95,11 @@ public final class LetsEncryptService {
                             .map(Object::toString).orElse("未知原因"));
                 }
             } finally {
-                try { AliyunService.deleteDomainRecord(aliyun, recordId); } catch (Exception ignored) {}
+                try {
+                    if (aliyun.getType() == ConnectType.TENCENT_CLOUD)
+                        TencentCloudService.deleteDomainRecord(aliyun, dnsZone, recordId);
+                    else AliyunService.deleteDomainRecord(aliyun, recordId);
+                } catch (Exception ignored) {}
             }
         }
 
@@ -234,33 +239,45 @@ public final class LetsEncryptService {
         String name = fqdn.endsWith(".") ? fqdn.substring(0, fqdn.length() - 1) : fqdn;
         String suffix = "." + rootDomain;
         if (!name.endsWith(suffix)) {
-            throw new IllegalArgumentException("验证记录不属于所选阿里云域名：" + fqdn);
+            throw new IllegalArgumentException("验证记录不属于当前云平台域名：" + fqdn);
         }
         return name.substring(0, name.length() - suffix.length());
     }
 
     private static void waitForDns(String name, String expected, Consumer<String> progress) throws Exception {
-        progress.accept("等待 DNS 记录生效…");
+        progress.accept("等待 DNS TXT 记录生效：" + name);
         long deadline = System.nanoTime() + Duration.ofMinutes(3).toNanos();
         Exception last = null;
         while (System.nanoTime() < deadline) {
-            try {
-                Hashtable<String, String> env = new Hashtable<>();
-                env.put("java.naming.factory.initial", "com.sun.jndi.dns.DnsContextFactory");
-                Attributes attrs = new InitialDirContext(env).getAttributes(name, new String[]{"TXT"});
-                Attribute txt = attrs.get("TXT");
-                if (txt != null) {
-                    for (int i = 0; i < txt.size(); i++) {
-                        String value = String.valueOf(txt.get(i)).replace("\"", "").replace(" ", "");
-                        if (expected.equals(value)) return;
+            // 优先查询腾讯云 Public DNS，避免 Windows/JVM 对此前 NXDOMAIN 的负缓存；
+            // 同时查询公共 DNS，确保 ACME 服务在公网也能看到该记录。
+            for (String provider : List.of("dns://119.29.29.29/", "dns://1.1.1.1/")) {
+                try {
+                    Hashtable<String, String> env = new Hashtable<>();
+                    env.put("java.naming.factory.initial", "com.sun.jndi.dns.DnsContextFactory");
+                    env.put("java.naming.provider.url", provider);
+                    InitialDirContext context = new InitialDirContext(env);
+                    try {
+                        Attributes attrs = context.getAttributes(name, new String[]{"TXT"});
+                        Attribute txt = attrs.get("TXT");
+                        if (txt != null) {
+                            for (int i = 0; i < txt.size(); i++) {
+                                String value = String.valueOf(txt.get(i)).replace("\"", "").replace(" ", "");
+                                if (expected.equals(value)) return;
+                            }
+                        }
+                    } finally {
+                        context.close();
                     }
+                } catch (Exception ex) {
+                    last = ex;
                 }
-            } catch (Exception ex) {
-                last = ex;
             }
             Thread.sleep(5000L);
         }
-        throw new IllegalStateException("等待 DNS TXT 记录生效超时" + (last == null ? "" : "：" + last.getMessage()));
+        throw new IllegalStateException("等待 DNS TXT 记录生效超时：" + name
+                + "。请确认该域名的 NS 已指向腾讯云 DNSPod，并检查域名是否处于正常解析状态"
+                + (last == null ? "" : "（最后错误：" + last.getMessage() + "）"));
     }
 
     private static String toPem(X509Certificate certificate) throws Exception {
