@@ -1,18 +1,30 @@
 package com.tangluobo.tomato.module.connect.view;
 
 import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
+import javafx.scene.control.ListView;
+import javafx.scene.control.ScrollBar;
+import javafx.geometry.Bounds;
+import javafx.geometry.Orientation;
+import javafx.scene.Node;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.stage.Popup;
 import org.fxmisc.flowless.VirtualizedScrollPane;
 import org.fxmisc.richtext.InlineCssTextArea;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -76,6 +88,24 @@ public class SqlEditorPane extends HBox {
     private Consumer<String> onModified;
     private Runnable onRunRequest;
     private Runnable onSaveRequest;
+    private final Popup completionPopup = new Popup();
+    private final ListView<CompletionItem> completionList = new ListView<>();
+    private final List<CompletionItem> completionItems = new ArrayList<>();
+    private int completionWordStart = -1;
+
+    /** 自动补全候选项。kind 用于标识关键字、数据库、表或字段。 */
+    public static final class CompletionItem {
+        private final String text;
+        private final String kind;
+
+        public CompletionItem(String text, String kind) {
+            this.text = text;
+            this.kind = kind;
+        }
+
+        public String getText() { return text; }
+        public String getKind() { return kind; }
+    }
 
     /** 默认可编辑 */
     public SqlEditorPane() {
@@ -143,11 +173,32 @@ public class SqlEditorPane extends HBox {
             if (syntaxHighlighting) applyHighlighting();
             updateLineNumbers(textArea.getParagraphs().size());
             if (onModified != null) onModified.accept(newVal);
+            if (textArea.isFocused() && textArea.isEditable()) {
+                javafx.application.Platform.runLater(this::refreshCompletionPopup);
+            }
         });
+
+        configureCompletionPopup();
+
+        // 光标通过鼠标、方向键或输入发生移动时，重新过滤候选并让弹层跟随光标。
+        textArea.caretPositionProperty().addListener((obs, oldVal, newVal) -> {
+            if (textArea.isFocused() && textArea.isEditable()) {
+                javafx.application.Platform.runLater(this::refreshCompletionPopup);
+            }
+        });
+        // RichTextFX 的 caretBounds 是屏幕坐标，滚动编辑器时也会变化。
+        textArea.caretBoundsProperty().addListener((obs, oldVal, newVal) -> {
+            if (completionPopup.isShowing()) {
+                newVal.ifPresent(bounds -> positionCompletionPopup(bounds, completionList.getItems().size()));
+            }
+        });
+
+        textArea.addEventFilter(KeyEvent.KEY_PRESSED, this::handleCompletionKeyPressed);
 
         // Tab 缩进
         textArea.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
-            if (e.getCode() == KeyCode.TAB) {
+            // 自动补全已消费 Tab 时只上屏候选，不再插入缩进空格。
+            if (!e.isConsumed() && e.getCode() == KeyCode.TAB) {
                 e.consume();
                 textArea.insertText(textArea.getCaretPosition(), "    ");
             }
@@ -175,7 +226,136 @@ public class SqlEditorPane extends HBox {
         setClip(clipRect);
 
         // 初始应用一次高亮（空文本时也设置默认样式）
+        setMetadataCompletions(List.of(), List.of(), List.of());
         if (syntaxHighlighting) applyHighlighting();
+    }
+
+    private void configureCompletionPopup() {
+        completionList.setPrefWidth(300);
+        completionList.setMaxHeight(220);
+        completionList.setFixedCellSize(26);
+        // 候选列表只负责展示和选择，键盘输入焦点始终留在 SQL 编辑器。
+        completionList.setFocusTraversable(false);
+        completionList.setStyle("-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 12px;");
+        completionList.setCellFactory(view -> new ListCell<>() {
+            @Override protected void updateItem(CompletionItem item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : item.getText() + "    " + item.getKind());
+            }
+        });
+        completionList.setOnMouseClicked(e -> acceptSelectedCompletion());
+        // 某些 JavaFX/系统组合下 Popup 仍可能收到按键，双侧监听保证回车可补全。
+        completionList.addEventFilter(KeyEvent.KEY_PRESSED, this::handleCompletionKeyPressed);
+        completionPopup.getContent().add(completionList);
+        completionPopup.setAutoHide(true);
+        completionPopup.setHideOnEscape(true);
+        completionPopup.setOnShown(e -> textArea.requestFocus());
+    }
+
+    private void handleCompletionKeyPressed(KeyEvent e) {
+        if (!completionPopup.isShowing() || completionList.getItems().isEmpty()) return;
+        if (e.getCode() == KeyCode.DOWN) {
+            int index = completionList.getSelectionModel().getSelectedIndex();
+            completionList.getSelectionModel().select(
+                    index >= completionList.getItems().size() - 1 ? 0 : index + 1);
+            centerSelectedCompletion();
+            e.consume();
+        } else if (e.getCode() == KeyCode.UP) {
+            int index = completionList.getSelectionModel().getSelectedIndex();
+            completionList.getSelectionModel().select(
+                    index <= 0 ? completionList.getItems().size() - 1 : index - 1);
+            centerSelectedCompletion();
+            e.consume();
+        } else if (e.getCode() == KeyCode.ENTER || e.getCode() == KeyCode.TAB) {
+            e.consume();
+            acceptSelectedCompletion();
+        } else if (e.getCode() == KeyCode.ESCAPE) {
+            completionPopup.hide();
+            e.consume();
+        }
+    }
+
+    /** 让中间位置的选中项尽量处于下拉框中央，首尾区域自然贴边。 */
+    private void centerSelectedCompletion() {
+        int selectedIndex = completionList.getSelectionModel().getSelectedIndex();
+        int itemCount = completionList.getItems().size();
+        int visibleRows = Math.min(itemCount, 8);
+        int maxTopIndex = Math.max(0, itemCount - visibleRows);
+        int desiredTopIndex = Math.max(0,
+                Math.min(maxTopIndex, selectedIndex - visibleRows / 2));
+
+        // ListView.scrollTo 只保证可见，不能居中；固定行高下按目标首行映射滚动条位置。
+        javafx.application.Platform.runLater(() -> {
+            for (Node node : completionList.lookupAll(".scroll-bar")) {
+                if (node instanceof ScrollBar bar && bar.getOrientation() == Orientation.VERTICAL) {
+                    if (maxTopIndex == 0) {
+                        bar.setValue(bar.getMin());
+                    } else {
+                        double ratio = (double) desiredTopIndex / maxTopIndex;
+                        bar.setValue(bar.getMin() + ratio * (bar.getMax() - bar.getMin()));
+                    }
+                    return;
+                }
+            }
+            completionList.scrollTo(selectedIndex);
+        });
+    }
+
+    private void refreshCompletionPopup() {
+        int caret = textArea.getCaretPosition();
+        String text = textArea.getText();
+        if (caret <= 0 || caret > text.length()) { completionPopup.hide(); return; }
+        int start = caret;
+        while (start > 0 && isIdentifierPart(text.charAt(start - 1))) start--;
+        String prefix = text.substring(start, caret);
+        if (prefix.isEmpty()) { completionPopup.hide(); return; }
+
+        String lowerPrefix = prefix.toLowerCase(Locale.ROOT);
+        List<CompletionItem> matches = completionItems.stream()
+                .filter(item -> item.getText().toLowerCase(Locale.ROOT).startsWith(lowerPrefix))
+                .filter(item -> !item.getText().equalsIgnoreCase(prefix))
+                .sorted(Comparator.comparingInt((CompletionItem item) -> kindOrder(item.getKind()))
+                        .thenComparing(CompletionItem::getText, String.CASE_INSENSITIVE_ORDER))
+                .limit(100).toList();
+        if (matches.isEmpty()) { completionPopup.hide(); return; }
+
+        completionWordStart = start;
+        completionList.getItems().setAll(matches);
+        completionList.getSelectionModel().selectFirst();
+        textArea.getCaretBounds().ifPresent(bounds -> positionCompletionPopup(bounds, matches.size()));
+    }
+
+    private void positionCompletionPopup(Bounds screen, int itemCount) {
+        completionList.setPrefHeight(Math.min(itemCount, 8) * 26.0 + 2);
+        if (completionPopup.isShowing()) {
+            completionPopup.setX(screen.getMinX());
+            completionPopup.setY(screen.getMaxY());
+        } else {
+            completionPopup.show(textArea, screen.getMinX(), screen.getMaxY());
+        }
+    }
+
+    private void acceptSelectedCompletion() {
+        CompletionItem selected = completionList.getSelectionModel().getSelectedItem();
+        if (selected == null || completionWordStart < 0) return;
+        int caret = textArea.getCaretPosition();
+        completionPopup.hide();
+        textArea.replaceText(completionWordStart, caret, selected.getText());
+        textArea.requestFocus();
+    }
+
+    private static boolean isIdentifierPart(char c) {
+        return Character.isLetterOrDigit(c) || c == '_' || c == '$';
+    }
+
+    private static int kindOrder(String kind) {
+        return switch (kind) {
+            case "关键字" -> 0;
+            case "数据库" -> 1;
+            case "表" -> 2;
+            case "字段" -> 3;
+            default -> 4;
+        };
     }
 
     private void updateLineNumbers(int lineCount) {
@@ -252,6 +432,24 @@ public class SqlEditorPane extends HBox {
     /** Ctrl+S 回调（保存） */
     public void setOnSaveRequest(Runnable onSaveRequest) {
         this.onSaveRequest = onSaveRequest;
+    }
+
+    /** 设置数据库元数据候选；SQL 关键字始终保留，名称不区分大小写去重。 */
+    public void setMetadataCompletions(Collection<String> databases,
+                                       Collection<String> tables,
+                                       Collection<String> columns) {
+        Map<String, CompletionItem> unique = new LinkedHashMap<>();
+        for (String keyword : KEYWORDS) addCompletion(unique, keyword, "关键字");
+        if (databases != null) for (String name : databases) addCompletion(unique, name, "数据库");
+        if (tables != null) for (String name : tables) addCompletion(unique, name, "表");
+        if (columns != null) for (String name : columns) addCompletion(unique, name, "字段");
+        completionItems.clear();
+        completionItems.addAll(unique.values());
+    }
+
+    private static void addCompletion(Map<String, CompletionItem> target, String text, String kind) {
+        if (text == null || text.isBlank()) return;
+        target.putIfAbsent(text.toLowerCase(Locale.ROOT), new CompletionItem(text, kind));
     }
 
     /** 全选 */

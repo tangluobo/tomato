@@ -26,7 +26,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 
 /**
@@ -53,6 +56,7 @@ public class SqlEditorView extends BorderPane {
 
     private Consumer<String> onTitleChange;
     private Runnable onSaveRequest;
+    private long completionLoadVersion = 0;
 
     public SqlEditorView(List<ConnectionConfig> connections, ConnectionConfig initialConfig, String initialDatabase) {
         // ---- 顶部工具栏 ----
@@ -163,6 +167,7 @@ public class SqlEditorView extends BorderPane {
         }
 
         databaseCombo.getStyleClass().add("combo-box-database");
+        databaseCombo.valueProperty().addListener((obs, oldVal, newVal) -> refreshCompletionMetadata());
 
         toolbar.getChildren().addAll(connectionCombo, databaseCombo, sep1, saveBtn, createQueryToolBtn, beautifyBtn, runBtn, explainBtn);
 
@@ -185,6 +190,7 @@ public class SqlEditorView extends BorderPane {
             RichTextSqlEditor rte = (RichTextSqlEditor) editor;
             rte.getPane().setOnRunRequest(this::executeQuery);
             rte.getPane().setOnSaveRequest(this::handleSave);
+            rte.getPane().setMetadataCompletions(databaseCombo.getItems(), List.of(), List.of());
         }
 
         // ---- 结果区域 ----
@@ -212,6 +218,7 @@ public class SqlEditorView extends BorderPane {
         // 初始加载数据库列表
         if (initialConfig != null) {
             refreshDatabaseList();
+            refreshCompletionMetadata();
         }
 
         getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
@@ -431,6 +438,7 @@ public class SqlEditorView extends BorderPane {
                     List<String> databases = DatabaseService.getDatabases(config);
                     Platform.runLater(() -> {
                         databaseCombo.getItems().addAll(databases);
+                        updateEditorDatabaseCompletions(databases);
                         if (currentDb != null && databases.contains(currentDb)) databaseCombo.setValue(currentDb);
                         else if (!databases.isEmpty()) databaseCombo.setValue(databases.get(0));
                     });
@@ -439,6 +447,52 @@ public class SqlEditorView extends BorderPane {
                 connLock.unlock();
             }
         }, "DB-RefreshDbList").start();
+    }
+
+    /** 后台加载当前库的表和字段，加载期间关键字和数据库名补全仍然可用。 */
+    private void refreshCompletionMetadata() {
+        if (!(editor instanceof RichTextSqlEditor rte)) return;
+        ConnectionConfig config = connectionCombo.getValue();
+        String dbName = databaseCombo.getValue();
+        long version = ++completionLoadVersion;
+        List<String> databases = new ArrayList<>(databaseCombo.getItems());
+        rte.getPane().setMetadataCompletions(databases, List.of(), List.of());
+        if (config == null || dbName == null || dbName.isBlank() || config.getPassword() == null) return;
+
+        Thread loader = new Thread(() -> {
+            Set<String> tables = new LinkedHashSet<>();
+            Set<String> columns = new LinkedHashSet<>();
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, dbName);
+            connLock.lock();
+            try {
+                tables.addAll(DatabaseService.getTables(config, dbName));
+                for (String table : tables) {
+                    for (Map<String, String> column : DatabaseService.getTableColumns(config, dbName, table)) {
+                        String name = column.get("字段名");
+                        if (name != null && !name.isBlank()) columns.add(name);
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("加载 SQL 自动补全元数据失败: " + e.getMessage());
+            } finally {
+                connLock.unlock();
+            }
+            Platform.runLater(() -> {
+                if (version == completionLoadVersion
+                        && config == connectionCombo.getValue()
+                        && dbName.equals(databaseCombo.getValue())) {
+                    rte.getPane().setMetadataCompletions(databases, tables, columns);
+                }
+            });
+        }, "SQL-CompletionMetadata");
+        loader.setDaemon(true);
+        loader.start();
+    }
+
+    private void updateEditorDatabaseCompletions(List<String> databases) {
+        if (editor instanceof RichTextSqlEditor rte) {
+            rte.getPane().setMetadataCompletions(databases, List.of(), List.of());
+        }
     }
 
     // ==================== SQL操作 ====================
