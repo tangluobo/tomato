@@ -32,7 +32,6 @@ public class RdpPatch extends Rdp {
     private volatile long lastReceiveEnterTime = 0;
     private volatile int lastReasonSeen = 0;
     private volatile int lastServerStatusSeen = 0;
-    private volatile boolean refreshSent = false;
     private volatile Consumer<Void> onFirstFrame;
     private volatile boolean firstFrameReceived = false;
     private final java.util.List<String> pduHistory = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
@@ -40,8 +39,6 @@ public class RdpPatch extends Rdp {
     // 反射访问Rdp的private方法/字段
     private final Method receiveMethod;
     private final Method processPacketMethod;
-    private final Method initDataMethod;
-    private final Method sendDataMethod;
     private final Field streamField;
     private final Field nextPacketField;
 
@@ -50,17 +47,13 @@ public class RdpPatch extends Rdp {
         this.stateRef = state;
 
         // 反射获取private方法和字段
-        Method rm = null, pm = null, im = null, sm = null;
+        Method rm = null, pm = null;
         Field sf = null, npf = null;
         try {
             rm = Rdp.class.getDeclaredMethod("receive", int[].class);
             rm.setAccessible(true);
             pm = Rdp.class.getDeclaredMethod("processPacket", int[].class, com.tangluobo.tomato.rdp.Packet.class);
             pm.setAccessible(true);
-            im = Rdp.class.getDeclaredMethod("initData", int.class);
-            im.setAccessible(true);
-            sm = Rdp.class.getDeclaredMethod("sendData", com.tangluobo.tomato.rdp.Packet.class, int.class);
-            sm.setAccessible(true);
             sf = Rdp.class.getDeclaredField("stream");
             sf.setAccessible(true);
             npf = Rdp.class.getDeclaredField("next_packet");
@@ -70,8 +63,6 @@ public class RdpPatch extends Rdp {
         }
         receiveMethod = rm;
         processPacketMethod = pm;
-        initDataMethod = im;
-        sendDataMethod = sm;
         streamField = sf;
         nextPacketField = npf;
     }
@@ -160,8 +151,10 @@ public class RdpPatch extends Rdp {
             case 3: break;
             case 5: process_null_system_pointer_pdu(s); break;
             case 6: break;
+            case 8: break; // pointer position; local Swing cursor position is authoritative
             case 9: process_colour_pointer_pdu(s); break;
             case 10: process_cached_pointer_pdu(s); break;
+            case 11: process_colour_pointer_pdu_new(s); break;
             default:
                 logger.warning("Unimplemented RDP5 updateCode " + type
                         + " (updateHeader=0x" + String.format("%02x", updateHeader) + ")");
@@ -300,6 +293,7 @@ public class RdpPatch extends Rdp {
             case 1: pduName = "DEMAND_ACTIVE"; break;
             case 6: pduName = "DEACTIVATE_ALL"; break;
             case 7: pduName = "DATA"; break;
+            case 10: pduName = "SERVER_REDIRECTION"; break;
             case 0: pduName = "KEEPALIVE"; break;
             default: pduName = "UNKNOWN(" + pduType + ")"; break;
             }
@@ -376,25 +370,6 @@ public class RdpPatch extends Rdp {
             long processMs = System.currentTimeMillis() - processStart;
             if (processMs > 100) {
                 logger.info(String.format("[MAINLOOP] PDU #%d (%s) processPacket耗时 %dms", pduCount, pduName, processMs));
-            }
-
-            // DEMAND_ACTIVE处理后，发送REFRESH_RECT请求全屏刷新
-            // 注意：之前尝试发送SUPPRESS_OUTPUT PDU导致服务器关闭连接(SEND #36断开)
-            // 可能是服务器不期望在此时收到此PDU，已移除
-            if (pduType == 1 && !refreshSent) {
-                refreshSent = true;
-                try {
-                    logger.info("[REFRESH] 发送TS_REFRESH_RECT_PDU请求全屏刷新");
-                    com.tangluobo.tomato.rdp.Packet refreshData = (com.tangluobo.tomato.rdp.Packet) initDataMethod.invoke(this, 4);
-                    refreshData.set8(0); // numAreas = 0 (全屏刷新)
-                    refreshData.set8(0); // pad
-                    refreshData.setLittleEndian16(0); // pad
-                    refreshData.markEnd(); // 关键：必须调用markEnd设置数据结束位置
-                    sendDataMethod.invoke(this, refreshData, 33); // 33 = PDUTYPE2_REFRESH_RECT
-                    logger.info("[REFRESH] 刷新请求已发送");
-                } catch (Exception e) {
-                    logger.warning("[REFRESH] 发送刷新请求失败: " + e.getMessage());
-                }
             }
 
             // 检测服务器是否发送了错误PDU (RDP_DATA_PDU_SET_ERROR)

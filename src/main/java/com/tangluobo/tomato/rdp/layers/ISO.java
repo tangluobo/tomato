@@ -209,11 +209,16 @@ public class ISO implements Layer<MCS> {
 	 * @throws IOException
 	 */
 	void send_connection_request() throws IOException {
+		byte[] routingToken = state.getRoutingToken();
 		String cookie = state.getCookie();
+		if (routingToken != null && routingToken.length > 0)
+			cookie = null; // routingToken and mstshash cookie occupy the same field
 		if (cookie != null && cookie.length() > 9)
 			cookie = cookie.substring(0, 9);
-		int length = 11 + (StringUtils.isNotBlank(state.getCookie()) ? ("Cookie: mstshash=".length() + cookie.length() + 2) : 0)
-				+ 8;
+		int length = 11 + (routingToken == null ? 0 : routingToken.length)
+				+ (StringUtils.isNotBlank(cookie)
+				? ("Cookie: mstshash=".length() + cookie.length() + 2)
+				: 0);
 		if (state.isRDP5()) {
 			length += 8;
 		}
@@ -227,6 +232,11 @@ public class ISO implements Layer<MCS> {
 		buffer.setBigEndian16(0); // source reference should be a reasonable
 		// address we use 0
 		buffer.set8(0); // service class
+		if (routingToken != null && routingToken.length > 0) {
+			buffer.copyFromByteArray(routingToken, 0, buffer.getPosition(), routingToken.length);
+			buffer.incrementPosition(routingToken.length);
+			logger.info("Including RDP routing token (" + routingToken.length + " bytes)");
+		}
 		if (StringUtils.isNotBlank(cookie)) {
 			if (logger.isDebugEnabled())
 				logger.debug("Including username");
@@ -244,6 +254,10 @@ public class ISO implements Layer<MCS> {
 			//buffer.setLittleEndian32(state.getSecurityType().getMask());
 			buffer.setLittleEndian32(state.getOptions().getSecurityTypesMask());
 		}
+		// Packet defaults its end to capacity. Mark the actual encoded length
+		// explicitly so a future optional field cannot leak zero padding onto
+		// the wire (strict RDP servers reject an overlong X.224 request).
+		buffer.markEnd();
 		/*
 		 * // Authentication request? buffer.setLittleEndian16(0x01);
 		 * buffer.setLittleEndian16(0x08); // Do we try to use SSL?

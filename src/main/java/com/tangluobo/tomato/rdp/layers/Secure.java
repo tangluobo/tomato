@@ -925,28 +925,32 @@ public class Secure implements Layer<Rdp> {
 		buffer.setLittleEndian16(state.isRDP5() ? 1 : 0);
 		if (state.isRDP5()) {
 			buffer.setLittleEndian32(0); // out_uint32(s, 0);
-			boolean thirtyTwoBitColor = false;
-			int bpp = state.getServerBpp();
-			if (bpp >= 32) {
-				bpp = 24;
-				thirtyTwoBitColor = true;
-			}
-			buffer.setLittleEndian16(bpp); // out_uint8(s,
+			int requestedBpp = state.getServerBpp();
+			boolean thirtyTwoBitColor = requestedBpp >= 32;
+			// highColorDepth has no 32-bpp enum. A 32-bpp session is requested by
+			// writing 24 here, advertising RNS_UD_32BPP_SUPPORT below, and setting
+			// RNS_UD_CS_WANT_32BPP_SESSION in earlyCapabilityFlags.
+			int highColorDepth = thirtyTwoBitColor ? 24 : requestedBpp;
+			buffer.setLittleEndian16(highColorDepth); // out_uint8(s,
 											// g_server_bpp);
-			switch (bpp) {
+			int supportedColorDepths;
+			switch (requestedBpp) {
 			case 32:
-				buffer.setLittleEndian16(0x0008);
+				// Keep 24/16-bit fallbacks for older Windows servers while explicitly
+				// declaring the 32-bit surface format required by RDPGFX.
+				supportedColorDepths = 0x0008 | 0x0001 | 0x0002;
 				break;
 			case 24:
-				buffer.setLittleEndian16(0x0001);
+				supportedColorDepths = 0x0001;
 				break;
 			case 15:
-				buffer.setLittleEndian16(0x0004);
+				supportedColorDepths = 0x0004;
 				break;
 			default:
-				buffer.setLittleEndian16(0x0002);
+				supportedColorDepths = 0x0002;
 				break;
 			}
+			buffer.setLittleEndian16(supportedColorDepths);
 			// early caps
 			// RNS_UD_CS_SUPPORT_ERRINFO_PDU Indicates that the client supports
 			// the Set Error Info 0x0001
@@ -961,6 +965,12 @@ public class Secure implements Layer<Rdp> {
 			// int earlyCaps = 0x0001 | 0x0040 | 0x0020 | 0x0080;
 			// int earlyCaps = 0x0001 | 0x0020;
 			int earlyCaps = 0x0001 | 0x0004;
+			for (int i = 0; i < channels.num_channels(); i++) {
+				if ("drdynvc".equals(channels.channel(i).name())) {
+					earlyCaps |= 0x0100; // RNS_UD_CS_SUPPORT_DYNVC_GFX_PROTOCOL
+					break;
+				}
+			}
 			if (thirtyTwoBitColor)
 				earlyCaps = earlyCaps | 0x0002;
 			buffer.setLittleEndian16(earlyCaps);

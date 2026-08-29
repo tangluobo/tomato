@@ -382,8 +382,15 @@ public class MCS implements Layer<Secure> {
 			logger.debug("send_edrq");
 		Packet buffer = isoLayer.init(5);
 		buffer.set8(EDRQ << 2);
-		buffer.setBigEndian16(1); // height
-		buffer.setBigEndian16(1); // interval
+		// subHeight and subInterval are ASN.1 PER INTEGERs.  Each zero value is
+		// encoded as a one-byte length followed by the value: 01 00.  They are
+		// not fixed-width big-endian shorts (00 01); that malformed encoding is
+		// tolerated by some Windows RDP servers, but FreeRDP/GNOME consumes only
+		// four of the five MCS bytes and rejects the remaining byte.
+		buffer.set8(1);
+		buffer.set8(0); // subHeight
+		buffer.set8(1);
+		buffer.set8(0); // subInterval
 		buffer.markEnd();
 		isoLayer.send(buffer);
 	}

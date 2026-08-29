@@ -69,6 +69,7 @@ public class Options {
 	private TimeZone timeZone = TimeZone.getDefault();
 	private Configuration jaasConfiguration;
 	private String cookie;
+	private byte[] routingToken;
 	private List<SecurityType> securityTypes = new ArrayList<>(Arrays.asList(SecurityType.supported()));
 	private int lmCompatibility = 3;
 	private CredSspTokenMode credSspTokenMode = CredSspTokenMode.RAW_NTLM;
@@ -123,12 +124,21 @@ public class Options {
 		return cookie;
 	}
 
+	/** Raw LoadBalanceInfo inserted into the X.224 Connection Request. */
+	public byte[] getRoutingToken() {
+		return routingToken == null ? null : routingToken.clone();
+	}
+
 	public List<SecurityType> getSecurityTypes() {
 		return securityTypes;
 	}
 
 	public void setCookie(String cookie) {
 		this.cookie = cookie;
+	}
+
+	public void setRoutingToken(byte[] routingToken) {
+		this.routingToken = routingToken == null ? null : routingToken.clone();
 	}
 
 	public Configuration getJaasConfiguration() {

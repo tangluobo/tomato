@@ -58,6 +58,13 @@ public class NTLMAuthenticate implements PacketPayload {
 		// SEC_E_INVALID_TOKEN (0x80090308).
 		authenticateFlags &= ~(NTLM.NTLMSSP_TARGET_TYPE_SERVER
 				| NTLM.NTLMSSP_TARGET_TYPE_DOMAIN);
+		// Some non-Windows acceptors echo both character-set capability bits in
+		// CHALLENGE_MESSAGE. AUTHENTICATE_MESSAGE must select one encoding. This
+		// implementation serializes Unicode whenever it is available, therefore
+		// do not also advertise OEM in the final token.
+		if ((authenticateFlags & NTLM.NTLMSSP_NEGOTIATE_UNICODE) != 0) {
+			authenticateFlags &= ~NTLM.NTLM_NEGOTIATE_OEM;
+		}
 		state.setFlags(authenticateFlags);
 		/* Compute responses */
 		computeResponse();

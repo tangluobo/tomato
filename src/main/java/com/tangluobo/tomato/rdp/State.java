@@ -6,7 +6,6 @@ import java.io.File;
 import java.net.InetAddress;
 import java.util.List;
 import java.util.StringTokenizer;
-import java.util.UUID;
 import java.util.concurrent.Semaphore;
 
 import org.apache.commons.lang3.StringUtils;
@@ -44,6 +43,7 @@ public class State {
 	private int clientAddressFamily;
 	private String clientDir;
 	private String cookie;
+	private byte[] routingToken;
 	private CredentialProvider credentialProvider;
 	private Semaphore commLock = new Semaphore(1);
 	private int mcsUserId;
@@ -106,8 +106,7 @@ public class State {
 		height = options.getHeight() == 0 ? 768 : options.getHeight();
 		serverBpp = options.getBpp();
 		cookie = options.getCookie();
-		if (StringUtils.isBlank(cookie))
-			cookie = UUID.randomUUID().toString();
+		routingToken = options.getRoutingToken();
 		if (!options.getSecurityTypes().isEmpty()) {
 			securityType = options.getSecurityTypes().get(options.getSecurityTypes().size() - 1);
 		}
@@ -156,6 +155,10 @@ public class State {
 
 	public String getCookie() {
 		return cookie;
+	}
+
+	public byte[] getRoutingToken() {
+		return routingToken == null ? null : routingToken.clone();
 	}
 
 	public CredentialProvider getCredentialProvider() {

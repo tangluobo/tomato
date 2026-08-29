@@ -12,12 +12,14 @@
 package com.tangluobo.tomato.rdp.layers;
 
 import java.awt.Image;
+import java.awt.HeadlessException;
 import java.awt.Toolkit;
 import java.awt.image.IndexColorModel;
 import java.io.EOFException;
 import java.io.IOException;
 import java.net.SocketException;
 import java.net.UnknownHostException;
+import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.util.List;
 import java.util.TimeZone;
@@ -39,6 +41,8 @@ import com.tangluobo.tomato.rdp.Orders;
 import com.tangluobo.tomato.rdp.Packet;
 import com.tangluobo.tomato.rdp.RdesktopDisconnectException;
 import com.tangluobo.tomato.rdp.RdesktopException;
+import com.tangluobo.tomato.rdp.RdpRedirectionException;
+import com.tangluobo.tomato.rdp.RdpRedirectionInfo;
 import com.tangluobo.tomato.rdp.SecurityType;
 import com.tangluobo.tomato.rdp.State;
 import com.tangluobo.tomato.rdp.CredentialProvider.CredentialType;
@@ -156,6 +160,7 @@ public class Rdp implements Layer<Layer<?>> {
 	private static final int RDP_PDU_CONFIRM_ACTIVE = 3;
 	private static final int RDP_PDU_DATA = 7;
 	private static final int RDP_PDU_DEACTIVATE_ALL = 6;
+	private static final int RDP_PDU_SERVER_REDIRECTION = 10;
 	// PDU Types
 	private static final int RDP_PDU_DEMAND_ACTIVE = 1;
 	private static final int RDP_POINTER_CACHED = 7;
@@ -341,12 +346,114 @@ public class Rdp implements Layer<Layer<?>> {
 			// all the others should be this
 			this.processData(data);
 			break;
+		case (Rdp.RDP_PDU_SERVER_REDIRECTION):
+			RdpRedirectionInfo redirection = processServerRedirection(data);
+			if (!redirection.isNoRedirect()) {
+				throw new RdpRedirectionException(redirection);
+			}
+			logger.info("Server Redirection PDU marked LB_NOREDIRECT; staying on current session");
+			break;
 		case 0:
 			break; // 32K keep alive fix, see receive() - rdesktop
 					// 1.2.0.
 		default:
 			throw new RdesktopException("Unimplemented type in main loop :" + type[0]);
 		}
+	}
+
+	/** Parse MS-RDPBCGR 2.2.13 Enhanced Security Server Redirection PDU. */
+	private RdpRedirectionInfo processServerRedirection(Packet data) throws RdesktopException {
+		// Enhanced security wraps the RDP_SERVER_REDIRECTION_PACKET in two pad bytes.
+		requireRedirectionBytes(data, data.getEnd(), 14, "header");
+		data.incrementPosition(2); // pad2Octets
+		int packetStart = data.getPosition();
+		int securityFlags = data.getLittleEndian16() & 0xffff;
+		if (securityFlags != 0x0400) {
+			throw new RdesktopException("无效的Server Redirection标志: 0x"
+					+ Integer.toHexString(securityFlags));
+		}
+		int packetLength = data.getLittleEndian16() & 0xffff;
+		if (packetLength < 12 || packetStart + packetLength > data.getEnd()) {
+			throw new RdesktopException("无效的Server Redirection长度: " + packetLength);
+		}
+		int packetEnd = packetStart + packetLength;
+		int sessionId = data.getLittleEndian32();
+		int flags = data.getLittleEndian32();
+		RdpRedirectionInfo result = new RdpRedirectionInfo(sessionId, flags);
+
+		if ((flags & RdpRedirectionInfo.LB_TARGET_NET_ADDRESS) != 0)
+			result.setTargetNetAddress(readRedirectionUnicode(data, packetEnd, 80, "TargetNetAddress"));
+		if ((flags & RdpRedirectionInfo.LB_LOAD_BALANCE_INFO) != 0)
+			result.setLoadBalanceInfo(readRedirectionBlob(data, packetEnd, 65535, "LoadBalanceInfo"));
+		if ((flags & RdpRedirectionInfo.LB_USERNAME) != 0)
+			result.setUsername(readRedirectionUnicode(data, packetEnd, 512, "UserName"));
+		if ((flags & RdpRedirectionInfo.LB_DOMAIN) != 0)
+			result.setDomain(readRedirectionUnicode(data, packetEnd, 52, "Domain"));
+		if ((flags & RdpRedirectionInfo.LB_PASSWORD) != 0)
+			result.setPassword(readRedirectionBlob(data, packetEnd, 512, "Password"));
+		if ((flags & RdpRedirectionInfo.LB_TARGET_FQDN) != 0)
+			result.setTargetFqdn(readRedirectionUnicode(data, packetEnd, 512, "TargetFQDN"));
+		if ((flags & RdpRedirectionInfo.LB_TARGET_NETBIOS_NAME) != 0)
+			result.setTargetNetbiosName(readRedirectionUnicode(data, packetEnd, 32, "TargetNetBiosName"));
+		if ((flags & RdpRedirectionInfo.LB_CLIENT_TSV_URL) != 0)
+			result.setTsvUrl(readRedirectionBlob(data, packetEnd, 65535, "TsvUrl"));
+		if ((flags & RdpRedirectionInfo.LB_REDIRECTION_GUID) != 0)
+			result.setRedirectionGuid(readRedirectionBlob(data, packetEnd, 65535, "RedirectionGuid"));
+		if ((flags & RdpRedirectionInfo.LB_TARGET_CERTIFICATE) != 0)
+			result.setTargetCertificate(readRedirectionBlob(data, packetEnd, 65535, "TargetCertificate"));
+		if ((flags & RdpRedirectionInfo.LB_TARGET_NET_ADDRESSES) != 0) {
+			byte[] addresses = readRedirectionBlob(data, packetEnd, 65535, "TargetNetAddresses");
+			Packet addressPacket = new Packet(addresses);
+			addressPacket.markEnd(addresses.length);
+			addressPacket.setPosition(0);
+			requireRedirectionBytes(addressPacket, addresses.length, 4, "TargetNetAddresses.count");
+			long count = Integer.toUnsignedLong(addressPacket.getLittleEndian32());
+			if (count > 64) throw new RdesktopException("TargetNetAddresses数量过大: " + count);
+			for (int i = 0; i < (int) count; i++) {
+				result.addTargetNetAddress(readRedirectionUnicode(
+						addressPacket, addresses.length, 80, "TargetNetAddresses[" + i + "]"));
+			}
+		}
+
+		logger.info("Received Server Redirection PDU: flags=0x"
+				+ Integer.toHexString(flags) + ", sessionId="
+				+ Integer.toUnsignedString(sessionId) + ", routingToken="
+				+ (result.getLoadBalanceInfo() == null ? 0 : result.getLoadBalanceInfo().length)
+				+ " bytes, rdstls=" + result.isPasswordPkEncrypted());
+		return result;
+	}
+
+	private static String readRedirectionUnicode(Packet data, int limit, int maxLength, String field)
+			throws RdesktopException {
+		byte[] value = readRedirectionBlob(data, limit, maxLength, field);
+		if (value.length < 2 || (value.length & 1) != 0)
+			throw new RdesktopException(field + "的UTF-16LE长度无效: " + value.length);
+		String decoded = new String(value, StandardCharsets.UTF_16LE);
+		int terminator = decoded.indexOf('\0');
+		if (terminator < 0)
+			throw new RdesktopException(field + "缺少终止符");
+		return decoded.substring(0, terminator);
+	}
+
+	private static byte[] readRedirectionBlob(Packet data, int limit, int maxLength, String field)
+			throws RdesktopException {
+		requireRedirectionBytes(data, limit, 4, field + ".length");
+		long length = Integer.toUnsignedLong(data.getLittleEndian32());
+		if (length > maxLength || length > Integer.MAX_VALUE)
+			throw new RdesktopException(field + "长度过大: " + length);
+		requireRedirectionBytes(data, limit, (int) length, field);
+		byte[] value = new byte[(int) length];
+		if (value.length > 0) {
+			data.copyToByteArray(value, 0, data.getPosition(), value.length);
+			data.incrementPosition(value.length);
+		}
+		return value;
+	}
+
+	private static void requireRedirectionBytes(Packet data, int limit, int length, String field)
+			throws RdesktopException {
+		if (length < 0 || data.getPosition() > limit || limit - data.getPosition() < length)
+			throw new RdesktopException("Server Redirection字段被截断: " + field);
 	}
 
 	/**
@@ -479,7 +586,15 @@ public class Rdp implements Layer<Layer<?>> {
 		int cache_idx = data.getLittleEndian16();
 		if (logger.isDebugEnabled())
 			logger.debug(String.format("Setting cache cursor %d", cache_idx));
-		state.getCanvas().getDisplay().setCursor(state.getCache().getCursor(cache_idx));
+		try {
+			state.getCanvas().getDisplay().setCursor(state.getCache().getCursor(cache_idx));
+		} catch (RdesktopException e) {
+			// A server can reference its default pointer before sending the image.
+			// Keep the platform cursor instead of treating this as a transport error.
+			logger.warn("Ignoring missing cached cursor {}", cache_idx);
+		} catch (HeadlessException e) {
+			logger.debug("Cursor display is unavailable in headless mode");
+		}
 	}
 
 	protected void process_colour_pointer_pdu(Packet data) throws RdesktopException {
@@ -495,16 +610,24 @@ public class Rdp implements Layer<Layer<?>> {
 		height = data.getLittleEndian16();
 		masklen = data.getLittleEndian16();
 		datalen = data.getLittleEndian16();
-		mask = new byte[masklen];
+		mask = masklen == 0 ? null : new byte[masklen];
 		pixel = new byte[datalen];
-		data.copyToByteArray(pixel, 0, data.getPosition(), datalen);
-		data.incrementPosition(datalen);
-		data.copyToByteArray(mask, 0, data.getPosition(), masklen);
-		data.incrementPosition(masklen);
+		if (datalen > 0) {
+			data.copyToByteArray(pixel, 0, data.getPosition(), datalen);
+			data.incrementPosition(datalen);
+		}
+		if (masklen > 0) {
+			data.copyToByteArray(mask, 0, data.getPosition(), masklen);
+			data.incrementPosition(masklen);
+		}
 		cursor = state.getCanvas().createCursor(x, y, width, height, mask, pixel, cache_idx, 24, true);
 		// logger.info("Creating and setting cursor " + cache_idx);
-		state.getCanvas().getDisplay().setCursor(cursor);
 		state.getCache().putCursor(cache_idx, cursor);
+		try {
+			state.getCanvas().getDisplay().setCursor(cursor);
+		} catch (HeadlessException e) {
+			logger.debug("Cursor display is unavailable in headless mode");
+		}
 	}
 
 	protected void process_colour_pointer_pdu_new(Packet data) throws RdesktopException {
@@ -521,22 +644,33 @@ public class Rdp implements Layer<Layer<?>> {
 		height = data.getLittleEndian16();
 		masklen = data.getLittleEndian16();
 		datalen = data.getLittleEndian16();
-		mask = new byte[masklen];
+		mask = masklen == 0 ? null : new byte[masklen];
 		pixel = new byte[datalen];
-		data.copyToByteArray(pixel, 0, data.getPosition(), datalen);
-		data.incrementPosition(datalen);
-		data.copyToByteArray(mask, 0, data.getPosition(), masklen);
-		data.incrementPosition(masklen);
+		if (datalen > 0) {
+			data.copyToByteArray(pixel, 0, data.getPosition(), datalen);
+			data.incrementPosition(datalen);
+		}
+		if (masklen > 0) {
+			data.copyToByteArray(mask, 0, data.getPosition(), masklen);
+			data.incrementPosition(masklen);
+		}
 		cursor = state.getCanvas().createCursor(x, y, width, height, mask, pixel, cache_idx, xorBpp, false);
-		state.getCanvas().getDisplay().setCursor(cursor);
 		state.getCache().putCursor(cache_idx, cursor);
+		try {
+			state.getCanvas().getDisplay().setCursor(cursor);
+		} catch (HeadlessException e) {
+			logger.debug("Cursor display is unavailable in headless mode");
+		}
 	}
 
 	/* Process a null system pointer PDU */
 	protected void process_null_system_pointer_pdu(Packet s) throws RdesktopException {
-		// FIXME: We should probably set another cursor here,
-		// like the X window system base cursor or something.
-		state.getCanvas().getDisplay().setCursor(state.getCache().getCursor(0));
+		try {
+			state.getCanvas().getDisplay().setCursor(state.getCache().getCursor(0));
+		} catch (RdesktopException | HeadlessException e) {
+			// A null system pointer does not require cache entry zero to exist.
+			state.getCanvas().getDisplay().setCursor(null);
+		}
 	}
 
 	protected void processBitmapUpdates(Packet data) throws RdesktopException {
@@ -897,8 +1031,12 @@ public class Rdp implements Layer<Layer<?>> {
 		 * MS-RDPBCGR 2.2.1.17
 		 */
 		// this.sendPersistentKeyList();
-		this.sendFonts(1);
-		this.sendFonts(2);
+		// The finalization sequence contains exactly one Client Font List PDU.
+		// The old rdesktop-era code sent two partial lists (flags 1 then 2).
+		// Current FreeRDP servers transition to ACTIVE after the first list, so
+		// the second packet is an unexpected activation PDU and GNOME responds
+		// with Deactivate All before tearing down the handover connection.
+		this.sendFonts();
 		Packet p = this.receive(type); // Receive RDP_PDU_SYNCHRONIZE
 		if (logger.isDebugEnabled())
 			logger.debug("RDP_PDU_SYNCHRONIZE " + p);
@@ -1117,7 +1255,10 @@ public class Rdp implements Layer<Layer<?>> {
 		data.setLittleEndian16(caplen);
 		data.copyFromByteArray(RDP_SOURCE, 0, data.getPosition(), RDP_SOURCE.length);
 		data.incrementPosition(RDP_SOURCE.length);
-		data.setLittleEndian16(0xf); // num_caps
+		// Sixteen capability sets are written below. The old value (15) left the
+		// final 8-byte Brush Capability Set outside combinedCapabilities, so
+		// strict servers rejected Confirm Active as eight bytes overlong.
+		data.setLittleEndian16(0x10); // num_caps
 		data.incrementPosition(2); // pad
 		sendGeneralCaps(data); // 1
 		sendBitmapCaps(data); // 2
@@ -1206,12 +1347,12 @@ public class Rdp implements Layer<Layer<?>> {
 		}
 	}
 
-	private void sendFonts(int seq) throws RdesktopException, IOException {
+	private void sendFonts() throws RdesktopException, IOException {
 		Packet data = this.initData(8);
 		data.setLittleEndian16(0); /* number of fonts */
-		data.setLittleEndian16(0x3e); /* unknown */
-		data.setLittleEndian16(seq); /* unknown */
-		data.setLittleEndian16(0x32); /* entry size */
+		data.setLittleEndian16(0); /* total number of fonts */
+		data.setLittleEndian16(0x0003); /* FONTLIST_FIRST | FONTLIST_LAST */
+		data.setLittleEndian16(0x0032); /* entry size */
 		data.markEnd();
 		if (logger.isDebugEnabled())
 			logger.debug("fonts");
@@ -1346,7 +1487,7 @@ public class Rdp implements Layer<Layer<?>> {
 		int dirlen = 2 * directory.length();
 		int packetlen = 18 + domainlen + userlen + passlen + commandlen + dirlen + 10;
 		if (state.isRDP5()) {
-			packetlen += 2 + 4 + len_ip + 4 + len_dll + 172 + 4 + 4 + 2 + 28 + 2 + 2;
+			packetlen += 2 + 4 + len_ip + 4 + len_dll + 172 + 4 + 4 + 2 + 2 + 2;
 		}
 		if (logger.isDebugEnabled())
 			logger.debug("Sending RDP Logon packet");
@@ -1380,7 +1521,9 @@ public class Rdp implements Layer<Layer<?>> {
 			data.setLittleEndian32(0); // client session ID
 			data.setLittleEndian32(state.getOptions().getRdp5PerformanceFlags());
 			data.setLittleEndian16(0); // auto reconnect cookie length
-			data.fill(28); // TODO auto reconnect cookie
+			// No ARC_CS_PRIVATE_PACKET follows when cbAutoReconnectLen is zero.
+			// Writing the old 28-byte placeholder made the TS_INFO_PACKET longer
+			// than its declared fields and strict FreeRDP servers rejected it.
 			data.setLittleEndian16(16); // reserved 1
 			data.setLittleEndian16(16); // reserved 2
 		}

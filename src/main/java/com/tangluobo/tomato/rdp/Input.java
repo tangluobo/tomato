@@ -561,7 +561,14 @@ public class Input {
 		capsLockOn = false;
 		numLockOn = false;
 		scrollLockOn = false;
-		doLockKeys(); // ensure lock key states are correct
+		try {
+			doLockKeys(); // ensure lock key states are correct
+		} catch (UnsupportedOperationException e) {
+			// Headless/remote Java runtimes may not expose the host lock-key
+			// state. This synchronization is optional and must not abort the RDP
+			// activation sequence.
+			logger.warn("Local lock-key state is unavailable; skipping initial keyboard LED synchronization");
+		}
 	}
 
 	protected void doLockKeys() {

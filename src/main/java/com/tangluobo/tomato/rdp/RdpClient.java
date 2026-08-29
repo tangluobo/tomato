@@ -174,7 +174,11 @@ public class RdpClient {
         options = new Options();
         options.setWidth(width);
         options.setHeight(height);
-        options.setBpp(bpp);
+        // RDPGFX uses XRGB/ARGB 32-bit surfaces, and GNOME Remote Desktop
+        // rejects a client that advertises the Graphics Pipeline with a lower
+        // colour depth. The legacy setting remains an input compatibility
+        // option; the wire session is promoted to 32 bpp.
+        options.setBpp(32);
         options.setRdp5(true);
         options.setPacketEncryption(true);
         options.setBitmapCaching(true);
@@ -268,6 +272,7 @@ public class RdpClient {
 
         // 注册音频重定向通道（保持MSTSC典型静态通道顺序）
         registerSoundChannel(channels);
+        registerGraphicsChannel(channels);
 
         // 创建RDP层（使用RdpPatch修复rdp5_process加密bug）
         rdpLayer = new RdpPatch(context, state, channels);
@@ -291,17 +296,9 @@ public class RdpClient {
                 logger.info("开始RDP连接: " + host + ":" + port + " useSsl=" + useSsl);
                 rdpLayer.connect(new DefaultIO(InetAddress.getByName(host), port),
                         dcp, options.getCommand(), options.getDirectory());
-                // 核心修复：SSL模式下在connect()之后强制设置licenceIssued=true
-                // 原因：Secure.receive()在licenceIssued=false时会读取4字节sec_flags header，
-                // 但SSL模式下接收的数据已被TLS层加密，不存在Secure层header。
-                // 这导致4字节RDP有效数据被错误消费，后续所有PDU解析失败（bitmapUpdates=0）。
-                // 必须在connect()之后设置：connect()期间Secure层发送PDUs时需要sec_flags header
-                // （服务器在SSL模式下仍期望看到sec_flags来识别PDU类型如SEC_LOGON_INFO），
-                // 但connect()之后接收PDUs时不应再读sec_flags（SSL模式下接收侧无此header）。
-                if (useSsl && !state.isLicenceIssued()) {
-                    logger.info("SSL模式：在connect()后强制设置licenceIssued=true（接收侧无Secure层header）");
-                    state.setLicenceIssued(true);
-                }
+                // TLS/HYBRID仍会在Demand Active之前通过Basic Security Header
+                // 发送服务器许可PDU。必须由Licence.process()在收到有效许可
+                // 结果后更新licenceIssued，不能在connect()返回时提前跳过。
                 logger.info("RDP协议握手完成，进入主循环: " + host + ":" + port);
                 rdpLayer.mainLoop();
                 logger.info("RDP主循环正常退出");
@@ -351,8 +348,9 @@ public class RdpClient {
                     retryWithSslSecurity(host, port, dcp);
                     return;
                 }
-                logger.log(Level.SEVERE, "IO错误: " + e.getMessage());
-                notifyDisconnected("IO错误: " + e.getMessage());
+                String detail = describeException(e);
+                logger.log(Level.SEVERE, "IO错误: " + detail, e);
+                notifyDisconnected("IO错误: " + detail);
             } catch (Exception e) {
                 logger.log(Level.SEVERE, "RDP连接错误: " + e.getMessage(), e);
                 notifyDisconnected("连接错误: " + e.getMessage());
@@ -435,6 +433,21 @@ public class RdpClient {
         }
     }
 
+    /** Registers the MS-RDPEDYC transport used by the RDP Graphics Pipeline. */
+    private void registerGraphicsChannel(VChannels channels) {
+        try {
+            channels.register(new DrdynvcChannel(() -> {
+                Consumer<Void> callback = onFirstFrame;
+                if (callback != null) {
+                    callback.accept(null);
+                }
+            }));
+            logger.info("动态图形通道(drdynvc/rdpgfx)已注册");
+        } catch (RdesktopException e) {
+            logger.log(Level.WARNING, "注册动态图形通道失败: " + e.getMessage());
+        }
+    }
+
     /** 停止音频通道播放并释放资源（断开/重连时调用） */
     private void shutdownSoundChannel() {
         RdpsndChannel ch = rdpsndChannel;
@@ -502,6 +515,7 @@ public class RdpClient {
             // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
             registerClipboardChannel(state, canvas, channels);
             registerSoundChannel(channels);
+            registerGraphicsChannel(channels);
             rdpLayer = new RdpPatch(context, state, channels);
             configureFrameCallback((RdpPatch) rdpLayer);
 
@@ -561,6 +575,7 @@ public class RdpClient {
             // 回退重连后重新注册剪贴板通道（重建VChannels/Canvas后原注册已丢失）
             registerClipboardChannel(state, canvas, channels);
             registerSoundChannel(channels);
+            registerGraphicsChannel(channels);
             rdpLayer = new RdpPatch(context, state, channels);
             configureFrameCallback((RdpPatch) rdpLayer);
 
@@ -574,13 +589,6 @@ public class RdpClient {
             rdpLayer.connect(new DefaultIO(InetAddress.getByName(host), port),
                     dcp, options.getCommand(), options.getDirectory());
 
-            // SSL模式下connect()后必须强制设置licenceIssued=true：
-            // SSL接收侧数据已被TLS层加密，不存在Secure层sec_flags header，
-            // 若licenceIssued=false会错误消费4字节RDP有效数据，导致PDU解析失败。
-            if (!state.isLicenceIssued()) {
-                logger.info("SSL模式：在connect()后强制设置licenceIssued=true（接收侧无Secure层header）");
-                state.setLicenceIssued(true);
-            }
             logger.info("SSL/TLS连接成功，进入主循环");
             rdpLayer.mainLoop();
             logger.info("RDP主循环正常退出");
@@ -611,43 +619,114 @@ public class RdpClient {
      */
     private void retryWithHybridSecurity(String host, int port, CredentialProvider dcp) {
         Exception rawNtlmFailure = null;
+        boolean mobileRedirectCompatibility = false;
+        int redirectCount = 0;
+        String currentHost = host;
+        int currentPort = port;
+        CredentialProvider currentCredentials = dcp;
         try {
-            // 先使用已在现有服务器验证通过的裸NTLM格式。仅当服务器明确以
-            // 无效令牌/内部TLS警报拒绝时，才在一条全新的连接上改用SPNEGO。
-            try {
-                connectHybridAttempt(host, port, dcp, CredSspTokenMode.RAW_NTLM);
-            } catch (Exception e) {
-                if (!isCredSspTokenFormatFailure(e)) {
-                    throw e;
-                }
-                rawNtlmFailure = e;
-                logger.log(Level.WARNING,
-                        "HYBRID RAW_NTLM被服务器拒绝，使用全新连接回退到SPNEGO/NTLM: "
-                                + e.getMessage());
-                connectHybridAttempt(host, port, dcp, CredSspTokenMode.SPNEGO_NTLM);
-            }
+            rawNtlmFailure = connectHybridWithTokenFallback(
+                    currentHost, currentPort, currentCredentials);
 
-            // HYBRID模式下connect()后也需设置licenceIssued=true（与SSL相同，TLS接收侧无Secure层header）
-            if (!state.isLicenceIssued()) {
-                logger.info("HYBRID模式：在connect()后强制设置licenceIssued=true");
-                state.setLicenceIssued(true);
+            while (true) {
+                try {
+                    logger.info("HYBRID (CredSSP/NLA) 连接成功，进入主循环");
+                    rdpLayer.mainLoop();
+                    logger.info("RDP主循环正常退出");
+                    shutdownSoundChannel();
+                    return;
+                } catch (RdpRedirectionException redirectException) {
+                    RdpRedirectionInfo redirect = redirectException.getRedirection();
+                    if (++redirectCount > 6) {
+                        throw new RdesktopException("服务端重定向次数过多（超过6次）");
+                    }
+
+                    if (redirect.isPasswordPkEncrypted()) {
+                        if (mobileRedirectCompatibility) {
+                            throw new RdesktopException(
+                                    "服务端在兼容模式下仍要求RDSTLS，无法使用普通NLA完成重定向");
+                        }
+
+                        // GNOME Remote Desktop deliberately sends clear-text one-time
+                        // handover credentials to iOS/Android clients, which then use
+                        // ordinary NLA on the redirected connection. Only switch identity
+                        // after a server actually asks for RDSTLS, so normal Windows RDP
+                        // sessions retain the existing Windows client capabilities.
+                        logger.info("服务端重定向要求RDSTLS；重新协商GNOME普通NLA重定向兼容路径");
+                        mobileRedirectCompatibility = true;
+                        options.setOsMajor(0x0007); // OSMAJORTYPE_ANDROID
+                        options.setOsMinor(0x0000); // OSMINORTYPE_UNSPECIFIED
+                        options.setRoutingToken(null);
+                        currentHost = host;
+                        currentPort = port;
+                        currentCredentials = dcp;
+                    } else {
+                        if (!redirect.hasFlag(RdpRedirectionInfo.LB_USERNAME)
+                                || !redirect.hasFlag(RdpRedirectionInfo.LB_PASSWORD)) {
+                            throw new RdesktopException("Server Redirection缺少一次性用户名或密码");
+                        }
+
+                        char[] redirectPassword = redirect.getClearTextPassword();
+                        DefaultCredentialsProvider redirectedCredentials =
+                                new DefaultCredentialsProvider(
+                                        redirect.getDomain(), redirect.getUsername(), redirectPassword);
+                        currentHost = redirect.selectTargetHost(currentHost);
+                        currentCredentials = redirectedCredentials;
+                        options.setRoutingToken(redirect.getLoadBalanceInfo());
+                        logger.info("跟随RDP服务端重定向: target=" + currentHost + ":" + currentPort
+                                + ", routingToken="
+                                + (redirect.getLoadBalanceInfo() == null
+                                        ? 0 : redirect.getLoadBalanceInfo().length)
+                                + " bytes, hop=" + redirectCount);
+                    }
+
+                    rawNtlmFailure = connectHybridWithTokenFallback(
+                            currentHost, currentPort, currentCredentials);
+                }
             }
-            logger.info("HYBRID (CredSSP/NLA) 连接成功，进入主循环");
-            rdpLayer.mainLoop();
-            logger.info("RDP主循环正常退出");
-            shutdownSoundChannel();
         } catch (RdesktopDisconnectException e) {
             logger.info("RDP连接断开: " + e.getMessage());
             notifyDisconnected(e.getMessage() != null ? e.getMessage() : "连接已断开");
         } catch (Exception e) {
             logger.log(Level.SEVERE, "HYBRID (CredSSP/NLA) 重连也失败: " + e.getMessage(), e);
             String detail = rawNtlmFailure == null
-                    ? e.getMessage()
-                    : "RAW_NTLM=" + rawNtlmFailure.getMessage()
-                            + "；SPNEGO_NTLM=" + e.getMessage();
+                    ? describeHybridFailure(e, dcp)
+                    : "RAW_NTLM=" + describeHybridFailure(rawNtlmFailure, dcp)
+                            + "；SPNEGO_NTLM=" + describeHybridFailure(e, dcp);
             notifyDisconnected("连接失败（Standard、SSL和HYBRID均不可用）: " + detail);
         } finally {
+            // Redirection credentials and routing data are one-shot. Do not let them
+            // leak into the next user-initiated connection on this RdpClient.
+            options.setRoutingToken(null);
+            if (mobileRedirectCompatibility) {
+                options.setOsMajor(-1);
+                options.setOsMinor(-1);
+            }
             connected = false;
+        }
+    }
+
+    /** Connect once with RAW_NTLM, falling back to SPNEGO only for token-format failures. */
+    private Exception connectHybridWithTokenFallback(String host, int port,
+                                                      CredentialProvider credentials)
+            throws Exception {
+        try {
+            connectHybridAttempt(host, port, credentials, CredSspTokenMode.RAW_NTLM);
+            return null;
+        } catch (Exception rawFailure) {
+            if (!isCredSspTokenFormatFailure(rawFailure)) {
+                throw rawFailure;
+            }
+            logger.log(Level.WARNING,
+                    "HYBRID RAW_NTLM被服务器拒绝，使用全新连接回退到SPNEGO/NTLM: "
+                            + rawFailure.getMessage());
+            try {
+                connectHybridAttempt(host, port, credentials, CredSspTokenMode.SPNEGO_NTLM);
+                return rawFailure;
+            } catch (Exception spnegoFailure) {
+                spnegoFailure.addSuppressed(rawFailure);
+                throw spnegoFailure;
+            }
         }
     }
 
@@ -678,6 +757,7 @@ public class RdpClient {
         registerRdpdrChannel(channels);
         registerClipboardChannel(state, canvas, channels);
         registerSoundChannel(channels);
+        registerGraphicsChannel(channels);
         rdpLayer = new RdpPatch(context, state, channels);
         configureFrameCallback((RdpPatch) rdpLayer);
 
@@ -711,6 +791,70 @@ public class RdpClient {
             current = current.getCause();
         }
         return false;
+    }
+
+    /**
+     * 将CredSSP服务端错误翻译为可操作的信息。WinPR/FreeRDP在NTLM服务端
+     * 校验失败时可能把线程中遗留的ERROR_MORE_DATA (234)放入TSRequest，
+     * 它不是SPNEGO继续交换指令，不能据此重复认证。
+     */
+    private String describeHybridFailure(Throwable error, CredentialProvider credentials) {
+        HResultException hresult = findCause(error, HResultException.class);
+        if (hresult != null && hresult.getFacility() == 7 && hresult.getCode() == 0x00ea) {
+            String domain = "";
+            String username = "";
+            try {
+                java.util.List<String> identity = credentials.getCredentials("nla-diagnostic", 0,
+                        CredentialProvider.CredentialType.DOMAIN,
+                        CredentialProvider.CredentialType.USERNAME);
+                if (identity != null) {
+                    domain = identity.size() > 0 && identity.get(0) != null ? identity.get(0) : "";
+                    username = identity.size() > 1 && identity.get(1) != null ? identity.get(1) : "";
+                }
+            } catch (RuntimeException ignored) {
+                // 诊断文本不能覆盖原始连接异常。
+            }
+            String account = domain.isBlank() ? username : domain + "\\" + username;
+            if (account.isBlank()) {
+                account = "(空)";
+            }
+            return "NLA身份验证被服务端拒绝（Win32 234，当前用户=" + account
+                    + "）。GNOME/FreeRDP通常在RDP凭据未配置、凭据库不可用，"
+                    + "或用户名/密码与‘远程登录’凭据不一致时返回此码；"
+                    + "它不会自动使用Linux系统登录密码。原始错误: " + hresult.getMessage();
+        }
+        return describeException(error);
+    }
+
+    private <T extends Throwable> T findCause(Throwable error, Class<T> type) {
+        Throwable current = error;
+        for (int depth = 0; current != null && depth < 12; depth++) {
+            if (type.isInstance(current)) {
+                return type.cast(current);
+            }
+            current = current.getCause();
+        }
+        return null;
+    }
+
+    /** 返回可复制、不会退化成null的异常摘要，并保留最底层异常类型。 */
+    private String describeException(Throwable error) {
+        if (error == null) {
+            return "未知错误";
+        }
+        Throwable root = error;
+        for (int depth = 0; root.getCause() != null && root.getCause() != root && depth < 12; depth++) {
+            root = root.getCause();
+        }
+        String rootMessage = root.getMessage();
+        String rootDescription = root.getClass().getSimpleName()
+                + (rootMessage == null || rootMessage.isBlank() ? "" : ": " + rootMessage);
+        String message = error.getMessage();
+        if (error == root || message == null || message.isBlank()
+                || message.equals(rootMessage)) {
+            return rootDescription;
+        }
+        return message + "（根因: " + rootDescription + "）";
     }
 
     /**
