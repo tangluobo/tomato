@@ -94,8 +94,38 @@ public class PEResourceExtractor {
             for (PEFile.ResourceEntry group : e.getValue()) {
                 byte[] ico = buildIcoFile(data, group, icons, false);
                 if (ico != null) {
-                    String name = group.nameIsString ? group.nameString : "icon_" + group.nameId;
+                    String name = group.nameIsString ? safeName(group.nameString) : "icon_" + group.nameId;
                     out.add(new ExtractedResource(name, "ico", ico, RT_GROUP_ICON));
+                }
+            }
+        }
+
+        // Vista 以后大尺寸图标帧通常直接以 PNG 编码存放在 RT_ICON 中。
+        // 除了重建多尺寸 ICO，也保留原始 PNG，方便直接获取应用 logo。
+        for (List<PEFile.ResourceEntry> variants : icons.values()) {
+            for (PEFile.ResourceEntry icon : variants) {
+                byte[] image = slice(data, icon);
+                if (isPng(image)) {
+                    String id = icon.nameIsString ? safeName(icon.nameString)
+                            : Integer.toString(icon.nameId);
+                    out.add(new ExtractedResource(
+                            "icon_" + id + "_lang" + icon.langId, "png", image, RT_ICON));
+                }
+            }
+        }
+
+        // 少数链接器/安装器只保留 RT_ICON 而没有 RT_GROUP_ICON。旧实现会把这些
+        // 图像全部跳过；这里将每个裸图像包装为单帧 ICO，至少保证资源可被导出。
+        if (groupIcons.isEmpty()) {
+            for (List<PEFile.ResourceEntry> variants : icons.values()) {
+                for (PEFile.ResourceEntry icon : variants) {
+                    byte[] ico = buildSingleIcon(slice(data, icon));
+                    if (ico != null) {
+                        String id = icon.nameIsString ? safeName(icon.nameString)
+                                : Integer.toString(icon.nameId);
+                        out.add(new ExtractedResource(
+                                "icon_" + id + "_lang" + icon.langId, "ico", ico, RT_ICON));
+                    }
                 }
             }
         }
@@ -176,18 +206,34 @@ public class PEResourceExtractor {
             iconIds[i] = ByteUtils.readUInt16LE(data, p + 12);
         }
 
-        byte[][] iconData = new byte[count][];
+        List<Integer> validIndexes = new ArrayList<>();
+        List<byte[]> validData = new ArrayList<>();
         long totalDataSize = 0;
         for (int i = 0; i < count; i++) {
             int id = iconIds[i];
             List<PEFile.ResourceEntry> list = items.get(id);
             if (list == null || list.isEmpty()) {
-                return null;
+                // 壳、增量链接和损坏的语言包中偶尔会缺一个尺寸；保留其余可用图标。
+                continue;
             }
-            PEFile.ResourceEntry item = list.get(0);
-            iconData[i] = slice(data, item);
-            totalDataSize += iconData[i].length;
+            PEFile.ResourceEntry item = chooseLanguage(list, group.langId);
+            byte[] image = slice(data, item);
+            if (isCursor) {
+                // RT_CURSOR 的前四字节是热点坐标，不属于 DIB/PNG 图像数据。
+                if (image.length <= 4) continue;
+                byte[] withoutHotspot = new byte[image.length - 4];
+                System.arraycopy(image, 4, withoutHotspot, 0, withoutHotspot.length);
+                image = withoutHotspot;
+            }
+            if (image.length == 0) continue;
+            validIndexes.add(i);
+            validData.add(image);
+            totalDataSize += image.length;
         }
+
+        count = validIndexes.size();
+        if (count == 0 || totalDataSize > Integer.MAX_VALUE - (6L + count * 16L)) return null;
+        dirSize = 6 + count * 16;
 
         byte[] ico = new byte[(int) (dirSize + totalDataSize)];
         int type = isCursor ? 2 : 1;
@@ -197,17 +243,21 @@ public class PEResourceExtractor {
 
         long dataOffset = dirSize;
         for (int i = 0; i < count; i++) {
-            int p = gOff + 6 + i * 14;
+            int sourceIndex = validIndexes.get(i);
+            byte[] image = validData.get(i);
+            int p = gOff + 6 + sourceIndex * 14;
             int entry = 6 + i * 16;
             if (isCursor) {
-                int w = data[p] & 0xFF;
-                int h = data[p + 1] & 0xFF;
-                ico[entry] = (byte) (w == 0 ? 0 : w);
-                ico[entry + 1] = (byte) (h == 0 ? 0 : h);
+                int w = ByteUtils.readUInt16LE(data, p);
+                int h = ByteUtils.readUInt16LE(data, p + 2);
+                ico[entry] = (byte) (w >= 256 ? 0 : w);
+                ico[entry + 1] = (byte) (h >= 256 ? 0 : h);
                 ico[entry + 2] = 0;
                 ico[entry + 3] = 0;
-                writeUInt16LE(ico, entry + 4, ByteUtils.readUInt16LE(data, p + 2));
-                writeUInt16LE(ico, entry + 6, ByteUtils.readUInt16LE(data, p + 4));
+                // 热点坐标保存在对应 RT_CURSOR 数据的开头。
+                PEFile.ResourceEntry cursor = chooseLanguage(items.get(iconIds[sourceIndex]), group.langId);
+                writeUInt16LE(ico, entry + 4, ByteUtils.readUInt16LE(data, (int) cursor.dataOffset));
+                writeUInt16LE(ico, entry + 6, ByteUtils.readUInt16LE(data, (int) cursor.dataOffset + 2));
             } else {
                 ico[entry] = data[p];
                 ico[entry + 1] = data[p + 1];
@@ -216,12 +266,69 @@ public class PEResourceExtractor {
                 writeUInt16LE(ico, entry + 4, ByteUtils.readUInt16LE(data, p + 4));
                 writeUInt16LE(ico, entry + 6, ByteUtils.readUInt16LE(data, p + 6));
             }
-            writeUInt32LE(ico, entry + 8, iconData[i].length);
+            writeUInt32LE(ico, entry + 8, image.length);
             writeUInt32LE(ico, entry + 12, (int) dataOffset);
-            System.arraycopy(iconData[i], 0, ico, (int) dataOffset, iconData[i].length);
-            dataOffset += iconData[i].length;
+            System.arraycopy(image, 0, ico, (int) dataOffset, image.length);
+            dataOffset += image.length;
         }
         return ico;
+    }
+
+    /** 优先使用与组资源相同的语言，其次中性语言，最后使用任一可用版本。 */
+    private PEFile.ResourceEntry chooseLanguage(List<PEFile.ResourceEntry> entries, int langId) {
+        for (PEFile.ResourceEntry entry : entries) {
+            if (entry.langId == langId) return entry;
+        }
+        for (PEFile.ResourceEntry entry : entries) {
+            if (entry.langId == 0) return entry;
+        }
+        return entries.get(0);
+    }
+
+    private byte[] buildSingleIcon(byte[] image) {
+        if (image.length < 16) return null;
+        int width = 0;
+        int height = 0;
+        int planes = 1;
+        int bitCount = 32;
+        // PNG 编码的 RT_ICON：IHDR 中宽高为大端整数。
+        if (image.length >= 24 && isPng(image)) {
+            width = (int) ByteUtils.readUInt32BE(image, 16);
+            height = (int) ByteUtils.readUInt32BE(image, 20);
+        } else if (image.length >= 16) {
+            // DIB 图标的高度包含 XOR 与 AND 两张位图，因此需要除以二。
+            width = (int) ByteUtils.readUInt32LE(image, 4);
+            height = (int) ByteUtils.readUInt32LE(image, 8) / 2;
+            planes = ByteUtils.readUInt16LE(image, 12);
+            bitCount = ByteUtils.readUInt16LE(image, 14);
+        }
+        if (width <= 0 || height <= 0) return null;
+
+        byte[] ico = new byte[22 + image.length];
+        writeUInt16LE(ico, 2, 1);
+        writeUInt16LE(ico, 4, 1);
+        ico[6] = (byte) (width >= 256 ? 0 : width);
+        ico[7] = (byte) (height >= 256 ? 0 : height);
+        writeUInt16LE(ico, 10, planes);
+        writeUInt16LE(ico, 12, bitCount);
+        writeUInt32LE(ico, 14, image.length);
+        writeUInt32LE(ico, 18, 22);
+        System.arraycopy(image, 0, ico, 22, image.length);
+        return ico;
+    }
+
+    private boolean isPng(byte[] image) {
+        return image.length >= 8
+                && image[0] == (byte) 0x89 && image[1] == 'P'
+                && image[2] == 'N' && image[3] == 'G'
+                && image[4] == 0x0D && image[5] == 0x0A
+                && image[6] == 0x1A && image[7] == 0x0A;
+    }
+
+    private String safeName(String name) {
+        if (name == null || name.isBlank()) return "unnamed";
+        String safe = name.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_").trim();
+        return safe.isEmpty() ? "unnamed" : safe;
     }
 
     private static void writeUInt16LE(byte[] b, int off, int v) {

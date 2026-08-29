@@ -69,6 +69,25 @@ public class FileScanner {
      * 扫描单个文件, 返回所有发现的资源
      */
     public List<ScanResult> scan(Path file) throws IOException {
+        List<ScanResult> results = new ArrayList<>(scanSingleFile(file));
+        if (isPrimaryPeFile(file)) {
+            for (Path companion : PEFile.findCompanionResources(file)) {
+                if (verbose) {
+                    System.out.println("[pe-companion] " + file.getFileName() + " -> " + companion);
+                }
+                try {
+                    results.addAll(scanSingleFile(companion));
+                } catch (IOException e) {
+                    if (verbose) {
+                        System.err.println("[pe-companion error] " + companion + ": " + e.getMessage());
+                    }
+                }
+            }
+        }
+        return results;
+    }
+
+    private List<ScanResult> scanSingleFile(Path file) throws IOException {
         long fileSize = Files.size(file);
         if (fileSize <= 0) {
             return Collections.emptyList();
@@ -90,6 +109,13 @@ public class FileScanner {
             results.addAll(scanPeResources(file, data));
         }
         return results;
+    }
+
+    private boolean isPrimaryPeFile(Path file) {
+        if (file.getFileName() == null) return false;
+        String name = file.getFileName().toString().toLowerCase();
+        return name.endsWith(".exe") || name.endsWith(".dll") || name.endsWith(".scr")
+                || name.endsWith(".ocx") || name.endsWith(".sys") || name.endsWith(".fon");
     }
 
     /**
@@ -292,14 +318,23 @@ public class FileScanner {
                 byte[] entryData = new byte[size];
                 System.arraycopy(fileData, (int) re.dataOffset, entryData, 0, size);
 
+                String resourceType = re.typeIsString ? normalizeResourceType(re.typeString) : "";
+                com.tangluobo.tomato.module.tools.extractor.format.FileFormatInfo directFormat =
+                        findFormatByExtension(resourceType);
+                if (directFormat != null && registry.isEnabled(directFormat)) {
+                    String entryName = resourceEntryName(re);
+                    results.add(new ScanResult(peFile, re.dataOffset, re.dataSize,
+                            directFormat, false, entryName, entryData, entryName));
+                    // 命名类型已经明确给出了整个资源的格式，无需在其内部重复扫描。
+                    continue;
+                }
+
                 List<ScanResult> embedded = scanBuffer(peFile, entryData);
                 for (ScanResult sr : embedded) {
                     int absOffset = (int) re.dataOffset + (int) sr.getOffset();
                     byte[] inline = new byte[(int) sr.getSize()];
                     System.arraycopy(fileData, absOffset, inline, 0, inline.length);
-                    String entryName = "RT" + re.type + "_"
-                            + (re.nameIsString && re.nameString != null ? re.nameString
-                                                                       : Integer.toString(re.nameId));
+                    String entryName = resourceEntryName(re);
                     ScanResult inlineSr = new ScanResult(
                             peFile, absOffset, sr.getSize(), sr.getFormat(), false,
                             entryName, inline, entryName);
@@ -310,6 +345,25 @@ public class FileScanner {
             try { pe.close(); } catch (IOException ignored) {}
         }
         return results;
+    }
+
+    private String resourceEntryName(PEFile.ResourceEntry re) {
+        String type = re.typeIsString && re.typeString != null ? re.typeString : "RT" + re.type;
+        String name = re.nameIsString && re.nameString != null
+                ? re.nameString : Integer.toString(re.nameId);
+        return type + "_" + name;
+    }
+
+    private String normalizeResourceType(String type) {
+        if (type == null) return "";
+        String normalized = type.trim().toLowerCase();
+        return switch (normalized) {
+            case "jpeg", "jpgimage" -> "jpg";
+            case "bitmap" -> "bmp";
+            case "icon" -> "ico";
+            case "cursor" -> "cur";
+            default -> normalized;
+        };
     }
 
     /**

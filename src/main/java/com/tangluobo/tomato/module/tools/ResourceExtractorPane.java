@@ -708,11 +708,24 @@ public class ResourceExtractorPane extends VBox {
             peFiles.add(source);
         }
 
+        // 单独选择 EXE/DLL 时也跟随 Windows 拆分出的 .mun/.mui 图标资源。
+        List<Path> companions = new ArrayList<>();
+        for (Path p : peFiles) {
+            companions.addAll(PEFile.findCompanionResources(p));
+        }
+        for (Path companion : companions) {
+            if (!peFiles.contains(companion)) {
+                peFiles.add(companion);
+                appendLog("发现伴随资源: " + companion);
+            }
+        }
+
         List<Path> peTargets = new ArrayList<>();
         for (Path p : peFiles) {
             String name = p.getFileName().toString().toLowerCase();
             if (name.endsWith(".exe") || name.endsWith(".dll") || name.endsWith(".scr")
-                    || name.endsWith(".fon") || name.endsWith(".sys") || name.endsWith(".ocx")) {
+                    || name.endsWith(".fon") || name.endsWith(".sys") || name.endsWith(".ocx")
+                    || name.endsWith(".mun") || name.endsWith(".mui")) {
                 peTargets.add(p);
             }
         }
