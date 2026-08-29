@@ -21,6 +21,7 @@ import javafx.scene.layout.Region;
 import javafx.geometry.Insets;
 import javafx.geometry.Rectangle2D;
 import javafx.scene.Cursor;
+import javafx.scene.input.MouseButton;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
 
@@ -78,6 +79,10 @@ public class TomatoController {
     private boolean windowManagementActive = false;
     private boolean customMaximized = false;
     private boolean draggingFromMaximized = false;
+    private boolean titleBarPressActive = false;
+    private boolean titleBarDragged = false;
+    private double maximizedDragRatioX = 0;
+    private double maximizedDragOffsetY = 0;
     /** 关闭按钮按下状态标志：按下期间忽略 hover/exit 对样式的修改，直到松开才恢复 */
     private boolean closeBtnPressed = false;
 
@@ -92,6 +97,7 @@ public class TomatoController {
     /** 窗口四侧边缘 resize 命中范围，统一较小值避免覆盖内容区边缘的交互控件 */
     private static final int HORIZONTAL_EDGE_THRESHOLD = 3;
     private static final int MAXIMIZE_THRESHOLD = 5;
+    private static final int DRAG_ACTIVATION_THRESHOLD = 4;
 
     // 模块缓存：保留每个模块的实例及其侧边栏子节点/内容容器，切换模块时复用，保留原有窗口状态
     private final Map<String, Module> moduleCache = new HashMap<>();
@@ -383,7 +389,11 @@ public class TomatoController {
         settingsBtn.setOnMouseExited(e -> settingsBtn.setStyle(minMaxNormalStyle));
 
         titleBar.setOnMouseClicked(event -> {
-            if (event.getClickCount() == 2) {
+            // Linux/GTK can still emit MOUSE_CLICKED after an undecorated Stage
+            // was repositioned during the gesture. Never reinterpret a real
+            // title-bar drag as a double-click maximize/restore action.
+            if (event.getButton() == MouseButton.PRIMARY
+                    && event.getClickCount() == 2 && !titleBarDragged) {
                 Stage stage = (Stage) titleBar.getScene().getWindow();
                 if (customMaximized) {
                     restoreWindow(stage);
@@ -487,6 +497,13 @@ public class TomatoController {
             return;
         }
 
+        titleBarDragged = false;
+        titleBarPressActive = false;
+        if (event.getButton() != MouseButton.PRIMARY) {
+            windowManagementActive = false;
+            return;
+        }
+
         // 向上遍历父节点链查找交互控件（ButtonBase/TextInputControl/ListCell），
         // 这样点击按钮内的子节点（如 SVGPath 图标）也能正确过滤，避免在按钮上按下拖动时移动窗体
         boolean onInteractiveControl = false;
@@ -508,19 +525,23 @@ public class TomatoController {
         }
 
         Stage stage = (Stage) rootPane.getScene().getWindow();
+        boolean inTitleBar = isInTitleBar(event);
+        titleBarPressActive = inTitleBar;
+        if (inTitleBar) {
+            dragStartX = event.getScreenX();
+            dragStartY = event.getScreenY();
+        }
 
         if (customMaximized) {
-            if (isInTitleBar(event)) {
+            if (inTitleBar) {
                 draggingFromMaximized = true;
-                dragStartX = event.getScreenX();
-                dragStartY = event.getScreenY();
                 windowManagementActive = true;
                 resizingLeft = false;
                 resizingRight = false;
                 resizingTop = false;
                 resizingBottom = false;
-                xOffset = dragStartX - savedX;
-                yOffset = dragStartY - savedY;
+                maximizedDragRatioX = clamp(event.getSceneX() / Math.max(stage.getWidth(), 1), 0, 1);
+                maximizedDragOffsetY = event.getSceneY();
             } else {
                 windowManagementActive = false;
             }
@@ -546,7 +567,7 @@ public class TomatoController {
             startY = event.getScreenY();
             startWindowX = stage.getX();
             startWindowY = stage.getY();
-        } else if (isInTitleBar(event)) {
+        } else if (inTitleBar) {
             windowManagementActive = true;
             draggingFromMaximized = false;
             xOffset = event.getSceneX();
@@ -581,16 +602,25 @@ public class TomatoController {
 
         Stage stage = (Stage) rootPane.getScene().getWindow();
 
+        if (titleBarPressActive && movedBeyondDragThreshold(
+                dragStartX, dragStartY, event.getScreenX(), event.getScreenY())) {
+            titleBarDragged = true;
+        }
+
         if (draggingFromMaximized) {
-            double currentY = event.getScreenY();
-            if (currentY > MAXIMIZE_THRESHOLD) {
+            if (titleBarDragged) {
+                double restoredOffsetX = maximizedDragRatioX * Math.max(savedWidth, 1);
+                double restoredOffsetY = clamp(maximizedDragOffsetY, 0,
+                        titleBar == null ? maximizedDragOffsetY : titleBar.getHeight());
                 restoreWindow(stage);
-                double deltaX = event.getScreenX() - dragStartX;
-                double deltaY = event.getScreenY() - dragStartY;
-                stage.setX(savedX + deltaX);
-                stage.setY(savedY + deltaY);
+                stage.setX(event.getScreenX() - restoredOffsetX);
+                stage.setY(event.getScreenY() - restoredOffsetY);
+                // Continue the same gesture as a normal title-bar drag. The old
+                // code disabled windowManagementActive here, so Linux could only
+                // alternate between restored and maximized states.
+                xOffset = restoredOffsetX;
+                yOffset = restoredOffsetY;
                 draggingFromMaximized = false;
-                windowManagementActive = false;
             }
             return;
         }
@@ -630,13 +660,12 @@ public class TomatoController {
             double newX = event.getScreenX() - xOffset;
             double newY = event.getScreenY() - yOffset;
 
-            // 按窗口中心点定位当前屏幕，副屏顶部（minY!=0）也能触发最大化
-            Screen screen = getScreenForStage(stage);
+            // 吸顶应以指针真正到达工作区顶部为准。用newY（窗口顶部）判断时，
+            // Linux上位于y=0的还原窗口刚开始向下拖就会立即再次最大化。
+            Screen screen = getScreenForPoint(event.getScreenX(), event.getScreenY());
             Rectangle2D visualBounds = screen.getVisualBounds();
-            double screenTop = visualBounds.getMinY();
 
-            if (newY <= screenTop + MAXIMIZE_THRESHOLD && newX >= visualBounds.getMinX()
-                && newX + stage.getWidth() <= visualBounds.getMaxX()) {
+            if (titleBarDragged && isPointerAtTopEdge(event.getScreenY(), visualBounds.getMinY())) {
                 maximizeWindow(stage);
                 windowManagementActive = false;
             } else {
@@ -653,10 +682,35 @@ public class TomatoController {
 
         windowManagementActive = false;
         draggingFromMaximized = false;
+        titleBarPressActive = false;
         resizingLeft = false;
         resizingRight = false;
         resizingTop = false;
         resizingBottom = false;
         rootPane.setCursor(Cursor.DEFAULT);
+    }
+
+    private Screen getScreenForPoint(double screenX, double screenY) {
+        for (Screen screen : Screen.getScreens()) {
+            if (screen.getBounds().contains(screenX, screenY)) {
+                return screen;
+            }
+        }
+        return getScreenForStage((Stage) rootPane.getScene().getWindow());
+    }
+
+    static boolean movedBeyondDragThreshold(double startX, double startY, double currentX, double currentY) {
+        double deltaX = currentX - startX;
+        double deltaY = currentY - startY;
+        return deltaX * deltaX + deltaY * deltaY
+                >= DRAG_ACTIVATION_THRESHOLD * DRAG_ACTIVATION_THRESHOLD;
+    }
+
+    static boolean isPointerAtTopEdge(double pointerScreenY, double screenTop) {
+        return pointerScreenY <= screenTop + MAXIMIZE_THRESHOLD;
+    }
+
+    private static double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
     }
 }
