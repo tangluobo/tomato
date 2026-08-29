@@ -1,4 +1,5 @@
 module tomato {
+    requires rdp4j;
     requires javafx.controls;
     requires javafx.fxml;
     requires javafx.swing;
@@ -18,9 +19,7 @@ module tomato {
     requires org.apache.commons.compress;
     requires org.apache.commons.codec;
     requires org.apache.commons.io;
-    requires org.apache.commons.cli;
     requires org.bouncycastle.provider;
-    requires org.bouncycastle.tls;
     requires org.shredzone.acme4j;
     requires minio;
     requires aliyun.sdk.oss;
@@ -93,8 +92,6 @@ module tomato {
     opens com.tangluobo.tomato.utils to com.google.gson, javafx.fxml;
     exports com.tangluobo.tomato.ssh;
     opens com.tangluobo.tomato.ssh to javafx.fxml;
-    exports com.tangluobo.tomato.rdp;
-    opens com.tangluobo.tomato.rdp to javafx.fxml;
     exports com.tangluobo.tomato.ssh.zmodem;
     exports com.tangluobo.tomato.ssh.zmodem.xfer.util;
     exports com.tangluobo.tomato.ssh.zmodem.xfer.zm.util;
