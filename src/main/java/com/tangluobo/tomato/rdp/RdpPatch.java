@@ -13,7 +13,6 @@ import com.tangluobo.tomato.rdp.IContext;
 import com.tangluobo.tomato.rdp.OrderException;
 import com.tangluobo.tomato.rdp.RdesktopDisconnectException;
 import com.tangluobo.tomato.rdp.RdesktopException;
-import com.tangluobo.tomato.rdp.SecurityType;
 import com.tangluobo.tomato.rdp.State;
 import com.tangluobo.tomato.rdp.layers.Rdp;
 import com.tangluobo.tomato.rdp.rdp5.VChannels;
@@ -71,8 +70,7 @@ public class RdpPatch extends Rdp {
     public void rdp5_process(com.tangluobo.tomato.rdp.Packet s, boolean encryption, boolean shortform)
             throws RdesktopException, OrderException {
         int pktNum = rdp5PacketCount.incrementAndGet();
-        boolean isSSL = stateRef.getSecurityType() == SecurityType.SSL
-                || stateRef.getSecurityType() == SecurityType.HYBRID;
+        boolean isSSL = stateRef.getSecurityType().isSSL();
 
         if (logger.isLoggable(Level.FINEST)) {
             logger.finest(String.format("[RDP5 #%d] encryption=%b, shortform=%b, securityType=%s, dataSize=%d",
@@ -80,7 +78,7 @@ public class RdpPatch extends Rdp {
         }
 
         if (encryption && isSSL) {
-            logger.finest("[RDP5] Ignoring encryption flag for SSL/HYBRID");
+            logger.finest("[RDP5] Ignoring legacy encryption flag for TLS security");
             encryption = false;
         }
 
@@ -252,6 +250,7 @@ public class RdpPatch extends Rdp {
         watchdog.setDaemon(true);
         watchdog.start();
 
+        try {
         int[] type = new int[1];
         com.tangluobo.tomato.rdp.Packet data;
         while (true) {
@@ -268,6 +267,9 @@ public class RdpPatch extends Rdp {
                 Throwable cause = e.getCause();
                 if (cause instanceof EOFException) {
                     logger.info("[MAINLOOP] EOF, exiting");
+                    if (stateRef.getLastReason() > 0) {
+                        throw new RdesktopDisconnectException(stateRef.getLastReason());
+                    }
                     return;
                 }
                 if (cause instanceof IOException) {
@@ -378,6 +380,10 @@ public class RdpPatch extends Rdp {
                 lastReasonSeen = lastReason;
                 logger.warning("[MAINLOOP] 服务器发送错误PDU! lastReason=0x" + Integer.toHexString(lastReason)
                         + " (" + lastReason + ")");
+                // SET_ERROR_INFO is terminal. Some GNOME/xrdp servers leave the
+                // socket open after sending it; waiting for another read leaks a
+                // receive loop and watchdog and delays the real disconnect reason.
+                throw new RdesktopDisconnectException(lastReason);
             }
             // 记录服务器状态
             int serverStatus = stateRef.getServerStatus();
@@ -407,6 +413,13 @@ public class RdpPatch extends Rdp {
             // doLockKeys已发送CapsLock/NumLock/ScrollLock同步事件，服务器应开始推送画面。
             // 注意：不再额外发送sendInput(0,0,0,0,0)——RDP_INPUT_SYNCHRONIZE在库中定义为0，
             // 但MS-RDPBCGR规范中INPUT_EVENT_SYNC=3，值0会被服务器当作未知事件忽略。
+        }
+        } finally {
+            // A redirected/closed protocol instance must become read-only before
+            // its old Swing canvas can dispatch another queued input event.
+            markConnectionClosed();
+            lastReceiveEnterTime = 0;
+            watchdog.interrupt();
         }
     }
 

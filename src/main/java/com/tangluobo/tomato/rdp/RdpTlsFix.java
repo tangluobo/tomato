@@ -433,8 +433,9 @@ public class RdpTlsFix {
     public static synchronized void apply(X509TrustManager trustManager) {
         if (applied) return;
 
-        // 在任何SSL操作之前启用SSL调试输出
-        System.setProperty("javax.net.debug", "ssl:handshake");
+        // 不在生产连接中全局启用 javax.net.debug。它会让整个JVM中的TLS
+        // 握手同步输出数千行证书/密码套件信息，多个RDP会话并行时会明显
+        // 拖慢重定向切换。需要底层握手诊断时由启动参数显式开启。
 
         try {
             // 1. 允许TLS 1.0/1.1/1.2协议（排除TLS 1.3，必须在创建SSLContext之前设置）

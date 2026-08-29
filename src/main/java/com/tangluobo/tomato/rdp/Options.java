@@ -70,6 +70,7 @@ public class Options {
 	private Configuration jaasConfiguration;
 	private String cookie;
 	private byte[] routingToken;
+	private RdstlsCredentials rdstlsCredentials;
 	private List<SecurityType> securityTypes = new ArrayList<>(Arrays.asList(SecurityType.supported()));
 	private int lmCompatibility = 3;
 	private CredSspTokenMode credSspTokenMode = CredSspTokenMode.RAW_NTLM;
@@ -139,6 +140,15 @@ public class Options {
 
 	public void setRoutingToken(byte[] routingToken) {
 		this.routingToken = routingToken == null ? null : routingToken.clone();
+	}
+
+	/** One-time opaque credentials used only by a redirected RDSTLS hop. */
+	public RdstlsCredentials getRdstlsCredentials() {
+		return rdstlsCredentials;
+	}
+
+	public void setRdstlsCredentials(RdstlsCredentials rdstlsCredentials) {
+		this.rdstlsCredentials = rdstlsCredentials;
 	}
 
 	public Configuration getJaasConfiguration() {

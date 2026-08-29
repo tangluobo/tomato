@@ -296,6 +296,12 @@ public class NLA {
 		passwordCreds.domainName = creds.get(0);
 		passwordCreds.userName = creds.get(1);
 		passwordCreds.password = creds.get(2) == null ? new char[0] : creds.get(2).toCharArray();
+		String delegatedAccount = passwordCreds.domainName == null || passwordCreds.domainName.isBlank()
+				? passwordCreds.userName
+				: passwordCreds.domainName + "\\" + passwordCreds.userName;
+		logger.info("Preparing CredSSP delegated credentials: account="
+				+ (delegatedAccount == null || delegatedAccount.isBlank() ? "(empty)" : delegatedAccount)
+				+ ", passwordPresent=" + (passwordCreds.password.length > 0));
 		TSCredentials credentials = new TSCredentials();
 		credentials.credType = 1;
 		credentials.credentials = passwordCreds;

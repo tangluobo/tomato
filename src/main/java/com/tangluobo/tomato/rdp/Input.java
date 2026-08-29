@@ -78,6 +78,9 @@ public class Input {
 	protected Vector pressedKeys;
 	protected boolean scrollLockOn = false;
 	protected boolean serverAltDown = false;
+	private boolean remoteLeftShiftDown = false;
+	private boolean remoteRightShiftDown = false;
+	private boolean remoteShiftStateKnown = false;
 	KeyCode keys = null;
 	private FocusAdapter focusListener;
 	private InputMethodListener inputMethodListener;
@@ -186,6 +189,9 @@ public class Input {
 			sendScancode(getTime(), RDP_KEYRELEASE, 0x38); // left Alt
 			sendScancode(getTime(), RDP_KEYRELEASE, 0x38 | KeyCode.SCANCODE_EXTENDED); // right Alt
 		}
+		remoteLeftShiftDown = false;
+		remoteRightShiftDown = false;
+		remoteShiftStateKnown = true;
 		lastKeyEvent = null;
 		modifiersValid = false;
 	}
@@ -194,6 +200,9 @@ public class Input {
 	 * Handle the main canvas gaining focus. Check locking key states.
 	 */
 	public void gainedFocus() {
+		// SwingNode/JavaFX focus hand-off may lose the physical Shift key-up.
+		// Re-check the remote modifier state before the next real input event.
+		remoteShiftStateKnown = false;
 		if (state.getRdp() != null) {
 			doLockKeys(); // ensure lock key states are correct
 		}
@@ -532,6 +541,55 @@ public class Input {
 					0);
 		} else
 			state.getRdp().sendInput((int) time, RDP_INPUT_SCANCODE, flags, scancode, 0);
+
+		int baseScancode = scancode & ~KeyCode.SCANCODE_EXTENDED;
+		boolean pressed = (flags & KBD_FLAG_UP) == 0;
+		if (baseScancode == 0x2a) {
+			remoteLeftShiftDown = pressed;
+			remoteShiftStateKnown = true;
+		} else if (baseScancode == 0x36) {
+			remoteRightShiftDown = pressed;
+			remoteShiftStateKnown = true;
+		}
+	}
+
+	/**
+	 * Reconcile the Shift state before another input reaches the server.
+	 *
+	 * <p>With Swing embedded in a JavaFX {@code SwingNode}, a focus transfer can
+	 * occasionally drop both {@code KEY_RELEASED} and {@code focusLost}.  In
+	 * that case the server keeps Shift depressed indefinitely.  Mouse/key events
+	 * still carry the current local modifier mask, so use it as the source of
+	 * truth.  When focus was recently transferred, first release both possible
+	 * Shift keys to clear any unknown server state, then restore Shift if the
+	 * physical key is currently held.</p>
+	 */
+	private void reconcileRemoteShift(boolean localShiftDown) {
+		if (state.getRdp() == null) {
+			return;
+		}
+		if (!remoteShiftStateKnown) {
+			sendScancode(getTime(), RDP_KEYRELEASE, 0x2a);
+			sendScancode(getTime(), RDP_KEYRELEASE, 0x36);
+			if (localShiftDown) {
+				sendScancode(getTime(), RDP_KEYPRESS, 0x2a);
+			}
+			remoteShiftStateKnown = true;
+			return;
+		}
+
+		if (localShiftDown) {
+			if (!remoteLeftShiftDown && !remoteRightShiftDown) {
+				sendScancode(getTime(), RDP_KEYPRESS, 0x2a);
+			}
+		} else {
+			if (remoteLeftShiftDown) {
+				sendScancode(getTime(), RDP_KEYRELEASE, 0x2a);
+			}
+			if (remoteRightShiftDown) {
+				sendScancode(getTime(), RDP_KEYRELEASE, 0x36);
+			}
+		}
 	}
 
 	/**
@@ -557,6 +615,7 @@ public class Input {
 	 */
 	public void triggerReadyToSend() {
 		logger.info("Input ready to send");
+		remoteShiftStateKnown = false;
 		// rdp.sendInput(0, RDP_INPUT_SYNCHRONIZE, 0, 0, 0);
 		capsLockOn = false;
 		numLockOn = false;
@@ -659,6 +718,7 @@ public class Input {
 		 */
 		@Override
 		public void keyPressed(KeyEvent e) {
+			reconcileRemoteShift(e.isShiftDown());
 			lastKeyEvent = e;
 			modifiersValid = true;
 			long time = getTime();
@@ -709,6 +769,7 @@ public class Input {
 		 */
 		@Override
 		public void keyTyped(KeyEvent e) {
+			reconcileRemoteShift(e.isShiftDown());
 			lastKeyEvent = e;
 			modifiersValid = true;
 			long time = getTime();
@@ -742,6 +803,7 @@ public class Input {
 		public void mousePressed(MouseEvent e) {
 			int time = getTime();
 			if (state.getRdp() != null) {
+				reconcileRemoteShift(e.isShiftDown());
 				if ((e.getModifiers() & InputEvent.BUTTON1_MASK) == InputEvent.BUTTON1_MASK) {
 					if (logger.isDebugEnabled())
 						logger.debug("Mouse Button 1 Pressed.");
@@ -762,6 +824,7 @@ public class Input {
 		public void mouseReleased(MouseEvent e) {
 			int time = getTime();
 			if (state.getRdp() != null) {
+				reconcileRemoteShift(e.isShiftDown());
 				if ((e.getModifiers() & InputEvent.BUTTON1_MASK) == InputEvent.BUTTON1_MASK) {
 					state.getRdp().sendInput(time, RDP_INPUT_MOUSE, MOUSE_FLAG_BUTTON1, e.getX(), e.getY());
 				} else if ((e.getModifiers() & InputEvent.BUTTON3_MASK) == InputEvent.BUTTON3_MASK) {
@@ -784,6 +847,7 @@ public class Input {
 			// if(logger.isInfoEnabled()) logger.info("mouseMoved to
 			// "+e.getX()+", "+e.getY()+" at "+time);
 			if (state.getRdp() != null) {
+				reconcileRemoteShift(e.isShiftDown());
 				state.getRdp().sendInput(time, RDP_INPUT_MOUSE, MOUSE_FLAG_MOVE, e.getX(), e.getY());
 			}
 		}
@@ -805,6 +869,7 @@ public class Input {
 			 * canvas.getParent()).hideMenu();
 			 */
 			if (state.getRdp() != null) {
+				reconcileRemoteShift(e.isShiftDown());
 				state.getRdp().sendInput(time, RDP_INPUT_MOUSE, MOUSE_FLAG_MOVE, e.getX(), e.getY());
 			}
 		}
@@ -816,6 +881,7 @@ public class Input {
 			int time = getTime();
 			// if(logger.isInfoEnabled()) logger.info("mousePressed at "+time);
 			if (state.getRdp() != null) {
+				reconcileRemoteShift(e.isShiftDown());
 				if (e.getWheelRotation() < 0) { // up
 					state.getRdp().sendInput(time, RDP_INPUT_MOUSE, MOUSE_FLAG_BUTTON4 | MOUSE_FLAG_DOWN, e.getX(), e.getY());
 				} else { // down

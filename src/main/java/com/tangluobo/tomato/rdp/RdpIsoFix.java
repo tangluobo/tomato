@@ -132,8 +132,7 @@ public class RdpIsoFix {
                     boolean encrypted = (version & 0x80) != 0;
 
                     // SSL/HYBRID模式下忽略加密标志（TLS已处理加密）
-                    if (encrypted && (stateRef.getSecurityType() == com.tangluobo.tomato.rdp.SecurityType.SSL
-                            || stateRef.getSecurityType() == com.tangluobo.tomato.rdp.SecurityType.HYBRID)) {
+                    if (encrypted && stateRef.getSecurityType().isSSL()) {
                         encrypted = false;
                     }
 

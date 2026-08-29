@@ -1144,12 +1144,19 @@ public class Secure implements Layer<Rdp> {
 		// g_server_rdp_version);
 		logger.debug(("Server RDP version is " + state.getServerRdpVersion()));
 		if (state.isNegotiated()) {
-			int protocol = mcs_data.getLittleEndian32();
-			SecurityType serverType = SecurityType.fromMask(protocol);
-			if (serverType != state.getSecurityType())
-				throw new IllegalStateException(String.format("Client wants %s but server did not agree and wants %s.",
-						state.getSecurityType(), serverType));
-			// TODO windows 2012 seems to be returning rubbish here?
+			// TS_UD_SC_CORE.clientRequestedProtocols is not the protocol selected
+			// by the server.  It is the complete requestedProtocols bit mask from
+			// our X.224 Negotiation Request, echoed by the server (MS-RDPBCGR
+			// 2.2.1.4.2).  Treating this mask as a single SecurityType breaks the
+			// normal SSL|HYBRID (0x03) offer even though the preceding
+			// RDP_NEG_RSP already selected HYBRID successfully.
+			int echoedRequestedProtocols = mcs_data.getLittleEndian32();
+			int requestedProtocols = state.getOptions().getSecurityTypesMask();
+			if (echoedRequestedProtocols != requestedProtocols) {
+				logger.warn(String.format(
+						"Server echoed requestedProtocols=0x%08x, client sent 0x%08x; continuing with negotiated %s.",
+						echoedRequestedProtocols, requestedProtocols, state.getSecurityType()));
+			}
 			earlyCaps = mcs_data.getLittleEndian32();
 			logger.info("Early server capabilities is " + earlyCaps);
 		}

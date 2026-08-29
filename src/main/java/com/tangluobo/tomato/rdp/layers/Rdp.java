@@ -43,6 +43,7 @@ import com.tangluobo.tomato.rdp.RdesktopDisconnectException;
 import com.tangluobo.tomato.rdp.RdesktopException;
 import com.tangluobo.tomato.rdp.RdpRedirectionException;
 import com.tangluobo.tomato.rdp.RdpRedirectionInfo;
+import com.tangluobo.tomato.rdp.RdstlsCredentials;
 import com.tangluobo.tomato.rdp.SecurityType;
 import com.tangluobo.tomato.rdp.State;
 import com.tangluobo.tomato.rdp.CredentialProvider.CredentialType;
@@ -85,6 +86,8 @@ public class Rdp implements Layer<Layer<?>> {
 	public static final int INFO_MAXIMIZE_SHELL = 0x20;
 	public static final int INFO_ENABLEWINDOWS_KEY = 0x100;
 	public static final int INFO_MOUSE_HAS_WHEEL = 0x200;
+	public static final int INFO_FORCE_ENCRYPTED_CS_PDU = 0x4000;
+	public static final int INFO_LOGON_ERRORS = 0x10000;
 	/* constants for RDP Layer */
 	public static final int SECURITY_TYPE_HYBRID = 0x02;
 	public static final int SECURITY_TYPE_HYBRID_EX = 0x04;
@@ -221,7 +224,8 @@ public class Rdp implements Layer<Layer<?>> {
 	// US-Ascii
 	protected Secure secureLayer = null;
 	boolean deactivated;
-	private boolean connected = false;
+	private volatile boolean connected = false;
+	private volatile boolean inputEnabled = false;
 	private IContext context;
 	private int next_packet = 0;
 	private State state;
@@ -263,6 +267,7 @@ public class Rdp implements Layer<Layer<?>> {
 		state.setCredentialProvider(credentialProvider);
 		secureLayer.connect(io);
 		this.connected = true;
+		this.inputEnabled = false;
 		this.sendLogonInfo(command, directory);
 		// TODO should this be here any more as it should all now be negotiated
 		// properly
@@ -277,6 +282,7 @@ public class Rdp implements Layer<Layer<?>> {
 	 */
 	public void disconnect() {
 		this.connected = false;
+		this.inputEnabled = false;
 		secureLayer.disconnect();
 	}
 
@@ -290,6 +296,17 @@ public class Rdp implements Layer<Layer<?>> {
 	}
 
 	/**
+	 * Mark the protocol instance unusable as soon as its receive loop exits.
+	 * Input listeners can outlive a redirected canvas for a short time, so they
+	 * must be able to observe this state before attempting another transport
+	 * write.
+	 */
+	protected final void markConnectionClosed() {
+		this.connected = false;
+		this.inputEnabled = false;
+	}
+
+	/**
 	 * RDP receive loop
 	 * 
 	 * @throws IOException on error
@@ -298,27 +315,34 @@ public class Rdp implements Layer<Layer<?>> {
 	public void mainLoop() throws IOException, RdesktopException {
 		int[] type = new int[1];
 		Packet data = null;
-		while (true) {
-			try {
-				data = this.receive(type);
-				if (data == null)
+		try {
+			while (true) {
+				try {
+					data = this.receive(type);
+					if (data == null)
+						return;
+				} catch (EOFException e) {
 					return;
-			} catch (EOFException e) {
-				return;
-			} catch (IOException ioe) {
-				logger.debug("IO error during receive.", ioe);
-				if (state.getLastReason() > 0)
-					throw new RdesktopDisconnectException(state.getLastReason());
-				else
-					throw new RdesktopDisconnectException(0, ioe);
+				} catch (IOException ioe) {
+					logger.debug("IO error during receive.", ioe);
+					if (state.getLastReason() > 0)
+						throw new RdesktopDisconnectException(state.getLastReason());
+					else
+						throw new RdesktopDisconnectException(0, ioe);
+				}
+				processPacket(type, data);
 			}
-			processPacket(type, data);
+		} finally {
+			markConnectionClosed();
 		}
 	}
 
 	private void processPacket(int[] type, Packet data) throws RdesktopException, IOException {
 		switch (type[0]) {
 		case (Rdp.RDP_PDU_DEMAND_ACTIVE):
+			// INPUT ready is raised from processDemandActive, so enable events just
+			// before entering it (not after it returns).
+			inputEnabled = true;
 			if (logger.isDebugEnabled())
 				logger.debug("Rdp.RDP_PDU_DEMAND_ACTIVE");
 			// get this after licence negotiation, just before the 1st
@@ -333,6 +357,9 @@ public class Rdp implements Layer<Layer<?>> {
 			break;
 		case (Rdp.RDP_PDU_DEACTIVATE_ALL):
 			logger.info("Got deactivate all.");
+			// A server may renegotiate and send a new Demand Active on this same
+			// transport. Keep receiving, but freeze user input during the gap.
+			inputEnabled = false;
 			if (state.getLastReason() > 0)
 				throw new RdesktopDisconnectException(state.getLastReason());
 			else {
@@ -548,11 +575,18 @@ public class Rdp implements Layer<Layer<?>> {
 	}
 
 	public void sendInput(int time, int message_type, int device_flags, int param1, int param2) {
+		// AWT may still deliver queued events for the old canvas while a server
+		// redirection is replacing the protocol stack. Never write those events
+		// to the TLS stream that the server has already closed.
+		if (!connected || !inputEnabled) {
+			return;
+		}
 		Packet data = null;
 		try {
 			data = this.initData(16);
 		} catch (RdesktopException e) {
 			context.error(e, false);
+			return;
 		}
 		data.setLittleEndian16(1); /* number of events */
 		data.setLittleEndian16(0); /* pad */
@@ -568,9 +602,11 @@ public class Rdp implements Layer<Layer<?>> {
 			this.sendData(data, RDP_DATA_PDU_INPUT);
 		} catch (RdesktopException e) {
 			logger.error("Failed to send input.", e);
+			markConnectionClosed();
 			context.error(e, true);
 		} catch (IOException e) {
 			logger.error("Failed to send input.", e);
+			markConnectionClosed();
 			context.error(e, true);
 		}
 	}
@@ -1459,30 +1495,53 @@ public class Rdp implements Layer<Layer<?>> {
 	 * @throws IOException on error
 	 */
 	private void sendLogonInfo(String command, String directory) throws RdesktopException, IOException {
-		int flags = INFO_MOUSE | INFO_DISABLECTRLALTDEL | INFO_UNICODE | INFO_MAXIMIZE_SHELL | INFO_ENABLEWINDOWS_KEY
-				| INFO_MOUSE_HAS_WHEEL;
+		int flags = INFO_MOUSE | INFO_DISABLECTRLALTDEL | INFO_UNICODE | INFO_MAXIMIZE_SHELL
+				| INFO_ENABLEWINDOWS_KEY | INFO_MOUSE_HAS_WHEEL | INFO_FORCE_ENCRYPTED_CS_PDU
+				| INFO_LOGON_ERRORS;
 		String domain;
 		String username;
 		char[] password = new char[0];
-		List<String> creds = state.getCredentialProvider().getCredentials("login", 0, CredentialType.DOMAIN,
-				CredentialType.USERNAME, CredentialType.PASSWORD);
-		if (creds == null) {
-			domain = username = "";
+		byte[] opaqueRedirectPassword = null;
+		// Keep using the redirect password when an RDSTLS reconnect negotiates
+		// its allowed PROTOCOL_SSL fallback. FreeRDP follows the same rule: the
+		// opaque RedirectionPassword belongs to this redirected hop, independent
+		// of which of SSL/RDSTLS the destination selected.
+		RdstlsCredentials rdstlsCredentials = state.getOptions().getRdstlsCredentials();
+		if (rdstlsCredentials != null) {
+			// RDSTLS carries a target-server encrypted one-time password. It must
+			// be replayed byte-for-byte in TS_INFO_PACKET and never decoded as text.
+			domain = rdstlsCredentials.getDomain();
+			username = rdstlsCredentials.getUsername();
+			opaqueRedirectPassword = rdstlsCredentials.getEncryptedPassword();
 		} else {
-			domain = StringUtils.defaultIfBlank(creds.get(0), "");
-			username = StringUtils.defaultIfBlank(creds.get(1), "");
-			password = StringUtils.defaultIfBlank(creds.get(2), "").toCharArray();
+			List<String> creds = state.getCredentialProvider().getCredentials("login", 0, CredentialType.DOMAIN,
+					CredentialType.USERNAME, CredentialType.PASSWORD);
+			if (creds == null) {
+				domain = username = "";
+			} else {
+				domain = StringUtils.defaultIfBlank(creds.get(0), "");
+				username = StringUtils.defaultIfBlank(creds.get(1), "");
+				password = StringUtils.defaultIfBlank(creds.get(2), "").toCharArray();
+			}
 		}
 		directory = StringUtils.defaultIfBlank(directory, "");
-		if (password != null && password.length > 0)
+		if ((password != null && password.length > 0)
+				|| (opaqueRedirectPassword != null && opaqueRedirectPassword.length > 0))
 			flags |= INFO_LOGON_AUTO;
+		String account = domain.isEmpty() ? username : domain + "\\" + username;
+		logger.info("Sending Client Info: account=" + (account.isEmpty() ? "(empty)" : account)
+				+ ", passwordPresent=" + ((password != null && password.length > 0)
+						|| (opaqueRedirectPassword != null && opaqueRedirectPassword.length > 0))
+				+ ", securityType=" + state.getSecurityType());
 		int len_ip = 2 * state.getClientIp().length();
 		int len_dll = 2 * state.getClientDir().length();
 		int sec_flags = state.getSecurityType() == SecurityType.STANDARD ? Secure.SEC_LOGON_INFO | Secure.SEC_ENCRYPT
 				: Secure.SEC_LOGON_INFO;
 		int domainlen = 2 * domain.length();
 		int userlen = 2 * username.length();
-		int passlen = 2 * (password == null ? 0 : password.length);
+		int passlen = opaqueRedirectPassword == null
+				? 2 * (password == null ? 0 : password.length)
+				: opaqueRedirectPassword.length;
 		int commandlen = 2 * command.length();
 		int dirlen = 2 * directory.length();
 		int packetlen = 18 + domainlen + userlen + passlen + commandlen + dirlen + 10;
@@ -1492,7 +1551,6 @@ public class Rdp implements Layer<Layer<?>> {
 		if (logger.isDebugEnabled())
 			logger.debug("Sending RDP Logon packet");
 		Packet data = secureLayer.init(sec_flags, packetlen);
-		data = secureLayer.init(sec_flags, packetlen);
 		data.setLittleEndian32(0); // code page
 		data.setLittleEndian32(flags);
 		data.setLittleEndian16(domainlen);
@@ -1502,10 +1560,15 @@ public class Rdp implements Layer<Layer<?>> {
 		data.setLittleEndian16(dirlen);
 		data.outUnicodeString(domain, domainlen);
 		data.outUnicodeString(username, userlen);
-		if (0 < passlen)
-			data.outUnicodeString(new String(password), passlen);
-		else
+		if (opaqueRedirectPassword != null) {
+			data.copyFromByteArray(opaqueRedirectPassword, 0, data.getPosition(), passlen);
+			data.incrementPosition(passlen);
 			data.setLittleEndian16(0);
+		} else if (0 < passlen) {
+			data.outUnicodeString(new String(password), passlen);
+		} else {
+			data.setLittleEndian16(0);
+		}
 		data.outUnicodeString(command, commandlen);
 		data.outUnicodeString(directory, dirlen);
 		if (state.isRDP5()) {
@@ -1524,8 +1587,12 @@ public class Rdp implements Layer<Layer<?>> {
 			// No ARC_CS_PRIVATE_PACKET follows when cbAutoReconnectLen is zero.
 			// Writing the old 28-byte placeholder made the TS_INFO_PACKET longer
 			// than its declared fields and strict FreeRDP servers rejected it.
-			data.setLittleEndian16(16); // reserved 1
-			data.setLittleEndian16(16); // reserved 2
+			// MS-RDPBCGR 2.2.1.11.1.1.1: reserved1 SHOULD be zero and
+			// reserved2 MUST be zero.  Some Windows servers ignored the old
+			// 16/16 values, while strict GNOME/FreeRDP servers terminate the
+			// newly activated session after parsing the malformed Client Info.
+			data.setLittleEndian16(0); // reserved 1
+			data.setLittleEndian16(0); // reserved 2
 		}
 		data.markEnd();
 		byte[] buffer = new byte[data.getEnd()];

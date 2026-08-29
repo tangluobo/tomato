@@ -90,6 +90,9 @@ public class Transport implements Layer<ISO> {
 			/* Start CredSSP! */
 			NLA nla = new NLA(state, this);
 			nla.start();
+		} else if (state.getSecurityType() == SecurityType.RDSTLS) {
+			/* Authenticate the redirected session over the established TLS stream. */
+			new RdstlsClient(state, this).start();
 		}
 	}
 
