@@ -7,6 +7,7 @@ import com.tangluobo.tomato.module.connect.ToolType;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
@@ -22,8 +23,14 @@ import javafx.stage.Stage;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 public class ConnectionConfigDialog {
+    private static final String DIALOG_STYLESHEET = ConnectionConfigDialog.class
+            .getResource("/css/connection-dialog.css").toExternalForm();
+    private static final Map<String, Image> ICON_CACHE = new HashMap<>();
+
     private Stage dialogStage;
     private boolean confirmed = false;
     private ConnectionConfig config;
@@ -37,6 +44,7 @@ public class ConnectionConfigDialog {
 
     // 配置页
     private VBox configPage;
+    private HBox configButtons;
     private Label configTitle;
     private ImageView configTitleGraphic;
 
@@ -73,6 +81,7 @@ public class ConnectionConfigDialog {
     private VBox s3SshTunnelContent;
     private ComboBox<ConnectionConfig> s3SshHostCombo;
     private List<ConnectionConfig> availableSshHosts = new ArrayList<>();
+    private boolean availableSshHostsLoaded;
 
     // ===== SSH/SFTP类型专用 =====
     private TabPane sshTabPane;
@@ -272,26 +281,46 @@ public class ConnectionConfigDialog {
 
         TabPane categoryTabPane = new TabPane();
         categoryTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
-        categoryTabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+        applyDialogStyles(categoryTabPane);
 
         // 数据库标签
         Tab dbTab = new Tab("数据库");
         dbTab.setContent(buildCategoryTilePane(ConnectType.Category.DATABASE, false));
         // 消息队列标签
         Tab mqTab = new Tab("消息队列");
-        mqTab.setContent(buildCategoryTilePane(ConnectType.Category.MESSAGE_QUEUE, false));
+        mqTab.setOnSelectionChanged(e -> {
+            if (mqTab.isSelected() && mqTab.getContent() == null) {
+                mqTab.setContent(buildCategoryTilePane(ConnectType.Category.MESSAGE_QUEUE, false));
+            }
+        });
         // 其他标签
         Tab othersTab = new Tab("客户端");
-        othersTab.setContent(buildCategoryTilePane(ConnectType.Category.OTHERS, false));
+        othersTab.setOnSelectionChanged(e -> {
+            if (othersTab.isSelected() && othersTab.getContent() == null) {
+                othersTab.setContent(buildCategoryTilePane(ConnectType.Category.OTHERS, false));
+            }
+        });
         // 工具标签
         Tab toolTab = new Tab("工具");
-        toolTab.setContent(buildToolTilePane());
+        toolTab.setOnSelectionChanged(e -> {
+            if (toolTab.isSelected() && toolTab.getContent() == null) {
+                toolTab.setContent(buildToolTilePane());
+            }
+        });
         // 服务器标签
         Tab serverTab = new Tab("服务器");
-        serverTab.setContent(buildServerTilePane());
+        serverTab.setOnSelectionChanged(e -> {
+            if (serverTab.isSelected() && serverTab.getContent() == null) {
+                serverTab.setContent(buildServerTilePane());
+            }
+        });
         // 游戏标签
         Tab gameTab = new Tab("游戏");
-        gameTab.setContent(buildGameTilePane());
+        gameTab.setOnSelectionChanged(e -> {
+            if (gameTab.isSelected() && gameTab.getContent() == null) {
+                gameTab.setContent(buildGameTilePane());
+            }
+        });
 
         categoryTabPane.getTabs().addAll(dbTab, mqTab, othersTab, toolTab, serverTab, gameTab);
 
@@ -316,43 +345,15 @@ public class ConnectionConfigDialog {
         configTitleGraphic.setFitHeight(20);
         configTitle.setGraphic(configTitleGraphic);
 
-        // ---- 构建数据库类型的 TabPane ----
-        buildDbTabPane();
-
-        // ---- 构建SSH/SFTP类型的配置 ----
-        buildSshConfigContent();
-
-        // ---- 构建其他类型的简单配置 ----
-        buildSimpleConfigContent();
-
-        // ---- 构建本地终端类型的配置 ----
-        buildLocalTerminalConfigContent();
-
-        // ---- 构建S3/阿里云OSS类型的配置 ----
-        buildS3ConfigContent();
-
-        // ---- 构建Redis类型的配置 ----
-        buildRedisConfigContent();
-
-        // ---- 构建RocketMQ类型的配置 ----
-        buildRocketmqConfigContent();
-
-        // ---- 构建Kafka类型的配置 ----
-        buildKafkaConfigContent();
-
-        // ---- 构建阿里云类型的配置 ----
-        buildAliyunConfigContent();
-
-        // ---- 构建本地目录类型的配置 ----
-        buildLocalDirectoryConfigContent();
-
         // 按钮区域
-        HBox configButtons = new HBox(10);
+        configButtons = new HBox(10);
         configButtons.setAlignment(Pos.CENTER_RIGHT);
 
         Button backBtn = new Button("返回");
         backBtn.setStyle("-fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-width: 80px;");
         backBtn.setOnAction(e -> showTypeSelectionPage());
+        backBtn.setVisible(existingConfig == null);
+        backBtn.setManaged(existingConfig == null);
 
         Button cancelBtn2 = new Button("取消");
         cancelBtn2.setStyle("-fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-width: 80px;");
@@ -364,7 +365,7 @@ public class ConnectionConfigDialog {
 
         configButtons.getChildren().addAll(backBtn, cancelBtn2, okBtn);
 
-        configPage.getChildren().addAll(configTitle, dbTabPane, sshTabPane, simpleConfigContent, localTerminalConfigContent, s3TabPane, redisTabPane, rocketmqTabPane, kafkaTabPane, aliyunConfigContent, localDirectoryConfigContent, configButtons);
+        configPage.getChildren().addAll(configTitle, configButtons);
 
         // 编辑已有连接时直接显示配置页
         if (existingConfig != null) {
@@ -468,9 +469,7 @@ public class ConnectionConfigDialog {
         ImageView icon = new ImageView();
         icon.setFitWidth(32);
         icon.setFitHeight(32);
-        try {
-            icon.setImage(new Image(getClass().getResourceAsStream(type.getIconPath())));
-        } catch (Exception ignored) {}
+        icon.setImage(loadIcon(type.getIconPath()));
 
         Label nameLabel = new Label(type.getDisplayName());
         nameLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-font-weight: bold;");
@@ -508,10 +507,7 @@ public class ConnectionConfigDialog {
         ImageView icon = new ImageView();
         icon.setFitWidth(32);
         icon.setFitHeight(32);
-        try {
-            Image img = new Image(getClass().getResourceAsStream(type.getIconPath()));
-            icon.setImage(img);
-        } catch (Exception ignored) {}
+        icon.setImage(loadIcon(type.getIconPath()));
 
         Label nameLabel = new Label(type.getDisplayName());
         nameLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-font-weight: bold;");
@@ -541,10 +537,7 @@ public class ConnectionConfigDialog {
         ImageView icon = new ImageView();
         icon.setFitWidth(32);
         icon.setFitHeight(32);
-        try {
-            Image img = new Image(getClass().getResourceAsStream(toolType.getIconPath()));
-            icon.setImage(img);
-        } catch (Exception ignored) {}
+        icon.setImage(loadIcon(toolType.getIconPath()));
 
         Label nameLabel = new Label(toolType.getDisplayName());
         nameLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; -fx-font-weight: bold;");
@@ -582,6 +575,28 @@ public class ConnectionConfigDialog {
         );
     }
 
+    /** 图标按实际展示尺寸解码并复用，避免每次打开对话框重复解码大尺寸原图。 */
+    private static Image loadIcon(String path) {
+        synchronized (ICON_CACHE) {
+            if (ICON_CACHE.containsKey(path)) {
+                return ICON_CACHE.get(path);
+            }
+            Image image = null;
+            try (var stream = ConnectionConfigDialog.class.getResourceAsStream(path)) {
+                if (stream != null) {
+                    image = new Image(stream, 32, 32, true, true);
+                }
+            } catch (Exception ignored) {
+            }
+            ICON_CACHE.put(path, image);
+            return image;
+        }
+    }
+
+    private static void applyDialogStyles(TabPane tabPane) {
+        tabPane.getStylesheets().add(DIALOG_STYLESHEET);
+    }
+
     /**
      * 构建数据库类型的 TabPane（常规 + SSH通道）
      */
@@ -591,7 +606,7 @@ public class ConnectionConfigDialog {
         dbTabPane.setVisible(false);
         dbTabPane.setManaged(false);
         // 使用与终端标签页相同的样式
-        dbTabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+        applyDialogStyles(dbTabPane);
 
         // ===== 常规 Tab =====
         VBox generalContent = new VBox(10);
@@ -774,26 +789,29 @@ public class ConnectionConfigDialog {
      * 加载已保存的 SSH/SFTP 连接，用于 S3/Redis/SSH/RocketMQ SSH通道 选择已有主机/跳板机
      */
     private void loadAvailableSshHosts() {
-        availableSshHosts.clear();
-        if (s3SshHostCombo != null) s3SshHostCombo.getItems().clear();
-        if (redisSshHostCombo != null) redisSshHostCombo.getItems().clear();
-        if (sshSshHostCombo != null) sshSshHostCombo.getItems().clear();
-        if (rocketmqSshHostCombo != null) rocketmqSshHostCombo.getItems().clear();
-        if (kafkaSshHostCombo != null) kafkaSshHostCombo.getItems().clear();
-        try {
-            List<ConnectionConfig> all = ConfigManager.loadConnections();
-            for (ConnectionConfig c : all) {
-                if (c.getType() == ConnectType.SSH || c.getType() == ConnectType.SFTP) {
-                    availableSshHosts.add(c);
-                    if (s3SshHostCombo != null) s3SshHostCombo.getItems().add(c);
-                    if (redisSshHostCombo != null) redisSshHostCombo.getItems().add(c);
-                    if (sshSshHostCombo != null) sshSshHostCombo.getItems().add(c);
-                    if (rocketmqSshHostCombo != null) rocketmqSshHostCombo.getItems().add(c);
-                    if (kafkaSshHostCombo != null) kafkaSshHostCombo.getItems().add(c);
+        if (!availableSshHostsLoaded) {
+            availableSshHostsLoaded = true;
+            try {
+                for (ConnectionConfig c : ConfigManager.loadConnections()) {
+                    if (c.getType() == ConnectType.SSH || c.getType() == ConnectType.SFTP) {
+                        availableSshHosts.add(c);
+                    }
                 }
+            } catch (Exception e) {
+                e.printStackTrace();
             }
-        } catch (Exception e) {
-            e.printStackTrace();
+        }
+
+        populateSshHostCombo(s3SshHostCombo);
+        populateSshHostCombo(redisSshHostCombo);
+        populateSshHostCombo(sshSshHostCombo);
+        populateSshHostCombo(rocketmqSshHostCombo);
+        populateSshHostCombo(kafkaSshHostCombo);
+    }
+
+    private void populateSshHostCombo(ComboBox<ConnectionConfig> comboBox) {
+        if (comboBox != null && comboBox.getItems().isEmpty()) {
+            comboBox.getItems().setAll(availableSshHosts);
         }
     }
 
@@ -1034,7 +1052,7 @@ public class ConnectionConfigDialog {
         sshTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         sshTabPane.setVisible(false);
         sshTabPane.setManaged(false);
-        sshTabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+        applyDialogStyles(sshTabPane);
 
         sshGeneralTab = new Tab("常规");
         sshGeneralTab.setContent(sshConfigContent);
@@ -1327,7 +1345,7 @@ public class ConnectionConfigDialog {
         s3TabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         s3TabPane.setVisible(false);
         s3TabPane.setManaged(false);
-        s3TabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+        applyDialogStyles(s3TabPane);
 
         s3GeneralTab = new Tab("常规");
         s3GeneralTab.setContent(s3ConfigContent);
@@ -1495,7 +1513,7 @@ public class ConnectionConfigDialog {
         redisTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         redisTabPane.setVisible(false);
         redisTabPane.setManaged(false);
-        redisTabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+        applyDialogStyles(redisTabPane);
 
         redisGeneralTab = new Tab("常规");
         redisGeneralTab.setContent(redisConfigContent);
@@ -1600,7 +1618,7 @@ public class ConnectionConfigDialog {
         rocketmqTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         rocketmqTabPane.setVisible(false);
         rocketmqTabPane.setManaged(false);
-        rocketmqTabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+        applyDialogStyles(rocketmqTabPane);
 
         rocketmqGeneralTab = new Tab("常规");
         rocketmqGeneralTab.setContent(rocketmqConfigContent);
@@ -1704,7 +1722,7 @@ public class ConnectionConfigDialog {
         kafkaTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         kafkaTabPane.setVisible(false);
         kafkaTabPane.setManaged(false);
-        kafkaTabPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+        applyDialogStyles(kafkaTabPane);
 
         kafkaGeneralTab = new Tab("常规");
         kafkaGeneralTab.setContent(kafkaConfigContent);
@@ -2064,7 +2082,55 @@ public class ConnectionConfigDialog {
 
     // ==================== 页面切换 ====================
 
+    /** 只创建当前选中类型需要的配置控件，避免打开类型选择页时初始化全部表单。 */
+    private void ensureSelectedConfigContent() {
+        Node content;
+        if (isDatabaseType(selectedType)) {
+            if (dbTabPane == null) buildDbTabPane();
+            content = dbTabPane;
+        } else if (selectedType == ConnectType.SSH || selectedType == ConnectType.SFTP) {
+            if (sshTabPane == null) buildSshConfigContent();
+            content = sshTabPane;
+        } else if (selectedType == ConnectType.LOCAL_TERMINAL) {
+            if (localTerminalConfigContent == null) buildLocalTerminalConfigContent();
+            content = localTerminalConfigContent;
+        } else if (selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS) {
+            if (s3TabPane == null) buildS3ConfigContent();
+            content = s3TabPane;
+        } else if (selectedType == ConnectType.REDIS) {
+            if (redisTabPane == null) buildRedisConfigContent();
+            content = redisTabPane;
+        } else if (selectedType == ConnectType.ROCKETMQ) {
+            if (rocketmqTabPane == null) buildRocketmqConfigContent();
+            content = rocketmqTabPane;
+        } else if (selectedType == ConnectType.KAFKA) {
+            if (kafkaTabPane == null) buildKafkaConfigContent();
+            content = kafkaTabPane;
+        } else if (selectedType == ConnectType.ALIYUN || selectedType == ConnectType.TENCENT_CLOUD) {
+            if (aliyunConfigContent == null) buildAliyunConfigContent();
+            content = aliyunConfigContent;
+        } else if (selectedType == ConnectType.LOCAL_DIRECTORY) {
+            if (localDirectoryConfigContent == null) buildLocalDirectoryConfigContent();
+            content = localDirectoryConfigContent;
+        } else {
+            if (simpleConfigContent == null) buildSimpleConfigContent();
+            content = simpleConfigContent;
+        }
+
+        if (!configPage.getChildren().contains(content)) {
+            configPage.getChildren().add(configPage.getChildren().indexOf(configButtons), content);
+        }
+    }
+
+    private static void setContentVisible(Node content, boolean visible) {
+        if (content != null) {
+            content.setVisible(visible);
+            content.setManaged(visible);
+        }
+    }
+
     private void showTypeSelectionPage() {
+        if (typeSelectionPage == null) return;
         typeSelectionPage.setVisible(true);
         typeSelectionPage.setManaged(true);
         configPage.setVisible(false);
@@ -2073,6 +2139,7 @@ public class ConnectionConfigDialog {
     }
 
     private void showConfigPage() {
+        ensureSelectedConfigContent();
         typeSelectionPage.setVisible(false);
         typeSelectionPage.setManaged(false);
         configPage.setVisible(true);
@@ -2080,12 +2147,7 @@ public class ConnectionConfigDialog {
         dialogStage.setTitle("新建" + selectedType.getDisplayName() + "连接");
         configTitle.setText(selectedType.getDisplayName() + "连接配置");
         // 根据类型设置标题图标
-        try {
-            Image typeIcon = new Image(getClass().getResourceAsStream(selectedType.getIconPath()));
-            configTitleGraphic.setImage(typeIcon);
-        } catch (Exception ignored) {
-            configTitleGraphic.setImage(null);
-        }
+        configTitleGraphic.setImage(loadIcon(selectedType.getIconPath()));
 
         // 根据类型切换布局
         boolean isDatabase = isDatabaseType(selectedType);
@@ -2110,31 +2172,21 @@ public class ConnectionConfigDialog {
             root.setPadding(new Insets(20));
         }
 
-        dbTabPane.setVisible(isDatabase);
-        dbTabPane.setManaged(isDatabase);
-        sshTabPane.setVisible(isSSH);
-        sshTabPane.setManaged(isSSH);
-        simpleConfigContent.setVisible(isSimple);
-        simpleConfigContent.setManaged(isSimple);
-        localTerminalConfigContent.setVisible(isLocalTerminal);
-        localTerminalConfigContent.setManaged(isLocalTerminal);
-        s3TabPane.setVisible(isS3orOSS);
-        s3TabPane.setManaged(isS3orOSS);
-        redisTabPane.setVisible(isRedis);
-        redisTabPane.setManaged(isRedis);
-        rocketmqTabPane.setVisible(isRocketmq);
-        rocketmqTabPane.setManaged(isRocketmq);
-        kafkaTabPane.setVisible(isKafka);
-        kafkaTabPane.setManaged(isKafka);
-        aliyunConfigContent.setVisible(isAliyun);
-        aliyunConfigContent.setManaged(isAliyun);
+        setContentVisible(dbTabPane, isDatabase);
+        setContentVisible(sshTabPane, isSSH);
+        setContentVisible(simpleConfigContent, isSimple);
+        setContentVisible(localTerminalConfigContent, isLocalTerminal);
+        setContentVisible(s3TabPane, isS3orOSS);
+        setContentVisible(redisTabPane, isRedis);
+        setContentVisible(rocketmqTabPane, isRocketmq);
+        setContentVisible(kafkaTabPane, isKafka);
+        setContentVisible(aliyunConfigContent, isAliyun);
         if (isAliyun) {
             boolean tencent = selectedType == ConnectType.TENCENT_CLOUD;
             aliyunAccessKeyField.setPromptText(tencent ? "腾讯云 SecretId" : "阿里云 AccessKey ID");
             aliyunSecretKeyField.setPromptText(tencent ? "腾讯云 SecretKey" : "阿里云 AccessKey Secret");
         }
-        localDirectoryConfigContent.setVisible(isLocalDirectory);
-        localDirectoryConfigContent.setManaged(isLocalDirectory);
+        setContentVisible(localDirectoryConfigContent, isLocalDirectory);
 
         if (isDatabase) {
             // 设置默认端口
@@ -2171,7 +2223,7 @@ public class ConnectionConfigDialog {
             if (kafkaPortField.getText().isEmpty()) {
                 kafkaPortField.setText("9092");
             }
-        } else {
+        } else if (isSimple) {
             if (simplePortField.getText().isEmpty()) {
                 simplePortField.setText(String.valueOf(getDefaultPort(selectedType)));
             }
