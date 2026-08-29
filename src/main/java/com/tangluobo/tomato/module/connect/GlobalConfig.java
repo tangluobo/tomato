@@ -36,6 +36,9 @@ public class GlobalConfig {
     // RDP全屏切换快捷键（全局默认，连接配置可按会话覆盖）
     private String rdpFullScreenShortcut = "Ctrl+Shift+Enter";
 
+    // RDP打开方式：WINDOW（独立窗口，默认）/ TAB（连接标签页）
+    private String rdpOpenMode = "WINDOW";
+
     public int getScrollbackLines() {
         return scrollbackLines;
     }
@@ -106,6 +109,14 @@ public class GlobalConfig {
 
     public void setRdpFullScreenShortcut(String rdpFullScreenShortcut) {
         this.rdpFullScreenShortcut = rdpFullScreenShortcut;
+    }
+
+    public String getRdpOpenMode() {
+        return rdpOpenMode == null || rdpOpenMode.isBlank() ? "WINDOW" : rdpOpenMode;
+    }
+
+    public void setRdpOpenMode(String rdpOpenMode) {
+        this.rdpOpenMode = rdpOpenMode;
     }
 
     private static GlobalConfig instance;

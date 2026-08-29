@@ -81,7 +81,33 @@ public class SessionConfigDialog {
         boolean isRdp = config.getType() == com.tangluobo.tomato.module.connect.ConnectType.RDP;
         final TextField rdpShortcutField;
         final CheckBox rdpShortcutUseGlobal;
+        final ComboBox<String> rdpOpenModeCombo;
+        final CheckBox rdpOpenModeUseGlobal;
         if (isRdp) {
+            row++;
+            grid.add(new Label("打开方式:"), 0, row);
+            HBox rdpOpenModeBox = new HBox(8);
+            rdpOpenModeUseGlobal = new CheckBox("使用全局配置");
+            String sessionOpenMode = config.getRdpOpenMode();
+            boolean useGlobalOpenMode = sessionOpenMode == null || sessionOpenMode.isBlank();
+            rdpOpenModeUseGlobal.setSelected(useGlobalOpenMode);
+            String effectiveOpenMode = useGlobalOpenMode
+                    ? GlobalConfig.getInstance().getRdpOpenMode() : sessionOpenMode;
+            rdpOpenModeCombo = new ComboBox<>();
+            rdpOpenModeCombo.getItems().addAll("独立窗口", "连接标签页");
+            rdpOpenModeCombo.setValue("TAB".equalsIgnoreCase(effectiveOpenMode)
+                    ? "连接标签页" : "独立窗口");
+            rdpOpenModeCombo.setDisable(useGlobalOpenMode);
+            rdpOpenModeUseGlobal.selectedProperty().addListener((obs, oldV, newV) -> {
+                rdpOpenModeCombo.setDisable(newV);
+                if (!newV) {
+                    rdpOpenModeCombo.setValue("TAB".equalsIgnoreCase(GlobalConfig.getInstance().getRdpOpenMode())
+                            ? "连接标签页" : "独立窗口");
+                }
+            });
+            rdpOpenModeBox.getChildren().addAll(rdpOpenModeCombo, rdpOpenModeUseGlobal);
+            grid.add(rdpOpenModeBox, 1, row);
+
             row++;
             grid.add(new Label("全屏快捷键:"), 0, row);
             HBox rdpShortcutBox = new HBox(8);
@@ -109,6 +135,8 @@ public class SessionConfigDialog {
         } else {
             rdpShortcutField = null;
             rdpShortcutUseGlobal = null;
+            rdpOpenModeCombo = null;
+            rdpOpenModeUseGlobal = null;
         }
 
         dialog.getDialogPane().setContent(grid);
@@ -141,6 +169,8 @@ public class SessionConfigDialog {
                     config.setDefaultFileViewMode(vm);
                 }
                 if (isRdp) {
+                    config.setRdpOpenMode(rdpOpenModeUseGlobal.isSelected() ? null
+                            : ("连接标签页".equals(rdpOpenModeCombo.getValue()) ? "TAB" : "WINDOW"));
                     if (rdpShortcutUseGlobal.isSelected()) {
                         config.setRdpFullScreenShortcut(null);
                     } else {

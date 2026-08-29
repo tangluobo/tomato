@@ -75,7 +75,18 @@ public class GlobalConfigDialog {
         }
 
         TextField rdpShortcutField;
+        ComboBox<String> rdpOpenModeBox;
         if (showRdpShortcut) {
+            grid.add(new Label("RDP打开方式:"), 0, row);
+            rdpOpenModeBox = new ComboBox<>();
+            rdpOpenModeBox.getItems().addAll("独立窗口", "连接标签页");
+            rdpOpenModeBox.setValue("TAB".equalsIgnoreCase(config.getRdpOpenMode())
+                    ? "连接标签页" : "独立窗口");
+            rdpOpenModeBox.setPrefWidth(160);
+            grid.add(rdpOpenModeBox, 1, row);
+            grid.add(new Label("(默认独立窗口)"), 2, row);
+            row++;
+
             grid.add(new Label("RDP全屏快捷键:"), 0, row);
             String globalShortcut = config.getRdpFullScreenShortcut();
             rdpShortcutField = new TextField(
@@ -86,6 +97,7 @@ public class GlobalConfigDialog {
             row++;
         } else {
             rdpShortcutField = null;
+            rdpOpenModeBox = null;
         }
 
         dialog.getDialogPane().setContent(grid);
@@ -108,6 +120,7 @@ public class GlobalConfigDialog {
                     config.setTableFontSize(fontSizeSpinner.getValue());
                 }
                 if (showRdpShortcut && rdpShortcutField != null) {
+                    config.setRdpOpenMode("连接标签页".equals(rdpOpenModeBox.getValue()) ? "TAB" : "WINDOW");
                     String s = rdpShortcutField.getText().trim();
                     if (!s.isEmpty()) {
                         try {

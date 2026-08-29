@@ -1161,7 +1161,7 @@ public class ConnectionConfigDialog {
         // RDP专属字段：色深
         grid.add(new Label("色深："), 0, row);
         rdpColorDepthCombo = new ComboBox<>();
-        rdpColorDepthCombo.getItems().addAll("16位", "24位");
+        rdpColorDepthCombo.getItems().addAll("16位", "24位", "32位");
         rdpColorDepthCombo.setPrefWidth(100);
         rdpColorDepthCombo.setValue("24位");
         grid.add(rdpColorDepthCombo, 1, row++);

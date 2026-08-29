@@ -2120,22 +2120,38 @@ public class ConnectModule implements Module {
         rdpGrid.setVgap(12);
         rdpGrid.setPadding(new Insets(20, 0, 0, 0));
 
+        Label rdpOpenModeLabel = new Label("打开方式");
+        rdpOpenModeLabel.setStyle("-fx-font-size: 14px;");
+        GridPane.setConstraints(rdpOpenModeLabel, 0, 0);
+
+        ComboBox<String> rdpOpenModeCombo = new ComboBox<>();
+        rdpOpenModeCombo.getItems().addAll("独立窗口", "连接标签页");
+        rdpOpenModeCombo.setValue("TAB".equalsIgnoreCase(GlobalConfig.getInstance().getRdpOpenMode())
+                ? "连接标签页" : "独立窗口");
+        rdpOpenModeCombo.setPrefWidth(220);
+        GridPane.setConstraints(rdpOpenModeCombo, 1, 0);
+
+        Label rdpOpenModeHint = new Label("(会话配置可单独覆盖，默认独立窗口)");
+        rdpOpenModeHint.setStyle("-fx-font-size: 12px; -fx-text-fill: #888;");
+        GridPane.setConstraints(rdpOpenModeHint, 2, 0);
+
         Label rdpShortcutLabel = new Label("全屏快捷键");
         rdpShortcutLabel.setStyle("-fx-font-size: 14px;");
-        GridPane.setConstraints(rdpShortcutLabel, 0, 0);
+        GridPane.setConstraints(rdpShortcutLabel, 0, 1);
 
         String globalRdpShortcut = GlobalConfig.getInstance().getRdpFullScreenShortcut();
         TextField rdpShortcutField = new TextField(
                 globalRdpShortcut != null && !globalRdpShortcut.isBlank() ? globalRdpShortcut : "Ctrl+Shift+Enter");
         rdpShortcutField.setPrefWidth(220);
         rdpShortcutField.setPromptText("如 Ctrl+Alt+Enter");
-        GridPane.setConstraints(rdpShortcutField, 1, 0);
+        GridPane.setConstraints(rdpShortcutField, 1, 1);
 
         Label rdpShortcutHint = new Label("(切换全屏/退出全屏；连接可右键-会话配置单独覆盖)");
         rdpShortcutHint.setStyle("-fx-font-size: 12px; -fx-text-fill: #888;");
-        GridPane.setConstraints(rdpShortcutHint, 2, 0);
+        GridPane.setConstraints(rdpShortcutHint, 2, 1);
 
-        rdpGrid.getChildren().addAll(rdpShortcutLabel, rdpShortcutField, rdpShortcutHint);
+        rdpGrid.getChildren().addAll(rdpOpenModeLabel, rdpOpenModeCombo, rdpOpenModeHint,
+                rdpShortcutLabel, rdpShortcutField, rdpShortcutHint);
 
         Button rdpApplyBtn = new Button("应用并保存");
         rdpApplyBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-width: 100px;");
@@ -2148,6 +2164,7 @@ public class ConnectModule implements Module {
                 return;
             }
             GlobalConfig cfg = GlobalConfig.getInstance();
+            cfg.setRdpOpenMode("连接标签页".equals(rdpOpenModeCombo.getValue()) ? "TAB" : "WINDOW");
             cfg.setRdpFullScreenShortcut(s);
             cfg.save();
             // 应用到所有使用全局配置的RDP会话（会话级覆盖不受影响）

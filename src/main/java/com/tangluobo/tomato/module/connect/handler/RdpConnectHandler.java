@@ -7,14 +7,22 @@ import com.tangluobo.tomato.module.connect.GlobalConfig;
 import com.tangluobo.tomato.module.connect.dialog.PasswordPromptDialog;
 import com.tangluobo.tomato.module.connect.dialog.SessionConfigDialog;
 import com.tangluobo.tomato.rdp.RdpPane;
+import javafx.scene.Node;
+import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.stage.Stage;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * RDP 远程桌面连接处理器。
  * 完整封装 RDP tab 创建、密码输入、连接建立逻辑。
  */
 public class RdpConnectHandler implements ConnectHandler {
+
+    /** handler按连接动作创建，因此独立窗口注册表需要跨实例共享（仅在JavaFX线程访问）。 */
+    private static final Map<String, Stage> OPEN_WINDOWS = new HashMap<>();
 
     @Override
     public boolean supports(ConnectType type) {
@@ -23,6 +31,17 @@ public class RdpConnectHandler implements ConnectHandler {
 
     @Override
     public void handleConnect(ConnectModule module, ConnectionConfig config) {
+        if (isWindowMode(config)) {
+            Stage existing = OPEN_WINDOWS.get(config.getId());
+            if (existing != null && existing.isShowing()) {
+                existing.setIconified(false);
+                existing.toFront();
+                existing.requestFocus();
+                return;
+            }
+            createRdpView(module, config, true);
+            return;
+        }
         // 若已有打开的 RDP tab，直接切换选中
         for (Tab tab : module.getTerminalTabPane().getTabs()) {
             if (config.getId().equals(tab.getUserData())) {
@@ -31,13 +50,13 @@ public class RdpConnectHandler implements ConnectHandler {
                 return;
             }
         }
-        createRdpTab(module, config);
+        createRdpView(module, config, false);
     }
 
     /**
      * 创建 RDP tab 并发起连接
      */
-    private void createRdpTab(ConnectModule module, ConnectionConfig config) {
+    private void createRdpView(ConnectModule module, ConnectionConfig config, boolean windowMode) {
         String password = config.getPassword();
         if (password == null || password.isEmpty()) {
             PasswordPromptDialog.Result pwdResult = PasswordPromptDialog.show(
@@ -54,6 +73,9 @@ public class RdpConnectHandler implements ConnectHandler {
         }
 
         RdpPane rdpPane = new RdpPane();
+        if (windowMode) {
+            rdpPane.suppressInitialWindowScrollBars();
+        }
         // 应用全屏切换快捷键：会话级覆盖优先，否则用全局配置
         rdpPane.setFullScreenShortcut(resolveFullScreenShortcut(config));
 
@@ -73,7 +95,7 @@ public class RdpConnectHandler implements ConnectHandler {
 
         MenuItem sessionConfigItem = new MenuItem("会话配置");
         sessionConfigItem.setOnAction(e -> {
-            Stage stage = (Stage) module.getTerminalTabPane().getScene().getWindow();
+            Stage stage = (Stage) rdpPane.getScene().getWindow();
             SessionConfigDialog.show(stage, config);
             module.saveConnections();
             // 会话配置可能修改了全屏快捷键，重新应用到当前会话
@@ -86,22 +108,111 @@ public class RdpConnectHandler implements ConnectHandler {
         tabContextMenu.getItems().addAll(fullScreenItem, sessionConfigItem, globalConfigItem);
         tab.setContextMenu(tabContextMenu);
 
-        tab.setOnClosed(e -> {
-            rdpPane.disconnect();
-            if (module.getTerminalTabPane().getTabs().isEmpty()) {
-                module.showWelcomeView();
+        Stage rdpWindow;
+        if (windowMode) {
+            TabPane windowTabs = new TabPane(tab);
+            // 独立窗口只有一个RDP会话，隐藏无意义的单标签标题栏。
+            windowTabs.setStyle("-fx-tab-min-height: 0; -fx-tab-max-height: 0;"
+                    + " -fx-padding: 0; -fx-background-insets: 0;"
+                    + " -fx-background-color: black; -fx-border-width: 0;");
+            rdpWindow = new Stage();
+            rdpWindow.setTitle(config.getName() != null ? config.getName() : "远程桌面");
+            rdpWindow.setScene(new Scene(windowTabs,
+                    Math.max(640, config.getScreenWidth()),
+                    Math.max(480, config.getScreenHeight() + 32)));
+            Stage mainStage = module.getTerminalTabPane().getScene() != null
+                    ? (Stage) module.getTerminalTabPane().getScene().getWindow() : null;
+            if (mainStage != null) {
+                // 不设置owner：拥有窗口在Windows任务栏中会附属于主窗口，无法作为
+                // 独立RDP窗口通过任务栏预览切换。仅继承应用图标以保持视觉一致。
+                rdpWindow.getIcons().setAll(mainStage.getIcons());
             }
-        });
+            OPEN_WINDOWS.put(config.getId(), rdpWindow);
+            rdpWindow.setOnHidden(e -> {
+                OPEN_WINDOWS.remove(config.getId(), rdpWindow);
+                rdpPane.disconnect();
+            });
+            windowTabs.getTabs().addListener((javafx.collections.ListChangeListener<Tab>) change -> {
+                if (windowTabs.getTabs().isEmpty()) {
+                    rdpWindow.close();
+                }
+            });
+            tab.setOnClosed(e -> rdpWindow.close());
+            // 独立RDP窗口的“最大化”直接进入RDP全屏，而不是普通窗口最大化。
+            // Windows标题栏最大化按钮和双击标题栏都会更新maximizedProperty。
+            rdpWindow.maximizedProperty().addListener((obs, wasMaximized, isMaximized) -> {
+                if (isMaximized && !rdpPane.isFullScreen()) {
+                    javafx.application.Platform.runLater(() -> {
+                        if (rdpWindow.isShowing() && !rdpPane.isFullScreen()) {
+                            rdpWindow.setMaximized(false);
+                            rdpPane.toggleFullScreen();
+                        }
+                    });
+                }
+            });
+            rdpWindow.show();
+            final boolean[] resizeTracking = {false, false}; // armed, already enabled
+            javafx.beans.value.ChangeListener<Number> manualResizeListener = (obs, oldValue, newValue) -> {
+                if (resizeTracking[0] && !resizeTracking[1]
+                        && Math.abs(newValue.doubleValue() - oldValue.doubleValue()) > 0.5) {
+                    // 延迟到本轮窗口状态变化完成后判断，避免把点击最大化进入全屏
+                    // 产生的尺寸变化误认为用户手动缩放。
+                    javafx.application.Platform.runLater(() -> {
+                        if (!resizeTracking[1] && !rdpWindow.isMaximized() && !rdpPane.isFullScreen()) {
+                            resizeTracking[1] = true;
+                            rdpPane.enableWindowScrollBars();
+                        }
+                    });
+                }
+            };
+            rdpWindow.widthProperty().addListener(manualResizeListener);
+            rdpWindow.heightProperty().addListener(manualResizeListener);
+            javafx.application.Platform.runLater(() -> {
+                // 仅把隐藏标签作为全屏还原锚点，不让TabPane的标题区、内容区边框
+                // 在系统标题栏与远程画面之间留下空白。
+                Node header = windowTabs.lookup(".tab-header-area");
+                if (header != null) {
+                    header.setVisible(false);
+                    header.setManaged(false);
+                }
+                Node content = windowTabs.lookup(".tab-content-area");
+                if (content != null) {
+                    content.setStyle("-fx-padding: 0; -fx-background-insets: 0;"
+                            + " -fx-background-color: black; -fx-border-width: 0;");
+                }
+                windowTabs.requestLayout();
+                javafx.application.Platform.runLater(() ->
+                {
+                    fitWindowToConfiguredDesktop(rdpWindow, rdpPane, config);
+                    javafx.animation.PauseTransition armResize = new javafx.animation.PauseTransition(
+                            javafx.util.Duration.millis(300));
+                    armResize.setOnFinished(event -> resizeTracking[0] = true);
+                    armResize.play();
+                });
+            });
+        } else {
+            rdpWindow = null;
+            tab.setOnClosed(e -> {
+                rdpPane.disconnect();
+                if (module.getTerminalTabPane().getTabs().isEmpty()) {
+                    module.showWelcomeView();
+                }
+            });
+        }
 
-        module.getTerminalTabPane().getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
-            if (newTab == tab) {
-                rdpPane.requestRdpFocus();
-            }
-        });
-
-        module.getTerminalTabPane().getTabs().add(tab);
-        module.getTerminalTabPane().getSelectionModel().select(tab);
-        module.showTerminalView();
+        if (!windowMode) {
+            module.getTerminalTabPane().getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
+                if (newTab == tab) {
+                    rdpPane.requestRdpFocus();
+                }
+            });
+            module.getTerminalTabPane().getTabs().add(tab);
+            module.getTerminalTabPane().getSelectionModel().select(tab);
+            module.showTerminalView();
+        } else {
+            rdpWindow.requestFocus();
+            rdpPane.requestRdpFocus();
+        }
 
         int rdpPort = config.getPort() > 0 ? config.getPort() : 3389;
         int width;
@@ -121,6 +232,35 @@ public class RdpConnectHandler implements ConnectHandler {
         rdpPane.connect(config.getHost(), rdpPort, config.getUsername(), password,
                 domain, width, height, bpp, config.isUseSsl(), config.isMapClipboard(),
                 config.isEnableSound());
+    }
+
+    private static boolean isWindowMode(ConnectionConfig config) {
+        String mode = config.getRdpOpenMode();
+        if (mode == null || mode.isBlank()) {
+            mode = GlobalConfig.getInstance().getRdpOpenMode();
+        }
+        return !"TAB".equalsIgnoreCase(mode);
+    }
+
+    private static void fitWindowToConfiguredDesktop(Stage stage, RdpPane pane, ConnectionConfig config) {
+        if (config.isFullscreen() || pane.getCenter() == null) {
+            return;
+        }
+        int targetWidth = config.getScreenWidth() > 0 ? config.getScreenWidth() : 1024;
+        int targetHeight = config.getScreenHeight() > 0 ? config.getScreenHeight() : 768;
+        javafx.geometry.Rectangle2D screen = javafx.stage.Screen.getScreensForRectangle(
+                stage.getX(), stage.getY(), Math.max(1, stage.getWidth()), Math.max(1, stage.getHeight()))
+                .stream().findFirst().orElse(javafx.stage.Screen.getPrimary()).getVisualBounds();
+        if (targetWidth >= screen.getWidth() || targetHeight >= screen.getHeight()) {
+            return;
+        }
+        double viewportWidth = pane.getCenter().getLayoutBounds().getWidth();
+        double viewportHeight = pane.getCenter().getLayoutBounds().getHeight();
+        if (viewportWidth <= 0 || viewportHeight <= 0) {
+            return;
+        }
+        stage.setWidth(Math.min(screen.getWidth(), stage.getWidth() + targetWidth - viewportWidth));
+        stage.setHeight(Math.min(screen.getHeight(), stage.getHeight() + targetHeight - viewportHeight));
     }
 
     /**
