@@ -10,6 +10,7 @@ import com.tangluobo.tomato.rdp.RdpPane;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.image.Image;
 import javafx.stage.Stage;
 
 import java.util.HashMap;
@@ -23,6 +24,7 @@ public class RdpConnectHandler implements ConnectHandler {
 
     /** handler按连接动作创建，因此独立窗口注册表需要跨实例共享（仅在JavaFX线程访问）。 */
     private static final Map<String, Stage> OPEN_WINDOWS = new HashMap<>();
+    private static Image mstscWindowIcon;
 
     @Override
     public boolean supports(ConnectType type) {
@@ -124,8 +126,13 @@ public class RdpConnectHandler implements ConnectHandler {
                     ? (Stage) module.getTerminalTabPane().getScene().getWindow() : null;
             if (mainStage != null) {
                 // 不设置owner：拥有窗口在Windows任务栏中会附属于主窗口，无法作为
-                // 独立RDP窗口通过任务栏预览切换。仅继承应用图标以保持视觉一致。
-                rdpWindow.getIcons().setAll(mainStage.getIcons());
+                // 独立RDP窗口通过任务栏预览切换。优先使用系统mstsc官方图标。
+                Image mstscIcon = loadMstscWindowIcon();
+                if (mstscIcon != null) {
+                    rdpWindow.getIcons().setAll(mstscIcon);
+                } else {
+                    rdpWindow.getIcons().setAll(mainStage.getIcons());
+                }
             }
             OPEN_WINDOWS.put(config.getId(), rdpWindow);
             rdpWindow.setOnHidden(e -> {
@@ -240,6 +247,22 @@ public class RdpConnectHandler implements ConnectHandler {
             mode = GlobalConfig.getInstance().getRdpOpenMode();
         }
         return !"TAB".equalsIgnoreCase(mode);
+    }
+
+    private static Image loadMstscWindowIcon() {
+        if (mstscWindowIcon != null) {
+            return mstscWindowIcon;
+        }
+        try {
+            java.net.URL resource = RdpConnectHandler.class.getResource("/images/rdp/mstsc.png");
+            if (resource == null) {
+                return null;
+            }
+            mstscWindowIcon = new Image(resource.toExternalForm());
+            return mstscWindowIcon;
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private static void fitWindowToConfiguredDesktop(Stage stage, RdpPane pane, ConnectionConfig config) {
