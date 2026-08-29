@@ -5376,6 +5376,9 @@
       "glob": "META-INF/fonts.mf"
     },
     {
+      "glob": "scripts/extract-windows-virtual-files.ps1"
+    },
+    {
       "glob": "META-INF/services/com.alibaba.fastjson.parser.deserializer.AutowiredObjectDeserializer"
     },
     {
