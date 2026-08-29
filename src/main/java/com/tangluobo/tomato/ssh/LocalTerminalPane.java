@@ -78,7 +78,7 @@ public class LocalTerminalPane extends BorderPane {
         stateLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
         HBox.setMargin(stateLabel, new javafx.geometry.Insets(0, 8, 0, 0));
 
-        connLabel = new Label(getShellDisplayName());
+        connLabel = new Label(getShellDisplayName(PseudoTerminal.getDefaultShell()));
         connLabel.setStyle("-fx-text-fill: #333333; -fx-font-size: 11px;");
 
         Region spacer = new Region();
@@ -244,8 +244,7 @@ public class LocalTerminalPane extends BorderPane {
     }
 
     /** 根据平台获取终端显示名称 */
-    private String getShellDisplayName() {
-        String shell = PseudoTerminal.getDefaultShell();
+    private String getShellDisplayName(String shell) {
         if (shell == null || shell.isEmpty()) return "Terminal";
         // "powershell.exe -NoProfile" → "PowerShell"
         if (shell.toLowerCase().contains("powershell")) return "PowerShell";
@@ -276,7 +275,8 @@ public class LocalTerminalPane extends BorderPane {
             return;
         }
         try {
-            String shell = PseudoTerminal.getDefaultShell();
+            String shell = PseudoTerminal.getShellCommand(terminalType);
+            connLabel.setText(getShellDisplayName(shell));
             // emulator.process(("[调试] 正在启动终端: " + shell + "\r\n").getBytes(StandardCharsets.UTF_8));
             // scheduleRender();
             pty.start(shell, emulator.getCols(), emulator.getRows());

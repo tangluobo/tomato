@@ -26,7 +26,6 @@ public class WindowsConPTY implements PseudoTerminal {
 
     // Windows 常量
     private static final int EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
-    private static final int CREATE_NO_WINDOW = 0x08000000;
     private static final int STARTF_USESTDHANDLES = 0x00000100;
     private static final long PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016L;
     private static final int STILL_ACTIVE = 259;
@@ -265,8 +264,12 @@ public class WindowsConPTY implements PseudoTerminal {
             MemorySegment startupInfo = arena.allocate(STARTUPINFOEX_SIZE);
             // cb = sizeof(STARTUPINFOEX) = 112
             startupInfo.set(ValueLayout.JAVA_INT, OFFSET_SI_CB, (int) STARTUPINFOEX_SIZE);
-            // dwFlags = 0（不使用 STARTF_USESTDHANDLES，ConPTY管理标准句柄）
-            startupInfo.set(ValueLayout.JAVA_INT, OFFSET_SI_DWFLAGS, 0);
+            // 显式清空标准句柄，避免从 IDE/GUI 父进程继承被重定向的 stdin/stdout/stderr。
+            // 设置 STARTF_USESTDHANDLES 后，Windows 会让 ConPTY 为子进程建立新的控制台连接。
+            startupInfo.set(ValueLayout.JAVA_INT, OFFSET_SI_DWFLAGS, STARTF_USESTDHANDLES);
+            startupInfo.set(HANDLE_LAYOUT, OFFSET_SI_HSTDINPUT, MemorySegment.NULL);
+            startupInfo.set(HANDLE_LAYOUT, OFFSET_SI_HSTDOUTPUT, MemorySegment.NULL);
+            startupInfo.set(HANDLE_LAYOUT, OFFSET_SI_HSTDERROR, MemorySegment.NULL);
             // lpAttributeList
             startupInfo.set(HANDLE_LAYOUT, OFFSET_SIEX_ATTR_LIST, attrList);
 
@@ -277,9 +280,9 @@ public class WindowsConPTY implements PseudoTerminal {
             }
 
             // 7. 创建进程
-            // CREATE_NO_WINDOW: 确保进程不继承父进程控制台窗口，强制使用 ConPTY
             // EXTENDED_STARTUPINFO_PRESENT: 使用 STARTUPINFOEX 和属性列表
-            int creationFlags = EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW;
+            // 不可添加 CREATE_NO_WINDOW，否则控制台子进程不会连接到 ConPTY。
+            int creationFlags = EXTENDED_STARTUPINFO_PRESENT;
             MemorySegment processInfo = arena.allocate(24); // PROCESS_INFORMATION: 24字节
             result = (int) CreateProcessW.invoke(
                 MemorySegment.NULL,       // lpApplicationName

@@ -44,6 +44,29 @@ public interface PseudoTerminal extends AutoCloseable {
     }
 
     /**
+     * 根据连接配置获取要启动的 shell 命令。
+     * Windows 支持 cmd 和 powershell；其他平台继续使用系统默认 shell。
+     */
+    static String getShellCommand(String terminalType) {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        if (!os.contains("win")) {
+            return getDefaultShell();
+        }
+
+        if (terminalType != null) {
+            String normalizedType = terminalType.trim().toLowerCase();
+            if ("cmd".equals(normalizedType)) {
+                return "cmd.exe";
+            }
+            if ("powershell".equals(normalizedType)) {
+                return "powershell.exe -NoLogo -NoProfile";
+            }
+        }
+
+        return getDefaultShell();
+    }
+
+    /**
      * 检测当前平台是否支持此 PTY 实现
      */
     boolean isAvailable();
