@@ -6,7 +6,7 @@ import com.tangluobo.tomato.module.connect.ConnectionConfig;
 import com.tangluobo.tomato.module.connect.GlobalConfig;
 import com.tangluobo.tomato.module.connect.dialog.PasswordPromptDialog;
 import com.tangluobo.tomato.module.connect.dialog.SessionConfigDialog;
-import com.tangluobo.tomato.rdp.RdpPane;
+import com.tangluobo.rdp4j.RdpPane;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.*;

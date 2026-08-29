@@ -884,6 +884,7 @@ public class ConnectModule implements Module {
 
     private static final String DRAG_PREFIX = "ConnectItem|";
     private static final String LOCAL_DIR_DRAG = "LocalDirDrag|";
+    private record ConnectionDropLocation(TreeItem<String> parent, int index) {}
     /** 本地目录拖动中的源节点（拖动期间临时持有） */
     private TreeItem<String> draggedLocalDirItem;
 
@@ -1053,6 +1054,11 @@ public class ConnectModule implements Module {
                     event.consume();
                     return;
                 }
+                // 搜索结果树不是完整结构，禁止在筛选状态下排序，避免隐藏节点顺序被意外改写。
+                if (searchField != null && !searchField.getText().isBlank()) {
+                    event.consume();
+                    return;
+                }
                 // 本地目录文件/文件夹拖动：用于跨目录移动
                 DatabaseNodeData dd = dbNodeDataMap.get(item);
                 if (dd != null && (dd.getType() == DatabaseNodeData.NodeType.LOCAL_DIR_FOLDER
@@ -1081,11 +1087,14 @@ public class ConnectModule implements Module {
             cell.setOnDragOver(event -> {
                 Dragboard db = event.getDragboard();
                 if (db.hasString() && db.getString().startsWith(DRAG_PREFIX)) {
-                    TreeItem<String> newParent = getConnectionDropParent(
-                            cell.getTreeItem(), event.getY(), cell.getHeight());
-                    if (newParent != null) {
+                    ConnectionDropLocation location = getValidConnectionDropLocation(
+                            db.getString(), cell.getTreeItem(), event.getY(), cell.getHeight());
+                    if (location != null) {
                         event.acceptTransferModes(TransferMode.MOVE);
                     }
+                } else if (db.hasString() && db.getString().equals(LOCAL_DIR_DRAG)
+                        && isValidLocalDirDropTarget(draggedLocalDirItem, cell.getTreeItem())) {
+                    event.acceptTransferModes(TransferMode.MOVE);
                 }
                 event.consume();
             });
@@ -1101,22 +1110,22 @@ public class ConnectModule implements Module {
                         }
                     } else if (s.startsWith(DRAG_PREFIX)) {
                         TreeItem<String> targetItem = cell.getTreeItem();
-                        TreeItem<String> newParent = getConnectionDropParent(
-                                targetItem, event.getY(), cell.getHeight());
-                        if (newParent != null) {
+                        ConnectionDropLocation location = getValidConnectionDropLocation(
+                                s, targetItem, event.getY(), cell.getHeight());
+                        if (location != null) {
                             ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
                             boolean droppingIntoFolder = targetConfig != null
                                     && targetConfig.getType() == null
-                                    && newParent == targetItem;
+                                    && location.parent() == targetItem;
                             if (droppingIntoFolder) {
+                                cell.setStyle("-fx-background-color: #e0e0e0;");
+                            } else if (targetItem == null || targetItem == root || targetItem == bottomSpacer) {
                                 cell.setStyle("-fx-background-color: #e0e0e0;");
                             } else if (event.getY() < cell.getHeight() / 2) {
                                 cell.setStyle("-fx-border-color: #07c160 transparent transparent transparent; -fx-border-width: 2 0 0 0;");
                             } else {
                                 cell.setStyle("-fx-border-color: transparent transparent #07c160 transparent; -fx-border-width: 0 0 2 0;");
                             }
-                        } else if (targetItem == null || targetItem == root) {
-                            cell.setStyle("-fx-background-color: #e0e0e0;");
                         }
                     }
                 }
@@ -1158,16 +1167,13 @@ public class ConnectModule implements Module {
                         }
                         draggedLocalDirItem = null;
                     } else if (s.startsWith(DRAG_PREFIX)) {
-                        String dragId = s.substring(DRAG_PREFIX.length());
                         TreeItem<String> targetItem = cell.getTreeItem();
-                        TreeItem<String> newParent = getConnectionDropParent(
-                                targetItem, event.getY(), cell.getHeight());
-
-                        TreeItem<String> draggedItem = findItemById(root, dragId);
-                        if (newParent != null && draggedItem != null
-                                && draggedItem != newParent && !isDescendant(draggedItem, newParent)) {
-                            moveItem(draggedItem, newParent);
-                            success = true;
+                        ConnectionDropLocation location = getValidConnectionDropLocation(
+                                s, targetItem, event.getY(), cell.getHeight());
+                        if (location != null) {
+                            String dragId = s.substring(DRAG_PREFIX.length());
+                            TreeItem<String> draggedItem = findItemById(root, dragId);
+                            success = moveItem(draggedItem, location.parent(), location.index());
                         }
                     }
                 }
@@ -1180,7 +1186,9 @@ public class ConnectModule implements Module {
 
         treeView.setOnDragOver(event -> {
             Dragboard db = event.getDragboard();
-            if (db.hasString() && db.getString().startsWith(DRAG_PREFIX)) {
+            if (db.hasString() && db.getString().startsWith(DRAG_PREFIX)
+                    && (searchField == null || searchField.getText().isBlank())
+                    && getValidConnectionDropLocation(db.getString(), null, 0, 0) != null) {
                 event.acceptTransferModes(TransferMode.MOVE);
             }
             event.consume();
@@ -1190,11 +1198,12 @@ public class ConnectModule implements Module {
             Dragboard db = event.getDragboard();
             boolean success = false;
             if (db.hasString() && db.getString().startsWith(DRAG_PREFIX)) {
-                String dragId = db.getString().substring(DRAG_PREFIX.length());
-                TreeItem<String> draggedItem = findItemById(root, dragId);
-                if (draggedItem != null && draggedItem.getParent() != root) {
-                    moveItem(draggedItem, root);
-                    success = true;
+                ConnectionDropLocation location = getValidConnectionDropLocation(
+                        db.getString(), null, 0, 0);
+                if (location != null) {
+                    String dragId = db.getString().substring(DRAG_PREFIX.length());
+                    TreeItem<String> draggedItem = findItemById(root, dragId);
+                    success = moveItem(draggedItem, location.parent(), location.index());
                 }
             }
             event.setDropCompleted(success);
@@ -1203,12 +1212,13 @@ public class ConnectModule implements Module {
     }
 
     /**
-     * 解析连接节点的投放父级：目录行中央表示放入该目录；行边缘或普通连接行
-     * 表示放到该行的同级位置，因此使用该行当前的父目录。
+     * 解析连接节点的投放位置：目录行中央表示放入目录末尾；行的上/下半区
+     * 分别表示插到目标同级节点之前/之后；空白区域表示移动到根目录末尾。
      */
-    private TreeItem<String> getConnectionDropParent(TreeItem<String> targetItem, double y, double height) {
+    private ConnectionDropLocation getConnectionDropLocation(
+            TreeItem<String> targetItem, double y, double height) {
         if (targetItem == null || targetItem == root || targetItem == bottomSpacer) {
-            return root;
+            return new ConnectionDropLocation(root, connectionChildCount(root));
         }
 
         ConnectionConfig targetConfig = itemConfigMap.get(targetItem);
@@ -1221,14 +1231,44 @@ public class ConnectModule implements Module {
                 && y >= height * 0.25
                 && y <= height * 0.75;
         if (folderCenter) {
-            return targetItem;
+            return new ConnectionDropLocation(targetItem, targetItem.getChildren().size());
         }
 
         TreeItem<String> parent = targetItem.getParent();
         if (parent == null) {
-            return root;
+            return new ConnectionDropLocation(root, connectionChildCount(root));
         }
-        return parent == root || itemConfigMap.containsKey(parent) ? parent : null;
+        if (parent != root && !itemConfigMap.containsKey(parent)) {
+            return null;
+        }
+
+        int targetIndex = parent.getChildren().indexOf(targetItem);
+        if (targetIndex < 0) return null;
+        int insertionIndex = targetIndex + (height > 0 && y >= height / 2.0 ? 1 : 0);
+        return new ConnectionDropLocation(parent, insertionIndex);
+    }
+
+    private ConnectionDropLocation getValidConnectionDropLocation(
+            String dragValue, TreeItem<String> targetItem, double y, double height) {
+        if (dragValue == null || !dragValue.startsWith(DRAG_PREFIX)) return null;
+        if (searchField != null && !searchField.getText().isBlank()) return null;
+
+        String dragId = dragValue.substring(DRAG_PREFIX.length());
+        TreeItem<String> draggedItem = findItemById(root, dragId);
+        ConnectionDropLocation location = getConnectionDropLocation(targetItem, y, height);
+        if (draggedItem == null || location == null
+                || draggedItem == location.parent()
+                || isDescendant(draggedItem, location.parent())) {
+            return null;
+        }
+        return location;
+    }
+
+    /** root 包含一个不可排序的 bottomSpacer，插入索引必须始终位于它之前。 */
+    private int connectionChildCount(TreeItem<String> parent) {
+        if (parent != root) return parent.getChildren().size();
+        int spacerIndex = root.getChildren().indexOf(bottomSpacer);
+        return spacerIndex >= 0 ? spacerIndex : root.getChildren().size();
     }
 
     /** 本地目录拖放目标是否有效：须为 LOCAL_DIR_FOLDER 或本地目录连接根，且与源同一连接、非自身/后代 */
@@ -1277,11 +1317,29 @@ public class ConnectModule implements Module {
         return false;
     }
 
-    private void moveItem(TreeItem<String> item, TreeItem<String> newParent) {
+    private boolean moveItem(TreeItem<String> item, TreeItem<String> newParent, int insertionIndex) {
+        if (item == null || newParent == null) return false;
         ConnectionConfig config = itemConfigMap.get(item);
-        if (config == null) return;
+        TreeItem<String> oldParent = item.getParent();
+        if (config == null || oldParent == null) return false;
 
-        item.getParent().getChildren().remove(item);
+        int oldIndex = oldParent.getChildren().indexOf(item);
+        if (oldIndex < 0) return false;
+        int adjustedIndex = insertionIndex;
+        if (oldParent == newParent && adjustedIndex > oldIndex) {
+            adjustedIndex--;
+        }
+        int maxIndexAfterRemoval = connectionChildCount(newParent)
+                - (oldParent == newParent ? 1 : 0);
+        adjustedIndex = Math.max(0, Math.min(adjustedIndex, maxIndexAfterRemoval));
+        if (oldParent == newParent && adjustedIndex == oldIndex) {
+            return false;
+        }
+
+        String oldParentId = config.getParentId();
+        List<ConnectionConfig> oldOrder = new ArrayList<>(connections);
+
+        oldParent.getChildren().remove(item);
 
         if (newParent == root) {
             config.setParentId(null);
@@ -1292,10 +1350,48 @@ public class ConnectModule implements Module {
             }
         }
 
-        addChildToParent(newParent, item);
+        newParent.getChildren().add(adjustedIndex, item);
         newParent.setExpanded(true);
+        synchronizeConnectionsFromTree();
 
-        saveConnectionsWithFeedback();
+        if (!saveConnectionsWithFeedback()) {
+            newParent.getChildren().remove(item);
+            oldParent.getChildren().add(Math.min(oldIndex, oldParent.getChildren().size()), item);
+            config.setParentId(oldParentId);
+            connections.clear();
+            connections.addAll(oldOrder);
+            return false;
+        }
+        treeView.getSelectionModel().select(item);
+        return true;
+    }
+
+    /** 将当前树中的层级和同级顺序同步到 JSON 数组顺序，确保刷新/重启后排序不变。 */
+    private void synchronizeConnectionsFromTree() {
+        List<ConnectionConfig> ordered = new ArrayList<>(connections.size());
+        Set<ConnectionConfig> orderedConfigs = java.util.Collections.newSetFromMap(
+                new java.util.IdentityHashMap<>());
+        appendConnectionsInTreeOrder(root, ordered, orderedConfigs);
+        // 对异常或暂未显示的配置做兜底保留，避免任何配置因同步顺序而丢失。
+        for (ConnectionConfig config : connections) {
+            if (orderedConfigs.add(config)) {
+                ordered.add(config);
+            }
+        }
+        connections.clear();
+        connections.addAll(ordered);
+    }
+
+    private void appendConnectionsInTreeOrder(
+            TreeItem<String> parent, List<ConnectionConfig> ordered, Set<ConnectionConfig> orderedConfigs) {
+        for (TreeItem<String> child : parent.getChildren()) {
+            if (child == bottomSpacer) continue;
+            ConnectionConfig childConfig = itemConfigMap.get(child);
+            if (childConfig != null && orderedConfigs.add(childConfig)) {
+                ordered.add(childConfig);
+            }
+            appendConnectionsInTreeOrder(child, ordered, orderedConfigs);
+        }
     }
 
     /** 向 parent 添加子节点；若 parent 为 root 则插入到 bottomSpacer 之前，确保空白占位始终在末尾 */
@@ -2227,7 +2323,7 @@ public class ConnectModule implements Module {
         for (Tab tab : terminalTabPane.getTabs()) {
             Object content = tab.getContent();
             Object userData = tab.getUserData();
-            if (content instanceof com.tangluobo.tomato.rdp.RdpPane pane
+            if (content instanceof com.tangluobo.rdp4j.RdpPane pane
                     && userData instanceof String configId) {
                 ConnectionConfig config = findConnectionById(configId);
                 // 仅更新使用全局配置（rdpFullScreenShortcut == null）的会话
@@ -2420,8 +2516,18 @@ public class ConnectModule implements Module {
         ConnectionConfigDialog dialog = new ConnectionConfigDialog(stage, existingConfig);
         ConnectionConfig updatedConfig = dialog.showAndWait();
         if (updatedConfig != null) {
-            connections.removeIf(c -> c.getId().equals(existingConfig.getId()));
-            connections.add(updatedConfig);
+            int existingIndex = -1;
+            for (int i = 0; i < connections.size(); i++) {
+                if (java.util.Objects.equals(connections.get(i).getId(), existingConfig.getId())) {
+                    existingIndex = i;
+                    break;
+                }
+            }
+            if (existingIndex >= 0) {
+                connections.set(existingIndex, updatedConfig);
+            } else {
+                connections.add(updatedConfig);
+            }
             saveConnectionsWithFeedback();
 
             itemConfigMap.remove(item);
@@ -2452,7 +2558,17 @@ public class ConnectModule implements Module {
         // 保持与原连接相同的 parentId：如果原连接是根级（parentId==null），则副本也是根级
         copiedConfig.setParentId(sourceConfig.getParentId());
 
-        connections.add(copiedConfig);
+        int sourceIndex = connections.indexOf(sourceConfig);
+        if (sourceIndex < 0) {
+            for (int i = 0; i < connections.size(); i++) {
+                if (java.util.Objects.equals(connections.get(i).getId(), sourceConfig.getId())) {
+                    sourceIndex = i;
+                    break;
+                }
+            }
+        }
+        int copiedIndex = sourceIndex >= 0 ? sourceIndex + 1 : connections.size();
+        connections.add(copiedIndex, copiedConfig);
         if (!saveConnectionsWithFeedback()) {
             // 保存失败，回滚 connections，保持内存与磁盘一致
             connections.remove(copiedConfig);
