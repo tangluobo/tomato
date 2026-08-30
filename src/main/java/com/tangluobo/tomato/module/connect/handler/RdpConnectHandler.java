@@ -239,6 +239,16 @@ public class RdpConnectHandler implements ConnectHandler {
         rdpPane.connect(config.getHost(), rdpPort, config.getUsername(), password,
                 domain, width, height, bpp, config.isUseSsl(), config.isMapClipboard(),
                 config.isEnableSound());
+
+        if (config.isFullscreen()) {
+            // “默认全屏”不仅决定远程桌面分辨率，也决定双击打开后的实际
+            // 显示状态。延后一轮，确保独立窗口或标签页已经挂到 Scene。
+            javafx.application.Platform.runLater(() -> {
+                if (rdpPane.getScene() != null && !rdpPane.isFullScreen()) {
+                    rdpPane.toggleFullScreen();
+                }
+            });
+        }
     }
 
     private static boolean isWindowMode(ConnectionConfig config) {

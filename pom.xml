@@ -6,7 +6,7 @@
 
     <groupId>com.tangluobo</groupId>
     <artifactId>tomato</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <name>tomato</name>
 
     <properties>
@@ -60,7 +60,7 @@
         <dependency>
             <groupId>com.tangluobo</groupId>
             <artifactId>rdp4j</artifactId>
-            <version>1.0.2</version>
+            <version>1.0.5</version>
         </dependency>
         <dependency>
             <groupId>org.openjfx</groupId>
