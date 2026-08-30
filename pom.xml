@@ -60,7 +60,7 @@
         <dependency>
             <groupId>com.tangluobo</groupId>
             <artifactId>rdp4j</artifactId>
-            <version>1.0.5</version>
+            <version>1.0.2-snapshot</version>
         </dependency>
         <dependency>
             <groupId>org.openjfx</groupId>
@@ -552,6 +552,8 @@
                                 <buildArg>-H:+AddAllCharsets</buildArg>
                                 <!--<buildArg>-H:Optimize="2"</buildArg> &lt;!&ndash; 用于指定编译优化级别，2是默认  控制代码优化：b - 针对最快构建时间进行优化，s - 针对大小进行优化，0 - 无优化，1 - 基本优化，2 - 高级优化，3 - 所有优化以实现最佳性能。 &ndash;&gt;-->
                                 <buildArg>-H:-CheckToolchain</buildArg>
+                                <!-- Netty 在构建期创建 SLF4J JUL 适配器；GraalVM 25 要求其类型同步在构建期初始化 -->
+                                <buildArg>--initialize-at-build-time=org.slf4j.jul.JDK14LoggerAdapter</buildArg>
                                 <buildArg>--initialize-at-run-time=io.netty.channel.kqueue.Native,io.netty.channel.kqueue.KQueueEventArray</buildArg>
                                 <!-- Woodstox (MinIO的XML解析器) 需在运行时初始化，否则native环境下XML解析会抛JsonParseException -->
                                 <buildArg>--initialize-at-run-time=com.ctc.wstx.stax.WstxInputFactory,com.ctc.wstx.stax.WstxOutputFactory,com.ctc.wstx.stax.WstxEventFactory,com.ctc.wstx.api.ReaderConfig,com.ctc.wstx.api.WriterConfig</buildArg>

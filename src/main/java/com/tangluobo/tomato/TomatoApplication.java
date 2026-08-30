@@ -16,19 +16,26 @@ import java.io.IOException;
 public class TomatoApplication extends Application {
     @Override
     public void start(Stage stage) throws IOException {
-        // 启动 DDNS 全局服务：加载持久化配置，自动定时更新（不依赖连接面板是否打开）
-        DdnsService.getInstance().start();
+        try {
+            // 启动 DDNS 全局服务：加载持久化配置，自动定时更新（不依赖连接面板是否打开）
+            DdnsService.getInstance().start();
 
-        // 暴露主窗口引用：供弹窗定位工具使用，多屏环境下让 Alert/Dialog 跟随主窗口所在屏幕
-        DialogPositionUtil.setMainWindow(stage);
+            // 暴露主窗口引用：供弹窗定位工具使用，多屏环境下让 Alert/Dialog 跟随主窗口所在屏幕
+            DialogPositionUtil.setMainWindow(stage);
 
-        FXMLLoader fxmlLoader = new FXMLLoader(TomatoApplication.class.getResource("tomato-view.fxml"));
-        Scene scene = new Scene(fxmlLoader.load(), 1200, 900);
-        scene.setFill(Color.WHITE);
-        stage.initStyle(StageStyle.UNDECORATED);
-        stage.getIcons().add(new Image(getClass().getResourceAsStream("/images/logo.png")));
-        stage.setScene(scene);
-        stage.show();
+            FXMLLoader fxmlLoader = new FXMLLoader(TomatoApplication.class.getResource("tomato-view.fxml"));
+            Scene scene = new Scene(fxmlLoader.load(), 1200, 900);
+            scene.setFill(Color.WHITE);
+            stage.initStyle(StageStyle.UNDECORATED);
+            stage.getIcons().add(new Image(getClass().getResourceAsStream("/images/logo.png")));
+            stage.setScene(scene);
+            stage.show();
+        } catch (Throwable error) {
+            if ("1".equals(System.getenv("TOMATO_CONSOLE_DIAGNOSTICS"))) {
+                error.printStackTrace();
+            }
+            throw new RuntimeException("Tomato startup failed", error);
+        }
     }
 
     @Override

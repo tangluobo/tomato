@@ -12,9 +12,12 @@ public class Launcher {
         System.setProperty("prism.lcdtext", "true");
         System.setProperty("prism.text", "lcd");
         // javaw / jpackage GUI 启动器无控制台，System.out/err 为无效句柄，
-        // JavaFX 内部（java.util.logging）写入会抛异常导致启动失败，重定向到空输出流规避
-        System.setOut(new PrintStream(OutputStream.nullOutputStream(), true));
-        System.setErr(new PrintStream(OutputStream.nullOutputStream(), true));
+        // JavaFX 内部（java.util.logging）写入会抛异常导致启动失败，重定向到空输出流规避。
+        // 原生镜像启动异常可通过 TOMATO_CONSOLE_DIAGNOSTICS=1 临时保留控制台输出进行排查。
+        if (!"1".equals(System.getenv("TOMATO_CONSOLE_DIAGNOSTICS"))) {
+            System.setOut(new PrintStream(OutputStream.nullOutputStream(), true));
+            System.setErr(new PrintStream(OutputStream.nullOutputStream(), true));
+        }
         Application.launch(TomatoApplication.class, args);
     }
 }
