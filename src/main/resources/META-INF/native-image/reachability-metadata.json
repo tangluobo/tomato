@@ -2265,7 +2265,16 @@
       "jniAccessible": true
     },
     {
-      "type": "com.sun.jna.CallbackProxy"
+      "type": "com.sun.jna.CallbackProxy",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "callback",
+          "parameterTypes": [
+            "java.lang.Object[]"
+          ]
+        }
+      ]
     },
     {
       "type": "com.sun.jna.CallbackReference",
@@ -2515,6 +2524,108 @@
           "parameterTypes": [
             "java.lang.String"
           ]
+        }
+      ]
+    },
+    {
+      "type": "com.sun.jna.platform.win32.WinDef$HMODULE",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.jna.platform.win32.WinDef$HWND",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.jna.platform.win32.WinDef$LPARAM",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.jna.platform.win32.WinDef$LRESULT",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.jna.platform.win32.WinDef$POINT",
+      "fields": [
+        {
+          "name": "x"
+        },
+        {
+          "name": "y"
+        }
+      ],
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.sun.jna.Pointer"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "com.sun.jna.platform.win32.WinDef$WPARAM",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.jna.platform.win32.WinUser$HHOOK",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.jna.platform.win32.WinUser$KBDLLHOOKSTRUCT"
+    },
+    {
+      "type": "com.sun.jna.platform.win32.WinUser$LowLevelKeyboardProc"
+    },
+    {
+      "type": "com.sun.jna.platform.win32.WinUser$MSG",
+      "fields": [
+        {
+          "name": "hWnd"
+        },
+        {
+          "name": "lParam"
+        },
+        {
+          "name": "message"
+        },
+        {
+          "name": "pt"
+        },
+        {
+          "name": "time"
+        },
+        {
+          "name": "wParam"
         }
       ]
     },
@@ -11309,8 +11420,32 @@
     {
       "type": {
         "proxy": [
+          "com.sun.jna.platform.win32.Kernel32"
+        ]
+      }
+    },
+    {
+      "type": {
+        "proxy": [
+          "com.sun.jna.platform.win32.User32"
+        ]
+      }
+    },
+    {
+      "type": {
+        "proxy": [
           "com.tangluobo.rdp4j.frontend.FxRdpInput$WindowsKeyboard"
         ]
+      }
+    },
+    {
+      "type": {
+        "lambda": {
+          "declaringClass": "com.tangluobo.rdp4j.WindowsFullScreenKeyboardHook",
+          "interfaces": [
+            "com.sun.jna.platform.win32.WinUser$LowLevelKeyboardProc"
+          ]
+        }
       }
     }
   ],
@@ -15906,7 +16041,13 @@
       "glob": "com/sun/scenario/effect/impl/es2/glsl/LinearConvolveShadow_8.frag"
     },
     {
+      "glob": "com/sun/scenario/effect/impl/hw/d3d/hlsl/LinearConvolveShadow_12.obj"
+    },
+    {
       "glob": "com/sun/scenario/effect/impl/hw/d3d/hlsl/LinearConvolveShadow_16.obj"
+    },
+    {
+      "glob": "com/sun/scenario/effect/impl/hw/d3d/hlsl/LinearConvolveShadow_20.obj"
     },
     {
       "glob": "com/sun/scenario/effect/impl/hw/d3d/hlsl/LinearConvolveShadow_28.obj"

@@ -46,7 +46,7 @@
         <dependency>
             <groupId>com.tangluobo</groupId>
             <artifactId>rdp4j</artifactId>
-            <version>1.0.2</version>
+            <version>1.0.3</version>
         </dependency>
         <dependency>
             <groupId>org.openjfx</groupId>
@@ -477,7 +477,6 @@
                     <imageName>${project.artifactId}</imageName>
                     <mainClass>${mainClass}</mainClass>
                     <!-- 与 exec-maven-plugin 中负责启动可交互应用的 execution id 保持一致。 -->
-                    <agentExecutionId>java-agent</agentExecutionId>
                     <agent>
                         <enabled>${native.agent.enabled}</enabled>
                         <metadataCopy>
@@ -532,6 +531,29 @@
     </build>
 
     <profiles>
+        <profile>
+            <id>windows-native-gui</id>
+            <activation>
+                <os>
+                    <family>Windows</family>
+                </os>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.graalvm.buildtools</groupId>
+                        <artifactId>native-maven-plugin</artifactId>
+                        <configuration>
+                            <buildArgs combine.children="append">
+                                <!-- 使用 Windows GUI 子系统，启动 AOT 可执行文件时不创建控制台窗口。 -->
+                                <buildArg>-H:NativeLinkerOption=/SUBSYSTEM:WINDOWS</buildArg>
+                                <buildArg>-H:NativeLinkerOption=/ENTRY:mainCRTStartup</buildArg>
+                            </buildArgs>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
         <profile>
             <id>native</id>
             <properties>
