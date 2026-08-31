@@ -5035,6 +5035,21 @@
       ]
     },
     {
+      "type": "java.awt.AWTEvent",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "bdata"
+        },
+        {
+          "name": "consumed"
+        },
+        {
+          "name": "id"
+        }
+      ]
+    },
+    {
       "type": "java.awt.Color",
       "jniAccessible": true,
       "methods": [
@@ -5055,6 +5070,15 @@
           "name": "background"
         },
         {
+          "name": "cursor"
+        },
+        {
+          "name": "enabled"
+        },
+        {
+          "name": "focusable"
+        },
+        {
           "name": "foreground"
         },
         {
@@ -5064,13 +5088,16 @@
           "name": "height"
         },
         {
-          "name": "isPacked"
+          "name": "parent"
         },
         {
           "name": "name"
         },
         {
           "name": "peer"
+        },
+        {
+          "name": "visible"
         },
         {
           "name": "width"
@@ -5084,11 +5111,70 @@
       ],
       "methods": [
         {
+          "name": "getFont_NoClientCode",
+          "parameterTypes": []
+        },
+        {
           "name": "getLocationOnScreen_NoTreeLock",
           "parameterTypes": []
         },
         {
-          "name": "getParent_NoClientCode",
+          "name": "getToolkitImpl",
+          "parameterTypes": []
+        },
+        {
+          "name": "isEnabledImpl",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "java.awt.Container",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "layoutMgr"
+        }
+      ]
+    },
+    {
+      "type": "java.awt.Dimension",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "height"
+        },
+        {
+          "name": "width"
+        }
+      ]
+    },
+    {
+      "type": "java.awt.Font",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "name"
+        },
+        {
+          "name": "pData"
+        },
+        {
+          "name": "size"
+        },
+        {
+          "name": "style"
+        }
+      ],
+      "methods": [
+        {
+          "name": "getFont",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        },
+        {
+          "name": "getFontPeer",
           "parameterTypes": []
         }
       ]
@@ -5104,6 +5190,9 @@
       ]
     },
     {
+      "type": "java.awt.Image"
+    },
+    {
       "type": "java.awt.Rectangle",
       "jniAccessible": true,
       "methods": [
@@ -5115,6 +5204,21 @@
             "int",
             "int"
           ]
+        }
+      ]
+    },
+    {
+      "type": "java.awt.event.InputEvent",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "modifiers"
+        }
+      ],
+      "methods": [
+        {
+          "name": "getButtonDownMasks",
+          "parameterTypes": []
         }
       ]
     },
@@ -7400,6 +7504,18 @@
       ]
     },
     {
+      "type": "sun.awt.Win32GraphicsEnvironment",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "dwmCompositionChanged",
+          "parameterTypes": [
+            "boolean"
+          ]
+        }
+      ]
+    },
+    {
       "type": "sun.awt.X11.XErrorHandlerUtil",
       "jniAccessible": true,
       "methods": [
@@ -7545,7 +7661,60 @@
       ]
     },
     {
+      "type": "sun.awt.shell.ShellFolder"
+    },
+    {
       "type": "sun.awt.shell.ShellFolderManager",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.awt.shell.Win32ShellFolder2",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "FDATE"
+        },
+        {
+          "name": "FNAME"
+        },
+        {
+          "name": "FSIZE"
+        },
+        {
+          "name": "FTYPE"
+        },
+        {
+          "name": "displayName"
+        },
+        {
+          "name": "folderType"
+        },
+        {
+          "name": "pIShellIcon"
+        }
+      ],
+      "methods": [
+        {
+          "name": "setIShellFolder",
+          "parameterTypes": [
+            "long"
+          ]
+        },
+        {
+          "name": "setRelativePIDL",
+          "parameterTypes": [
+            "long"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.awt.shell.Win32ShellFolderManager2",
       "methods": [
         {
           "name": "<init>",
@@ -9059,6 +9228,32 @@
       ]
     },
     {
+      "type": "sun.awt.windows.WComponentPeer",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "hwnd"
+        },
+        {
+          "name": "winGraphicsConfig"
+        }
+      ],
+      "methods": [
+        {
+          "name": "disposeLater",
+          "parameterTypes": []
+        },
+        {
+          "name": "replaceSurfaceData",
+          "parameterTypes": []
+        },
+        {
+          "name": "replaceSurfaceDataLater",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
       "type": "sun.awt.AWTAutoShutdown",
       "jniAccessible": true,
       "methods": [
@@ -9105,6 +9300,89 @@
           "name": "systemSleepCallback",
           "parameterTypes": [
             "boolean"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.awt.windows.WDesktopProperties",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "pData"
+        }
+      ],
+      "methods": [
+        {
+          "name": "setBooleanProperty",
+          "parameterTypes": [
+            "java.lang.String",
+            "boolean"
+          ]
+        },
+        {
+          "name": "setColorProperty",
+          "parameterTypes": [
+            "java.lang.String",
+            "int",
+            "int",
+            "int"
+          ]
+        },
+        {
+          "name": "setFontProperty",
+          "parameterTypes": [
+            "java.lang.String",
+            "java.lang.String",
+            "int",
+            "int"
+          ]
+        },
+        {
+          "name": "setIntegerProperty",
+          "parameterTypes": [
+            "java.lang.String",
+            "int"
+          ]
+        },
+        {
+          "name": "setSoundProperty",
+          "parameterTypes": [
+            "java.lang.String",
+            "java.lang.String"
+          ]
+        },
+        {
+          "name": "setStringProperty",
+          "parameterTypes": [
+            "java.lang.String",
+            "java.lang.String"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.awt.windows.WObjectPeer",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "createError"
+        },
+        {
+          "name": "destroyed"
+        },
+        {
+          "name": "pData"
+        },
+        {
+          "name": "target"
+        }
+      ],
+      "methods": [
+        {
+          "name": "getPeerForTarget",
+          "parameterTypes": [
+            "java.lang.Object"
           ]
         }
       ]

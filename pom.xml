@@ -17,8 +17,9 @@
         <mainClass>com.tangluobo.tomato.Launcher</mainClass>
         <javafx.version>27-ea+24</javafx.version>
         <!-- jpackage 相关属性 -->
-        <!-- agent.exec.skip=true 时跳过 test 阶段启动 UI 的 exec（java-agent），jpackage profile 中自动置为 true -->
-        <agent.exec.skip>false</agent.exec.skip>
+        <!-- 默认 package 只构建普通 JAR，不启动 UI，也不启用 Native Image tracing agent。 -->
+        <agent.exec.skip>true</agent.exec.skip>
+        <native.agent.enabled>false</native.agent.enabled>
         <!-- jpackage 打包类型：exe（Win 安装向导，需 WiX 3.x）/ rpm（Linux）/ msi / app-image（绿色目录） -->
         <jpackage.type>exe</jpackage.type>
         <!-- 所有平台的应用版本和产物文件名均从 POM 项目版本自动获取。 -->
@@ -36,24 +37,9 @@
     </properties>
 
     <description>
-        本项目是一个JavaFX演示项目，主要用于演示如何使用GraalVM打包成本地镜像文件。
-        本演示项目只考虑windows系统使用MSVC时的情况。打包的结果是一个单独exe文件。
-        本项目与以往的使用GluonFX的插件不同，直接使用GraalVM，因为使用GluonFX打包JavaFX25和GraalVM25时会报错，17不报错。
-        与GluonFX的插件不同，本项目打包可以使用cmd，不用打开vs的cmd窗口。
-
-        本项目的代码只是idea创建JavaFX时的默认代码。
-        本项目的打包思路为：
-            1.打包成不含依赖的jar包
-            2.利用maven-assembly-plugin插件将第一步的jar包与依赖的jar包打包成含有当前代码编译结果与所有依赖的jar包
-            3.使用exec-maven-plugin插件收集项目整体需要的资源与反射信息，故而打包时运行JavaFX项目的UI界面，需要手动点击所有功能以便插件收集信息。
-              收集到的信息被放在target/native/agent-output/main/reachability-metadata.json,可以将此文件保存下来放在src/main/resources/META-INF/native-image/reachability-metadata.json，
-              以减少下次编译时收集资源与反射信息的时间，不用点击全部功能。两个文件会自动合并，不用担心冲突。
-            4.使用native-maven-plugin插件，其利用GraalVM的native-image将第二步的结果结合第三步的结果编译成exe文件。本地镜像打包相关配置在该插件的configuration标签内配置。
-        打包命令为mvn clean -Pnative package。
-
-        我本地测试，用这个办法打包结果大小为44.9MB，比使用GluonFX（JavaFX17和GraalVM17）的打包的六十多兆要小，内存占用也要更小，可能是因为GraalVM的进步吧。
-        收集资源与反射信息时会抛出异常，实测不影响打包。
-        用这个方法打包出来的jar是未命名模块，不知道为什么，没有解决（Unsupported JavaFX configuration: classes were loaded from 'unnamed module @2fefd6c2'）。
+        Tomato JavaFX application. The default Maven lifecycle builds regular JAR artifacts.
+        Optional Maven profiles collect and merge GraalVM tracing-agent metadata or build a
+        platform-native executable on Windows, Linux, and macOS.
     </description>
 
     <dependencies>
@@ -483,6 +469,40 @@
                 </executions>
             </plugin>
             <plugin>
+                <groupId>org.graalvm.buildtools</groupId>
+                <artifactId>native-maven-plugin</artifactId>
+                <version>${native.maven.plugin.version}</version>
+                <extensions>true</extensions>
+                <configuration>
+                    <imageName>${project.artifactId}</imageName>
+                    <mainClass>${mainClass}</mainClass>
+                    <!-- 与 exec-maven-plugin 中负责启动可交互应用的 execution id 保持一致。 -->
+                    <agentExecutionId>java-agent</agentExecutionId>
+                    <agent>
+                        <enabled>${native.agent.enabled}</enabled>
+                        <metadataCopy>
+                            <!-- 交互采集只合并 main；测试阶段的 agent 输出不污染应用配置。 -->
+                            <disabledStages>
+                                <stage>test</stage>
+                            </disabledStages>
+                            <outputDirectory>${project.basedir}/src/main/resources/META-INF/native-image</outputDirectory>
+                            <merge>true</merge>
+                        </metadataCopy>
+                    </agent>
+                    <buildArgs>
+                        <buildArg>--enable-native-access=ALL-UNNAMED</buildArg>
+                        <buildArg>--no-fallback</buildArg>
+                        <buildArg>-H:+AddAllCharsets</buildArg>
+                        <buildArg>-H:-CheckToolchain</buildArg>
+                        <!-- Netty 在构建期创建 SLF4J JUL 适配器。 -->
+                        <buildArg>--initialize-at-build-time=org.slf4j.jul.JDK14LoggerAdapter</buildArg>
+                        <buildArg>--initialize-at-run-time=io.netty.channel.kqueue.Native,io.netty.channel.kqueue.KQueueEventArray</buildArg>
+                        <!-- Woodstox/MinIO 的工厂与配置必须延迟到运行期初始化。 -->
+                        <buildArg>--initialize-at-run-time=com.ctc.wstx.stax.WstxInputFactory,com.ctc.wstx.stax.WstxOutputFactory,com.ctc.wstx.stax.WstxEventFactory,com.ctc.wstx.api.ReaderConfig,com.ctc.wstx.api.WriterConfig</buildArg>
+                    </buildArgs>
+                </configuration>
+            </plugin>
+            <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-resources-plugin</artifactId>
                 <version>3.3.1</version>
@@ -514,62 +534,185 @@
     <profiles>
         <profile>
             <id>native</id>
+            <properties>
+                <agent.exec.skip>false</agent.exec.skip>
+                <native.agent.enabled>true</native.agent.enabled>
+            </properties>
             <build>
                 <plugins>
                     <plugin>
                         <groupId>org.graalvm.buildtools</groupId>
                         <artifactId>native-maven-plugin</artifactId>
-                        <version>${native.maven.plugin.version}</version>
-                        <extensions>true</extensions>
                         <executions>
                             <execution>
+                                <id>merge-aot-agent-metadata</id>
+                                <phase>prepare-package</phase>
+                                <goals>
+                                    <goal>metadata-copy</goal>
+                                </goals>
+                            </execution>
+                            <execution>
                                 <id>build-native</id>
+                                <phase>package</phase>
                                 <goals>
                                     <goal>compile-no-fork</goal>
                                 </goals>
-                                <phase>package</phase>
                             </execution>
                         </executions>
-                        <configuration>
-                            <imageName>tomato</imageName>
-                            <agent>
-                                <enabled>true</enabled>
-                                <!-- 自动将收集到的元数据复制到 src/main/resources/META-INF/native-image -->
-                                <!-- 正确的 metadataCopy 配置 -->
-                                <metadataCopy>
-                                    <!-- 指定元数据合并后输出的目标目录 -->
-                                    <outputDirectory>${project.basedir}/src/main/resources/META-INF/native-image</outputDirectory>
-                                    <!-- 可选：是否合并已存在的文件，默认为 false -->
-                                    <merge>true</merge>
-                                </metadataCopy>
-                            </agent>
-                            <buildArgs>
-
-<!--                                <buildArg>&#45;&#45;static &#45;&#45;libc=musl</buildArg>-->
-                                <buildArg>--enable-native-access=ALL-UNNAMED</buildArg> <!-- 未添加此参数会有警告，提示添加此参数，添加后就不会有警告 -->
-                                <buildArg>--no-fallback</buildArg>
-                                <!--包含所有字符编码，会增大打包结果的大小，我本地测试会增大十几MB-->
-                                <buildArg>-H:+AddAllCharsets</buildArg>
-                                <!--<buildArg>-H:Optimize="2"</buildArg> &lt;!&ndash; 用于指定编译优化级别，2是默认  控制代码优化：b - 针对最快构建时间进行优化，s - 针对大小进行优化，0 - 无优化，1 - 基本优化，2 - 高级优化，3 - 所有优化以实现最佳性能。 &ndash;&gt;-->
-                                <buildArg>-H:-CheckToolchain</buildArg>
-                                <!-- Netty 在构建期创建 SLF4J JUL 适配器；GraalVM 25 要求其类型同步在构建期初始化 -->
-                                <buildArg>--initialize-at-build-time=org.slf4j.jul.JDK14LoggerAdapter</buildArg>
-                                <buildArg>--initialize-at-run-time=io.netty.channel.kqueue.Native,io.netty.channel.kqueue.KQueueEventArray</buildArg>
-                                <!-- Woodstox (MinIO的XML解析器) 需在运行时初始化，否则native环境下XML解析会抛JsonParseException -->
-                                <buildArg>--initialize-at-run-time=com.ctc.wstx.stax.WstxInputFactory,com.ctc.wstx.stax.WstxOutputFactory,com.ctc.wstx.stax.WstxEventFactory,com.ctc.wstx.api.ReaderConfig,com.ctc.wstx.api.WriterConfig</buildArg>
-
-                                <!-- 下面两个参数用于在windows系统上用MSVC编译时，是的编译结果双击时不弹出cmd窗口 -->
-                                <!-- -H:NativeLinkerOption=/SUBSYSTEM:WINDOWS 告诉链接器生成「GUI 子系统」EXE，禁用 CMD 窗口-->
-                                <!-- -H:NativeLinkerOption=/ENTRY:mainCRTStartup 告诉链接器入口点是 mainCRTStartup（适配 Java 的 main 函数）-->
-                                <!-- 如果编译使用MinGW，可以使用-H:CCompilerOption=-mwindows或者-H:NativeLinkerOption=-mwindows，未试过，不清楚效果 -->
-                                <!-- 其他操作系统未试过 -->
-<!--                                <buildArg>-H:NativeLinkerOption=/SUBSYSTEM:WINDOWS</buildArg>-->
-<!--                                <buildArg>-H:NativeLinkerOption=/ENTRY:mainCRTStartup</buildArg>-->
-
-
-<!--                               可以用这个参数看到更多辅助信息 native-image - -expert-options 两个-之间没有空格   -->
-                            </buildArgs>
-                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-resources-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>refresh-merged-native-metadata</id>
+                                <phase>prepare-package</phase>
+                                <goals>
+                                    <goal>copy-resources</goal>
+                                </goals>
+                                <configuration>
+                                    <overwrite>true</overwrite>
+                                    <outputDirectory>${project.build.outputDirectory}</outputDirectory>
+                                    <resources>
+                                        <resource>
+                                            <directory>${project.basedir}/src/main/resources</directory>
+                                            <includes>
+                                                <include>META-INF/native-image/**</include>
+                                            </includes>
+                                        </resource>
+                                    </resources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>native-direct</id>
+            <properties>
+                <agent.exec.skip>true</agent.exec.skip>
+                <native.agent.enabled>false</native.agent.enabled>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.graalvm.buildtools</groupId>
+                        <artifactId>native-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>build-native</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>compile-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>aot-agent</id>
+            <properties>
+                <agent.exec.skip>false</agent.exec.skip>
+                <native.agent.enabled>true</native.agent.enabled>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.graalvm.buildtools</groupId>
+                        <artifactId>native-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>merge-aot-agent-metadata</id>
+                                <phase>prepare-package</phase>
+                                <goals>
+                                    <goal>metadata-copy</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-resources-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>refresh-merged-native-metadata</id>
+                                <phase>prepare-package</phase>
+                                <goals>
+                                    <goal>copy-resources</goal>
+                                </goals>
+                                <configuration>
+                                    <overwrite>true</overwrite>
+                                    <outputDirectory>${project.build.outputDirectory}</outputDirectory>
+                                    <resources>
+                                        <resource>
+                                            <directory>${project.basedir}/src/main/resources</directory>
+                                            <includes>
+                                                <include>META-INF/native-image/**</include>
+                                            </includes>
+                                        </resource>
+                                    </resources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>native-agent</id>
+            <properties>
+                <agent.exec.skip>false</agent.exec.skip>
+                <native.agent.enabled>true</native.agent.enabled>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.graalvm.buildtools</groupId>
+                        <artifactId>native-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>merge-aot-agent-metadata</id>
+                                <phase>prepare-package</phase>
+                                <goals>
+                                    <goal>metadata-copy</goal>
+                                </goals>
+                            </execution>
+                            <execution>
+                                <id>build-native</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>compile-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-resources-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>refresh-merged-native-metadata</id>
+                                <phase>prepare-package</phase>
+                                <goals>
+                                    <goal>copy-resources</goal>
+                                </goals>
+                                <configuration>
+                                    <overwrite>true</overwrite>
+                                    <outputDirectory>${project.build.outputDirectory}</outputDirectory>
+                                    <resources>
+                                        <resource>
+                                            <directory>${project.basedir}/src/main/resources</directory>
+                                            <includes>
+                                                <include>META-INF/native-image/**</include>
+                                            </includes>
+                                        </resource>
+                                    </resources>
+                                </configuration>
+                            </execution>
+                        </executions>
                     </plugin>
                 </plugins>
             </build>

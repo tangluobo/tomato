@@ -1,40 +1,102 @@
-# demo
+# Tomato
 
-#### 介绍
-直接使用GraalVM打包的JavaFX项目的演示项目
+JavaFX 数据库、服务器与远程桌面工具，支持普通 JAR、jpackage 安装包和 GraalVM Native Image AOT 构建。
 
-#### 软件架构
-        本项目是一个JavaFX演示项目，主要用于演示如何使用GraalVM打包成本地镜像文件。
-        本演示项目只考虑windows系统使用MSVC时的情况。打包的结果是一个单独exe文件。
-        本项目与以往的使用GluonFX的插件不同，直接使用GraalVM，因为使用GluonFX打包JavaFX25和GraalVM25时会报错，17不报错。
-        与GluonFX的插件不同，本项目打包可以使用cmd，不用打开vs的cmd窗口。
+## Maven Profile 打包
 
-        本项目的代码只是idea创建JavaFX时的默认代码。
-        本项目的打包思路为：
-            1.打包成不含依赖的jar包
-            2.利用maven-assembly-plugin插件将第一步的jar包与依赖的jar包打包成含有当前代码编译结果与所有依赖的jar包
-            3.使用exec-maven-plugin插件收集项目整体需要的资源与反射信息，故而打包时运行JavaFX项目的UI界面，需要手动点击所有功能以便插件收集信息。
-              收集到的信息被放在target/native/agent-output/main/reachability-metadata.json,可以将此文件保存下来放在src/main/resources/META-INF/native-image/reachability-metadata.json，
-              以减少下次编译时收集资源与反射信息的时间，不用点击全部功能。两个文件会自动合并，不用担心冲突。
-            4.使用native-maven-plugin插件，其利用GraalVM的native-image将第二步的结果结合第三步的结果编译成exe文件。本地镜像打包相关配置在该插件的configuration标签内配置。
-        打包命令为mvn clean -Pnative package。
+在 IntelliJ IDEA 的 Maven 工具窗口展开 **Profiles**，勾选需要的 Profile 后运行 Lifecycle 中的 `clean`、`package` 即可。命令行与 IDE 的行为完全相同。
 
-        我本地测试，用这个办法打包结果大小为44.9MB，比使用GluonFX（JavaFX17和GraalVM17）的打包的六十多兆要小，内存占用也要更小，可能是因为GraalVM的进步吧。
-        收集资源与反射信息时会抛出异常，实测不影响打包。
-        用这个方法打包出来的jar是未命名模块，不知道为什么，没有解决（Unsupported JavaFX configuration: classes were loaded from 'unnamed module @2fefd6c2'）。
+### 默认：普通 JAR
 
+不勾选任何 Profile：
 
-#### 安装教程
+```shell
+mvn clean package
+```
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+默认构建不会启动应用、不会运行 tracing agent、也不会执行 Native Image。产物位于：
 
-#### 使用说明
+- `target/tomato-${project.version}.jar`：普通 JAR。
+- `target/tomato-${project.version}-jar-with-dependencies.jar`：包含依赖的可运行 JAR。
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+### `native`：交互采集并构建 AOT（推荐）
+
+勾选 `native`，然后运行 `package`：
+
+```shell
+mvn clean package -Pnative
+```
+
+构建到 `test` 阶段时会自动打开 JVM 版应用。手动点击需要支持 AOT 的页面和功能，然后正常关闭应用窗口。Maven 会自动合并刚采集的元数据、刷新构建目录，并继续构建当前操作系统的原生程序：
+
+- Windows：`target/tomato.exe`，并保留同目录下生成的 DLL。
+- Linux/macOS：`target/tomato`，并保留同目录下生成的动态库（如果 GraalVM 输出了动态库）。
+
+### `native-direct`：跳过采集直接构建
+
+已经完成过采集、只想快速重新打包时，勾选 `native-direct`：
+
+```shell
+mvn clean package -Pnative-direct
+```
+
+此模式不会打开应用，直接使用仓库中已有的 `src/main/resources/META-INF/native-image` 配置执行 AOT。
+
+### `aot-agent`：交互采集并自动合并
+
+勾选 `aot-agent`，然后运行 `package`：
+
+```shell
+mvn clean package -Paot-agent
+```
+
+构建到 `test` 阶段时会自动打开 JVM 版应用。依次进入需要支持 AOT 的页面、点击相关功能，覆盖反射、资源、JNI、动态代理、序列化等运行路径。操作结束后请**正常关闭应用窗口**，Maven 会继续执行并自动完成以下工作：
+
+1. 将采集结果写入 `target/native/agent-output/main`。
+2. 通过 `native:metadata-copy` 合并到 `src/main/resources/META-INF/native-image`。
+3. 保留已有配置，新增内容采用 `merge=true` 合并。
+
+此 Profile 只采集和合并，不执行耗时的 Native Image 编译。合并完成后应查看 Git diff，并提交需要保留的元数据。
+
+### `native-agent`：兼容别名
+
+勾选 `native-agent`，然后运行 `package`：
+
+```shell
+mvn clean package -Pnative-agent
+```
+
+`native-agent` 保留为兼容别名，行为与现在的 `native` 完全相同：打开应用采集、自动合并，并在同一次 `package` 中继续生成 Native Image。
+
+## Windows、Linux、macOS
+
+Native Image 不做跨平台交叉编译：Windows 产物必须在 Windows 构建，Linux 产物必须在 Linux 构建，macOS 产物必须在 macOS 构建。三个平台都使用相同的 `native`、`native-direct`、`aot-agent`、`native-agent` Profile。
+
+- Windows：安装 GraalVM JDK 和 Visual Studio C++ Build Tools/MSVC。
+- Linux：安装 GraalVM JDK、GCC/Clang、glibc 开发包及 JavaFX/GTK 所需系统库。
+- macOS：安装 GraalVM JDK 和 Xcode Command Line Tools。
+
+建议分别在三个平台运行一次 `aot-agent`，把各平台实际触发的 JNI/资源元数据合并进仓库，再构建该平台的最终产物。
+
+原有 `windows_exe`、`windows_msi`、`windows_image`、`linux_*`、`macos_*` Profile 属于 jpackage/JVM 发行包，不是 GraalVM AOT；不要与 Native Profile 混淆。
+
+## GraalVM 选择
+
+项目当前使用 JavaFX 27 EA（class file version 69），构建和测试必须使用 JDK/GraalVM 25 或更高版本。确保 `JAVA_HOME` 指向 GraalVM，并让其 `bin` 位于 `PATH` 前部。例如 Windows PowerShell：
+
+```powershell
+$env:JAVA_HOME = 'D:\App\Java\graalvm-jdk-25.0.3+9.1'
+$env:Path = "$env:JAVA_HOME\bin;$env:Path"
+mvn clean package -Pnative
+```
+
+可先执行以下命令确认环境：
+
+```shell
+java -version
+native-image --version
+mvn -version
+```
 
 #### 参与贡献
 
