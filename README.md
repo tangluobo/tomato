@@ -31,6 +31,9 @@ mvn clean package -Pnative
 
 - Windows：`target/tomato.exe`，并保留同目录下生成的 DLL。
 - Linux/macOS：`target/tomato`，并保留同目录下生成的动态库（如果 GraalVM 输出了动态库）。
+- 所有平台都会把主程序、动态库、`README.md` 和 `LICENSE` 整理到
+  `target/native-package/tomato-${project.version}-<os>-<arch>/`。
+- 同时在 `dist/` 自动生成 ZIP 和 `tar.gz`，不再需要手动复制依赖文件。
 
 ### `native-direct`：跳过采集直接构建
 
@@ -40,7 +43,7 @@ mvn clean package -Pnative
 mvn clean package -Pnative-direct
 ```
 
-此模式不会打开应用，直接使用仓库中已有的 `src/main/resources/META-INF/native-image` 配置执行 AOT。
+此模式不会打开应用，直接使用仓库中已有的 `src/main/resources/META-INF/native-image` 配置执行 AOT。原生链接结束后同样会自动生成完整的 ZIP 和 `tar.gz` 发行包。
 
 ### `aot-agent`：交互采集并自动合并
 
@@ -69,6 +72,35 @@ Native Image 不做跨平台交叉编译：Windows 产物必须在 Windows 构�
 建议分别在三个平台运行一次 `aot-agent`，把各平台实际触发的 JNI/资源元数据合并进仓库，再构建该平台的最终产物。
 
 原有 `windows_exe`、`windows_msi`、`windows_image`、`linux_*`、`macos_*` Profile 属于 jpackage/JVM 发行包，不是 GraalVM AOT；不要与 Native Profile 混淆。
+
+## AOT 自动发行包
+
+本地执行以下命令即可完成 AOT 编译、依赖收集和双格式压缩：
+
+```shell
+mvn clean package -Pnative-direct
+```
+
+产物名统一采用 `tomato-<version>-<platform>-<arch>.<format>`。以 1.0.2 Windows x86_64 为例：
+
+- `dist/tomato-1.0.2-windows-x86_64.zip`
+- `dist/tomato-1.0.2-windows-x86_64.tar.gz`
+
+ZIP 与 `tar.gz` 内都有一个同名顶层目录，包含 AOT 主程序及其全部同目录动态库。`mvn clean` 会同时清理旧的 `target/` 与 `dist/`，避免不同版本的文件混入新包。
+
+`.github/workflows/maven-publish.yml` 会在下列原生 runner 上并行编译；每个平台/架构只编译一次 AOT，再从同一份 AOT 目录派生所有格式：
+
+| 平台 | 架构 | 发行格式 |
+|------|------|----------|
+| Windows | x86_64 | ZIP、tar.gz、NSIS EXE、MSI |
+| Linux | x86_64 | ZIP、tar.gz、DEB、RPM、AppImage |
+| Linux | arm64 | ZIP、tar.gz、DEB、RPM、AppImage |
+| macOS | x86_64 | ZIP、tar.gz、DMG、PKG |
+| macOS | arm64 | ZIP、tar.gz、DMG、PKG |
+
+推送 `v*` 标签会自动构建并创建 GitHub Release，也可以在 Actions 页面手动运行。手动填写的版本或标签版本必须与 `pom.xml` 的项目版本一致。Release 会附带所有产物及 `SHA256SUMS.txt`。
+
+当前 Windows 和 macOS 安装包未做代码签名；分发给其他用户时，系统可能显示未知开发者提示。
 
 ## GraalVM 选择
 

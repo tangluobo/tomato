@@ -6,7 +6,7 @@
 
     <groupId>com.tangluobo</groupId>
     <artifactId>tomato</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
     <name>tomato</name>
 
     <properties>
@@ -34,6 +34,14 @@
         <jpackage.archive.skip>true</jpackage.archive.skip>
         <jpackage.archive.format>zip</jpackage.archive.format>
         <jpackage.output.name>tomato-${os.name}-${os.arch}</jpackage.output.name>
+        <!-- Native Image 完成后自动整理运行文件并生成 ZIP 与 tar.gz。 -->
+        <native.archive.skip>true</native.archive.skip>
+        <native.package.os>unknown</native.package.os>
+        <native.package.arch>unknown</native.package.arch>
+        <native.executable.name>tomato</native.executable.name>
+        <native.bundle.name>${project.artifactId}-${project.version}-${native.package.os}-${native.package.arch}</native.bundle.name>
+        <native.stage.root>${project.build.directory}/native-package</native.stage.root>
+        <native.stage.dir>${native.stage.root}/${native.bundle.name}</native.stage.dir>
     </properties>
 
     <description>
@@ -368,6 +376,18 @@
                     <useModulePath>false</useModulePath>
                 </configuration>
             </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-clean-plugin</artifactId>
+                <version>3.4.0</version>
+                <configuration>
+                    <filesets>
+                        <fileset>
+                            <directory>${project.basedir}/dist</directory>
+                        </fileset>
+                    </filesets>
+                </configuration>
+            </plugin>
 <!--            <plugin>-->
 <!--                <groupId>org.apache.maven.plugins</groupId>-->
 <!--                <artifactId>maven-jar-plugin</artifactId>-->
@@ -527,6 +547,64 @@
                     </execution>
                 </executions>
             </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>archive-native-image</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <skip>${native.archive.skip}</skip>
+                            <target>
+                                <delete dir="${native.stage.root}"/>
+                                <mkdir dir="${native.stage.dir}"/>
+                                <mkdir dir="${project.basedir}/dist"/>
+                                <copy file="${project.build.directory}/${native.executable.name}"
+                                      todir="${native.stage.dir}" failonerror="true"/>
+                                <copy todir="${native.stage.dir}" failonerror="false">
+                                    <fileset dir="${project.build.directory}">
+                                        <include name="*.dll"/>
+                                        <include name="*.so"/>
+                                        <include name="*.so.*"/>
+                                        <include name="*.dylib"/>
+                                        <include name="*.dylib.*"/>
+                                    </fileset>
+                                </copy>
+                                <copy file="${project.basedir}/README.md" todir="${native.stage.dir}"/>
+                                <copy file="${project.basedir}/LICENSE" todir="${native.stage.dir}"/>
+                                <chmod file="${native.stage.dir}/${native.executable.name}"
+                                       perm="755" osfamily="unix"/>
+                                <zip destfile="${project.basedir}/dist/${native.bundle.name}.zip">
+                                    <zipfileset dir="${native.stage.dir}" prefix="${native.bundle.name}"
+                                                filemode="644">
+                                        <exclude name="${native.executable.name}"/>
+                                    </zipfileset>
+                                    <zipfileset dir="${native.stage.dir}" prefix="${native.bundle.name}"
+                                                filemode="755">
+                                        <include name="${native.executable.name}"/>
+                                    </zipfileset>
+                                </zip>
+                                <tar destfile="${project.basedir}/dist/${native.bundle.name}.tar.gz"
+                                     compression="gzip" longfile="gnu">
+                                    <tarfileset dir="${native.stage.dir}" prefix="${native.bundle.name}"
+                                                filemode="644">
+                                        <exclude name="${native.executable.name}"/>
+                                    </tarfileset>
+                                    <tarfileset dir="${native.stage.dir}" prefix="${native.bundle.name}"
+                                                filemode="755">
+                                        <include name="${native.executable.name}"/>
+                                    </tarfileset>
+                                </tar>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 
@@ -555,10 +633,89 @@
             </build>
         </profile>
         <profile>
+            <id>native-platform-windows</id>
+            <activation>
+                <os>
+                    <family>Windows</family>
+                </os>
+            </activation>
+            <properties>
+                <native.package.os>windows</native.package.os>
+                <native.executable.name>tomato.exe</native.executable.name>
+            </properties>
+        </profile>
+        <profile>
+            <id>native-platform-linux</id>
+            <activation>
+                <os>
+                    <name>Linux</name>
+                </os>
+            </activation>
+            <properties>
+                <native.package.os>linux</native.package.os>
+            </properties>
+        </profile>
+        <profile>
+            <id>native-platform-macos</id>
+            <activation>
+                <os>
+                    <family>mac</family>
+                </os>
+            </activation>
+            <properties>
+                <native.package.os>macos</native.package.os>
+            </properties>
+        </profile>
+        <profile>
+            <id>native-arch-amd64</id>
+            <activation>
+                <os>
+                    <arch>amd64</arch>
+                </os>
+            </activation>
+            <properties>
+                <native.package.arch>x86_64</native.package.arch>
+            </properties>
+        </profile>
+        <profile>
+            <id>native-arch-x86-64</id>
+            <activation>
+                <os>
+                    <arch>x86_64</arch>
+                </os>
+            </activation>
+            <properties>
+                <native.package.arch>x86_64</native.package.arch>
+            </properties>
+        </profile>
+        <profile>
+            <id>native-arch-aarch64</id>
+            <activation>
+                <os>
+                    <arch>aarch64</arch>
+                </os>
+            </activation>
+            <properties>
+                <native.package.arch>arm64</native.package.arch>
+            </properties>
+        </profile>
+        <profile>
+            <id>native-arch-arm64</id>
+            <activation>
+                <os>
+                    <arch>arm64</arch>
+                </os>
+            </activation>
+            <properties>
+                <native.package.arch>arm64</native.package.arch>
+            </properties>
+        </profile>
+        <profile>
             <id>native</id>
             <properties>
                 <agent.exec.skip>false</agent.exec.skip>
                 <native.agent.enabled>true</native.agent.enabled>
+                <native.archive.skip>false</native.archive.skip>
             </properties>
             <build>
                 <plugins>
@@ -615,6 +772,7 @@
             <properties>
                 <agent.exec.skip>true</agent.exec.skip>
                 <native.agent.enabled>false</native.agent.enabled>
+                <native.archive.skip>false</native.archive.skip>
             </properties>
             <build>
                 <plugins>

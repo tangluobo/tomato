@@ -43,7 +43,7 @@ public class DdnsService {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Type ENTRY_LIST_TYPE = new TypeToken<List<DdnsEntry>>() {}.getType();
     private static final String[] PUBLIC_IP_URLS = {
-        "https://ifconfig.me/ip",
+        "https://gitlab.tangluobo.com/ip",
         "https://ddns.oray.com/checkip"
     };
     private static final Pattern IPV4_PATTERN = Pattern.compile("(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3})");

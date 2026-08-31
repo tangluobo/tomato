@@ -953,7 +953,25 @@
       ]
     },
     {
+      "type": "com.sun.crypto.provider.TlsKeyMaterialGenerator",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
       "type": "com.sun.crypto.provider.TlsMasterSecretGenerator",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.TlsPrfGenerator$V12",
       "methods": [
         {
           "name": "<init>",
@@ -2528,6 +2546,15 @@
       ]
     },
     {
+      "type": "com.sun.jna.platform.win32.BaseTSD$ULONG_PTR",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
       "type": "com.sun.jna.platform.win32.WinDef$HMODULE",
       "methods": [
         {
@@ -2601,10 +2628,43 @@
       ]
     },
     {
-      "type": "com.sun.jna.platform.win32.WinUser$KBDLLHOOKSTRUCT"
+      "type": "com.sun.jna.platform.win32.WinUser$KBDLLHOOKSTRUCT",
+      "fields": [
+        {
+          "name": "dwExtraInfo"
+        },
+        {
+          "name": "flags"
+        },
+        {
+          "name": "scanCode"
+        },
+        {
+          "name": "time"
+        },
+        {
+          "name": "vkCode"
+        }
+      ],
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
     },
     {
-      "type": "com.sun.jna.platform.win32.WinUser$LowLevelKeyboardProc"
+      "type": "com.sun.jna.platform.win32.WinUser$LowLevelKeyboardProc",
+      "methods": [
+        {
+          "name": "callback",
+          "parameterTypes": [
+            "int",
+            "com.sun.jna.platform.win32.WinDef$WPARAM",
+            "com.sun.jna.platform.win32.WinUser$KBDLLHOOKSTRUCT"
+          ]
+        }
+      ]
     },
     {
       "type": "com.sun.jna.platform.win32.WinUser$MSG",
@@ -2626,6 +2686,15 @@
         },
         {
           "name": "wParam"
+        }
+      ]
+    },
+    {
+      "type": "com.sun.jna.ptr.IntByReference",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
         }
       ]
     },
@@ -5956,6 +6025,9 @@
       "fields": [
         {
           "name": "allHandlers"
+        },
+        {
+          "name": "currentHandler"
         }
       ],
       "methods": [
@@ -5963,6 +6035,19 @@
           "name": "handle_data_request",
           "parameterTypes": [
             "com.tangluobo.rdp4j.Packet"
+          ]
+        },
+        {
+          "name": "handle_data_response",
+          "parameterTypes": [
+            "com.tangluobo.rdp4j.Packet",
+            "int"
+          ]
+        },
+        {
+          "name": "request_clipboard_data",
+          "parameterTypes": [
+            "int"
           ]
         }
       ]
@@ -6150,6 +6235,161 @@
     {
       "type": "com.tangluobo.tomato.module.connect.ConnectionConfig",
       "allDeclaredFields": true,
+      "fields": [
+        {
+          "name": "bucket"
+        },
+        {
+          "name": "certificateEmail"
+        },
+        {
+          "name": "colorDepth"
+        },
+        {
+          "name": "database"
+        },
+        {
+          "name": "defaultFileViewMode"
+        },
+        {
+          "name": "description"
+        },
+        {
+          "name": "directoryType"
+        },
+        {
+          "name": "domain"
+        },
+        {
+          "name": "enableSound"
+        },
+        {
+          "name": "endpoint"
+        },
+        {
+          "name": "fullscreen"
+        },
+        {
+          "name": "host"
+        },
+        {
+          "name": "id"
+        },
+        {
+          "name": "localDirectoryPath"
+        },
+        {
+          "name": "mapClipboard"
+        },
+        {
+          "name": "name"
+        },
+        {
+          "name": "parentId"
+        },
+        {
+          "name": "password"
+        },
+        {
+          "name": "pathStyleAccess"
+        },
+        {
+          "name": "port"
+        },
+        {
+          "name": "privateKeyPaths"
+        },
+        {
+          "name": "publicAccessUrl"
+        },
+        {
+          "name": "rdpFullScreenShortcut"
+        },
+        {
+          "name": "rdpOpenMode"
+        },
+        {
+          "name": "redisCluster"
+        },
+        {
+          "name": "redisClusterNodes"
+        },
+        {
+          "name": "redisDatabase"
+        },
+        {
+          "name": "region"
+        },
+        {
+          "name": "s3Prefix"
+        },
+        {
+          "name": "savePassword"
+        },
+        {
+          "name": "screenHeight"
+        },
+        {
+          "name": "screenWidth"
+        },
+        {
+          "name": "scrollbackLines"
+        },
+        {
+          "name": "serverConfig"
+        },
+        {
+          "name": "sshTunnelHost"
+        },
+        {
+          "name": "sshTunnelHostId"
+        },
+        {
+          "name": "sshTunnelPassword"
+        },
+        {
+          "name": "sshTunnelPort"
+        },
+        {
+          "name": "sshTunnelPrivateKeyPaths"
+        },
+        {
+          "name": "sshTunnelSavePassword"
+        },
+        {
+          "name": "sshTunnelUseKey"
+        },
+        {
+          "name": "sshTunnelUsePassword"
+        },
+        {
+          "name": "sshTunnelUsername"
+        },
+        {
+          "name": "terminalType"
+        },
+        {
+          "name": "toolType"
+        },
+        {
+          "name": "type"
+        },
+        {
+          "name": "useKey"
+        },
+        {
+          "name": "usePassword"
+        },
+        {
+          "name": "useSshTunnel"
+        },
+        {
+          "name": "useSsl"
+        },
+        {
+          "name": "username"
+        }
+      ],
       "methods": [
         {
           "name": "<init>",
@@ -6163,6 +6403,32 @@
     {
       "type": "com.tangluobo.tomato.module.connect.GlobalConfig",
       "allDeclaredFields": true,
+      "fields": [
+        {
+          "name": "scrollbackLines"
+        },
+        {
+          "name": "sidebarVisible"
+        },
+        {
+          "name": "sshDefaultFileViewMode"
+        },
+        {
+          "name": "sshServiceManagementEnabled"
+        },
+        {
+          "name": "sshTerminalFontName"
+        },
+        {
+          "name": "sshTerminalFontSize"
+        },
+        {
+          "name": "tableFontName"
+        },
+        {
+          "name": "tableFontSize"
+        }
+      ],
       "methods": [
         {
           "name": "<init>",
@@ -6285,6 +6551,29 @@
     {
       "type": "com.tangluobo.tomato.module.connect.service.DdnsService$DdnsEntry",
       "allDeclaredFields": true,
+      "fields": [
+        {
+          "name": "connectionId"
+        },
+        {
+          "name": "domainName"
+        },
+        {
+          "name": "line"
+        },
+        {
+          "name": "recordId"
+        },
+        {
+          "name": "rr"
+        },
+        {
+          "name": "ttl"
+        },
+        {
+          "name": "type"
+        }
+      ],
       "methods": [
         {
           "name": "<init>",
@@ -6422,6 +6711,20 @@
     {
       "type": "com.tangluobo.tomato.module.tools.server.ServerAccount",
       "allDeclaredFields": true,
+      "fields": [
+        {
+          "name": "enabled"
+        },
+        {
+          "name": "homeDirectory"
+        },
+        {
+          "name": "password"
+        },
+        {
+          "name": "username"
+        }
+      ],
       "methods": [
         {
           "name": "<init>",
@@ -6432,6 +6735,29 @@
     {
       "type": "com.tangluobo.tomato.module.tools.server.ServerConfig",
       "allDeclaredFields": true,
+      "fields": [
+        {
+          "name": "accounts"
+        },
+        {
+          "name": "anonymousAccess"
+        },
+        {
+          "name": "bindAddress"
+        },
+        {
+          "name": "port"
+        },
+        {
+          "name": "rootDirectory"
+        },
+        {
+          "name": "sharedDirectories"
+        },
+        {
+          "name": "type"
+        }
+      ],
       "methods": [
         {
           "name": "<init>",
@@ -6504,6 +6830,15 @@
     },
     {
       "type": "io.minio.ListObjectsArgs",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "io.minio.PutObjectArgs",
       "methods": [
         {
           "name": "<init>",
@@ -7016,6 +7351,9 @@
           ]
         }
       ]
+    },
+    {
+      "type": "java.awt.SequencedEvent"
     },
     {
       "type": "java.awt.Toolkit",
@@ -7587,6 +7925,9 @@
       ]
     },
     {
+      "type": "java.lang.Object[]"
+    },
+    {
       "type": "java.lang.OutOfMemoryError",
       "jniAccessible": true,
       "methods": [
@@ -7726,6 +8067,18 @@
         {
           "name": "getMessage",
           "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "java.lang.UnsatisfiedLinkError",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
         }
       ]
     },
