@@ -37,7 +37,7 @@ public class GlobalConfigDialog {
 
         boolean showScrollback = (mode == ConfigMode.ALL || mode == ConfigMode.SSH);
         boolean showTableFont = (mode == ConfigMode.ALL || mode == ConfigMode.TABLE);
-        boolean showRdpShortcut = (mode == ConfigMode.ALL);
+        boolean showRdpSettings = (mode == ConfigMode.ALL);
 
         TextField scrollbackField;
         if (showScrollback) {
@@ -74,9 +74,8 @@ public class GlobalConfigDialog {
             fontNameBox = null;
         }
 
-        TextField rdpShortcutField;
         ComboBox<String> rdpOpenModeBox;
-        if (showRdpShortcut) {
+        if (showRdpSettings) {
             grid.add(new Label("RDP打开方式:"), 0, row);
             rdpOpenModeBox = new ComboBox<>();
             rdpOpenModeBox.getItems().addAll("独立窗口", "连接标签页");
@@ -86,17 +85,7 @@ public class GlobalConfigDialog {
             grid.add(rdpOpenModeBox, 1, row);
             grid.add(new Label("(默认独立窗口)"), 2, row);
             row++;
-
-            grid.add(new Label("RDP全屏快捷键:"), 0, row);
-            String globalShortcut = config.getRdpFullScreenShortcut();
-            rdpShortcutField = new TextField(
-                    globalShortcut != null && !globalShortcut.isBlank() ? globalShortcut : "Ctrl+Shift+Enter");
-            rdpShortcutField.setPrefWidth(160);
-            grid.add(rdpShortcutField, 1, row);
-            grid.add(new Label("(如 Ctrl+Alt+Enter)"), 2, row);
-            row++;
         } else {
-            rdpShortcutField = null;
             rdpOpenModeBox = null;
         }
 
@@ -119,17 +108,8 @@ public class GlobalConfigDialog {
                     config.setTableFontName(fontNameBox.getValue());
                     config.setTableFontSize(fontSizeSpinner.getValue());
                 }
-                if (showRdpShortcut && rdpShortcutField != null) {
+                if (showRdpSettings && rdpOpenModeBox != null) {
                     config.setRdpOpenMode("连接标签页".equals(rdpOpenModeBox.getValue()) ? "TAB" : "WINDOW");
-                    String s = rdpShortcutField.getText().trim();
-                    if (!s.isEmpty()) {
-                        try {
-                            javafx.scene.input.KeyCombination.valueOf(s);
-                            config.setRdpFullScreenShortcut(s);
-                        } catch (IllegalArgumentException ignored) {
-                            // 非法快捷键组合，保持原值
-                        }
-                    }
                 }
                 config.save();
                 return true;

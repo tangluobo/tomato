@@ -46,7 +46,7 @@
         <dependency>
             <groupId>com.tangluobo</groupId>
             <artifactId>rdp4j</artifactId>
-            <version>1.0.2-snapshot</version>
+            <version>1.0.2</version>
         </dependency>
         <dependency>
             <groupId>org.openjfx</groupId>
@@ -629,62 +629,6 @@
                                 <phase>prepare-package</phase>
                                 <goals>
                                     <goal>metadata-copy</goal>
-                                </goals>
-                            </execution>
-                        </executions>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-resources-plugin</artifactId>
-                        <executions>
-                            <execution>
-                                <id>refresh-merged-native-metadata</id>
-                                <phase>prepare-package</phase>
-                                <goals>
-                                    <goal>copy-resources</goal>
-                                </goals>
-                                <configuration>
-                                    <overwrite>true</overwrite>
-                                    <outputDirectory>${project.build.outputDirectory}</outputDirectory>
-                                    <resources>
-                                        <resource>
-                                            <directory>${project.basedir}/src/main/resources</directory>
-                                            <includes>
-                                                <include>META-INF/native-image/**</include>
-                                            </includes>
-                                        </resource>
-                                    </resources>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-        <profile>
-            <id>native-agent</id>
-            <properties>
-                <agent.exec.skip>false</agent.exec.skip>
-                <native.agent.enabled>true</native.agent.enabled>
-            </properties>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.graalvm.buildtools</groupId>
-                        <artifactId>native-maven-plugin</artifactId>
-                        <executions>
-                            <execution>
-                                <id>merge-aot-agent-metadata</id>
-                                <phase>prepare-package</phase>
-                                <goals>
-                                    <goal>metadata-copy</goal>
-                                </goals>
-                            </execution>
-                            <execution>
-                                <id>build-native</id>
-                                <phase>package</phase>
-                                <goals>
-                                    <goal>compile-no-fork</goal>
                                 </goals>
                             </execution>
                         </executions>

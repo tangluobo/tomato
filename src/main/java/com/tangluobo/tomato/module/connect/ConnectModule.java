@@ -2231,40 +2231,19 @@ public class ConnectModule implements Module {
         rdpOpenModeHint.setStyle("-fx-font-size: 12px; -fx-text-fill: #888;");
         GridPane.setConstraints(rdpOpenModeHint, 2, 0);
 
-        Label rdpShortcutLabel = new Label("全屏快捷键");
-        rdpShortcutLabel.setStyle("-fx-font-size: 14px;");
-        GridPane.setConstraints(rdpShortcutLabel, 0, 1);
+        Label rdpKeyboardHint = new Label("(全屏时键盘输入全部发送到远程；退出请使用顶部控制栏)");
+        rdpKeyboardHint.setStyle("-fx-font-size: 12px; -fx-text-fill: #888;");
+        GridPane.setConstraints(rdpKeyboardHint, 0, 1, 3, 1);
 
-        String globalRdpShortcut = GlobalConfig.getInstance().getRdpFullScreenShortcut();
-        TextField rdpShortcutField = new TextField(
-                globalRdpShortcut != null && !globalRdpShortcut.isBlank() ? globalRdpShortcut : "Ctrl+Shift+Enter");
-        rdpShortcutField.setPrefWidth(220);
-        rdpShortcutField.setPromptText("如 Ctrl+Alt+Enter");
-        GridPane.setConstraints(rdpShortcutField, 1, 1);
-
-        Label rdpShortcutHint = new Label("(切换全屏/退出全屏；连接可右键-会话配置单独覆盖)");
-        rdpShortcutHint.setStyle("-fx-font-size: 12px; -fx-text-fill: #888;");
-        GridPane.setConstraints(rdpShortcutHint, 2, 1);
-
-        rdpGrid.getChildren().addAll(rdpOpenModeLabel, rdpOpenModeCombo, rdpOpenModeHint,
-                rdpShortcutLabel, rdpShortcutField, rdpShortcutHint);
+        rdpGrid.getChildren().addAll(rdpOpenModeLabel, rdpOpenModeCombo,
+                rdpOpenModeHint, rdpKeyboardHint);
 
         Button rdpApplyBtn = new Button("应用并保存");
         rdpApplyBtn.setStyle("-fx-background-color: #07c160; -fx-text-fill: white; -fx-border-radius: 4px; -fx-background-radius: 4px; -fx-pref-width: 100px;");
         rdpApplyBtn.setOnAction(e -> {
-            String s = rdpShortcutField.getText().trim();
-            try {
-                javafx.scene.input.KeyCombination.valueOf(s);
-            } catch (IllegalArgumentException ex) {
-                new Alert(Alert.AlertType.WARNING, "无效的快捷键组合: " + s, ButtonType.OK).showAndWait();
-                return;
-            }
             GlobalConfig cfg = GlobalConfig.getInstance();
             cfg.setRdpOpenMode("连接标签页".equals(rdpOpenModeCombo.getValue()) ? "TAB" : "WINDOW");
-            cfg.setRdpFullScreenShortcut(s);
             cfg.save();
-            // 应用到所有使用全局配置的RDP会话（会话级覆盖不受影响）
-            applyRdpShortcutToAllTabs(s);
         });
 
         rdpRoot.getChildren().addAll(rdpTitle, rdpGrid, rdpApplyBtn);
@@ -2312,24 +2291,6 @@ public class ConnectModule implements Module {
                     } else if (content instanceof com.tangluobo.tomato.ssh.LocalTerminalPane pane) {
                         pane.setScrollbackLines(scrollback);
                     }
-                }
-            }
-        }
-    }
-
-    /** 将全局RDP全屏快捷键应用到所有使用全局配置的RDP会话（会话级覆盖不受影响） */
-    private void applyRdpShortcutToAllTabs(String shortcut) {
-        if (terminalTabPane == null) return;
-        for (Tab tab : terminalTabPane.getTabs()) {
-            Object content = tab.getContent();
-            Object userData = tab.getUserData();
-            if (content instanceof com.tangluobo.rdp4j.RdpPane pane
-                    && userData instanceof String configId) {
-                ConnectionConfig config = findConnectionById(configId);
-                // 仅更新使用全局配置（rdpFullScreenShortcut == null）的会话
-                if (config != null
-                        && (config.getRdpFullScreenShortcut() == null || config.getRdpFullScreenShortcut().isBlank())) {
-                    pane.setFullScreenShortcut(shortcut);
                 }
             }
         }

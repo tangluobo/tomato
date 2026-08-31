@@ -35,11 +35,19 @@ public class RdpConnectHandler implements ConnectHandler {
     public void handleConnect(ConnectModule module, ConnectionConfig config) {
         if (isWindowMode(config)) {
             Stage existing = OPEN_WINDOWS.get(config.getId());
-            if (existing != null && existing.isShowing()) {
-                existing.setIconified(false);
-                existing.toFront();
-                existing.requestFocus();
-                return;
+            if (existing != null) {
+                RdpPane existingPane = existing.getUserData() instanceof RdpPane pane ? pane : null;
+                if (shouldReuseRdpWindow(existing.isShowing(),
+                        existingPane != null && existingPane.isFullScreen())) {
+                    if (existingPane != null && existingPane.isFullScreen()) {
+                        existingPane.activateFullScreenWindow();
+                    } else {
+                        existing.setIconified(false);
+                        existing.toFront();
+                        existing.requestFocus();
+                    }
+                    return;
+                }
             }
             createRdpView(module, config, true);
             return;
@@ -77,10 +85,8 @@ public class RdpConnectHandler implements ConnectHandler {
         RdpPane rdpPane = new RdpPane();
         if (windowMode) {
             rdpPane.suppressInitialWindowScrollBars();
+            rdpPane.setHideOwnerWindowInFullScreen(true);
         }
-        // 应用全屏切换快捷键：会话级覆盖优先，否则用全局配置
-        rdpPane.setFullScreenShortcut(resolveFullScreenShortcut(config));
-
         Tab tab = new Tab(config.getName());
         tab.setContent(rdpPane);
         tab.setUserData(config.getId());
@@ -90,18 +96,15 @@ public class RdpConnectHandler implements ConnectHandler {
 
         MenuItem fullScreenItem = new MenuItem("全屏");
         fullScreenItem.setOnAction(e -> rdpPane.toggleFullScreen());
-        // 菜单打开时根据当前全屏状态和生效快捷键更新文字
+        // 全屏不保留本地键盘快捷键，退出操作由顶部控制栏提供。
         tabContextMenu.setOnShowing(e ->
-                fullScreenItem.setText((rdpPane.isFullScreen() ? "退出全屏" : "全屏")
-                        + "（" + rdpPane.getFullScreenShortcutText() + "）"));
+                fullScreenItem.setText(rdpPane.isFullScreen() ? "退出全屏" : "全屏"));
 
         MenuItem sessionConfigItem = new MenuItem("会话配置");
         sessionConfigItem.setOnAction(e -> {
             Stage stage = (Stage) rdpPane.getScene().getWindow();
             SessionConfigDialog.show(stage, config);
             module.saveConnections();
-            // 会话配置可能修改了全屏快捷键，重新应用到当前会话
-            rdpPane.setFullScreenShortcut(resolveFullScreenShortcut(config));
         });
 
         MenuItem globalConfigItem = new MenuItem("全局配置");
@@ -118,6 +121,7 @@ public class RdpConnectHandler implements ConnectHandler {
                     + " -fx-padding: 0; -fx-background-insets: 0;"
                     + " -fx-background-color: black; -fx-border-width: 0;");
             rdpWindow = new Stage();
+            rdpWindow.setUserData(rdpPane);
             rdpWindow.setTitle(config.getName() != null ? config.getName() : "远程桌面");
             rdpWindow.setScene(new Scene(windowTabs,
                     Math.max(640, config.getScreenWidth()),
@@ -136,6 +140,9 @@ public class RdpConnectHandler implements ConnectHandler {
             }
             OPEN_WINDOWS.put(config.getId(), rdpWindow);
             rdpWindow.setOnHidden(e -> {
+                if (rdpPane.isOwnerWindowTemporarilyHiddenForFullScreen()) {
+                    return;
+                }
                 OPEN_WINDOWS.remove(config.getId(), rdpWindow);
                 rdpPane.disconnect();
             });
@@ -259,6 +266,10 @@ public class RdpConnectHandler implements ConnectHandler {
         return !"TAB".equalsIgnoreCase(mode);
     }
 
+    static boolean shouldReuseRdpWindow(boolean ownerWindowShowing, boolean paneFullScreen) {
+        return ownerWindowShowing || paneFullScreen;
+    }
+
     private static Image loadMstscWindowIcon() {
         if (mstscWindowIcon != null) {
             return mstscWindowIcon;
@@ -284,7 +295,15 @@ public class RdpConnectHandler implements ConnectHandler {
         javafx.geometry.Rectangle2D screen = javafx.stage.Screen.getScreensForRectangle(
                 stage.getX(), stage.getY(), Math.max(1, stage.getWidth()), Math.max(1, stage.getHeight()))
                 .stream().findFirst().orElse(javafx.stage.Screen.getPrimary()).getVisualBounds();
-        if (targetWidth >= screen.getWidth() || targetHeight >= screen.getHeight()) {
+        if (desktopRequiresFullScreen(targetWidth, targetHeight, screen)) {
+            // A desktop as large as the available work area cannot fit in a
+            // decorated window. Windows may clamp that window to the monitor,
+            // making it look full-screen even though RdpPane never created its
+            // real full-screen layer (and therefore has no top control bar).
+            // Enter the same RDP full-screen mode used by the explicit setting.
+            if (stage.isShowing() && !pane.isFullScreen()) {
+                pane.toggleFullScreen();
+            }
             return;
         }
         double viewportWidth = pane.getCenter().getLayoutBounds().getWidth();
@@ -296,15 +315,13 @@ public class RdpConnectHandler implements ConnectHandler {
         stage.setHeight(Math.min(screen.getHeight(), stage.getHeight() + targetHeight - viewportHeight));
     }
 
-    /**
-     * 解析生效的全屏切换快捷键：会话级覆盖优先，空则回退全局配置
-     */
-    private static String resolveFullScreenShortcut(ConnectionConfig config) {
-        String shortcut = config.getRdpFullScreenShortcut();
-        if (shortcut == null || shortcut.isBlank()) {
-            shortcut = GlobalConfig.getInstance().getRdpFullScreenShortcut();
+    static boolean desktopRequiresFullScreen(int desktopWidth, int desktopHeight,
+                                             javafx.geometry.Rectangle2D visualBounds) {
+        if (visualBounds == null || desktopWidth <= 0 || desktopHeight <= 0) {
+            return false;
         }
-        return (shortcut == null || shortcut.isBlank()) ? "Ctrl+Shift+Enter" : shortcut;
+        return desktopWidth >= Math.floor(visualBounds.getWidth())
+                || desktopHeight >= Math.floor(visualBounds.getHeight());
     }
 
     /**

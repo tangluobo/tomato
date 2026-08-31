@@ -58,19 +58,9 @@ mvn clean package -Paot-agent
 
 此 Profile 只采集和合并，不执行耗时的 Native Image 编译。合并完成后应查看 Git diff，并提交需要保留的元数据。
 
-### `native-agent`：兼容别名
-
-勾选 `native-agent`，然后运行 `package`：
-
-```shell
-mvn clean package -Pnative-agent
-```
-
-`native-agent` 保留为兼容别名，行为与现在的 `native` 完全相同：打开应用采集、自动合并，并在同一次 `package` 中继续生成 Native Image。
-
 ## Windows、Linux、macOS
 
-Native Image 不做跨平台交叉编译：Windows 产物必须在 Windows 构建，Linux 产物必须在 Linux 构建，macOS 产物必须在 macOS 构建。三个平台都使用相同的 `native`、`native-direct`、`aot-agent`、`native-agent` Profile。
+Native Image 不做跨平台交叉编译：Windows 产物必须在 Windows 构建，Linux 产物必须在 Linux 构建，macOS 产物必须在 macOS 构建。三个平台都使用相同的 `native`、`native-direct`、`aot-agent` Profile。
 
 - Windows：安装 GraalVM JDK 和 Visual Studio C++ Build Tools/MSVC。
 - Linux：安装 GraalVM JDK、GCC/Clang、glibc 开发包及 JavaFX/GTK 所需系统库。
