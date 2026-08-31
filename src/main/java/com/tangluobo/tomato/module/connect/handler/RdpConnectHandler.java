@@ -7,11 +7,13 @@ import com.tangluobo.tomato.module.connect.GlobalConfig;
 import com.tangluobo.tomato.module.connect.dialog.PasswordPromptDialog;
 import com.tangluobo.tomato.module.connect.dialog.SessionConfigDialog;
 import com.tangluobo.rdp4j.RdpPane;
+import javafx.geometry.Rectangle2D;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.stage.Stage;
+import javafx.stage.Window;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -137,6 +139,7 @@ public class RdpConnectHandler implements ConnectHandler {
                 } else {
                     rdpWindow.getIcons().setAll(mainStage.getIcons());
                 }
+                positionWindowOnAnchorScreen(rdpWindow, mainStage);
             }
             OPEN_WINDOWS.put(config.getId(), rdpWindow);
             rdpWindow.setOnHidden(e -> {
@@ -232,8 +235,9 @@ public class RdpConnectHandler implements ConnectHandler {
         int width;
         int height;
         if (config.isFullscreen()) {
-            // 全屏模式：动态获取主窗口所在屏幕（无窗口时取主屏）大小作为分辨率
-            javafx.geometry.Rectangle2D bounds = resolveScreenBounds(module);
+            // 全屏模式：使用即将进入全屏的RDP界面所在屏幕。独立窗口
+            // 已被放到启动它的主界面所在屏，标签模式则直接使用主界面。
+            Rectangle2D bounds = resolveScreenBounds(module, rdpWindow);
             width = (int) Math.floor(bounds.getWidth());
             height = (int) Math.floor(bounds.getHeight());
         } else {
@@ -324,22 +328,35 @@ public class RdpConnectHandler implements ConnectHandler {
                 || desktopHeight >= Math.floor(visualBounds.getHeight());
     }
 
-    /**
-     * 获取主窗口所在屏幕的可视区域（全屏分辨率用）；无窗口时取主屏
-     */
-    private javafx.geometry.Rectangle2D resolveScreenBounds(ConnectModule module) {
-        try {
-            javafx.scene.Scene scene = module.getTerminalTabPane().getScene();
-            if (scene != null && scene.getWindow() != null) {
-                javafx.stage.Window window = scene.getWindow();
-                javafx.geometry.Rectangle2D windowBounds = new javafx.geometry.Rectangle2D(
-                        window.getX(), window.getY(), 1, 1);
-                for (javafx.stage.Screen screen : javafx.stage.Screen.getScreensForRectangle(windowBounds)) {
-                    return screen.getBounds();
-                }
-            }
-        } catch (Exception ignored) {
+    private Rectangle2D resolveScreenBounds(ConnectModule module, Stage rdpWindow) {
+        Window anchor = rdpWindow;
+        if (anchor == null) {
+            Scene scene = module.getTerminalTabPane().getScene();
+            anchor = scene == null ? null : scene.getWindow();
         }
-        return javafx.stage.Screen.getPrimary().getBounds();
+        return RdpPane.getScreenBoundsForWindow(anchor);
+    }
+
+    private static void positionWindowOnAnchorScreen(Stage window, Window anchor) {
+        Rectangle2D target = RdpPane.getScreenBoundsForWindow(anchor);
+        Rectangle2D visual = javafx.stage.Screen.getScreens().stream()
+                .filter(screen -> screen.getBounds().equals(target))
+                .findFirst()
+                .orElse(javafx.stage.Screen.getPrimary())
+                .getVisualBounds();
+        Scene scene = window.getScene();
+        double width = scene == null ? 800 : Math.max(1, scene.getWidth());
+        double height = scene == null ? 600 : Math.max(1, scene.getHeight());
+        window.setX(centeredWindowCoordinate(visual.getMinX(), visual.getWidth(), width));
+        window.setY(centeredWindowCoordinate(visual.getMinY(), visual.getHeight(), height));
+    }
+
+    static double centeredWindowCoordinate(double screenMin, double screenSize,
+                                           double windowSize) {
+        if (!Double.isFinite(screenMin) || !Double.isFinite(screenSize)
+                || !Double.isFinite(windowSize) || screenSize <= 0 || windowSize <= 0) {
+            return screenMin;
+        }
+        return screenMin + Math.max(0, (screenSize - windowSize) / 2);
     }
 }

@@ -4,6 +4,7 @@ import javafx.geometry.Rectangle2D;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RdpConnectHandlerTest {
@@ -34,5 +35,16 @@ class RdpConnectHandlerTest {
     @Test
     void doesNotReuseClosedWindow() {
         assertFalse(RdpConnectHandler.shouldReuseRdpWindow(false, false));
+    }
+
+    @Test
+    void centersNewRdpWindowOnSecondaryScreen() {
+        assertEquals(2240, RdpConnectHandler.centeredWindowCoordinate(1920, 1920, 1280));
+        assertEquals(180, RdpConnectHandler.centeredWindowCoordinate(0, 1080, 720));
+    }
+
+    @Test
+    void keepsOversizedWindowAtTargetScreenOrigin() {
+        assertEquals(1920, RdpConnectHandler.centeredWindowCoordinate(1920, 1920, 2560));
     }
 }
