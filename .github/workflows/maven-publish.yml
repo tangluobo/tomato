@@ -159,6 +159,11 @@ jobs:
         shell: pwsh
         run: |
           $base = "dist/tomato-$env:VERSION-${{ matrix.platform }}-${{ matrix.arch }}"
+          $bundle = "target/native-package/tomato-$env:VERSION-${{ matrix.platform }}-${{ matrix.arch }}"
+          @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') | ForEach-Object {
+            $runtime = Join-Path $bundle $_
+            if (-not (Test-Path -LiteralPath $runtime)) { throw "Missing Visual C++ runtime: $runtime" }
+          }
           @('.zip', '.tar.gz', '.exe', '.msi') | ForEach-Object {
             $file = "$base$_"
             if (-not (Test-Path -LiteralPath $file)) { throw "Missing artifact: $file" }

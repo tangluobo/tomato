@@ -2,6 +2,8 @@
 set -eu
 
 APP_HOME=/opt/tomato
-cd "$APP_HOME"
+DATA_HOME="${HOME:-/tmp}/.tomato"
+mkdir -p "$DATA_HOME"
+cd "$DATA_HOME"
 export LD_LIBRARY_PATH="$APP_HOME${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 exec "$APP_HOME/tomato" "$@"
