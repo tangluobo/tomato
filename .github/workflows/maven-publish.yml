@@ -85,7 +85,11 @@ jobs:
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           java --version
-          native-image --version
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            "$JAVA_HOME/bin/native-image.cmd" --version
+          else
+            "$JAVA_HOME/bin/native-image" --version
+          fi
 
       - name: 安装 Linux 打包工具
         if: matrix.platform == 'linux'
