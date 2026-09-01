@@ -1,6 +1,7 @@
 package com.tangluobo.tomato.module.tools;
 
 import com.tangluobo.tomato.module.Module;
+import javafx.animation.PauseTransition;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -10,12 +11,16 @@ import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.SVGPath;
+import javafx.util.Duration;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 工具模块
@@ -44,6 +49,13 @@ public class ToolsModule implements Module {
 
     // 保存loadContent传入的contentArea引用
     private VBox contentArea;
+    // 工具面板按需创建一次并常驻，切换时只改变 visible/managed，保留输入状态并避免重复初始化。
+    private final Map<String, Node> toolContentCache = new HashMap<>();
+    private StackPane toolContentHost;
+    private Node welcomeContent;
+    private Node loadingContent;
+    private String activeToolId;
+    private PauseTransition pendingToolLoad;
 
     @Override
     public String getName() {
@@ -119,21 +131,21 @@ public class ToolsModule implements Module {
         // 保存引用，后续点击工具时使用
         this.contentArea = contentArea;
         contentArea.getChildren().clear();
+        contentArea.setFillWidth(true);
+        contentArea.setMaxWidth(Double.MAX_VALUE);
+        contentArea.setMaxHeight(Double.MAX_VALUE);
 
-        // 默认显示欢迎界面
-        VBox welcomeBox = new VBox(20);
-        welcomeBox.setAlignment(Pos.CENTER);
-        welcomeBox.setPadding(new Insets(40));
-
-        Label welcomeLabel = new Label("选择一个工具开始使用");
-        welcomeLabel.setStyle("-fx-font-size: 18px; -fx-text-fill: #999;");
-
-        Label hintLabel = new Label("从左侧工具列表中选择需要的功能");
-        hintLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: #bbb;");
-
-        welcomeBox.getChildren().addAll(welcomeLabel, hintLabel);
-        contentArea.getChildren().add(welcomeBox);
-        VBox.setVgrow(welcomeBox, Priority.ALWAYS);
+        if (toolContentHost == null) {
+            toolContentHost = new StackPane();
+            toolContentHost.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
+            welcomeContent = buildMessagePane(
+                    "选择一个工具开始使用", "从左侧工具列表中选择需要的功能");
+            loadingContent = buildMessagePane("正在打开工具…", null);
+            toolContentHost.getChildren().addAll(welcomeContent, loadingContent);
+            showOnly(welcomeContent);
+        }
+        contentArea.getChildren().add(toolContentHost);
+        VBox.setVgrow(toolContentHost, Priority.ALWAYS);
     }
 
     private void initToolItems() {
@@ -333,65 +345,83 @@ public class ToolsModule implements Module {
         row.setStyle("-fx-background-color: #e8f4ff; -fx-cursor: hand; -fx-background-radius: 0;");
 
         // 使用保存的contentArea引用来更新内容
-        if (contentArea == null) return;
+        if (contentArea == null || toolContentHost == null) return;
 
-        contentArea.getChildren().clear();
-        contentArea.setFillWidth(true);
-        contentArea.setMaxWidth(Double.MAX_VALUE);
-        contentArea.setMaxHeight(Double.MAX_VALUE);
-
-        switch (item.id) {
-            case "image_format_converter":
-                ImageFormatConverterPane imgPane = new ImageFormatConverterPane();
-                contentArea.getChildren().add(imgPane);
-                VBox.setVgrow(imgPane, Priority.ALWAYS);
-                break;
-            case "dataset_converter":
-                DatasetConverterPane datasetPane = new DatasetConverterPane();
-                contentArea.getChildren().add(datasetPane);
-                VBox.setVgrow(datasetPane, Priority.ALWAYS);
-                break;
-            case "json_tool":
-                JsonToolPane jsonPane = new JsonToolPane();
-                contentArea.getChildren().add(jsonPane);
-                VBox.setVgrow(jsonPane, Priority.ALWAYS);
-                break;
-            case "desktop_shortcut":
-                DesktopShortcutPane shortcutPane = new DesktopShortcutPane();
-                contentArea.getChildren().add(shortcutPane);
-                VBox.setVgrow(shortcutPane, Priority.ALWAYS);
-                break;
-            case "hosts_file":
-                HostsFilePane hostsFilePane = new HostsFilePane();
-                contentArea.getChildren().add(hostsFilePane);
-                VBox.setVgrow(hostsFilePane, Priority.ALWAYS);
-                break;
-            case "image_background_remover":
-                ImageBackgroundRemoverPane bgRemoverPane = new ImageBackgroundRemoverPane();
-                contentArea.getChildren().add(bgRemoverPane);
-                VBox.setVgrow(bgRemoverPane, Priority.ALWAYS);
-                break;
-            case "trae_session":
-                TraeSessionPane traeSessionPane = new TraeSessionPane();
-                contentArea.getChildren().add(traeSessionPane);
-                VBox.setVgrow(traeSessionPane, Priority.ALWAYS);
-                break;
-            case "resource_extractor":
-                ResourceExtractorPane extractorPane = new ResourceExtractorPane();
-                contentArea.getChildren().add(extractorPane);
-                VBox.setVgrow(extractorPane, Priority.ALWAYS);
-                break;
-            default:
-                VBox placeholderBox = new VBox();
-                placeholderBox.setAlignment(Pos.CENTER);
-                placeholderBox.setMaxWidth(Double.MAX_VALUE);
-                placeholderBox.setMaxHeight(Double.MAX_VALUE);
-                Label placeholder = new Label("工具开发中...");
-                placeholder.setStyle("-fx-font-size: 16px; -fx-text-fill: #999;");
-                placeholderBox.getChildren().add(placeholder);
-                contentArea.getChildren().add(placeholderBox);
-                VBox.setVgrow(placeholderBox, Priority.ALWAYS);
-                break;
+        Node cached = toolContentCache.get(item.id);
+        if (cached != null) {
+            cancelPendingToolLoad();
+            activeToolId = item.id;
+            showOnly(cached);
+            return;
         }
+        if (item.id.equals(activeToolId) && pendingToolLoad != null) {
+            return;
+        }
+
+        activeToolId = item.id;
+        showOnly(loadingContent);
+        cancelPendingToolLoad();
+
+        // 让选中高亮和加载提示先完成一个 UI pulse，再初始化较重的工具控件。
+        pendingToolLoad = new PauseTransition(Duration.millis(1));
+        pendingToolLoad.setOnFinished(event -> {
+            pendingToolLoad = null;
+            if (!item.id.equals(activeToolId)) {
+                return;
+            }
+            Node content = toolContentCache.computeIfAbsent(item.id, this::createToolContent);
+            if (!toolContentHost.getChildren().contains(content)) {
+                toolContentHost.getChildren().add(content);
+            }
+            showOnly(content);
+        });
+        pendingToolLoad.play();
+    }
+
+    private Node createToolContent(String toolId) {
+        return switch (toolId) {
+            case "image_format_converter" -> new ImageFormatConverterPane();
+            case "dataset_converter" -> new DatasetConverterPane();
+            case "json_tool" -> new JsonToolPane();
+            case "desktop_shortcut" -> new DesktopShortcutPane();
+            case "hosts_file" -> new HostsFilePane();
+            case "image_background_remover" -> new ImageBackgroundRemoverPane();
+            case "trae_session" -> new TraeSessionPane();
+            case "resource_extractor" -> new ResourceExtractorPane();
+            default -> buildMessagePane("工具开发中...", null);
+        };
+    }
+
+    private void showOnly(Node selectedContent) {
+        if (toolContentHost == null || selectedContent == null) return;
+        for (Node content : toolContentHost.getChildren()) {
+            boolean selected = content == selectedContent;
+            content.setVisible(selected);
+            content.setManaged(selected);
+        }
+    }
+
+    private void cancelPendingToolLoad() {
+        if (pendingToolLoad != null) {
+            pendingToolLoad.stop();
+            pendingToolLoad = null;
+        }
+    }
+
+    private VBox buildMessagePane(String title, String hint) {
+        VBox pane = new VBox(12);
+        pane.setAlignment(Pos.CENTER);
+        pane.setPadding(new Insets(40));
+        pane.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
+
+        Label titleLabel = new Label(title);
+        titleLabel.setStyle("-fx-font-size: 18px; -fx-text-fill: #999;");
+        pane.getChildren().add(titleLabel);
+        if (hint != null) {
+            Label hintLabel = new Label(hint);
+            hintLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: #bbb;");
+            pane.getChildren().add(hintLabel);
+        }
+        return pane;
     }
 }
