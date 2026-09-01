@@ -5,6 +5,7 @@ import com.tangluobo.tomato.module.connect.dialog.BackupDialog;
 import com.tangluobo.tomato.module.connect.dialog.ConnectionConfigDialog;
 import com.tangluobo.tomato.module.connect.dialog.ExportConnectionDialog;
 import com.tangluobo.tomato.module.connect.dialog.FolderDialog;
+import com.tangluobo.tomato.module.connect.dialog.ImportConnectionDialog;
 import com.tangluobo.tomato.module.connect.dialog.RestoreDialog;
 import com.tangluobo.tomato.module.connect.handler.*;
 import com.tangluobo.tomato.module.connect.ToolType;
@@ -584,6 +585,7 @@ public class ConnectModule implements Module {
     }
 
     private ContextMenu contextMenu;
+    private List<TreeItem<String>> selectionBeforeContextMenu = List.of();
 
     private void setupContextMenu() {
         contextMenu = new ContextMenu();
@@ -602,6 +604,15 @@ public class ConnectModule implements Module {
             }
 
             final TreeItem<String> targetItem = clickedItem;
+            if (targetItem != null
+                    && selectionBeforeContextMenu.size() > 1
+                    && selectionBeforeContextMenu.contains(targetItem)) {
+                // JavaFX 右键按下时可能把多选收缩为当前项；恢复原选择供批量菜单操作使用。
+                treeView.getSelectionModel().clearSelection();
+                for (TreeItem<String> selected : selectionBeforeContextMenu) {
+                    treeView.getSelectionModel().select(selected);
+                }
+            }
 
             if (targetItem == null || targetItem == bottomSpacer) {
                 MenuItem addFolder = new MenuItem("新建目录");
@@ -745,7 +756,13 @@ public class ConnectModule implements Module {
         treeView.setOnMousePressed(event -> contextMenu.hide());
 
         treeView.addEventFilter(MouseEvent.MOUSE_PRESSED, event -> {
+            if (event.getButton() == MouseButton.SECONDARY) {
+                selectionBeforeContextMenu = new ArrayList<>(
+                        treeView.getSelectionModel().getSelectedItems());
+                return;
+            }
             if (event.getButton() != MouseButton.PRIMARY) return;
+            selectionBeforeContextMenu = List.of();
             if (event.getClickCount() == 1) {
                 selectedItemBeforeClick = treeView.getSelectionModel().getSelectedItem();
             }
@@ -2548,11 +2565,19 @@ public class ConnectModule implements Module {
     }
 
     private void handleDelete(TreeItem<String> item) {
+        List<TreeItem<String>> selectedItems = selectedConnectionItemsForDelete(item);
+        selectionBeforeContextMenu = List.of();
+        if (selectedItems.size() > 1) {
+            handleBatchDelete(selectedItems);
+            return;
+        }
+
         ConnectionConfig config = itemConfigMap.get(item);
         if (config == null) return;
 
         boolean isFolder = config.getType() == null;
-        boolean hasChildren = !item.getChildren().isEmpty();
+        boolean hasChildren = isFolder && connections.stream()
+                .anyMatch(candidate -> java.util.Objects.equals(config.getId(), candidate.getParentId()));
 
         if (isFolder && hasChildren) {
             Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
@@ -2570,20 +2595,9 @@ public class ConnectModule implements Module {
             Optional<ButtonType> result = alert.showAndWait();
             if (result.isPresent()) {
                 if (result.get() == keepChildrenBtn) {
-                    String parentId = config.getParentId();
-                    for (TreeItem<String> child : item.getChildren()) {
-                        ConnectionConfig childConfig = itemConfigMap.get(child);
-                        if (childConfig != null) {
-                            childConfig.setParentId(parentId);
-                        }
-                    }
-                    connections.removeIf(c -> c.getId().equals(config.getId()));
-                    saveConnectionsWithFeedback();
-                    loadTree();
+                    deleteFolderKeepingChildren(item, config);
                 } else if (result.get() == deleteAllBtn) {
-                    removeConfigAndChildren(config.getId());
-                    saveConnectionsWithFeedback();
-                    loadTree();
+                    deleteConnectionSubtree(item, config.getId());
                 }
             }
         } else {
@@ -2594,24 +2608,168 @@ public class ConnectModule implements Module {
             DialogPositionUtil.centerOnOwner(alert, getStage());
             Optional<ButtonType> result = alert.showAndWait();
             if (result.isPresent() && result.get() == ButtonType.OK) {
-                removeConfigAndChildren(config.getId());
-                saveConnectionsWithFeedback();
-                loadTree();
+                deleteConnectionSubtree(item, config.getId());
             }
         }
     }
 
-    private void removeConfigAndChildren(String parentId) {
-        connections.removeIf(config -> {
-            if (config.getId().equals(parentId)) {
-                return true;
+    private List<TreeItem<String>> selectedConnectionItemsForDelete(TreeItem<String> targetItem) {
+        List<TreeItem<String>> candidates;
+        if (selectionBeforeContextMenu.contains(targetItem)) {
+            candidates = selectionBeforeContextMenu;
+        } else if (treeView.getSelectionModel().getSelectedItems().contains(targetItem)) {
+            candidates = new ArrayList<>(treeView.getSelectionModel().getSelectedItems());
+        } else {
+            candidates = List.of(targetItem);
+        }
+
+        List<TreeItem<String>> result = new ArrayList<>();
+        for (TreeItem<String> candidate : candidates) {
+            if (itemConfigMap.containsKey(candidate) && !result.contains(candidate)) {
+                result.add(candidate);
             }
-            if (parentId.equals(config.getParentId())) {
-                removeConfigAndChildren(config.getId());
-                return true;
+        }
+        if (result.isEmpty() && itemConfigMap.containsKey(targetItem)) {
+            result.add(targetItem);
+        }
+        return result;
+    }
+
+    private void handleBatchDelete(List<TreeItem<String>> selectedItems) {
+        Set<String> selectedIds = new HashSet<>();
+        boolean containsFolderWithChildren = false;
+        for (TreeItem<String> selectedItem : selectedItems) {
+            ConnectionConfig selectedConfig = itemConfigMap.get(selectedItem);
+            if (selectedConfig == null || selectedConfig.getId() == null) {
+                continue;
             }
-            return false;
-        });
+            selectedIds.add(selectedConfig.getId());
+            if (selectedConfig.getType() == null && connections.stream()
+                    .anyMatch(candidate -> java.util.Objects.equals(
+                            selectedConfig.getId(), candidate.getParentId()))) {
+                containsFolderWithChildren = true;
+            }
+        }
+        if (selectedIds.isEmpty()) {
+            return;
+        }
+
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.setTitle("批量删除");
+        alert.setHeaderText("确定要删除选中的 " + selectedItems.size() + " 个节点吗？");
+        alert.setContentText(containsFolderWithChildren
+                ? "所选目录会连同其子节点一起删除，此操作无法撤销。"
+                : "此操作无法撤销。");
+        DialogPositionUtil.centerOnOwner(alert, getStage());
+        Optional<ButtonType> result = alert.showAndWait();
+        if (result.isPresent() && result.get() == ButtonType.OK) {
+            deleteConnectionSubtrees(selectedItems, selectedIds);
+        }
+    }
+
+    private void deleteFolderKeepingChildren(TreeItem<String> item, ConnectionConfig folder) {
+        String folderId = folder.getId();
+        String newParentId = folder.getParentId();
+        int folderIndex = connections.indexOf(folder);
+        List<ConnectionConfig> directChildren = new ArrayList<>();
+        for (ConnectionConfig candidate : connections) {
+            if (java.util.Objects.equals(folderId, candidate.getParentId())) {
+                directChildren.add(candidate);
+                candidate.setParentId(newParentId);
+            }
+        }
+        connections.removeIf(candidate -> java.util.Objects.equals(folderId, candidate.getId()));
+
+        if (!saveConnectionsWithFeedback()) {
+            for (ConnectionConfig child : directChildren) {
+                child.setParentId(folderId);
+            }
+            connections.add(Math.max(0, Math.min(folderIndex, connections.size())), folder);
+            return;
+        }
+
+        if (isFilteringConnections()) {
+            filterTree(searchField.getText());
+            return;
+        }
+        TreeItem<String> parent = item.getParent();
+        if (parent == null) {
+            loadTree();
+            return;
+        }
+        int treeIndex = parent.getChildren().indexOf(item);
+        List<TreeItem<String>> children = new ArrayList<>(item.getChildren());
+        item.getChildren().clear();
+        parent.getChildren().remove(item);
+        parent.getChildren().addAll(Math.max(0, treeIndex), children);
+        removeConnectionItemMappings(item);
+        treeView.getSelectionModel().clearSelection();
+    }
+
+    private void deleteConnectionSubtree(TreeItem<String> item, String rootId) {
+        deleteConnectionSubtrees(List.of(item), Set.of(rootId));
+    }
+
+    private void deleteConnectionSubtrees(
+            List<TreeItem<String>> selectedItems, Set<String> rootIds) {
+        // 旧实现会对每个子节点再次扫描并修改整个列表；改为一次建索引、一次删除。
+        Set<String> removedIds = ConnectionTreeUtils.collectSubtreesIds(connections, rootIds);
+        if (removedIds.isEmpty()) {
+            return;
+        }
+        List<ConnectionConfig> originalConnections = new ArrayList<>(connections);
+        connections.removeIf(candidate -> removedIds.contains(candidate.getId()));
+        if (!saveConnectionsWithFeedback()) {
+            connections.clear();
+            connections.addAll(originalConnections);
+            return;
+        }
+
+        if (isFilteringConnections()) {
+            filterTree(searchField.getText());
+            return;
+        }
+
+        Set<TreeItem<String>> selectedSet = java.util.Collections.newSetFromMap(
+                new java.util.IdentityHashMap<>());
+        selectedSet.addAll(selectedItems);
+        List<TreeItem<String>> topLevelItems = new ArrayList<>();
+        for (TreeItem<String> selectedItem : selectedItems) {
+            TreeItem<String> ancestor = selectedItem.getParent();
+            boolean hasSelectedAncestor = false;
+            while (ancestor != null) {
+                if (selectedSet.contains(ancestor)) {
+                    hasSelectedAncestor = true;
+                    break;
+                }
+                ancestor = ancestor.getParent();
+            }
+            if (!hasSelectedAncestor) {
+                topLevelItems.add(selectedItem);
+            }
+        }
+        for (TreeItem<String> topLevelItem : topLevelItems) {
+            TreeItem<String> parent = topLevelItem.getParent();
+            removeConnectionItemMappings(topLevelItem);
+            if (parent != null) {
+                parent.getChildren().remove(topLevelItem);
+            }
+        }
+        treeView.getSelectionModel().clearSelection();
+    }
+
+    private boolean isFilteringConnections() {
+        return searchField != null && !searchField.getText().isBlank();
+    }
+
+    private void removeConnectionItemMappings(TreeItem<String> item) {
+        itemConfigMap.remove(item);
+        dbNodeDataMap.remove(item);
+        connectionStateMap.remove(item);
+        connectingHosts.remove(item);
+        for (TreeItem<String> child : item.getChildren()) {
+            removeConnectionItemMappings(child);
+        }
     }
 
     /** 供 handler 调用：获取所属 Stage */
@@ -2728,12 +2886,14 @@ public class ConnectModule implements Module {
                 String format = importObj.has("format") ? importObj.get("format").getAsString() : null;
                 if ("tomato-connections-export".equals(format)) {
                     ConnectionConfig[] configs = new Gson().fromJson(importObj.getAsJsonArray("connections"), ConnectionConfig[].class);
-                    importConfigs = configs != null ? new ArrayList<>(List.of(configs)) : new ArrayList<>();
+                    importConfigs = configs != null
+                            ? new ArrayList<>(java.util.Arrays.asList(configs)) : new ArrayList<>();
                 } else {
                     // 尝试从对象中直接读取 connections 数组
                     if (importObj.has("connections")) {
                         ConnectionConfig[] configs = new Gson().fromJson(importObj.getAsJsonArray("connections"), ConnectionConfig[].class);
-                        importConfigs = configs != null ? new ArrayList<>(List.of(configs)) : new ArrayList<>();
+                        importConfigs = configs != null
+                                ? new ArrayList<>(java.util.Arrays.asList(configs)) : new ArrayList<>();
                     } else {
                         importConfigs = new ArrayList<>();
                     }
@@ -2741,11 +2901,13 @@ public class ConnectModule implements Module {
             } else if (jsonElement.isJsonArray()) {
                 // 兼容纯数组格式
                 ConnectionConfig[] configs = new Gson().fromJson(jsonElement.getAsJsonArray(), ConnectionConfig[].class);
-                importConfigs = configs != null ? new ArrayList<>(List.of(configs)) : new ArrayList<>();
+                importConfigs = configs != null
+                        ? new ArrayList<>(java.util.Arrays.asList(configs)) : new ArrayList<>();
             } else {
                 importConfigs = new ArrayList<>();
             }
 
+            importConfigs.removeIf(java.util.Objects::isNull);
             if (importConfigs.isEmpty()) {
                 Alert alert = new Alert(Alert.AlertType.WARNING);
                 alert.setTitle("导入");
@@ -2756,54 +2918,33 @@ public class ConnectModule implements Module {
                 return;
             }
 
-            // 生成新 ID 并重映射 parentId，保留目录结构
-            Map<String, String> idMapping = new HashMap<>();
-            for (ConnectionConfig config : importConfigs) {
-                String oldId = config.getId();
-                String newId = ConfigManager.generateId();
-                config.setId(newId);
-                if (oldId != null) {
-                    idMapping.put(oldId, newId);
-                }
-            }
-            for (ConnectionConfig config : importConfigs) {
-                String oldParentId = config.getParentId();
-                if (oldParentId != null && !oldParentId.isEmpty()) {
-                    String newParentId = idMapping.get(oldParentId);
-                    if (newParentId != null) {
-                        config.setParentId(newParentId);
-                    } else {
-                        // 父节点不在导入范围内，设为根级
-                        config.setParentId(null);
-                    }
-                }
+            ConnectionImportPlanner.DuplicateAnalysis duplicateAnalysis =
+                    ConnectionImportPlanner.analyzeDuplicates(importConfigs, connections);
+            ImportConnectionDialog selectionDialog = new ImportConnectionDialog(
+                    stage, importConfigs, duplicateAnalysis.duplicates());
+            if (!selectionDialog.showAndWait()) {
+                return;
             }
 
-            // 检查名称冲突，重名时添加后缀
-            Set<String> existingNames = new HashSet<>();
-            for (ConnectionConfig c : connections) {
-                existingNames.add(c.getName());
-            }
-            for (ConnectionConfig config : importConfigs) {
-                String baseName = config.getName();
-                String name = baseName;
-                int suffix = 1;
-                while (existingNames.contains(name)) {
-                    name = baseName + " (" + suffix + ")";
-                    suffix++;
-                }
-                config.setName(name);
-                existingNames.add(name);
-            }
+            List<ConnectionConfig> selectedConfigs = selectionDialog.getSelectedConfigs();
+            List<ConnectionConfig> preparedConfigs = ConnectionImportPlanner.prepareSelected(
+                    importConfigs,
+                    selectedConfigs,
+                    connections,
+                    duplicateAnalysis,
+                    ConfigManager::generateId);
 
-            connections.addAll(importConfigs);
-            saveConnectionsWithFeedback();
+            connections.addAll(preparedConfigs);
+            if (!saveConnectionsWithFeedback()) {
+                connections.removeAll(preparedConfigs);
+                return;
+            }
             loadTree();
 
             Alert alert = new Alert(Alert.AlertType.INFORMATION);
             alert.setTitle("导入成功");
             alert.setHeaderText(null);
-            alert.setContentText("已成功导入 " + importConfigs.size() + " 个连接");
+            alert.setContentText("已成功导入 " + preparedConfigs.size() + " 个项目");
             DialogPositionUtil.centerOnOwner(alert, getStage());
             alert.showAndWait();
         } catch (Exception e) {
