@@ -1,0 +1,28 @@
+{
+  "bundles": [
+    {
+      "name": "com.mysql.cj.LocalizedErrorMessages"
+    },
+    {
+      "name": "com.sun.javafx.tk.quantum.QuantumMessagesBundle"
+    },
+    {
+      "name": "com/sun/glass/ui/win/themes"
+    },
+    {
+      "name": "com/sun/javafx/scene/control/skin/resources/controls"
+    },
+    {
+      "name": "com/sun/javafx/scene/control/skin/resources/controls-nt"
+    },
+    {
+      "name": "org.postgresql.translation.messages"
+    },
+    {
+      "name": "sun.awt.resources.awt"
+    },
+    {
+      "name": "sun.util.logging.resources.logging"
+    }
+  ]
+}
