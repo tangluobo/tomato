@@ -6,7 +6,7 @@
 
     <groupId>com.tangluobo</groupId>
     <artifactId>tomato</artifactId>
-    <version>1.0.2</version>
+    <version>1.0.1</version>
     <name>tomato</name>
 
     <properties>

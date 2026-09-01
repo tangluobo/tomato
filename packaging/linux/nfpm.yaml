@@ -35,13 +35,23 @@ overrides:
     depends:
       - libgtk-3-0 | libgtk-3-0t64
       - libx11-6
+      - libxext6
+      - libxrender1
       - libxtst6
       - libxi6
+      - libfreetype6
+      - libfontconfig1
       - libasound2 | libasound2t64
+      - zlib1g
   rpm:
     depends:
       - gtk3
       - libX11
+      - libXext
+      - libXrender
       - libXtst
       - libXi
+      - freetype
+      - fontconfig
       - alsa-lib
+      - zlib
