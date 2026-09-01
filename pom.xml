@@ -54,7 +54,7 @@
         <dependency>
             <groupId>com.tangluobo</groupId>
             <artifactId>rdp4j</artifactId>
-            <version>1.0.3</version>
+            <version>1.0.4</version>
         </dependency>
         <dependency>
             <groupId>org.openjfx</groupId>
@@ -140,6 +140,15 @@
             <groupId>com.aliyun</groupId>
             <artifactId>aliyun-java-sdk-core</artifactId>
             <version>4.6.4</version>
+            <exclusions>
+                <!-- The SDK still pulls the signed jdk15on 1.70 provider.
+                     Tomato already uses jdk18on 1.83; keeping both causes a
+                     package signer mismatch while GraalVM scans classes. -->
+                <exclusion>
+                    <groupId>org.bouncycastle</groupId>
+                    <artifactId>bcprov-jdk15on</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>com.aliyun</groupId>

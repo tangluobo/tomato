@@ -16830,30 +16830,6 @@
     {
       "module": "jdk.jfr",
       "glob": "jdk/jfr/internal/query/view.ini"
-    },
-    {
-      "bundle": "com.mysql.cj.LocalizedErrorMessages"
-    },
-    {
-      "bundle": "com.sun.javafx.tk.quantum.QuantumMessagesBundle"
-    },
-    {
-      "bundle": "com/sun/glass/ui/win/themes"
-    },
-    {
-      "bundle": "com/sun/javafx/scene/control/skin/resources/controls"
-    },
-    {
-      "bundle": "com/sun/javafx/scene/control/skin/resources/controls-nt"
-    },
-    {
-      "bundle": "org.postgresql.translation.messages"
-    },
-    {
-      "bundle": "sun.awt.resources.awt"
-    },
-    {
-      "bundle": "sun.util.logging.resources.logging"
     }
   ],
   "foreign": {
