@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Tomato
+Comment=Database, server and remote desktop connection tool
+Exec=tomato
+Icon=tomato
+Terminal=false
+Categories=Utility;Development;Network;
+StartupNotify=true

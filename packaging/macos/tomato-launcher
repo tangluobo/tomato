@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+
+APP_HOME=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$APP_HOME"
+export DYLD_LIBRARY_PATH="$APP_HOME${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+exec "$APP_HOME/tomato-bin" "$@"

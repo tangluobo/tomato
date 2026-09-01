@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=https://nfpm.goreleaser.com/schema.json
+name: tomato
+arch: ${NFPM_ARCH}
+platform: linux
+version: ${VERSION}
+release: 1
+section: utils
+priority: optional
+maintainer: tangluobo
+description: Tomato database, server and remote desktop connection tool
+vendor: tangluobo
+homepage: https://github.com/tangluobo/tomato
+license: MIT
+
+contents:
+  - src: ${NATIVE_BUNDLE_DIR}/
+    dst: /opt/tomato
+    type: tree
+    expand: true
+  - src: packaging/linux/tomato
+    dst: /usr/bin/tomato
+    file_info:
+      mode: 0755
+  - src: packaging/linux/tomato.desktop
+    dst: /usr/share/applications/tomato.desktop
+    file_info:
+      mode: 0644
+  - src: src/main/resources/images/logo.png
+    dst: /usr/share/icons/hicolor/512x512/apps/tomato.png
+    file_info:
+      mode: 0644
+
+overrides:
+  deb:
+    depends:
+      - libgtk-3-0 | libgtk-3-0t64
+      - libx11-6
+      - libxtst6
+      - libxi6
+      - libasound2 | libasound2t64
+  rpm:
+    depends:
+      - gtk3
+      - libX11
+      - libXtst
+      - libXi
+      - alsa-lib

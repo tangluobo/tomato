@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+    <Product Id="*" Name="Tomato" Language="2052" Version="$(var.Version)"
+             Manufacturer="tangluobo" UpgradeCode="9EDBE186-C9AB-44DC-BA36-5E69BFD9F4A1">
+        <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"/>
+        <MajorUpgrade DowngradeErrorMessage="A newer version of Tomato is already installed."/>
+        <MediaTemplate EmbedCab="yes"/>
+        <Icon Id="TomatoIcon" SourceFile="$(var.IconFile)"/>
+        <Property Id="ARPPRODUCTICON" Value="TomatoIcon"/>
+
+        <Directory Id="TARGETDIR" Name="SourceDir">
+            <Directory Id="ProgramFiles64Folder">
+                <Directory Id="INSTALLFOLDER" Name="Tomato"/>
+            </Directory>
+            <Directory Id="ProgramMenuFolder">
+                <Directory Id="ApplicationProgramsFolder" Name="Tomato"/>
+            </Directory>
+        </Directory>
+
+        <DirectoryRef Id="INSTALLFOLDER">
+            <Component Id="ApplicationShortcut" Guid="*" Win64="yes">
+                <Shortcut Id="ApplicationStartMenuShortcut" Directory="ApplicationProgramsFolder"
+                          Name="Tomato" Description="Tomato" Target="[INSTALLFOLDER]tomato.exe"
+                          WorkingDirectory="INSTALLFOLDER" Icon="TomatoIcon"/>
+                <RemoveFolder Id="RemoveApplicationProgramsFolder"
+                              Directory="ApplicationProgramsFolder" On="uninstall"/>
+                <RegistryValue Root="HKLM" Key="Software\tangluobo\Tomato" Name="Version"
+                               Type="string" Value="$(var.Version)" KeyPath="yes"/>
+            </Component>
+        </DirectoryRef>
+
+        <Feature Id="MainFeature" Title="Tomato" Level="1" Absent="disallow">
+            <ComponentGroupRef Id="NativeFiles"/>
+            <ComponentRef Id="ApplicationShortcut"/>
+        </Feature>
+    </Product>
+</Wix>
