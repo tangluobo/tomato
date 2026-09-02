@@ -57,7 +57,7 @@ public class BackupService {
         Files.createDirectories(dir);
         Path file = dir.resolve(filename);
 
-        try (FileOutputStream fos = new FileOutputStream(file.toFile());
+        try (OutputStream fos = new BufferedOutputStream(Files.newOutputStream(file));
              TarArchiveOutputStream backupTar = new TarArchiveOutputStream(fos)) {
 
             backupTar.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);
@@ -134,7 +134,8 @@ public class BackupService {
 
         // 获取列信息
         List<String> columnNames = new ArrayList<>();
-        String selectSql = buildSelectSql(config, databaseName, tableName);
+        // 这里只读取 ResultSetMetaData，限制为零行，避免为获取列名先传输一次整张表。
+        String selectSql = buildSelectSql(config, databaseName, tableName) + " WHERE 1 = 0";
         try (Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(selectSql)) {
             ResultSetMetaData meta = rs.getMetaData();
@@ -161,6 +162,7 @@ public class BackupService {
             for (int pageNumber = 1; pageNumber <= pageCount; pageNumber++) {
                 if (task.isCancelled()) break;
 
+                task.log("读取表 " + tableName + "：第 " + pageNumber + "/" + pageCount + " 批");
                 String pageSql = buildPageSql(config, databaseName, tableName, pageNumber, pageSize);
                 List<Map<String, Object>> records = new ArrayList<>();
                 try (Statement stmt = conn.createStatement();
@@ -605,7 +607,6 @@ public class BackupService {
         archiveEntry.setSize(bytes.length);
         backupTar.putArchiveEntry(archiveEntry);
         backupTar.write(bytes);
-        backupTar.flush();
         backupTar.closeArchiveEntry();
     }
 

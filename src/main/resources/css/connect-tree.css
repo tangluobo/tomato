@@ -72,7 +72,6 @@
 
 /* 树节点 disclosure 区域样式 */
 .tree-cell .tree-disclosure-node {
-    -fx-padding: 0;
     -fx-background-color: transparent;
     -fx-background-insets: 0;
 }

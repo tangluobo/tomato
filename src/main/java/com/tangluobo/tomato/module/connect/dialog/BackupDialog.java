@@ -36,6 +36,12 @@ public class BackupDialog {
     private Label processedCountLabel;
     private Label recordCountLabel;
     private Label timeLabel;
+    private TabPane tabPane;
+    private Tab logTab;
+    private Label objectLoadingLabel;
+    private Button backupBtn;
+    private ProgressIndicator busyIndicator;
+    private boolean objectLoadStarted;
 
     private TreeView<BackupObject> objectTree;
 
@@ -47,7 +53,6 @@ public class BackupDialog {
         this.databaseName = databaseName;
         this.path = path == null ? "" : path;
         initUI(parent);
-        loadObjects();
     }
 
     private void initUI(Stage parent) {
@@ -65,7 +70,7 @@ public class BackupDialog {
         BorderPane root = new BorderPane();
         root.setStyle("-fx-background-color: #f4f4f4;");
 
-        TabPane tabPane = createTabPane();
+        tabPane = createTabPane();
         root.setCenter(tabPane);
         BorderPane.setMargin(tabPane, new Insets(0, 0, 0, 0));
 
@@ -74,6 +79,13 @@ public class BackupDialog {
 
         Scene scene = new Scene(root, 720, 580);
         dialogStage.setScene(scene);
+        // 先显示窗口，再启动对象查询，避免点击备份菜单后长时间没有界面反馈。
+        dialogStage.addEventHandler(javafx.stage.WindowEvent.WINDOW_SHOWN, event -> Platform.runLater(() -> {
+            if (!objectLoadStarted) {
+                objectLoadStarted = true;
+                loadObjects();
+            }
+        }));
         DialogPositionUtil.centerOnOwner(dialogStage, parent);
     }
 
@@ -91,7 +103,7 @@ public class BackupDialog {
         Tab advancedTab = new Tab("高级");
         advancedTab.setContent(createAdvancedTab());
 
-        Tab logTab = new Tab("信息日志");
+        logTab = new Tab("信息日志");
         logTab.setContent(createLogTab());
 
         tabPane.getTabs().addAll(generalTab, objectTab, advancedTab, logTab);
@@ -169,6 +181,8 @@ public class BackupDialog {
         objectTree.getStyleClass().add("backup-object-tree");
         objectTree.setStyle("-fx-font-size: 12px;");
         objectTree.setFixedCellSize(26);
+        objectLoadingLabel = new Label("正在加载备份对象，请稍候...");
+        objectLoadingLabel.setStyle("-fx-text-fill: #666666; -fx-font-size: 13px;");
         objectTree.setCellFactory(tv -> new TreeCell<>() {
             private final CheckBox checkBox = new CheckBox();
             private final HBox hbox = new HBox(2);
@@ -256,7 +270,9 @@ public class BackupDialog {
             }
         });
 
-        VBox.setVgrow(objectTree, Priority.ALWAYS);
+        StackPane objectTreePane = new StackPane(objectTree, objectLoadingLabel);
+        StackPane.setAlignment(objectLoadingLabel, Pos.CENTER);
+        VBox.setVgrow(objectTreePane, Priority.ALWAYS);
         objectTree.setPrefHeight(250);
 
         HBox buttonRow = new HBox(10);
@@ -281,7 +297,7 @@ public class BackupDialog {
 
         buttonRow.getChildren().addAll(selectAllBtn, deselectAllBtn);
 
-        box.getChildren().addAll(topLabel, objectLabel, objectTree, buttonRow);
+        box.getChildren().addAll(topLabel, objectLabel, objectTreePane, buttonRow);
         return box;
     }
 
@@ -373,12 +389,18 @@ public class BackupDialog {
 
         saveMenuBtn.getItems().addAll(saveAsTemplate, loadTemplate, clearTemplate);
 
-        Button backupBtn = new Button("备份");
+        busyIndicator = new ProgressIndicator(-1);
+        busyIndicator.setPrefSize(18, 18);
+        busyIndicator.setMinSize(18, 18);
+        busyIndicator.setMaxSize(18, 18);
+
+        backupBtn = new Button("加载中...");
         backupBtn.setStyle(
             "-fx-background-color: #07c160; -fx-text-fill: white; -fx-border-color: #06ad56;" +
             "-fx-border-radius: 0; -fx-background-radius: 0; -fx-font-size: 13px; -fx-cursor: hand;"
         );
-        backupBtn.setPrefWidth(80);
+        backupBtn.setPrefWidth(90);
+        backupBtn.setDisable(true);
         backupBtn.setOnAction(e -> startBackup(backupBtn));
 
         Button closeBtn = new Button("关闭");
@@ -394,7 +416,7 @@ public class BackupDialog {
             dialogStage.close();
         });
 
-        bar.getChildren().addAll(saveMenuBtn, backupBtn, closeBtn);
+        bar.getChildren().addAll(saveMenuBtn, busyIndicator, backupBtn, closeBtn);
         return bar;
     }
 
@@ -410,10 +432,20 @@ public class BackupDialog {
                     buildObjectTree(tables, views, functions, events);
                     int totalCount = tables.size() + views.size() + functions.size() + events.size();
                     objectCountLabel.setText(String.valueOf(totalCount));
+                    objectLoadingLabel.setManaged(false);
+                    objectLoadingLabel.setVisible(false);
+                    hideBusyIndicator();
+                    backupBtn.setText(totalCount == 0 ? "无对象" : "备份");
+                    backupBtn.setDisable(totalCount == 0);
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> {
                     logArea.appendText("加载对象列表失败: " + e.getMessage() + "\n");
+                    objectLoadingLabel.setText("加载对象失败: " + e.getMessage());
+                    hideBusyIndicator();
+                    backupBtn.setText("加载失败");
+                    backupBtn.setDisable(true);
+                    tabPane.getSelectionModel().select(logTab);
                 });
             }
         }, "Backup-LoadObjects").start();
@@ -610,9 +642,14 @@ public class BackupDialog {
         }
 
         backupBtn.setDisable(true);
+        backupBtn.setText("备份中...");
         logArea.clear();
+        logArea.appendText("正在准备备份，共 " + selected.size() + " 个对象...\n");
+        objectCountLabel.setText(String.valueOf(selected.size()));
         processedCountLabel.setText("0");
         recordCountLabel.setText("0");
+        timeLabel.setText("进行中...");
+        tabPane.getSelectionModel().select(logTab);
 
         String comment = commentArea.getText();
         boolean lockTables = lockTablesCheck.isSelected();
@@ -620,50 +657,73 @@ public class BackupDialog {
         String customFile = useCustomFilenameCheck.isSelected() ? customFilenameField.getText() : null;
 
         currentTask = new BackupTask(config, databaseName, selected, comment, lockTables, singleTx, customFile, path);
+        showBackupProgress();
 
         currentTask.messageProperty().addListener((obs, oldMsg, newMsg) -> {
-            Platform.runLater(() -> logArea.appendText(newMsg + "\n"));
+            if (newMsg != null && !newMsg.isBlank()) {
+                logArea.appendText(newMsg + "\n");
+            }
         });
 
         currentTask.progressProperty().addListener((obs, oldVal, newVal) -> {
-            Platform.runLater(() -> processedCountLabel.setText(String.valueOf(newVal.intValue())));
+            if (newVal.doubleValue() >= 0) {
+                long processed = Math.round(newVal.doubleValue() * selected.size());
+                processedCountLabel.setText(String.valueOf(Math.min(processed, selected.size())));
+            }
         });
 
         currentTask.recordCountProperty().addListener((obs, oldVal, newVal) -> {
-            Platform.runLater(() -> recordCountLabel.setText(String.valueOf(newVal.longValue())));
+            recordCountLabel.setText(String.valueOf(newVal.longValue()));
         });
 
         currentTask.runningTimeProperty().addListener((obs, oldVal, newVal) -> {
-            Platform.runLater(() -> timeLabel.setText(newVal));
+            timeLabel.setText(newVal);
         });
 
         currentTask.setOnSucceeded(e -> {
+            hideBusyIndicator();
             backupBtn.setDisable(false);
-            Platform.runLater(() -> {
-                Alert alert = new Alert(Alert.AlertType.INFORMATION);
-                alert.setTitle("备份完成");
-                alert.setHeaderText(null);
-                String result = currentTask.getValue();
-                alert.setContentText("备份文件已保存:\n" + result);
-                DialogPositionUtil.centerOnOwner(alert, dialogStage);
-        alert.showAndWait();
-                dialogStage.close();
-            });
+            backupBtn.setText("备份");
+            processedCountLabel.setText(String.valueOf(selected.size()));
+            Alert alert = new Alert(Alert.AlertType.INFORMATION);
+            alert.setTitle("备份完成");
+            alert.setHeaderText(null);
+            String result = currentTask.getValue();
+            alert.setContentText("备份文件已保存:\n" + result);
+            DialogPositionUtil.centerOnOwner(alert, dialogStage);
+            alert.showAndWait();
+            dialogStage.close();
         });
 
         currentTask.setOnFailed(e -> {
+            hideBusyIndicator();
             backupBtn.setDisable(false);
-            Platform.runLater(() -> {
-                Alert alert = new Alert(Alert.AlertType.ERROR);
-                alert.setTitle("备份失败");
-                alert.setHeaderText(null);
-                alert.setContentText("错误: " + currentTask.getException().getMessage());
-                DialogPositionUtil.centerOnOwner(alert, dialogStage);
-        alert.showAndWait();
-            });
+            backupBtn.setText("备份");
+            timeLabel.setText("失败");
+            Alert alert = new Alert(Alert.AlertType.ERROR);
+            alert.setTitle("备份失败");
+            alert.setHeaderText(null);
+            alert.setContentText("错误: " + currentTask.getException().getMessage());
+            DialogPositionUtil.centerOnOwner(alert, dialogStage);
+            alert.showAndWait();
         });
 
         new Thread(currentTask, "Backup-Task").start();
+    }
+
+    private void showBackupProgress() {
+        busyIndicator.progressProperty().unbind();
+        busyIndicator.progressProperty().bind(currentTask.progressProperty());
+        busyIndicator.setManaged(true);
+        busyIndicator.setVisible(true);
+    }
+
+    private void hideBusyIndicator() {
+        if (busyIndicator == null) return;
+        busyIndicator.progressProperty().unbind();
+        busyIndicator.setProgress(-1);
+        busyIndicator.setManaged(false);
+        busyIndicator.setVisible(false);
     }
 
     private List<BackupObject> getSelectedBackupObjects() {
