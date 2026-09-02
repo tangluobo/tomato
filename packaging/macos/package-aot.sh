@@ -30,6 +30,7 @@ mkdir -p "$macos_dir" "$resources_dir" "$dist_dir"
 cp -R "$bundle_dir/." "$macos_dir/"
 mv "$macos_dir/tomato" "$macos_dir/tomato-bin"
 install -m 0755 packaging/macos/tomato-launcher "$macos_dir/tomato"
+chmod 0755 "$macos_dir/tomato-bin"
 sed "s/@VERSION@/${version}/g" packaging/macos/Info.plist > "$contents_dir/Info.plist"
 
 iconset_dir="$work_dir/tomato.iconset"

@@ -1,9 +1,43 @@
 #!/bin/sh
 set -eu
 
-APP_HOME=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SCRIPT_PATH="$0"
+if [ -L "$SCRIPT_PATH" ]; then
+  SCRIPT_PATH=$(readlink "$SCRIPT_PATH")
+fi
+APP_HOME=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
+
 DATA_HOME="${HOME:-/tmp}/.tomato"
 mkdir -p "$DATA_HOME"
 cd "$DATA_HOME"
-export DYLD_LIBRARY_PATH="$APP_HOME${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
-exec "$APP_HOME/tomato-bin" "$@"
+
+LIB_DIRS="$APP_HOME"
+[ -d "$APP_HOME/lib" ] && LIB_DIRS="$APP_HOME:$APP_HOME/lib"
+
+if [ -n "${DYLD_LIBRARY_PATH-}" ]; then
+  export DYLD_LIBRARY_PATH="$LIB_DIRS:$DYLD_LIBRARY_PATH"
+else
+  export DYLD_LIBRARY_PATH="$LIB_DIRS"
+fi
+
+if [ -n "${DYLD_FALLBACK_LIBRARY_PATH-}" ]; then
+  export DYLD_FALLBACK_LIBRARY_PATH="$LIB_DIRS:$DYLD_FALLBACK_LIBRARY_PATH"
+else
+  export DYLD_FALLBACK_LIBRARY_PATH="$LIB_DIRS"
+fi
+
+if [ "${TOMATO_LAUNCH_DEBUG:-0}" = "1" ]; then
+  {
+    echo "[tomato-launcher] APP_HOME=$APP_HOME"
+    echo "[tomato-launcher] DATA_HOME=$DATA_HOME"
+    echo "[tomato-launcher] DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH"
+    echo "[tomato-launcher] DYLD_FALLBACK_LIBRARY_PATH=$DYLD_FALLBACK_LIBRARY_PATH"
+  } >> "$DATA_HOME/tomato-launcher.log"
+fi
+
+if [ -x "$APP_HOME/tomato-bin" ]; then
+  exec "$APP_HOME/tomato-bin" "$@"
+else
+  echo "Executable not found: $APP_HOME/tomato-bin" >&2
+  exit 127
+fi
