@@ -107,6 +107,8 @@ public class TableObjectsView extends BorderPane {
         void designObject(DatabaseNodeData data);
         /** 新建表 */
         void createTable();
+        /** 新建查询 */
+        void createQuery();
         /** 删除表/视图（批量，视图内部已刷新，无需再刷新） */
         void deleteObjects(List<DatabaseNodeData> dataList);
         /** 清空表数据（DELETE FROM，仅作用于表） */
@@ -292,6 +294,11 @@ public class TableObjectsView extends BorderPane {
             if (operations != null) operations.createTable();
         });
 
+        Button createQueryBtn = createToolBarButton("新建查询", createImageIcon("/images/connect/query.png", 16));
+        createQueryBtn.setOnAction(e -> {
+            if (operations != null) operations.createQuery();
+        });
+
         deleteTableBtn = createToolBarButton("删除表", createImageIcon("/images/connect/table_drop.png", 16));
         deleteTableBtn.setOnAction(e -> handleDeleteTable());
 
@@ -323,7 +330,7 @@ public class TableObjectsView extends BorderPane {
         Node searchBox = createSearchBox();
 
         toolBar.getChildren().addAll(
-                openTableBtn, designTableBtn, createTableBtn, deleteTableBtn,
+                openTableBtn, designTableBtn, createTableBtn, createQueryBtn, deleteTableBtn,
                 sep1, importBtn, exportBtn, sep2, refreshBtn,
                 toolBarSpacer, searchBox);
         return toolBar;
@@ -1021,6 +1028,8 @@ public class TableObjectsView extends BorderPane {
         designItem.setOnAction(e -> handleDesignTable());
         MenuItem newTableItem = new MenuItem("新建表", createImageIcon("/images/connect/table_add.png", 16));
         newTableItem.setOnAction(e -> { if (operations != null) operations.createTable(); });
+        MenuItem newQueryItem = new MenuItem("新建查询", createImageIcon("/images/connect/query.png", 16));
+        newQueryItem.setOnAction(e -> { if (operations != null) operations.createQuery(); });
         MenuItem copyItem = new MenuItem("复制表", createImageIcon("/images/connect/copy_tables.png", 16));
         copyItem.setOnAction(e -> copySelectedTablesToClipboard());
         MenuItem clearItem = new MenuItem("清空表", createImageIcon("/images/connect/table_drop.png", 16));
@@ -1031,7 +1040,7 @@ public class TableObjectsView extends BorderPane {
         deleteItem.setOnAction(e -> handleDeleteTable());
         MenuItem refreshItem = new MenuItem("刷新", createImageIcon("/images/connect/refresh.png", 16));
         refreshItem.setOnAction(e -> loadData());
-        contextMenu.getItems().addAll(openTableItem, designItem, newTableItem, new SeparatorMenuItem(),
+        contextMenu.getItems().addAll(openTableItem, designItem, newTableItem, newQueryItem, new SeparatorMenuItem(),
                 copyItem, new SeparatorMenuItem(), clearItem, truncateItem, new SeparatorMenuItem(),
                 deleteItem, new SeparatorMenuItem(), refreshItem);
 

@@ -1093,6 +1093,11 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                     }
 
                     @Override
+                    public void createQuery() {
+                        handleNewQueryFromObjects(folderItem);
+                    }
+
+                    @Override
                     public void deleteObjects(List<DatabaseNodeData> dataList) {
                         handleDeleteObjects(dataList, () -> {
                             if (holder[0] != null) holder[0].notifyObjectDeleted();
@@ -1167,6 +1172,19 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         module.getTerminalTabPane().getTabs().add(tab);
         module.getTerminalTabPane().getSelectionModel().select(tab);
         module.showDataView();
+    }
+
+    /** 从“对象”页新建查询：查询文件仍保存到同级“查询”目录。 */
+    private void handleNewQueryFromObjects(TreeItem<String> objectsFolderItem) {
+        TreeItem<String> parent = objectsFolderItem != null ? objectsFolderItem.getParent() : null;
+        if (parent == null) return;
+        for (TreeItem<String> sibling : parent.getChildren()) {
+            DatabaseNodeData siblingData = module.getDbNodeDataMap().get(sibling);
+            if (siblingData != null && siblingData.getType() == DatabaseNodeData.NodeType.QUERY_FOLDER) {
+                handleNewQuery(sibling, siblingData);
+                return;
+            }
+        }
     }
 
     /**
@@ -1573,13 +1591,17 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 openObjectsItem.setOnAction(e -> openObjectsView(item, data));
                 MenuItem newTableItem = new MenuItem("新建表");
                 newTableItem.setOnAction(e -> handleNewTable(item, data));
+                MenuItem newQueryItem = new MenuItem("新建查询", module.createMenuIcon("query.png"));
+                newQueryItem.setOnAction(e -> handleNewQueryFromObjects(item));
                 MenuItem refreshItem = new MenuItem("刷新");
                 refreshItem.setOnAction(e -> refreshDbNode(item, data));
                 // 粘贴表：剪贴板中有 TOMATO_COPY_TABLES 内容时启用
                 MenuItem pasteTablesItem = new MenuItem("粘贴表");
                 pasteTablesItem.setOnAction(e -> handlePasteTables(item, data));
                 pasteTablesItem.setDisable(!isClipboardHasTables());
-                contextMenu.getItems().addAll(openObjectsItem, new SeparatorMenuItem(), newTableItem, new SeparatorMenuItem(), pasteTablesItem, new SeparatorMenuItem(), refreshItem);
+                contextMenu.getItems().addAll(openObjectsItem, new SeparatorMenuItem(), newTableItem,
+                        newQueryItem, new SeparatorMenuItem(), pasteTablesItem,
+                        new SeparatorMenuItem(), refreshItem);
             }
             case VIEWS_FOLDER -> {
                 MenuItem refreshItem = new MenuItem("刷新");
@@ -2082,7 +2104,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         String dbName = data.getDatabaseName();
         String path = data.getPath();
 
-        SqlEditorView editorView = new SqlEditorView(module.getConnections(), config, dbName);
+        SqlEditorView editorView = new SqlEditorView(module.getConnections(), config, dbName, data.getSchemaName());
         editorView.setPath(path);
 
         Tab tab = new Tab("*未保存查询");
@@ -2112,7 +2134,8 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 editorView.doSave(queryName);
 
                 TreeItem<String> queryItem = new TreeItem<>(queryName);
-                DatabaseNodeData queryData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, queryName, config, dbName, null, path);
+                DatabaseNodeData queryData = new DatabaseNodeData(DatabaseNodeData.NodeType.QUERY, queryName,
+                        config, dbName, data.getSchemaName(), path);
                 queryItem.setGraphic(module.getDbNodeIcon(queryData));
                 module.getDbNodeDataMap().put(queryItem, queryData);
                 folderItem.getChildren().add(queryItem);
@@ -2153,7 +2176,8 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             }
         }
 
-        SqlEditorView editorView = new SqlEditorView(module.getConnections(), data.getConnectionConfig(), data.getDatabaseName());
+        SqlEditorView editorView = new SqlEditorView(module.getConnections(), data.getConnectionConfig(),
+                data.getDatabaseName(), data.getSchemaName());
         editorView.setQueryName(data.getName());
         editorView.setQueryNode(queryItem);
         editorView.setPath(data.getPath());

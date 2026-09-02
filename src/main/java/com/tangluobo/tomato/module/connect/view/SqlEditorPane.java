@@ -4,11 +4,15 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollBar;
+import javafx.scene.control.ContextMenu;
+import javafx.scene.control.MenuItem;
+import javafx.scene.control.SeparatorMenuItem;
 import javafx.geometry.Bounds;
 import javafx.geometry.Orientation;
 import javafx.scene.Node;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
+import javafx.scene.input.Clipboard;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
@@ -87,7 +91,9 @@ public class SqlEditorPane extends HBox {
 
     private Consumer<String> onModified;
     private Runnable onRunRequest;
+    private Runnable onRunSelectedRequest;
     private Runnable onSaveRequest;
+    private ContextMenu editorContextMenu;
     private final Popup completionPopup = new Popup();
     private final ListView<CompletionItem> completionList = new ListView<>();
     private final List<CompletionItem> completionItems = new ArrayList<>();
@@ -427,6 +433,50 @@ public class SqlEditorPane extends HBox {
     /** Ctrl+Enter 回调（运行） */
     public void setOnRunRequest(Runnable onRunRequest) {
         this.onRunRequest = onRunRequest;
+    }
+
+    /** 右键菜单“运行已选择”回调；设置后同时提供常用剪切、复制、粘贴菜单。 */
+    public void setOnRunSelectedRequest(Runnable onRunSelectedRequest) {
+        this.onRunSelectedRequest = onRunSelectedRequest;
+        if (editorContextMenu != null) return;
+
+        MenuItem runSelectedItem = new MenuItem("运行已选择");
+        runSelectedItem.setOnAction(e -> {
+            if (this.onRunSelectedRequest != null && !getSelectedText().isBlank()) {
+                this.onRunSelectedRequest.run();
+            }
+        });
+        MenuItem cutItem = new MenuItem("剪切");
+        cutItem.setOnAction(e -> textArea.cut());
+        MenuItem copyItem = new MenuItem("复制");
+        copyItem.setOnAction(e -> textArea.copy());
+        MenuItem pasteItem = new MenuItem("粘贴");
+        pasteItem.setOnAction(e -> textArea.paste());
+        MenuItem selectAllItem = new MenuItem("全选");
+        selectAllItem.setOnAction(e -> textArea.selectAll());
+
+        editorContextMenu = new ContextMenu(runSelectedItem, new SeparatorMenuItem(),
+                cutItem, copyItem, pasteItem, new SeparatorMenuItem(), selectAllItem);
+        editorContextMenu.setAutoHide(true);
+        editorContextMenu.setHideOnEscape(true);
+        editorContextMenu.setOnShowing(e -> {
+            boolean noSelection = getSelectedText().isBlank();
+            runSelectedItem.setDisable(noSelection);
+            cutItem.setDisable(noSelection || !textArea.isEditable());
+            copyItem.setDisable(noSelection);
+            pasteItem.setDisable(!textArea.isEditable() || !Clipboard.getSystemClipboard().hasString());
+        });
+        textArea.setOnContextMenuRequested(e -> {
+            editorContextMenu.show(textArea, e.getScreenX(), e.getScreenY());
+            e.consume();
+        });
+    }
+
+    /** 隐藏当前编辑器右键菜单。 */
+    public void hideContextMenu() {
+        if (editorContextMenu != null && editorContextMenu.isShowing()) {
+            editorContextMenu.hide();
+        }
     }
 
     /** Ctrl+S 回调（保存） */

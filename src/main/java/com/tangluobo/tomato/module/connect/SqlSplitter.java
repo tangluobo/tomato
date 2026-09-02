@@ -162,6 +162,8 @@ public class SqlSplitter {
 
         // FROM之后的表名
         String afterFrom = trimmed.substring(fromIndex + 4).trim();
+        // 查询结果允许回写时必须能唯一确定源表；JOIN 或逗号多表查询一律保持只读。
+        if (hasTopLevelMultipleSources(afterFrom)) return null;
 
         // 去掉可能的别名前的AS
         // 提取第一个标识符（表名）
@@ -205,6 +207,62 @@ public class SqlSplitter {
 
         String result = tableName.toString().trim();
         return result.isEmpty() ? null : result;
+    }
+
+    /** 检测 FROM 子句顶层的 JOIN/逗号，忽略字符串、引号标识符和括号内部内容。 */
+    private static boolean hasTopLevelMultipleSources(String fromClause) {
+        int depth = 0;
+        char quote = '\0';
+        for (int i = 0; i < fromClause.length(); i++) {
+            char ch = fromClause.charAt(i);
+            if (quote != '\0') {
+                if ((quote == '[' && ch == ']') || (quote != '[' && ch == quote)) {
+                    quote = '\0';
+                }
+                continue;
+            }
+            if (ch == '\'' || ch == '"' || ch == '`' || ch == '[') {
+                quote = ch;
+                continue;
+            }
+            if (ch == '(') {
+                depth++;
+                continue;
+            }
+            if (ch == ')') {
+                if (depth > 0) depth--;
+                continue;
+            }
+            if (depth != 0) continue;
+            if (ch == ',') return true;
+            if (matchesKeywordAt(fromClause, i, "JOIN")) return true;
+            if (matchesAnyKeywordAt(fromClause, i,
+                    "WHERE", "GROUP", "ORDER", "HAVING", "LIMIT", "OFFSET",
+                    "UNION", "EXCEPT", "INTERSECT", "FOR")) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private static boolean matchesAnyKeywordAt(String text, int index, String... keywords) {
+        for (String keyword : keywords) {
+            if (matchesKeywordAt(text, index, keyword)) return true;
+        }
+        return false;
+    }
+
+    private static boolean matchesKeywordAt(String text, int index, String keyword) {
+        if (index + keyword.length() > text.length()
+                || !text.regionMatches(true, index, keyword, 0, keyword.length())) {
+            return false;
+        }
+        boolean beforeOk = index == 0
+                || (!Character.isLetterOrDigit(text.charAt(index - 1)) && text.charAt(index - 1) != '_');
+        int end = index + keyword.length();
+        boolean afterOk = end == text.length()
+                || (!Character.isLetterOrDigit(text.charAt(end)) && text.charAt(end) != '_');
+        return beforeOk && afterOk;
     }
 
     /**
