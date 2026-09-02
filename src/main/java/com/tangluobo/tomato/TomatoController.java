@@ -302,7 +302,7 @@ public class TomatoController {
         stage.setWidth(savedWidth);
         stage.setHeight(savedHeight);
         customMaximized = false;
-        rootPane.setStyle("-fx-border-color: #D9D9D7; -fx-border-width: 0 0 1 1;");
+        rootPane.setStyle("-fx-border-color: #BEBEBC; -fx-border-width: 1;");
 
         // 还原窗口后图标恢复为单矩形（最大化图标样式），重建 SVGPath 替换 Group
         javafx.scene.shape.SVGPath maximizeIcon = new javafx.scene.shape.SVGPath();

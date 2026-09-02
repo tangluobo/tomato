@@ -48,6 +48,8 @@ public class TableDataView extends BorderPane {
     private TableView<ObservableList<String>> tableView;
     private ScrollPane tableScrollPane;
     private Label pageInfoLabel;
+    private Label sqlStatusLabel;
+    private String pendingStatusSql;
     private Button firstPageBtn;
     private Button prevPageBtn;
     private Button nextPageBtn;
@@ -72,6 +74,7 @@ public class TableDataView extends BorderPane {
     private boolean sortDescending = false;
     // 表头事件过滤器是否已安装
     private boolean headerEventFilterInstalled = false;
+    private boolean transactionActive = false;
 
     // 主键列名缓存
     private List<String> primaryKeyColumns;
@@ -84,9 +87,10 @@ public class TableDataView extends BorderPane {
 
     // ---- 行状态追踪（延迟保存） ----
     /** 尚未持久化到数据库的新行 */
-    private final Set<ObservableList<String>> newRows = new HashSet<>();
+    private final Set<ObservableList<String>> newRows =
+            java.util.Collections.newSetFromMap(new IdentityHashMap<>());
     /** 现有行的原始值（加载时的快照），用于检测哪些列被修改 */
-    private final Map<ObservableList<String>, ObservableList<String>> originalValuesMap = new HashMap<>();
+    private final Map<ObservableList<String>, ObservableList<String>> originalValuesMap = new IdentityHashMap<>();
 
     public TableDataView(ConnectionConfig config, String databaseName, String tableName) {
         this(config, databaseName, null, tableName);
@@ -125,25 +129,53 @@ public class TableDataView extends BorderPane {
     private void setupRowContextMenu() {
         ContextMenu contextMenu = new ContextMenu();
 
-        // 复制菜单项
-        MenuItem copyItem = new MenuItem("复制");
-        copyItem.setOnAction(e -> handleCopySelectedCells());
-        contextMenu.getItems().add(copyItem);
+        MenuItem setEmptyItem = new MenuItem("设置为空字符串");
+        setEmptyItem.setOnAction(e -> setSelectedDataCellsToEmptyString());
+        MenuItem setNullItem = new MenuItem("设置为 NULL");
+        setNullItem.setOnAction(e -> setSelectedDataCellsToNull());
 
         // 删除菜单项（仅在有主键时可用）
-        MenuItem deleteItem = new MenuItem();
-        deleteItem.setStyle("-fx-text-fill: #c00;");
+        MenuItem deleteItem = new MenuItem("删除 记录");
+        deleteItem.setStyle("-fx-font-weight: bold;");
         deleteItem.setOnAction(e -> handleDeleteSelectedRows());
         boolean hasPrimaryKey = primaryKeyColumns != null && !primaryKeyColumns.isEmpty();
         deleteItem.setDisable(!hasPrimaryKey);
-        contextMenu.getItems().add(new SeparatorMenuItem());
-        contextMenu.getItems().add(deleteItem);
 
-        // 刷新菜单项：重新加载当前页数据
+        MenuItem copyItem = new MenuItem("复制");
+        copyItem.setOnAction(e -> handleCopySelectedCells());
+        Menu copyAsMenu = TableCellContextMenuUtils.createCopyAsMenu(
+                tableView, 1, () -> tableName, () -> primaryKeyColumns);
+        MenuItem pasteItem = new MenuItem("粘贴");
+        pasteItem.setOnAction(e -> handlePasteRows());
+        MenuItem saveAsItem = TableCellContextMenuUtils.createSaveDataAsItem(tableView, 1);
+        Menu sortMenu = TableCellContextMenuUtils.createSortMenu(tableView, 1);
+        Menu filterMenu = TableCellContextMenuUtils.createFilterMenu(tableView, 1);
+        MenuItem clearSortFilterItem = new MenuItem("移除全部排序及筛选");
+        clearSortFilterItem.setOnAction(e -> TableCellContextMenuUtils.clearSortAndFilter(tableView));
+        Menu displayMenu = TableCellContextMenuUtils.createDisplayMenu(tableView, 1);
         MenuItem refreshItem = new MenuItem("刷新");
-        refreshItem.setOnAction(e -> refreshData());
-        contextMenu.getItems().add(new SeparatorMenuItem());
-        contextMenu.getItems().add(refreshItem);
+        refreshItem.setOnAction(e -> {
+            TableCellContextMenuUtils.clearSortAndFilter(tableView);
+            refreshData();
+        });
+
+        contextMenu.getItems().setAll(
+                setEmptyItem,
+                setNullItem,
+                new SeparatorMenuItem(),
+                deleteItem,
+                copyItem,
+                copyAsMenu,
+                pasteItem,
+                saveAsItem,
+                new SeparatorMenuItem(),
+                sortMenu,
+                filterMenu,
+                clearSortFilterItem,
+                new SeparatorMenuItem(),
+                displayMenu,
+                refreshItem
+        );
 
         // 只在数据行区域显示右键菜单，表头区域不显示
         tableView.setOnContextMenuRequested(event -> {
@@ -159,10 +191,12 @@ public class TableDataView extends BorderPane {
                 }
                 target = target.getParent();
             }
-            int cellCount = tableView.getSelectionModel().getSelectedCells().size();
-            copyItem.setText("复制" + (cellCount > 0 ? "(" + cellCount + "个单元格)" : ""));
-            int count = (int) tableView.getSelectionModel().getSelectedItems().stream().distinct().count();
-            deleteItem.setText("删除" + (count > 0 ? count : 1) + "条数据");
+            int dataCellCount = getSelectedDataCells().size();
+            setEmptyItem.setDisable(dataCellCount == 0);
+            setNullItem.setDisable(dataCellCount == 0);
+            copyItem.setDisable(dataCellCount == 0);
+            copyAsMenu.setDisable(dataCellCount == 0);
+            pasteItem.setDisable(!javafx.scene.input.Clipboard.getSystemClipboard().hasString());
             contextMenu.show(tableView, event.getScreenX(), event.getScreenY());
             event.consume();
         });
@@ -674,6 +708,42 @@ public class TableDataView extends BorderPane {
     }
 
     /**
+     * 将选中的数据单元格设置为空字符串。
+     */
+    private void setSelectedDataCellsToEmptyString() {
+        List<TablePosition<ObservableList<String>, ?>> selectedCells = getSelectedDataCells();
+        if (selectedCells.isEmpty()) return;
+        for (TablePosition<ObservableList<String>, ?> pos : selectedCells) {
+            int row = pos.getRow();
+            int dataColIndex = getDataColIndex(pos);
+            if (row < 0 || row >= tableView.getItems().size() || dataColIndex < 0) continue;
+            ObservableList<String> rowData = tableView.getItems().get(row);
+            if (dataColIndex < rowData.size()) {
+                rowData.set(dataColIndex, "");
+            }
+        }
+        tableView.refresh();
+    }
+
+    /**
+     * 将选中的数据单元格设置为 NULL。
+     */
+    private void setSelectedDataCellsToNull() {
+        List<TablePosition<ObservableList<String>, ?>> selectedCells = getSelectedDataCells();
+        if (selectedCells.isEmpty()) return;
+        for (TablePosition<ObservableList<String>, ?> pos : selectedCells) {
+            int row = pos.getRow();
+            int dataColIndex = getDataColIndex(pos);
+            if (row < 0 || row >= tableView.getItems().size() || dataColIndex < 0) continue;
+            ObservableList<String> rowData = tableView.getItems().get(row);
+            if (dataColIndex < rowData.size()) {
+                rowData.set(dataColIndex, null);
+            }
+        }
+        tableView.refresh();
+    }
+
+    /**
      * 开始批量输入：记录选中单元格的原始值（用于 Esc 撤销）
      */
     private void startBatchEdit(List<TablePosition<ObservableList<String>, ?>> cells) {
@@ -933,7 +1003,7 @@ public class TableDataView extends BorderPane {
             if (newRows.contains(current)) continue;
             for (int i = 0; i < current.size(); i++) {
                 String orig = i < original.size() ? original.get(i) : "";
-                if (!current.get(i).equals(orig)) return true;
+                if (!java.util.Objects.equals(current.get(i), orig)) return true;
             }
         }
         return false;
@@ -949,7 +1019,7 @@ public class TableDataView extends BorderPane {
         if (original != null) {
             for (int i = 0; i < row.size(); i++) {
                 String orig = i < original.size() ? original.get(i) : "";
-                if (!row.get(i).equals(orig)) return RowState.EXISTING_DIRTY;
+                if (!java.util.Objects.equals(row.get(i), orig)) return RowState.EXISTING_DIRTY;
             }
         }
         return RowState.EXISTING;
@@ -1029,33 +1099,53 @@ public class TableDataView extends BorderPane {
         centerPane.setPadding(Insets.EMPTY);
         centerPane.setStyle("-fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
 
-        // 分页状态栏
-        HBox statusBar = new HBox(10);
-        statusBar.setPadding(new Insets(6, 12, 6, 12));
-        statusBar.setStyle("-fx-background-color: #f5f5f5; -fx-border-color: #ddd; -fx-border-width: 1 0 0 0;");
-        statusBar.setAlignment(Pos.CENTER_LEFT);
+        // 底部第一行：左侧数据操作，右侧分页。
+        toolBar.setPadding(new Insets(0, 4, 0, 4));
+        toolBar.setStyle("-fx-background-color: transparent;");
+        HBox actionPageBar = new HBox(2);
+        actionPageBar.setPadding(new Insets(1, 5, 1, 5));
+        actionPageBar.setMinHeight(27);
+        actionPageBar.setAlignment(Pos.CENTER_LEFT);
+        actionPageBar.setStyle("-fx-background-color: #f3f3f3; -fx-border-color: #d7d7d7; -fx-border-width: 1 0 1 0;");
 
         pageInfoLabel = new Label();
-        pageInfoLabel.setStyle("-fx-font-size: 12px;");
+        pageInfoLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #222;");
 
-        firstPageBtn = new Button("首页");
-        firstPageBtn.setStyle("-fx-font-size: 11px; -fx-padding: 3 8;");
-        prevPageBtn = new Button("上一页");
-        prevPageBtn.setStyle("-fx-font-size: 11px; -fx-padding: 3 8;");
-        nextPageBtn = new Button("下一页");
-        nextPageBtn.setStyle("-fx-font-size: 11px; -fx-padding: 3 8;");
-        lastPageBtn = new Button("尾页");
-        lastPageBtn.setStyle("-fx-font-size: 11px; -fx-padding: 3 8;");
+        // 底部第二行：左侧 SQL，右侧记录位置。
+        HBox sqlInfoBar = new HBox(8);
+        sqlInfoBar.setPadding(new Insets(2, 5, 2, 5));
+        sqlInfoBar.setMinHeight(21);
+        sqlInfoBar.setAlignment(Pos.CENTER_LEFT);
+        sqlInfoBar.setStyle("-fx-background-color: #fafafa; -fx-border-color: #e0e0e0; -fx-border-width: 0 0 1 0;");
+        sqlStatusLabel = new Label();
+        sqlStatusLabel.setMinWidth(0);
+        sqlStatusLabel.setMaxWidth(Double.MAX_VALUE);
+        sqlStatusLabel.setTextOverrun(OverrunStyle.ELLIPSIS);
+        sqlStatusLabel.setStyle("-fx-font-family: 'Consolas'; -fx-font-size: 11px; -fx-text-fill: #111;");
+        HBox.setHgrow(sqlStatusLabel, Priority.ALWAYS);
 
-        Label jumpLabel = new Label("跳到");
-        jumpLabel.setStyle("-fx-font-size: 12px;");
+        String pagingButtonStyle = "-fx-background-color: transparent; -fx-border-color: transparent; -fx-padding: 2 5; -fx-font-size: 10px;";
+        firstPageBtn = new Button("|<");
+        firstPageBtn.setTooltip(new Tooltip("首页"));
+        firstPageBtn.setStyle(pagingButtonStyle);
+        prevPageBtn = new Button("<");
+        prevPageBtn.setTooltip(new Tooltip("上一页"));
+        prevPageBtn.setStyle(pagingButtonStyle);
+        nextPageBtn = new Button(">");
+        nextPageBtn.setTooltip(new Tooltip("下一页"));
+        nextPageBtn.setStyle(pagingButtonStyle);
+        lastPageBtn = new Button(">|");
+        lastPageBtn.setTooltip(new Tooltip("尾页"));
+        lastPageBtn.setStyle(pagingButtonStyle);
+
         jumpPageField = new TextField();
-        jumpPageField.setPrefWidth(50);
-        jumpPageField.setStyle("-fx-font-size: 12px; -fx-padding: 3 5;");
-        Label pageLabel = new Label("页");
-        pageLabel.setStyle("-fx-font-size: 12px;");
-        jumpBtn = new Button("跳转");
-        jumpBtn.setStyle("-fx-font-size: 11px; -fx-padding: 3 8;");
+        jumpPageField.setPrefWidth(30);
+        jumpPageField.setMaxWidth(30);
+        jumpPageField.setAlignment(Pos.CENTER);
+        jumpPageField.setStyle("-fx-font-size: 11px; -fx-padding: 1 3; -fx-background-radius: 0;");
+        jumpBtn = new Button();
+        jumpBtn.setManaged(false);
+        jumpBtn.setVisible(false);
 
         // 事件绑定
         firstPageBtn.setOnAction(e -> loadData(1));
@@ -1072,13 +1162,19 @@ public class TableDataView extends BorderPane {
         });
         jumpPageField.setOnAction(e -> jumpBtn.fire());
 
-        statusBar.getChildren().addAll(
-            pageInfoLabel,
-            firstPageBtn, prevPageBtn, nextPageBtn, lastPageBtn,
-            jumpLabel, jumpPageField, pageLabel, jumpBtn
-        );
+        Region actionSpacer = new Region();
+        HBox.setHgrow(actionSpacer, Priority.ALWAYS);
+        actionPageBar.getChildren().addAll(toolBar, actionSpacer,
+                firstPageBtn, prevPageBtn, jumpPageField, nextPageBtn, lastPageBtn);
 
-        this.setTop(toolBar);
+        Region sqlSpacer = new Region();
+        HBox.setHgrow(sqlSpacer, Priority.ALWAYS);
+        sqlInfoBar.getChildren().addAll(sqlStatusLabel, sqlSpacer, pageInfoLabel);
+
+        VBox statusBar = new VBox(actionPageBar, sqlInfoBar);
+        tableView.getSelectionModel().selectedIndexProperty().addListener((obs, oldIndex, newIndex) -> updateStatusBar());
+
+        this.setTop(createTableActionBar());
         this.setCenter(centerPane);
         this.setBottom(statusBar);
         this.setPadding(Insets.EMPTY);
@@ -1092,21 +1188,32 @@ public class TableDataView extends BorderPane {
      */
     private HBox createToolBar() {
         HBox toolBar = new HBox(2);
-        toolBar.setPadding(new Insets(0, 8, 4, 8));
-        toolBar.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #ddd; -fx-border-width: 0 0 1 0;");
+        toolBar.setPadding(Insets.EMPTY);
+        toolBar.setStyle("-fx-background-color: transparent;");
         toolBar.setAlignment(Pos.CENTER_LEFT);
 
         // 添加按钮：绿色加号（仅在UI添加空行，不触发DB插入）
-        Button addBtn = createToolBarButton("添加", createAddIcon());
+        Button addBtn = createToolBarButton("添加", createSimpleToolIcon("M2 7H12 M7 2V12"));
         addBtn.setOnAction(e -> handleAddNewRow());
+        addBtn.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+        addBtn.setTooltip(new Tooltip("添加"));
 
         // 删除按钮：红色减号/叉号
-        Button deleteBtn = createToolBarButton("删除", createDeleteIcon());
+        Button deleteBtn = createToolBarButton("删除", createSimpleToolIcon("M2 7H12"));
         deleteBtn.setOnAction(e -> handleDeleteSelectedRows());
+        deleteBtn.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+        deleteBtn.setTooltip(new Tooltip("删除"));
 
         // 保存按钮：蓝色上箭头（提交所有更改）
-        Button saveBtn = createToolBarButton("保存", createSaveIcon());
+        Button saveBtn = createToolBarButton("保存", createSimpleToolIcon("M2 7L6 11L13 4"));
         saveBtn.setOnAction(e -> handleSave());
+        saveBtn.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+        saveBtn.setTooltip(new Tooltip("保存"));
+
+        Button cancelBtn = createToolBarButton("取消修改", createSimpleToolIcon("M3 3L11 11 M11 3L3 11"));
+        cancelBtn.setOnAction(e -> refreshData());
+        cancelBtn.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+        cancelBtn.setTooltip(new Tooltip("取消修改"));
 
         // 分隔符
         Separator separator = new Separator();
@@ -1116,22 +1223,180 @@ public class TableDataView extends BorderPane {
         // 刷新按钮：环形箭头
         Button refreshBtn = createToolBarButton("刷新", createRefreshIcon());
         refreshBtn.setOnAction(e -> refreshData());
+        refreshBtn.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+        refreshBtn.setTooltip(new Tooltip("刷新"));
 
-        toolBar.getChildren().addAll(addBtn, deleteBtn, saveBtn, separator, refreshBtn);
+        toolBar.getChildren().addAll(addBtn, deleteBtn, saveBtn, cancelBtn, separator, refreshBtn);
         return toolBar;
+    }
+
+    /** 标签下方、数据表格上方的操作工具栏。 */
+    private HBox createTableActionBar() {
+        HBox bar = new HBox(3);
+        bar.setAlignment(Pos.CENTER_LEFT);
+        bar.setPadding(new Insets(2, 5, 2, 5));
+        bar.setMinHeight(31);
+        bar.setStyle("-fx-background-color: #f3f3f3; -fx-border-color: #d6d6d6; -fx-border-width: 0 0 1 0;");
+
+        MenuButton transactionButton = new MenuButton("开始事务",
+                createActionBarIcon("M2 3c0-1 3-2 6-2s6 1 6 2-3 2-6 2-6-1-6-2zm0 3c1 1 3 2 6 2s5-1 6-2v3c0 1-3 2-6 2s-6-1-6-2V6zm0 6c1 1 3 2 6 2s5-1 6-2v2c0 1-3 2-6 2s-6-1-6-2v-3z", "#5D8B63"));
+        MenuItem beginItem = new MenuItem("开始事务");
+        MenuItem commitItem = new MenuItem("提交事务");
+        MenuItem rollbackItem = new MenuItem("回滚事务");
+        beginItem.setOnAction(e -> runTransactionCommand("START TRANSACTION", true,
+                () -> DatabaseService.beginTransaction(config, databaseName)));
+        commitItem.setOnAction(e -> runTransactionCommand("COMMIT", false,
+                () -> DatabaseService.commitTransaction(config, databaseName)));
+        rollbackItem.setOnAction(e -> runTransactionCommand("ROLLBACK", false,
+                () -> DatabaseService.rollbackTransaction(config, databaseName)));
+        transactionButton.getItems().setAll(beginItem, commitItem, rollbackItem);
+        transactionButton.setOnShowing(e -> {
+            beginItem.setDisable(transactionActive);
+            commitItem.setDisable(!transactionActive);
+            rollbackItem.setDisable(!transactionActive);
+        });
+        styleActionBarControl(transactionButton);
+
+        MenuButton textButton = new MenuButton("文本",
+                createActionBarIcon("M2 1h10l3 3v12H2z M4 6h9v1H4z M4 9h9v1H4z M4 12h7v1H4z", "#4D78A8"));
+        CheckMenuItem textMode = new CheckMenuItem("文本");
+        textMode.setSelected(true);
+        textButton.getItems().add(textMode);
+        styleActionBarControl(textButton);
+
+        Button filterButton = new Button("筛选",
+                createActionBarIcon("M1 2h14L9.5 8v5l-3 2V8z", "#3E9FE6"));
+        filterButton.setOnAction(e -> TableCellContextMenuUtils.showFilterPopup(tableView, 1, filterButton));
+        styleActionBarControl(filterButton);
+
+        Button sortButton = new Button("排序",
+                createActionBarIcon("M2 1h2v10h3l-4 4-3-4h2z M9 2h7v1.5H9z M9 6h6v1.5H9z M9 10h5v1.5H9z", "#4D8EC8"));
+        sortButton.setOnAction(e -> TableCellContextMenuUtils.showSortPopup(tableView, 1, sortButton));
+        styleActionBarControl(sortButton);
+
+        Button importButton = new Button("导入",
+                createActionBarIcon("M1 2h11v4h3v9H1z M8 0v8l3-3v2L7 11 3 7V5l3 3V0z", "#2E9A72"));
+        importButton.setOnAction(e -> importTableData());
+        styleActionBarControl(importButton);
+
+        Button exportButton = new Button("导出",
+                createActionBarIcon("M1 2h11v4h3v9H1z M6 11V3L3 6V4l4-4 4 4v2L8 3v8z", "#E3912D"));
+        exportButton.setOnAction(e -> TableCellContextMenuUtils.createSaveDataAsItem(tableView, 1).fire());
+        styleActionBarControl(exportButton);
+
+        bar.getChildren().addAll(
+                transactionButton,
+                createVerticalToolSeparator(),
+                textButton,
+                createVerticalToolSeparator(),
+                filterButton,
+                createVerticalToolSeparator(),
+                sortButton,
+                createVerticalToolSeparator(),
+                importButton,
+                exportButton
+        );
+        return bar;
+    }
+
+    private void styleActionBarControl(ButtonBase control) {
+        control.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-padding: 3 5; -fx-font-size: 12px;");
+        control.setContentDisplay(ContentDisplay.LEFT);
+        control.setGraphicTextGap(4);
+    }
+
+    private Separator createVerticalToolSeparator() {
+        Separator separator = new Separator();
+        separator.setOrientation(javafx.geometry.Orientation.VERTICAL);
+        separator.setPadding(new Insets(2, 1, 2, 1));
+        return separator;
+    }
+
+    private Node createActionBarIcon(String pathData, String color) {
+        javafx.scene.shape.SVGPath icon = new javafx.scene.shape.SVGPath();
+        icon.setContent(pathData);
+        icon.setFill(Color.web(color));
+        icon.setScaleX(0.85);
+        icon.setScaleY(0.85);
+        return icon;
+    }
+
+    private void importTableData() {
+        javafx.stage.FileChooser chooser = new javafx.stage.FileChooser();
+        chooser.setTitle("导入制表符数据");
+        chooser.getExtensionFilters().add(
+                new javafx.stage.FileChooser.ExtensionFilter("制表符文本文件", "*.tsv", "*.txt"));
+        java.io.File file = chooser.showOpenDialog(getScene() != null ? getScene().getWindow() : null);
+        if (file == null) return;
+        try {
+            String text = java.nio.file.Files.readString(file.toPath(), java.nio.charset.StandardCharsets.UTF_8);
+            List<String[]> valueRows = parseClipboardRows(text);
+            List<String> columns = getDataColumnNames();
+            if (valueRows.isEmpty() || columns.isEmpty()) return;
+            TableCellContextMenuUtils.clearSortAndFilter(tableView);
+            for (String[] values : valueRows) {
+                ObservableList<String> row = FXCollections.observableArrayList();
+                for (int i = 0; i < columns.size(); i++) row.add(i < values.length ? values[i] : "");
+                newRows.add(row);
+                tableView.getItems().add(row);
+            }
+        } catch (Exception ex) {
+            Alert alert = new Alert(Alert.AlertType.ERROR, "导入失败：" + ex.getMessage());
+            DialogPositionUtil.centerOnOwner(alert, this);
+            alert.showAndWait();
+        }
+    }
+
+    private void runTransactionCommand(String sql, boolean activeAfter, TransactionCommand command) {
+        new Thread(() -> {
+            java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
+            connLock.lock();
+            try {
+                command.run();
+                Platform.runLater(() -> {
+                    transactionActive = activeAfter;
+                    showSqlStatus(sql);
+                });
+            } catch (Exception ex) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR, "事务操作失败：" + ex.getMessage());
+                    DialogPositionUtil.centerOnOwner(alert, this);
+                    alert.showAndWait();
+                });
+            } finally {
+                connLock.unlock();
+            }
+        }, "DB-TableTransaction").start();
+    }
+
+    @FunctionalInterface
+    private interface TransactionCommand {
+        void run() throws Exception;
     }
 
     /**
      * 创建工具栏按钮（图标+文字）
      */
     private Button createToolBarButton(String text, Node icon) {
-        Button btn = new Button(text);
+        Button btn = new Button();
+        btn.setAccessibleText(text);
         btn.getStyleClass().add("toolbar-button");
-        btn.setStyle("-fx-font-size: 12px; -fx-padding: 4 8; -fx-content-display: LEFT; -fx-graphic-text-gap: 4;");
+        btn.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-padding: 2 5; -fx-content-display: GRAPHIC_ONLY;");
         if (icon != null) {
             btn.setGraphic(icon);
         }
         return btn;
+    }
+
+    private Node createSimpleToolIcon(String pathData) {
+        javafx.scene.shape.SVGPath icon = new javafx.scene.shape.SVGPath();
+        icon.setContent(pathData);
+        icon.setFill(Color.TRANSPARENT);
+        icon.setStroke(Color.BLACK);
+        icon.setStrokeWidth(1.8);
+        icon.setStrokeLineCap(javafx.scene.shape.StrokeLineCap.SQUARE);
+        icon.setStrokeLineJoin(javafx.scene.shape.StrokeLineJoin.MITER);
+        return icon;
     }
 
     /** 添加图标：绿色加号 */
@@ -1183,11 +1448,11 @@ public class TableDataView extends BorderPane {
         javafx.scene.Group g = new javafx.scene.Group();
         Arc arc = new Arc(7, 7, 6, 6, 45, 270);
         arc.setType(ArcType.OPEN);
-        arc.setStroke(Color.valueOf("#666666"));
+        arc.setStroke(Color.BLACK);
         arc.setStrokeWidth(2);
         arc.setFill(null);
         Polygon arrowHead = new Polygon(12, 3, 14, 7, 10, 6);
-        arrowHead.setFill(Color.valueOf("#666666"));
+        arrowHead.setFill(Color.BLACK);
         g.getChildren().addAll(arc, arrowHead);
         return g;
     }
@@ -1247,7 +1512,7 @@ public class TableDataView extends BorderPane {
             for (int i = 0; i < currentRow.size(); i++) {
                 String current = currentRow.get(i);
                 String original = i < originalRow.size() ? originalRow.get(i) : "";
-                if (!current.equals(original)) {
+                if (!java.util.Objects.equals(current, original)) {
                     modifiedCols.add(i);
                 }
             }
@@ -1263,12 +1528,14 @@ public class TableDataView extends BorderPane {
             return;
         }
 
-        // 检查更新操作是否需要主键
-        if (!rowsToUpdate.isEmpty() && (primaryKeyColumns == null || primaryKeyColumns.isEmpty())) {
+        // 无主键更新仅对 MySQL 开启整行匹配 + LIMIT 1 回退。
+        if (!rowsToUpdate.isEmpty()
+                && (primaryKeyColumns == null || primaryKeyColumns.isEmpty())
+                && config.getType() != com.tangluobo.tomato.module.connect.ConnectType.MYSQL) {
             Alert warn = new Alert(Alert.AlertType.WARNING);
             warn.setTitle("无法更新");
             warn.setHeaderText(null);
-            warn.setContentText("该表无主键，无法更新现有行。只有新行会被插入。");
+            warn.setContentText("该表无主键，当前数据库类型无法安全更新现有行。只有新行会被插入。");
             DialogPositionUtil.centerOnOwner(warn, this);
             warn.showAndWait();
             // 继续插入新行，跳过更新
@@ -1285,6 +1552,7 @@ public class TableDataView extends BorderPane {
         new Thread(() -> {
             java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
             connLock.lock();
+            List<String> executedSql = new ArrayList<>();
             try {
                 try {
                     // INSERT 新行
@@ -1297,10 +1565,16 @@ public class TableDataView extends BorderPane {
                     if (!finalRowsToUpdate.isEmpty()) {
                         DatabaseService.updateRows(config, databaseName, schemaName, tableName,
                                 primaryKeyColumns, dataColumns,
-                                finalRowsToUpdate, finalOriginalValues, finalModifiedColumns);
+                                finalRowsToUpdate, finalOriginalValues, finalModifiedColumns,
+                                executedSql::add);
                     }
 
                     Platform.runLater(() -> {
+                        if (!executedSql.isEmpty()) {
+                            String sqlText = executedSql.get(executedSql.size() - 1);
+                            pendingStatusSql = sqlText;
+                            showSqlStatus(sqlText);
+                        }
                         // 保存成功后刷新数据，获取DB生成的值（如自增主键、默认值、触发器结果）
                         refreshData();
                     });
@@ -1374,6 +1648,9 @@ public class TableDataView extends BorderPane {
                     totalPages = data.getTotalPages();
                     totalCount = data.getTotalCount();
                     updateTableView(data);
+                    String statusSql = pendingStatusSql != null ? pendingStatusSql : data.getExecutedSql();
+                    pendingStatusSql = null;
+                    showSqlStatus(statusSql);
                     updateStatusBar();
                     loadingIndicator.setVisible(false);
                     tableView.setDisable(false);
@@ -1652,11 +1929,17 @@ public class TableDataView extends BorderPane {
      * 选中整列
      */
     private void selectColumnByTableIndex(int tableColIndex) {
+        if (batchEditing) commitBatchEdit();
         tableView.getSelectionModel().clearSelection();
         TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(tableColIndex);
         for (int row = 0; row < tableView.getItems().size(); row++) {
             tableView.getSelectionModel().select(row, col);
         }
+        if (!tableView.getItems().isEmpty()) {
+            tableView.getFocusModel().focus(0, col);
+        }
+        tableView.requestFocus();
+        Platform.runLater(tableView::requestFocus);
     }
 
     /**
@@ -1703,17 +1986,31 @@ public class TableDataView extends BorderPane {
     }
 
     private void updateStatusBar() {
+        if (pageInfoLabel == null) return;
         if (totalCount == 0) {
             pageInfoLabel.setText("无数据");
         } else {
-            pageInfoLabel.setText(String.format("第 %d / %d 页  |  共 %d 条", currentPage, totalPages, totalCount));
+            int selectedIndex = tableView.getSelectionModel().getSelectedIndex();
+            long recordNumber = (long) (currentPage - 1) * DEFAULT_PAGE_SIZE
+                    + (selectedIndex >= 0 ? selectedIndex + 1 : 1);
+            recordNumber = Math.min(recordNumber, totalCount);
+            pageInfoLabel.setText(String.format("第 %d 条记录（共 %d 条）于第 %d 页",
+                    recordNumber, totalCount, currentPage));
         }
+
+        jumpPageField.setText(String.valueOf(Math.max(1, currentPage)));
 
         firstPageBtn.setDisable(currentPage <= 1);
         prevPageBtn.setDisable(currentPage <= 1);
         nextPageBtn.setDisable(currentPage >= totalPages);
         lastPageBtn.setDisable(currentPage >= totalPages);
         jumpBtn.setDisable(totalPages <= 1);
+    }
+
+    private void showSqlStatus(String sql) {
+        String text = sql == null ? "" : sql;
+        sqlStatusLabel.setText(text.replace("\r", " ").replace("\n", "  "));
+        sqlStatusLabel.setTooltip(text.isBlank() ? null : new Tooltip(text));
     }
 
     public void applyTableConfig(GlobalConfig config) {
@@ -1746,6 +2043,7 @@ public class TableDataView extends BorderPane {
         private TextField textField;
         /** 标记用户是否按下了Escape键（真正取消编辑） */
         private boolean escapePressed = false;
+        private String editingOriginalValue = "";
         /** 当前列的 java.sql.Types 类型，用于按类型渲染日期/时间/日期时间选择器 */
         private final int sqlType;
         /**
@@ -1784,6 +2082,7 @@ public class TableDataView extends BorderPane {
         public void startEdit() {
             escapePressed = false;
             super.startEdit();
+            editingOriginalValue = getItem();
             if (textField == null) {
                 createTextField();
             }
@@ -1794,7 +2093,7 @@ public class TableDataView extends BorderPane {
             } else {
                 setGraphic(textField);
             }
-            textField.setText(getItem() != null ? getItem() : "");
+            textField.setText(toEditorText(getItem()));
             textField.selectAll();
             textField.requestFocus();
             // 编辑状态：白色背景+蓝色边框覆盖表格线
@@ -1805,8 +2104,8 @@ public class TableDataView extends BorderPane {
         public void cancelEdit() {
             // 非Escape触发的cancel（如点击其他cell），保留编辑值到数据模型
             if (!escapePressed && textField != null) {
-                String newValue = textField.getText();
                 String currentValue = getItem() != null ? getItem() : "";
+                String newValue = normalizeEditValueForModel(textField.getText(), currentValue);
                 if (!newValue.equals(currentValue)) {
                     updateCellData(newValue);
                 }
@@ -1816,7 +2115,7 @@ public class TableDataView extends BorderPane {
             // cancelEdit后getItem()返回的是原值，但数据模型可能已更新，
             // 需要重新从数据模型读取显示值
             String displayValue = getCellData();
-            displayText.setText(displayValue != null ? displayValue : "");
+            updateDisplayText(displayValue);
             setGraphic(displayText);
             setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
             setText(null);
@@ -1833,13 +2132,13 @@ public class TableDataView extends BorderPane {
             } else {
                 if (isEditing()) {
                     if (textField != null) {
-                        textField.setText(getItem() != null ? getItem() : "");
+                        textField.setText(toEditorText(getItem()));
                     }
                     setText(null);
                     setGraphic(textField);
                     setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 2; -fx-padding: 0; -fx-text-fill: black; -fx-alignment: center-left;");
                 } else {
-                    displayText.setText(item != null ? item : "");
+                    updateDisplayText(item);
                     setGraphic(displayText);
                     setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
                     setText(null);
@@ -1893,18 +2192,31 @@ public class TableDataView extends BorderPane {
             @SuppressWarnings("unchecked")
             ObservableList<String> row = (ObservableList<String>) tableRow.getItem();
             RowState state = getRowState(row);
+            String textFill = getCellData() == null ? "#999999" : "-fx-text-base-color";
             switch (state) {
                 case NEW ->
-                    setStyle("-fx-background-color: #FFFFF0; -fx-font-style: italic; -fx-text-fill: #666; -fx-alignment: center-left;");
-                case EXISTING_DIRTY ->
-                    setStyle("-fx-background-color: #E8F4FD; -fx-alignment: center-left;");
+                    setStyle("-fx-background-color: #FFFFF0; -fx-font-style: italic; -fx-text-fill: "
+                            + (getCellData() == null ? "#999999" : "#666666") + "; -fx-alignment: center-left;");
+                case EXISTING_DIRTY -> {
+                    ObservableList<String> original = originalValuesMap.get(row);
+                    int tableColumnIndex = getTableView().getColumns().indexOf(getTableColumn());
+                    int dataColumnIndex = tableColumnIndex - 1;
+                    String currentValue = dataColumnIndex >= 0 && dataColumnIndex < row.size()
+                            ? row.get(dataColumnIndex) : null;
+                    String originalValue = original != null && dataColumnIndex >= 0 && dataColumnIndex < original.size()
+                            ? original.get(dataColumnIndex) : null;
+                    boolean cellDirty = original != null
+                            && !java.util.Objects.equals(currentValue, originalValue);
+                    setStyle((cellDirty ? "-fx-background-color: #E8F4FD; " : "")
+                            + "-fx-text-fill: " + textFill + "; -fx-alignment: center-left;");
+                }
                 default ->
-                    setStyle("-fx-alignment: center-left;");
+                    setStyle("-fx-text-fill: " + textFill + "; -fx-alignment: center-left;");
             }
         }
 
         private void createTextField() {
-            textField = new TextField(getItem() != null ? getItem() : "");
+            textField = new TextField();
             textField.setMinWidth(this.getWidth() - this.getGraphicTextGap() * 2);
             // 白色背景，无边框，看起来是cell本身在编辑
             textField.setStyle("-fx-background-color: white; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0 4; -fx-focus-color: transparent; -fx-faint-focus-color: transparent; -fx-text-fill: black;");
@@ -1912,12 +2224,26 @@ public class TableDataView extends BorderPane {
             textField.setOnKeyPressed(event -> {
                 escapePressed = (event.getCode() == javafx.scene.input.KeyCode.ESCAPE);
             });
-            textField.setOnAction(e -> commitEdit(textField.getText()));
+            textField.setOnAction(e -> commitEdit(normalizeEditValueForModel(textField.getText(), editingOriginalValue)));
             textField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
                 if (!isNowFocused) {
-                    commitEdit(textField.getText());
+                    commitEdit(normalizeEditValueForModel(textField.getText(), editingOriginalValue));
                 }
             });
+        }
+
+        private void updateDisplayText(String value) {
+            displayText.setText(value == null ? "NULL" : value);
+        }
+
+        private String toEditorText(String raw) {
+            return raw != null ? raw : "";
+        }
+
+        private String normalizeEditValueForModel(String editedValue, String originalValue) {
+            String edited = editedValue != null ? editedValue : "";
+            if (originalValue == null && edited.isEmpty()) return null;
+            return edited;
         }
 
         /** 临时类型列编辑控件：文本框 + 右侧日历图标按钮（点击弹一层日期/时间选择器） */

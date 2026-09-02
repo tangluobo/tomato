@@ -11,7 +11,6 @@ import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.control.*;
-import javafx.scene.control.cell.TextFieldTableCell;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.KeyCode;
@@ -845,6 +844,9 @@ public class SqlEditorView extends BorderPane {
         });
 
         List<String> columns = result.getColumnNames();
+        List<Integer> columnTypes = result.getColumnTypes() != null
+                ? new ArrayList<>(result.getColumnTypes())
+                : new ArrayList<>();
         QueryResultEditContext editContext = null;
         if (sourceTableName != null && resultConfig != null && resultDatabase != null) {
             QueryTableTarget target = resolveQueryTableTarget(sourceTableName, resultConfig, resultDatabase);
@@ -941,9 +943,10 @@ public class SqlEditorView extends BorderPane {
                 ObservableList<String> row = param.getValue();
                 return new javafx.beans.property.SimpleStringProperty(colIndex < row.size() ? row.get(colIndex) : "");
             });
+            final int colType = (colIndex < columnTypes.size()) ? columnTypes.get(colIndex) : java.sql.Types.OTHER;
+            col.setCellFactory(tc -> new QueryResultEditableTableCell(colType));
             if (finalEditContext != null) {
                 col.setEditable(false);
-                col.setCellFactory(TextFieldTableCell.forTableColumn());
                 col.setOnEditCommit(event -> {
                     if (!finalEditContext.editableColumnIndexes.contains(colIndex)) return;
                     ObservableList<String> row = event.getRowValue();
@@ -977,7 +980,7 @@ public class SqlEditorView extends BorderPane {
         setupDragSelection(tableView);
         // Ctrl+C 复制选中cell
         setupKeyboardShortcuts(tableView, finalEditContext);
-        setupQueryResultContextMenu(tableView, finalEditContext);
+        setupQueryResultContextMenu(tableView, finalEditContext, sourceTableName);
 
         if (finalEditContext == null) return scrollPane;
 
@@ -1005,6 +1008,377 @@ public class SqlEditorView extends BorderPane {
         wrapper.setTop(editToolbar);
         loadQueryResultEditMetadata(finalEditContext);
         return wrapper;
+    }
+
+    /**
+     * 查询结果可编辑单元格：非编辑时用 Text 显示，编辑时支持文本编辑/日期时间弹层。
+     * 与打开表视图的编辑行为保持一致。
+     */
+    private class QueryResultEditableTableCell extends TableCell<ObservableList<String>, String> {
+        private TextField textField;
+        private boolean escapePressed = false;
+        private final int sqlType;
+        private final javafx.scene.text.Text displayText;
+        private String editingOriginalValue = "";
+
+        QueryResultEditableTableCell(int sqlType) {
+            this.sqlType = sqlType;
+            getStyleClass().add("data-cell");
+            setAlignment(Pos.CENTER_LEFT);
+            displayText = new javafx.scene.text.Text();
+            displayText.setTextOrigin(javafx.geometry.VPos.CENTER);
+            displayText.boundsTypeProperty().set(javafx.scene.text.TextBoundsType.VISUAL);
+            displayText.fontProperty().bind(fontProperty());
+            displayText.fillProperty().bind(textFillProperty());
+        }
+
+        private boolean isDateColumn() {
+            return sqlType == java.sql.Types.DATE;
+        }
+
+        private boolean isTimeColumn() {
+            return sqlType == java.sql.Types.TIME || sqlType == java.sql.Types.TIME_WITH_TIMEZONE;
+        }
+
+        private boolean isDateTimeColumn() {
+            return sqlType == java.sql.Types.TIMESTAMP || sqlType == java.sql.Types.TIMESTAMP_WITH_TIMEZONE;
+        }
+
+        private boolean isTemporalColumn() {
+            return isDateColumn() || isTimeColumn() || isDateTimeColumn();
+        }
+
+        @Override
+        public void startEdit() {
+            escapePressed = false;
+            super.startEdit();
+            editingOriginalValue = getItem();
+            if (textField == null) {
+                createTextField();
+            }
+            setText(null);
+            if (isTemporalColumn()) {
+                setGraphic(createTemporalEditor());
+            } else {
+                setGraphic(textField);
+            }
+            textField.setText(toEditorText(editingOriginalValue));
+            textField.selectAll();
+            textField.requestFocus();
+            setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 2; -fx-padding: 0; -fx-text-fill: black; -fx-alignment: center-left;");
+        }
+
+        @Override
+        public void cancelEdit() {
+            if (!escapePressed && textField != null) {
+                String currentValue = getItem() != null ? getItem() : "";
+                String newValue = normalizeEditValueForModel(textField.getText(), currentValue);
+                if (!newValue.equals(currentValue)) {
+                    updateCellData(newValue);
+                }
+            }
+            escapePressed = false;
+            super.cancelEdit();
+            String displayValue = getCellData();
+            updateDisplayText(displayValue);
+            setGraphic(displayText);
+            setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+            setText(null);
+        }
+
+        @Override
+        protected void updateItem(String item, boolean empty) {
+            super.updateItem(item, empty);
+            if (empty) {
+                setText(null);
+                setGraphic(null);
+                setStyle("-fx-border-color: transparent; -fx-padding: 0; -fx-alignment: center-left;");
+            } else {
+            if (isEditing()) {
+                if (textField != null) {
+                    textField.setText(toEditorText(getItem()));
+                }
+                setText(null);
+                setGraphic(textField);
+                setStyle("-fx-background-color: white; -fx-border-color: #3592CB; -fx-border-width: 2; -fx-padding: 0; -fx-text-fill: black; -fx-alignment: center-left;");
+            } else {
+                    updateDisplayText(item);
+                    setGraphic(displayText);
+                    setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+                    setText(null);
+                }
+            }
+        }
+
+        private void updateCellData(String newValue) {
+            TableRow<?> tableRow = getTableRow();
+            if (tableRow == null) return;
+            @SuppressWarnings("unchecked")
+            ObservableList<String> row = (ObservableList<String>) tableRow.getItem();
+            if (row == null) return;
+            int tableViewColIndex = getTableView().getColumns().indexOf(getTableColumn());
+            int dataColIndex = tableViewColIndex - 1;
+            if (dataColIndex >= 0 && dataColIndex < row.size()) {
+                row.set(dataColIndex, newValue);
+            }
+        }
+
+        private String getCellData() {
+            TableRow<?> tableRow = getTableRow();
+            if (tableRow == null) return getItem();
+            @SuppressWarnings("unchecked")
+            ObservableList<String> row = (ObservableList<String>) tableRow.getItem();
+            if (row == null) return getItem();
+            int tableViewColIndex = getTableView().getColumns().indexOf(getTableColumn());
+            int dataColIndex = tableViewColIndex - 1;
+            if (dataColIndex >= 0 && dataColIndex < row.size()) {
+                return row.get(dataColIndex);
+            }
+            return getItem();
+        }
+
+        private void createTextField() {
+            textField = new TextField();
+            textField.setMinWidth(this.getWidth() - this.getGraphicTextGap() * 2);
+            textField.setStyle("-fx-background-color: white; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0 4; -fx-focus-color: transparent; -fx-faint-focus-color: transparent; -fx-text-fill: black;");
+            textField.setOnKeyPressed(event -> escapePressed = (event.getCode() == javafx.scene.input.KeyCode.ESCAPE));
+            textField.setOnAction(e -> commitEdit(normalizeEditValueForModel(textField.getText(), editingOriginalValue)));
+            textField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
+                if (!isNowFocused) {
+                    commitEdit(normalizeEditValueForModel(textField.getText(), editingOriginalValue));
+                }
+            });
+        }
+
+        private void updateDisplayText(String value) {
+            displayText.setText(value == null ? "NULL" : value);
+            setStyle("-fx-text-fill: " + (value == null ? "#999999" : "-fx-text-base-color")
+                    + "; -fx-alignment: center-left;");
+        }
+
+        private String toEditorText(String raw) {
+            return raw != null ? raw : "";
+        }
+
+        private String normalizeEditValueForModel(String editedValue, String originalValue) {
+            String edited = editedValue != null ? editedValue : "";
+            if (originalValue == null && edited.isEmpty()) return null;
+            return edited;
+        }
+
+        private javafx.scene.layout.StackPane createTemporalEditor() {
+            Button pickerBtn = new Button();
+            pickerBtn.setGraphic(createCalendarIcon());
+            pickerBtn.setTooltip(new Tooltip("选择" + buttonLabelForTemporal()));
+            pickerBtn.setFocusTraversable(false);
+            pickerBtn.setPrefWidth(26);
+            pickerBtn.setStyle("-fx-background-color: #f5f5f5; -fx-border-color: transparent transparent transparent #ccc; -fx-border-width: 0 0 0 1; -fx-background-radius: 0; -fx-padding: 0; -fx-cursor: hand;");
+            pickerBtn.setOnAction(e -> showTemporalPopup());
+            textField.setMinWidth(0);
+            textField.setMaxWidth(Double.MAX_VALUE);
+            textField.setPadding(new javafx.geometry.Insets(0, 30, 0, 4));
+            javafx.scene.layout.StackPane stack = new javafx.scene.layout.StackPane(textField, pickerBtn);
+            stack.setStyle("-fx-background-color: #fff;");
+            javafx.scene.layout.StackPane.setAlignment(pickerBtn, Pos.CENTER_RIGHT);
+            javafx.scene.layout.StackPane.setAlignment(textField, Pos.CENTER_LEFT);
+            return stack;
+        }
+
+        private javafx.scene.shape.SVGPath createCalendarIcon() {
+            javafx.scene.shape.SVGPath icon = new javafx.scene.shape.SVGPath();
+            icon.setContent("M20 3h-1V1h-2v2H7V1H5v2H4c-1.11 0-1.99.9-1.99 2L2 19c0 1.1.88 2 2 2h16c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H4V8h16v11z");
+            icon.setFill(javafx.scene.paint.Color.valueOf("#555"));
+            icon.setScaleX(0.62);
+            icon.setScaleY(0.62);
+            return icon;
+        }
+
+        private String buttonLabelForTemporal() {
+            if (isDateColumn()) return "日期";
+            if (isTimeColumn()) return "时间";
+            return "日期时间";
+        }
+
+        private void showTemporalPopup() {
+            javafx.stage.Popup popup = new javafx.stage.Popup();
+            javafx.scene.layout.VBox content = new javafx.scene.layout.VBox(8);
+            content.setStyle("-fx-background-color: #fff; -fx-border-color: #999; -fx-border-width: 1; -fx-padding: 10; -fx-background-radius: 4; -fx-font-size: 12px;");
+            content.setPrefWidth(260);
+
+            java.time.LocalDate initDate = java.time.LocalDate.now();
+            int initH = 0, initM = 0, initS = 0;
+            String cur = textField.getText();
+            if (cur != null && !cur.trim().isEmpty() && !"NULL".equals(cur)) {
+                try {
+                    if (isDateColumn()) {
+                        initDate = java.time.LocalDate.parse(cur.trim());
+                    } else if (isTimeColumn()) {
+                        String[] p = cur.trim().split(":");
+                        if (p.length >= 1) initH = clamp(parseSafeInt(p[0]), 0, 23);
+                        if (p.length >= 2) initM = clamp(parseSafeInt(p[1]), 0, 59);
+                        if (p.length >= 3) initS = clamp(parseSafeInt(p[2]), 0, 59);
+                    } else if (isDateTimeColumn()) {
+                        java.time.LocalDateTime ldt = parseLenientDateTime(cur.trim());
+                        if (ldt != null) {
+                            initDate = ldt.toLocalDate();
+                            initH = ldt.getHour();
+                            initM = ldt.getMinute();
+                            initS = ldt.getSecond();
+                        }
+                    }
+                } catch (Exception ignore) {
+                }
+            }
+
+            final java.time.LocalDate[] selectedDate = { isTimeColumn() ? null : initDate };
+            Spinner<Integer> hourSp = null, minSp = null, secSp = null;
+            if (isDateColumn() || isDateTimeColumn()) {
+                content.getChildren().add(buildInlineCalendar(initDate, selectedDate));
+            }
+            if (isTimeColumn() || isDateTimeColumn()) {
+                hourSp = new Spinner<>(0, 23, initH);
+                minSp = new Spinner<>(0, 59, initM);
+                secSp = new Spinner<>(0, 59, initS);
+                for (Spinner<Integer> sp : java.util.List.of(hourSp, minSp, secSp)) {
+                    sp.setEditable(true);
+                    sp.setPrefWidth(56);
+                    sp.setPrefHeight(30);
+                    sp.setMinHeight(30);
+                    sp.getEditor().setStyle("-fx-padding: 0 2; -fx-alignment: CENTER; -fx-font-size: 13px;");
+                }
+                HBox timeBox = new HBox(4, new Label("时"), hourSp, new Label("分"), minSp, new Label("秒"), secSp);
+                timeBox.setAlignment(Pos.CENTER_LEFT);
+                content.getChildren().add(timeBox);
+            }
+
+            Button applyBtn = new Button("确定");
+            applyBtn.setStyle("-fx-background-color: #3592CB; -fx-text-fill: white; -fx-cursor: hand;");
+            final Spinner<Integer> fH = hourSp;
+            final Spinner<Integer> fM = minSp;
+            final Spinner<Integer> fS = secSp;
+            applyBtn.setOnAction(e -> {
+                String result = formatTemporal(selectedDate[0], fH, fM, fS);
+                if (!result.isEmpty()) {
+                    textField.setText(result);
+                    textField.positionCaret(result.length());
+                }
+                popup.hide();
+                textField.requestFocus();
+            });
+            HBox btnBox = new HBox(applyBtn);
+            btnBox.setAlignment(Pos.CENTER_RIGHT);
+            content.getChildren().add(btnBox);
+
+            popup.getContent().add(content);
+            popup.setAutoHide(true);
+            popup.setHideOnEscape(true);
+            javafx.geometry.Point2D anchor = textField.localToScreen(0, textField.getHeight());
+            if (anchor != null) {
+                popup.show(textField, anchor.getX(), anchor.getY() + 5);
+            } else {
+                popup.show(textField.getScene().getWindow());
+            }
+        }
+
+        private javafx.scene.layout.VBox buildInlineCalendar(java.time.LocalDate initial, final java.time.LocalDate[] selected) {
+            final java.time.LocalDate[] cursor = { initial.withDayOfMonth(1) };
+            javafx.scene.layout.VBox box = new javafx.scene.layout.VBox(4);
+            box.setStyle("-fx-background-color: white; -fx-alignment: center;");
+            Label monthLabel = new Label();
+            monthLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #333;");
+            Button prev = new Button("<");
+            Button next = new Button(">");
+            for (Button b : java.util.List.of(prev, next)) {
+                b.setStyle("-fx-background-color: #f0f0f0; -fx-border-color: #ccc; -fx-cursor: hand; -fx-padding: 0 6;");
+            }
+            HBox header = new HBox(8, prev, monthLabel, next);
+            header.setAlignment(Pos.CENTER);
+
+            javafx.scene.layout.GridPane grid = new javafx.scene.layout.GridPane();
+            grid.setHgap(2);
+            grid.setVgap(2);
+            grid.setAlignment(Pos.CENTER);
+
+            final Runnable[] render = new Runnable[1];
+            render[0] = () -> {
+                monthLabel.setText(cursor[0].getYear() + "-" + String.format("%02d", cursor[0].getMonthValue()));
+                grid.getChildren().clear();
+                String[] hs = {"日", "一", "二", "三", "四", "五", "六"};
+                for (int i = 0; i < 7; i++) {
+                    Label l = new Label(hs[i]);
+                    l.setPrefWidth(30);
+                    l.setAlignment(Pos.CENTER);
+                    l.setStyle("-fx-text-fill: #888;");
+                    grid.add(l, i, 0);
+                }
+                int startDay = cursor[0].getDayOfWeek().getValue() % 7;
+                int days = cursor[0].lengthOfMonth();
+                for (int d = 1; d <= days; d++) {
+                    final java.time.LocalDate date = cursor[0].withDayOfMonth(d);
+                    Button b = new Button(String.valueOf(d));
+                    b.setPrefSize(30, 24);
+                    boolean isSel = date.equals(selected[0]);
+                    b.setStyle(isSel
+                            ? "-fx-background-color: #3592CB; -fx-text-fill: white; -fx-border-color: #3592CB; -fx-cursor: hand; -fx-font-size: 11px;"
+                            : "-fx-background-color: white; -fx-text-fill: #333; -fx-border-color: #e0e0e0; -fx-cursor: hand; -fx-font-size: 11px;");
+                    b.setOnAction(ev -> {
+                        selected[0] = date;
+                        render[0].run();
+                    });
+                    grid.add(b, (startDay + d - 1) % 7, (startDay + d - 1) / 7 + 1);
+                }
+            };
+            prev.setOnAction(e -> {
+                cursor[0] = cursor[0].minusMonths(1);
+                render[0].run();
+            });
+            next.setOnAction(e -> {
+                cursor[0] = cursor[0].plusMonths(1);
+                render[0].run();
+            });
+            render[0].run();
+            box.getChildren().addAll(header, grid);
+            return box;
+        }
+
+        private String formatTemporal(java.time.LocalDate date, Spinner<Integer> h, Spinner<Integer> m, Spinner<Integer> s) {
+            if (isDateColumn()) {
+                return date != null ? date.toString() : "";
+            }
+            if (isTimeColumn()) {
+                return String.format("%02d:%02d:%02d", h.getValue(), m.getValue(), s.getValue());
+            }
+            String ds = date != null ? date.toString() : "";
+            return ds + " " + String.format("%02d:%02d:%02d", h.getValue(), m.getValue(), s.getValue());
+        }
+
+        private int clamp(int v, int min, int max) {
+            return Math.max(min, Math.min(max, v));
+        }
+
+        private int parseSafeInt(String s) {
+            try {
+                return (int) Double.parseDouble(s.trim());
+            } catch (Exception e) {
+                return 0;
+            }
+        }
+
+        private java.time.LocalDateTime parseLenientDateTime(String s) {
+            try {
+                return java.time.LocalDateTime.parse(s, java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            } catch (Exception e) {
+            }
+            try {
+                return java.time.LocalDateTime.parse(s, java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.S"));
+            } catch (Exception e) {
+            }
+            try {
+                return java.time.LocalDateTime.parse(s.replace(' ', 'T'));
+            } catch (Exception e) {
+            }
+            return null;
+        }
     }
 
     /**
@@ -1061,32 +1435,61 @@ public class SqlEditorView extends BorderPane {
      * 查询结果右键菜单：复制始终可用；粘贴、保存和删除仅在主键校验通过后启用。
      */
     private void setupQueryResultContextMenu(TableView<ObservableList<String>> tableView,
-                                             QueryResultEditContext context) {
+                                             QueryResultEditContext context,
+                                             String sourceTableName) {
         ContextMenu menu = new ContextMenu();
         menu.setAutoHide(true);
         menu.setHideOnEscape(true);
         menu.setOnHidden(e -> {
             if (activeResultContextMenu == menu) activeResultContextMenu = null;
         });
+        MenuItem setEmptyItem = new MenuItem("设置为空字符串");
+        setEmptyItem.setOnAction(e -> {
+            if (context != null) setQueryResultCellsToEmptyString(context);
+        });
+        MenuItem setNullItem = new MenuItem("设置为 NULL");
+        setNullItem.setOnAction(e -> {
+            if (context != null) setQueryResultCellsToNull(context);
+        });
+        MenuItem deleteItem = new MenuItem("删除 记录");
+        deleteItem.setStyle("-fx-font-weight: bold;");
+        deleteItem.setOnAction(e -> {
+            if (context != null) handleQueryResultDeleteRows(context);
+        });
         MenuItem copyItem = new MenuItem("复制");
         copyItem.setOnAction(e -> handleCopySelectedCells(tableView));
-        menu.getItems().add(copyItem);
-        MenuItem pasteItem = null;
-        MenuItem saveItem = null;
-        MenuItem deleteItem = null;
-        if (context != null) {
-            pasteItem = new MenuItem("粘贴（修改）");
-            pasteItem.setOnAction(e -> pasteIntoQueryResult(context));
-            saveItem = new MenuItem("保存修改");
-            saveItem.setOnAction(e -> saveQueryResultChanges(context));
-            deleteItem = new MenuItem("删除");
-            deleteItem.setStyle("-fx-text-fill: #c00;");
-            deleteItem.setOnAction(e -> handleQueryResultDeleteRows(context));
-            menu.getItems().addAll(pasteItem, saveItem, new SeparatorMenuItem(), deleteItem);
-        }
-        final MenuItem finalPasteItem = pasteItem;
-        final MenuItem finalSaveItem = saveItem;
-        final MenuItem finalDeleteItem = deleteItem;
+        Menu copyAsMenu = TableCellContextMenuUtils.createCopyAsMenu(
+                tableView, 1, () -> sourceTableName, java.util.List::of);
+        MenuItem pasteItem = new MenuItem("粘贴");
+        pasteItem.setOnAction(e -> {
+            if (context != null) pasteIntoQueryResult(context);
+        });
+        MenuItem saveAsItem = TableCellContextMenuUtils.createSaveDataAsItem(tableView, 1);
+        Menu sortMenu = TableCellContextMenuUtils.createSortMenu(tableView, 1);
+        Menu filterMenu = TableCellContextMenuUtils.createFilterMenu(tableView, 1);
+        MenuItem clearSortFilterItem = new MenuItem("移除全部排序及筛选");
+        clearSortFilterItem.setOnAction(e -> TableCellContextMenuUtils.clearSortAndFilter(tableView));
+        Menu displayMenu = TableCellContextMenuUtils.createDisplayMenu(tableView, 1);
+        MenuItem refreshItem = new MenuItem("刷新");
+        refreshItem.setOnAction(e -> tableView.refresh());
+
+        menu.getItems().setAll(
+                setEmptyItem,
+                setNullItem,
+                new SeparatorMenuItem(),
+                deleteItem,
+                copyItem,
+                copyAsMenu,
+                pasteItem,
+                saveAsItem,
+                new SeparatorMenuItem(),
+                sortMenu,
+                filterMenu,
+                clearSortFilterItem,
+                new SeparatorMenuItem(),
+                displayMenu,
+                refreshItem
+        );
         tableView.setOnContextMenuRequested(event -> {
             Node target = event.getPickResult().getIntersectedNode();
             while (target != null && target != tableView) {
@@ -1099,17 +1502,16 @@ public class SqlEditorView extends BorderPane {
                 target = target.getParent();
             }
             int cellCount = tableView.getSelectionModel().getSelectedCells().size();
-            copyItem.setText("复制" + (cellCount > 0 ? "(" + cellCount + "个单元格)" : ""));
+            int editableCellCount = context == null ? 0 : countEditableQueryResultSelectedCells(context);
             copyItem.setDisable(cellCount == 0);
-            if (context != null) {
-                boolean editable = context.isEditable();
-                finalPasteItem.setDisable(!editable
-                        || !javafx.scene.input.Clipboard.getSystemClipboard().hasString());
-                finalSaveItem.setDisable(!editable || context.saving || !hasQueryResultChanges(context));
-                int rowCount = (int) tableView.getSelectionModel().getSelectedItems().stream().distinct().count();
-                finalDeleteItem.setText("删除" + (rowCount > 0 ? rowCount : 1) + "条数据");
-                finalDeleteItem.setDisable(!editable || context.saving || rowCount == 0);
-            }
+            copyAsMenu.setDisable(cellCount == 0);
+            boolean editable = context != null && context.isEditable();
+            setEmptyItem.setDisable(!editable || editableCellCount == 0);
+            setNullItem.setDisable(!editable || editableCellCount == 0);
+            pasteItem.setDisable(!editable
+                    || !javafx.scene.input.Clipboard.getSystemClipboard().hasString());
+            int rowCount = (int) tableView.getSelectionModel().getSelectedItems().stream().distinct().count();
+            deleteItem.setDisable(!editable || context.saving || rowCount == 0);
             if (activeResultContextMenu != null && activeResultContextMenu != menu) {
                 activeResultContextMenu.hide();
             }
@@ -1117,6 +1519,68 @@ public class SqlEditorView extends BorderPane {
             menu.show(tableView, event.getScreenX(), event.getScreenY());
             event.consume();
         });
+    }
+
+    /**
+     * 将查询结果中当前选中的可编辑数据单元格设置为空字符串。
+     */
+    private void setQueryResultCellsToEmptyString(QueryResultEditContext context) {
+        if (context == null || !context.isEditable()) return;
+        for (TablePosition<ObservableList<String>, ?> position : context.tableView.getSelectionModel().getSelectedCells()) {
+            int tableColumnIndex = context.tableView.getColumns().indexOf(position.getTableColumn());
+            int dataColumnIndex = tableColumnIndex - 1;
+            int rowIndex = position.getRow();
+            if (position.getTableColumn() == null
+                    || rowIndex < 0
+                    || rowIndex >= context.tableView.getItems().size()
+                    || dataColumnIndex < 0
+                    || !context.editableColumnIndexes.contains(dataColumnIndex)) {
+                continue;
+            }
+            ObservableList<String> row = context.tableView.getItems().get(rowIndex);
+            if (dataColumnIndex < row.size()) row.set(dataColumnIndex, "");
+        }
+        context.tableView.refresh();
+        updateQueryResultButtons(context);
+    }
+
+    /**
+     * 将查询结果中当前选中的可编辑数据单元格设置为 NULL。
+     */
+    private void setQueryResultCellsToNull(QueryResultEditContext context) {
+        if (context == null || !context.isEditable()) return;
+        for (TablePosition<ObservableList<String>, ?> position : context.tableView.getSelectionModel().getSelectedCells()) {
+            int tableColumnIndex = context.tableView.getColumns().indexOf(position.getTableColumn());
+            int dataColumnIndex = tableColumnIndex - 1;
+            int rowIndex = position.getRow();
+            if (position.getTableColumn() == null
+                    || rowIndex < 0
+                    || rowIndex >= context.tableView.getItems().size()
+                    || dataColumnIndex < 0
+                    || !context.editableColumnIndexes.contains(dataColumnIndex)) {
+                continue;
+            }
+            ObservableList<String> row = context.tableView.getItems().get(rowIndex);
+            if (dataColumnIndex >= row.size()) continue;
+            row.set(dataColumnIndex, null);
+        }
+        context.tableView.refresh();
+        updateQueryResultButtons(context);
+    }
+
+    private int countEditableQueryResultSelectedCells(QueryResultEditContext context) {
+        if (context == null) return 0;
+        int count = 0;
+        for (TablePosition<ObservableList<String>, ?> position : context.tableView.getSelectionModel().getSelectedCells()) {
+            if (position.getTableColumn() == null) continue;
+            int tableColumnIndex = context.tableView.getColumns().indexOf(position.getTableColumn());
+            int dataColumnIndex = tableColumnIndex - 1;
+            if (position.getRow() >= 0 && dataColumnIndex >= 0
+                    && context.editableColumnIndexes.contains(dataColumnIndex)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /** 保存查询结果中通过编辑或粘贴产生的修改。 */

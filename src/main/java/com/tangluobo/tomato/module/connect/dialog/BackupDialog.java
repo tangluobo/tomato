@@ -166,6 +166,7 @@ public class BackupDialog {
 
         objectTree = new TreeView<>();
         objectTree.setShowRoot(false);
+        objectTree.getStyleClass().add("backup-object-tree");
         objectTree.setStyle("-fx-font-size: 12px;");
         objectTree.setFixedCellSize(26);
         objectTree.setCellFactory(tv -> new TreeCell<>() {
@@ -673,15 +674,11 @@ public class BackupDialog {
         for (TreeItem<BackupObject> group : root.getChildren()) {
             if (group.getValue() == null) continue;
             boolean groupSelectAll = false;
-            boolean groupCustomizeAny = false;
 
             for (TreeItem<BackupObject> sub : group.getChildren()) {
                 BackupObject subObj = sub.getValue();
                 if (subObj.getSpecialType() == BackupObject.SpecialType.SELECT_ALL && subObj.isSelected()) {
                     groupSelectAll = true;
-                }
-                if (subObj.getSpecialType() == BackupObject.SpecialType.CUSTOMIZE && subObj.isSelected()) {
-                    groupCustomizeAny = true;
                 }
             }
 
@@ -689,13 +686,8 @@ public class BackupDialog {
                 if (sub.getValue().getSpecialType() != BackupObject.SpecialType.CUSTOMIZE) continue;
                 for (TreeItem<BackupObject> child : sub.getChildren()) {
                     BackupObject childObj = child.getValue();
-                    if (groupSelectAll || groupCustomizeAny) {
-                        if (groupSelectAll) {
-                            childObj.setSelected(true);
-                        }
-                        if (childObj.isSelected()) {
-                            result.add(childObj);
-                        }
+                    if (groupSelectAll || childObj.isSelected()) {
+                        result.add(childObj);
                     }
                 }
             }

@@ -683,6 +683,14 @@
     -fx-scale-shape: true;
 }
 
+/* 备份对象树使用两段互相垂直的折线对号 */
+.backup-object-tree .check-box:selected .box .mark {
+    -fx-background-color: #000000;
+    -fx-shape: "M1,7 L3,5 L6,8 L12,2 L14,4 L6,12 Z";
+    -fx-padding: 1px;
+    -fx-scale-shape: true;
+}
+
 .check-box:indeterminate .box {
     -fx-background-color: transparent;
     -fx-border-color: #555555;

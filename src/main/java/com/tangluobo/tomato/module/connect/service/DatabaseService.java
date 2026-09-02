@@ -459,6 +459,29 @@ public class DatabaseService {
      * 分页查询表/视图数据
      * @return TableRowData 包含列名列表和数据行
      */
+    public static void beginTransaction(ConnectionConfig config, String databaseName) throws Exception {
+        Connection conn = config.getType() == ConnectType.POSTGRESQL
+                ? getConnection(config, databaseName)
+                : getConnection(config);
+        if (conn.getAutoCommit()) conn.setAutoCommit(false);
+    }
+
+    public static void commitTransaction(ConnectionConfig config, String databaseName) throws Exception {
+        Connection conn = config.getType() == ConnectType.POSTGRESQL
+                ? getConnection(config, databaseName)
+                : getConnection(config);
+        conn.commit();
+        conn.setAutoCommit(true);
+    }
+
+    public static void rollbackTransaction(ConnectionConfig config, String databaseName) throws Exception {
+        Connection conn = config.getType() == ConnectType.POSTGRESQL
+                ? getConnection(config, databaseName)
+                : getConnection(config);
+        conn.rollback();
+        conn.setAutoCommit(true);
+    }
+
     public static TableRowData queryTableData(ConnectionConfig config, String databaseName, String tableName, int page, int pageSize) throws Exception {
         return queryTableData(config, databaseName, tableName, page, pageSize, null, false);
     }
@@ -499,6 +522,7 @@ public class DatabaseService {
 
         // 分页查询数据
         String dataSql = buildPageSql(config, databaseName, schemaName, tableName, page, pageSize, sortColumn, sortDescending);
+        result.setExecutedSql(dataSql);
         try (Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(dataSql)) {
             ResultSetMetaData metaData = rs.getMetaData();
@@ -520,7 +544,7 @@ public class DatabaseService {
                 ObservableList<String> row = FXCollections.observableArrayList();
                 for (int i = 1; i <= columnCount; i++) {
                     String value = rs.getString(i);
-                    row.add(value != null ? value : "NULL");
+                    row.add(value);
                 }
                 rows.add(row);
             }
@@ -667,10 +691,13 @@ public class DatabaseService {
                     int columnCount = metaData.getColumnCount();
 
                     List<String> columnNames = new ArrayList<>();
+                    List<Integer> columnTypes = new ArrayList<>();
                     for (int i = 1; i <= columnCount; i++) {
                         columnNames.add(metaData.getColumnLabel(i));
+                        columnTypes.add(metaData.getColumnType(i));
                     }
                     result.setColumnNames(columnNames);
+                    result.setColumnTypes(columnTypes);
 
                     ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
                     long count = 0;
@@ -678,7 +705,7 @@ public class DatabaseService {
                         ObservableList<String> row = FXCollections.observableArrayList();
                         for (int i = 1; i <= columnCount; i++) {
                             String val = rs.getString(i);
-                            row.add(val != null ? val : "");
+                            row.add(val);
                         }
                         rows.add(row);
                         count++;
@@ -1254,10 +1281,13 @@ public class DatabaseService {
                         int columnCount = metaData.getColumnCount();
 
                         List<String> columnNames = new ArrayList<>();
+                        List<Integer> columnTypes = new ArrayList<>();
                         for (int i = 1; i <= columnCount; i++) {
                             columnNames.add(metaData.getColumnLabel(i));
+                            columnTypes.add(metaData.getColumnType(i));
                         }
                         result.setColumnNames(columnNames);
+                        result.setColumnTypes(columnTypes);
 
                         ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
                         long count = 0;
@@ -1265,7 +1295,7 @@ public class DatabaseService {
                             ObservableList<String> row = FXCollections.observableArrayList();
                             for (int i = 1; i <= columnCount; i++) {
                                 String val = rs.getString(i);
-                                row.add(val != null ? val : "");
+                                row.add(val);
                             }
                             rows.add(row);
                             count++;
@@ -1450,7 +1480,7 @@ public class DatabaseService {
                 for (ObservableList<String> row : rows) {
                     for (int i = 0; i < pkIndexes.size(); i++) {
                         String value = row.get(pkIndexes.get(i));
-                        if ("NULL".equals(value)) {
+                        if (value == null) {
                             pstmt.setNull(i + 1, Types.VARCHAR);
                         } else {
                             pstmt.setString(i + 1, value);
@@ -1546,14 +1576,14 @@ public class DatabaseService {
         String sql = "UPDATE " + qualifiedTable + " SET " + quotedUpdateCol + " = ? WHERE " + whereClause;
 
         try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            if ("NULL".equals(newValue)) {
+            if (newValue == null) {
                 pstmt.setNull(1, Types.VARCHAR);
             } else {
                 pstmt.setString(1, newValue);
             }
             for (int i = 0; i < pkIndexes.size(); i++) {
                 String pkValue = row.get(pkIndexes.get(i));
-                if ("NULL".equals(pkValue)) {
+                if (pkValue == null) {
                     pstmt.setNull(i + 2, Types.VARCHAR);
                 } else {
                     pstmt.setString(i + 2, pkValue);
@@ -1678,7 +1708,7 @@ public class DatabaseService {
                 for (int j = 0; j < includeIndexes.size(); j++) {
                     int colIdx = includeIndexes.get(j);
                     String value = colIdx < row.size() ? row.get(colIdx) : "";
-                    if (isNullOrEmpty(value) || "NULL".equals(value)) {
+                    if (value == null) {
                         pstmt.setNull(j + 1, Types.VARCHAR);
                     } else {
                         pstmt.setString(j + 1, value);
@@ -1721,12 +1751,31 @@ public class DatabaseService {
                                  List<ObservableList<String>> currentRows,
                                  List<ObservableList<String>> originalRows,
                                  List<java.util.Set<Integer>> modifiedColumnsPerRow) throws Exception {
+        return updateRows(config, databaseName, schemaName, tableName, primaryKeyColumns, columnNames,
+                currentRows, originalRows, modifiedColumnsPerRow, null);
+    }
+
+    /**
+     * 更新多行数据，并通过回调返回每条已执行的可读 SQL。
+     * MySQL 表无主键时，使用修改前整行值作为 WHERE 条件并强制 LIMIT 1。
+     */
+    public static int updateRows(ConnectionConfig config, String databaseName, String schemaName, String tableName,
+                                 List<String> primaryKeyColumns, List<String> columnNames,
+                                 List<ObservableList<String>> currentRows,
+                                 List<ObservableList<String>> originalRows,
+                                 List<java.util.Set<Integer>> modifiedColumnsPerRow,
+                                 java.util.function.Consumer<String> executedSqlConsumer) throws Exception {
         // PostgreSQL 绑定到具体数据库；MySQL/Oracle 复用主连接（SQL 使用全限定名）
         Connection conn = (config.getType() == ConnectType.POSTGRESQL)
                 ? getConnection(config, databaseName)
                 : getConnection(config);
         String pgSchema = schemaName != null ? schemaName : databaseName;
         int totalUpdated = 0;
+        List<String> effectivePrimaryKeys = primaryKeyColumns != null ? primaryKeyColumns : List.of();
+        boolean matchByOriginalRow = effectivePrimaryKeys.isEmpty();
+        if (matchByOriginalRow && config.getType() != ConnectType.MYSQL) {
+            throw new IllegalArgumentException("无主键更新目前仅支持 MySQL");
+        }
 
         String qualifiedTable = switch (config.getType()) {
             case MYSQL -> "`" + databaseName + "`.`" + tableName + "`";
@@ -1737,7 +1786,7 @@ public class DatabaseService {
 
         // 构建主键列索引映射
         List<Integer> pkIndexes = new ArrayList<>();
-        for (String pkCol : primaryKeyColumns) {
+        for (String pkCol : effectivePrimaryKeys) {
             for (int i = 0; i < columnNames.size(); i++) {
                 if (columnNames.get(i).equalsIgnoreCase(pkCol)) {
                     pkIndexes.add(i);
@@ -1753,9 +1802,13 @@ public class DatabaseService {
 
             // SET子句仅包含修改过的列
             StringBuilder setClause = new StringBuilder();
+            StringBuilder displaySetClause = new StringBuilder();
             List<Integer> setColIndexes = new ArrayList<>();
             for (int colIdx : modifiedCols) {
-                if (!setColIndexes.isEmpty()) setClause.append(", ");
+                if (!setColIndexes.isEmpty()) {
+                    setClause.append(", ");
+                    displaySetClause.append(", ");
+                }
                 String colName = columnNames.get(colIdx);
                 String quotedCol = switch (config.getType()) {
                     case MYSQL -> "`" + colName + "`";
@@ -1763,49 +1816,69 @@ public class DatabaseService {
                     default -> colName;
                 };
                 setClause.append(quotedCol).append(" = ?");
+                displaySetClause.append(quotedCol).append(" = ")
+                        .append(formatSqlLiteral(currentRow.get(colIdx)));
                 setColIndexes.add(colIdx);
             }
 
-            // WHERE子句使用原始主键值
+            // 有主键时按原始主键定位；MySQL 无主键时按修改前整行定位。
             StringBuilder whereClause = new StringBuilder();
-            for (int i = 0; i < primaryKeyColumns.size(); i++) {
+            StringBuilder displayWhereClause = new StringBuilder();
+            List<Integer> whereIndexes = matchByOriginalRow
+                    ? java.util.stream.IntStream.range(0, columnNames.size()).boxed().toList()
+                    : pkIndexes;
+            List<Integer> whereParamIndexes = new ArrayList<>();
+            for (int i = 0; i < whereIndexes.size(); i++) {
                 if (i > 0) whereClause.append(" AND ");
-                String pkCol = primaryKeyColumns.get(i);
+                if (i > 0) displayWhereClause.append(" AND ");
+                int whereIndex = whereIndexes.get(i);
+                String whereColumn = columnNames.get(whereIndex);
                 String quotedCol = switch (config.getType()) {
-                    case MYSQL -> "`" + pkCol + "`";
-                    case POSTGRESQL, ORACLE -> "\"" + pkCol + "\"";
-                    default -> pkCol;
+                    case MYSQL -> "`" + whereColumn + "`";
+                    case POSTGRESQL, ORACLE -> "\"" + whereColumn + "\"";
+                    default -> whereColumn;
                 };
-                whereClause.append(quotedCol).append(" = ?");
+                String originalValue = originalRow.get(whereIndex);
+                if (originalValue == null) {
+                    whereClause.append(quotedCol).append(" IS NULL");
+                    displayWhereClause.append(quotedCol).append(" IS NULL");
+                } else {
+                    whereClause.append(quotedCol).append(" = ?");
+                    displayWhereClause.append(quotedCol).append(" = ").append(formatSqlLiteral(originalValue));
+                    whereParamIndexes.add(whereIndex);
+                }
             }
 
-            String sql = "UPDATE " + qualifiedTable + " SET " + setClause + " WHERE " + whereClause;
+            String limitClause = matchByOriginalRow ? " LIMIT 1" : "";
+            String sql = "UPDATE " + qualifiedTable + " SET " + setClause + " WHERE " + whereClause + limitClause;
+            String displaySql = "UPDATE " + qualifiedTable + " SET " + displaySetClause
+                    + " WHERE " + displayWhereClause + limitClause;
 
             try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
                 int paramIdx = 1;
                 // SET参数（新值）
                 for (int colIdx : setColIndexes) {
                     String newValue = currentRow.get(colIdx);
-                    if ("NULL".equals(newValue) || isNullOrEmpty(newValue)) {
+                    if (newValue == null) {
                         pstmt.setNull(paramIdx++, Types.VARCHAR);
                     } else {
                         pstmt.setString(paramIdx++, newValue);
                     }
                 }
-                // WHERE参数（原始主键值）
-                for (int pkIdx : pkIndexes) {
-                    String pkValue = originalRow.get(pkIdx);
-                    if ("NULL".equals(pkValue)) {
-                        pstmt.setNull(paramIdx++, Types.VARCHAR);
-                    } else {
-                        pstmt.setString(paramIdx++, pkValue);
-                    }
+                // WHERE 中 NULL 已生成 IS NULL，此处只绑定非 NULL 原始值。
+                for (int whereIndex : whereParamIndexes) {
+                    pstmt.setString(paramIdx++, originalRow.get(whereIndex));
                 }
                 totalUpdated += pstmt.executeUpdate();
+                if (executedSqlConsumer != null) executedSqlConsumer.accept(displaySql);
             }
         }
 
         return totalUpdated;
+    }
+
+    private static String formatSqlLiteral(String value) {
+        return value == null ? "NULL" : "'" + value.replace("'", "''") + "'";
     }
 
     private static boolean isNullOrEmpty(String value) {
