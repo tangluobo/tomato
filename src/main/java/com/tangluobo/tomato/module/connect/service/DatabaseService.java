@@ -63,22 +63,8 @@ public class DatabaseService {
             int port = config.getPort();
 
             if (config.isUseSshTunnel()) {
-                SshTunnel oldTunnel = tunnelCache.get(key);
-                if (oldTunnel != null && oldTunnel.isActive()) {
-                    port = oldTunnel.getForwardedLocalPort();
-                    host = "127.0.0.1";
-                } else {
-                    // 隧道已失效或不复用：先断开旧隧道并移除缓存，确保重建得到干净的新隧道，避免端口占用与资源泄漏
-                    if (oldTunnel != null) {
-                        tunnelCache.remove(key);
-                        try { oldTunnel.disconnect(); } catch (Exception ignored) {}
-                    }
-                    SshTunnel tunnel = SshTunnel.fromConfig(config);
-                    int localPort = tunnel.connect();
-                    tunnelCache.put(key, tunnel);
-                    host = "127.0.0.1";
-                    port = localPort;
-                }
+                port = ensureSshTunnel(config);
+                host = "127.0.0.1";
             }
 
             String url = buildJdbcUrl(config, host, port, null);
@@ -615,23 +601,8 @@ public class DatabaseService {
             int port = config.getPort();
 
             if (config.isUseSshTunnel()) {
-                String tunnelKey = config.getId();
-                SshTunnel oldTunnel = tunnelCache.get(tunnelKey);
-                if (oldTunnel != null && oldTunnel.isActive()) {
-                    port = oldTunnel.getForwardedLocalPort();
-                    host = "127.0.0.1";
-                } else {
-                    // 隧道已失效或不复用：先断开旧隧道并移除缓存，确保重建得到干净的新隧道，避免端口占用与资源泄漏
-                    if (oldTunnel != null) {
-                        tunnelCache.remove(tunnelKey);
-                        try { oldTunnel.disconnect(); } catch (Exception ignored) {}
-                    }
-                    SshTunnel tunnel = SshTunnel.fromConfig(config);
-                    int localPort = tunnel.connect();
-                    tunnelCache.put(tunnelKey, tunnel);
-                    host = "127.0.0.1";
-                    port = localPort;
-                }
+                port = ensureSshTunnel(config);
+                host = "127.0.0.1";
             }
 
             String url = buildJdbcUrl(config, host, port, databaseName);
@@ -1196,12 +1167,38 @@ public class DatabaseService {
             }
         }
         // 关闭SSH隧道
+        closeSshTunnel(configId);
+        // 清理锁
+        connectionLocks.remove(configId);
+    }
+
+    /** 所有主连接/数据库专用连接共享同一条隧道，统一串行检查和重建。 */
+    private static synchronized int ensureSshTunnel(ConnectionConfig config) throws Exception {
+        String key = config.getId();
+        SshTunnel tunnel = tunnelCache.get(key);
+        if (tunnel != null && tunnel.isActive()) {
+            return tunnel.getForwardedLocalPort();
+        }
+        if (tunnel != null) {
+            tunnelCache.remove(key, tunnel);
+            try { tunnel.disconnect(); } catch (Exception ignored) {}
+        }
+        SshTunnel created = SshTunnel.fromConfig(config);
+        try {
+            int localPort = created.connect();
+            tunnelCache.put(key, created);
+            return localPort;
+        } catch (Exception e) {
+            created.disconnect();
+            throw e;
+        }
+    }
+
+    private static synchronized void closeSshTunnel(String configId) {
         SshTunnel tunnel = tunnelCache.remove(configId);
         if (tunnel != null) {
             tunnel.disconnect();
         }
-        // 清理锁
-        connectionLocks.remove(configId);
     }
 
     /**

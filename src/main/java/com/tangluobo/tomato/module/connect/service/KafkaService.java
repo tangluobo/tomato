@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Kafka 管理服务，参考 RocketmqService 结构。
  *
- * SSH通道：仅对 bootstrap server 建立跳板隧道（SshTunnelManager.resolve），
+ * SSH通道：仅对 bootstrap server 建立跳板隧道（SshTunnelManager.TunnelLease），
  * AdminClient/KafkaConsumer 连接 localhost:转发端口。
  *
  * 说明：Kafka 与 RocketMQ 不同，客户端的 NetworkClient 对 broker 地址
@@ -38,6 +38,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class KafkaService {
     private static final Map<String, AdminClient> adminCache = new ConcurrentHashMap<>();
+    private static final Map<String, SshTunnelManager.TunnelLease> tunnelLeaseCache = new ConcurrentHashMap<>();
 
     /** 最近一次查询的内部诊断信息（每个线程独立），UI 在查询失败时可读取展示 */
     private static final ThreadLocal<StringBuilder> lastDiag = ThreadLocal.withInitial(StringBuilder::new);
@@ -87,10 +88,17 @@ public class KafkaService {
         synchronized (KafkaService.class) {
             cached = adminCache.get(cacheKey);
             if (cached != null) return cached;
-            String bootstrap = resolveBootstrap(config); // 启用隧道则建立并获取引用计数
-            AdminClient admin = AdminClient.create(buildAdminProps(bootstrap));
-            adminCache.put(cacheKey, admin);
-            return admin;
+            SshTunnelManager.TunnelLease lease = SshTunnelManager.acquire(config);
+            try {
+                String bootstrap = bootstrapAddress(config, lease.getLocalPort());
+                AdminClient admin = AdminClient.create(buildAdminProps(bootstrap));
+                tunnelLeaseCache.put(cacheKey, lease);
+                adminCache.put(cacheKey, admin);
+                return admin;
+            } catch (RuntimeException e) {
+                lease.close();
+                throw e;
+            }
         }
     }
 
@@ -99,12 +107,12 @@ public class KafkaService {
      * 返回 null 表示成功，返回非空字符串表示失败原因。
      */
     public static String testConnection(ConnectionConfig config) {
-        boolean tunnelAcquired = false;
         AdminClient admin = null;
         String bootstrap = null;
-        try {
-            bootstrap = resolveBootstrap(config);
-            tunnelAcquired = config.isUseSshTunnel() && config.getSshTunnelHostId() != null;
+        boolean viaTunnel = false;
+        try (SshTunnelManager.TunnelLease lease = SshTunnelManager.acquire(config)) {
+            viaTunnel = lease.getLocalPort() != -1;
+            bootstrap = bootstrapAddress(config, lease.getLocalPort());
 
             // 第一步：原始 TCP 连接测试，区分网络问题与 Kafka 客户端问题
             String[] hp = bootstrap.split(":");
@@ -130,7 +138,7 @@ public class KafkaService {
             // 这里补充诊断信息，便于用户定位 advertised.listeners / 端口 / SASL 等常见问题。
             String diag = "Kafka AdminClient 连接超时(30s)\n"
                     + "  bootstrap=" + bootstrap + "\n"
-                    + "  SSH隧道=" + (tunnelAcquired ? "已启用" : "未启用") + "\n"
+                    + "  SSH隧道=" + (viaTunnel ? "已启用" : "未启用") + "\n"
                     + "常见原因:\n"
                     + "  1) broker 的 advertised.listeners 配置为 localhost/主机名/内网IP，客户端无法访问\n"
                     + "  2) 端口错误（如连了 ZooKeeper 的 2181 端口，TCP 通但 Kafka 协议不通）\n"
@@ -150,7 +158,6 @@ public class KafkaService {
             if (admin != null) {
                 try { admin.close(Duration.ofSeconds(3)); } catch (Exception ignored) {}
             }
-            if (tunnelAcquired) SshTunnelManager.release(config);
         }
     }
 
@@ -163,7 +170,8 @@ public class KafkaService {
         if (admin != null) {
             try { admin.close(Duration.ofSeconds(3)); } catch (Exception ignored) {}
         }
-        SshTunnelManager.release(config);
+        SshTunnelManager.TunnelLease lease = tunnelLeaseCache.remove(cacheKey);
+        if (lease != null) lease.close();
     }
 
     public static void closeAllAdmins() {
@@ -171,6 +179,10 @@ public class KafkaService {
             try { admin.close(Duration.ofSeconds(3)); } catch (Exception ignored) {}
         }
         adminCache.clear();
+        for (SshTunnelManager.TunnelLease lease : tunnelLeaseCache.values()) {
+            lease.close();
+        }
+        tunnelLeaseCache.clear();
     }
 
     /**
@@ -185,29 +197,20 @@ public class KafkaService {
     }
 
     /**
-     * 解析实际连接的 bootstrap 地址：启用隧道则建立/复用跳板隧道并获取引用计数，返回 localhost:转发端口。
+     * 获取 bootstrap 地址（短生命周期消费者用）：刷新并复用 getAdmin 持有的租约。
      */
-    private static String resolveBootstrap(ConnectionConfig config) {
-        if (config.isUseSshTunnel() && config.getSshTunnelHostId() != null) {
-            try {
-                int localPort = SshTunnelManager.resolve(config);
-                return "localhost:" + localPort;
-            } catch (Exception e) {
-                throw new RuntimeException("建立SSH跳板隧道失败: " + e.getMessage(), e);
-            }
+    private static String bootstrap(ConnectionConfig config) {
+        SshTunnelManager.TunnelLease lease = tunnelLeaseCache.get(adminCacheKey(config));
+        if (lease != null) {
+            return bootstrapAddress(config, lease.refresh());
         }
         return config.getHost() + ":" + config.getPort();
     }
 
-    /**
-     * 获取 bootstrap 地址（短生命周期消费者用）：复用 getAdmin 已建立的隧道（peek，不增减引用计数）。
-     */
-    private static String bootstrap(ConnectionConfig config) {
-        int localPort = SshTunnelManager.peek(config);
-        if (localPort != -1) {
-            return "localhost:" + localPort;
-        }
-        return config.getHost() + ":" + config.getPort();
+    private static String bootstrapAddress(ConnectionConfig config, int localPort) {
+        return localPort == -1
+                ? config.getHost() + ":" + config.getPort()
+                : "localhost:" + localPort;
     }
 
     private static Properties buildAdminProps(String bootstrap) {

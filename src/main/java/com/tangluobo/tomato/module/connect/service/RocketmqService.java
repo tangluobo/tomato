@@ -47,6 +47,7 @@ import java.util.concurrent.ExecutorService;
 public class RocketmqService {
     // 缓存MQAdminExt实例，key为nameServer地址
     private static final Map<String, DefaultMQAdminExt> adminCache = new ConcurrentHashMap<>();
+    private static final Map<String, SshTunnelManager.TunnelLease> tunnelLeaseCache = new ConcurrentHashMap<>();
 
     /**
      * 获取或创建MQAdminExt实例。
@@ -60,18 +61,21 @@ public class RocketmqService {
         synchronized (RocketmqService.class) {
             cached = adminCache.get(cacheKey);
             if (cached != null) return cached;
-            String nameServer = resolveNameServer(config); // 启用隧道则建立/复用并获取引用计数
+            SshTunnelManager.TunnelLease lease = SshTunnelManager.acquire(config);
+            String nameServer = nameServerAddress(config, lease.getLocalPort());
             DefaultMQAdminExt admin = new DefaultMQAdminExt();
             admin.setNamesrvAddr(nameServer);
             admin.setAdminExtGroup("tomato_admin_group");
             try {
                 admin.start();
-            } catch (MQClientException e) {
-                SshTunnelManager.release(config); // 启动失败则释放隧道引用
+                // 安装隧道 RemotingClient 装饰器：broker 地址经跳板隧道转发
+                installTunnelingRemotingClient(admin, config);
+            } catch (MQClientException | RuntimeException e) {
+                try { admin.shutdown(); } catch (Exception ignored) {}
+                lease.close();
                 throw e;
             }
-            // 安装隧道 RemotingClient 装饰器：broker 地址经跳板隧道转发
-            installTunnelingRemotingClient(admin, config);
+            tunnelLeaseCache.put(cacheKey, lease);
             adminCache.put(cacheKey, admin);
             return admin;
         }
@@ -82,10 +86,8 @@ public class RocketmqService {
      */
     public static boolean testConnection(ConnectionConfig config) {
         DefaultMQAdminExt admin = new DefaultMQAdminExt();
-        boolean tunnelAcquired = false;
-        try {
-            String nameServer = resolveNameServer(config); // 启用隧道则建立并获取引用计数
-            tunnelAcquired = config.isUseSshTunnel() && config.getSshTunnelHostId() != null;
+        try (SshTunnelManager.TunnelLease lease = SshTunnelManager.acquire(config)) {
+            String nameServer = nameServerAddress(config, lease.getLocalPort());
             admin.setNamesrvAddr(nameServer);
             admin.setAdminExtGroup("tomato_admin_test_" + System.currentTimeMillis());
             admin.start();
@@ -96,7 +98,6 @@ public class RocketmqService {
             return false;
         } finally {
             try { admin.shutdown(); } catch (Exception ignored) {}
-            if (tunnelAcquired) SshTunnelManager.release(config);
         }
     }
 
@@ -109,7 +110,8 @@ public class RocketmqService {
         if (admin != null) {
             try { admin.shutdown(); } catch (Exception ignored) {}
         }
-        SshTunnelManager.release(config);
+        SshTunnelManager.TunnelLease lease = tunnelLeaseCache.remove(cacheKey);
+        if (lease != null) lease.close();
         // 关闭所有 broker 跳板隧道（NameServer 隧道由 release 释放）
         SshTunnelManager.closeBrokerTunnels(config);
     }
@@ -126,31 +128,20 @@ public class RocketmqService {
     }
 
     /**
-     * 解析实际连接的 NameServer 地址：启用隧道则建立/复用跳板隧道并获取引用计数，返回 localhost:转发端口。
-     * 调用方需在连接生命周期结束时调用 SshTunnelManager.release(config) 释放引用。
+     * 获取 NameServer 地址（短生命周期消费者用）：刷新并复用 getAdmin 持有的租约。
      */
-    private static String resolveNameServer(ConnectionConfig config) {
-        if (config.isUseSshTunnel() && config.getSshTunnelHostId() != null) {
-            try {
-                int localPort = SshTunnelManager.resolve(config);
-                return "localhost:" + localPort;
-            } catch (Exception e) {
-                throw new RuntimeException("建立SSH跳板隧道失败: " + e.getMessage(), e);
-            }
+    private static String nameServer(ConnectionConfig config) {
+        SshTunnelManager.TunnelLease lease = tunnelLeaseCache.get(adminCacheKey(config));
+        if (lease != null) {
+            return nameServerAddress(config, lease.refresh());
         }
         return config.getHost() + ":" + config.getPort();
     }
 
-    /**
-     * 获取 NameServer 地址（短生命周期消费者用）：复用 getAdmin 已建立的隧道（peek，不增减引用计数）。
-     * 隧道未建立时回退到原始地址。
-     */
-    private static String nameServer(ConnectionConfig config) {
-        int localPort = SshTunnelManager.peek(config);
-        if (localPort != -1) {
-            return "localhost:" + localPort;
-        }
-        return config.getHost() + ":" + config.getPort();
+    private static String nameServerAddress(ConnectionConfig config, int localPort) {
+        return localPort == -1
+                ? config.getHost() + ":" + config.getPort()
+                : "localhost:" + localPort;
     }
 
     // ==================== RocketMQ broker 跳板隧道 RemotingClient 装饰器 ====================
@@ -364,6 +355,10 @@ public class RocketmqService {
             try { entry.getValue().shutdown(); } catch (Exception ignored) {}
         }
         adminCache.clear();
+        for (SshTunnelManager.TunnelLease lease : tunnelLeaseCache.values()) {
+            lease.close();
+        }
+        tunnelLeaseCache.clear();
     }
 
     // ==================== Topic管理 ====================

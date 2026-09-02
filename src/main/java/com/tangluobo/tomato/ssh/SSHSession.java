@@ -9,18 +9,20 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * SSH会话管理，使用JSch库，支持多密钥认证
  */
 public class SSHSession {
 
-    private JSch jsch;
-    private Session session;
-    private ChannelShell channel;
-    private InputStream inputStream;
-    private OutputStream outputStream;
-    private boolean connected = false;
+    private volatile JSch jsch;
+    private volatile Session session;
+    private volatile ChannelShell channel;
+    private volatile InputStream inputStream;
+    private volatile OutputStream outputStream;
+    private volatile boolean connected = false;
+    private final AtomicLong lifecycle = new AtomicLong();
 
     private final String host;
     private final int port;
@@ -56,37 +58,86 @@ public class SSHSession {
      * 连接SSH服务器
      */
     public void connect() throws JSchException, IOException {
-        jsch = new JSch();
+        ChannelShell previousChannel;
+        Session previousSession;
+        long attempt;
+        synchronized (this) {
+            attempt = lifecycle.incrementAndGet();
+            connected = false;
+            previousChannel = channel;
+            previousSession = session;
+            channel = null;
+            session = null;
+            inputStream = null;
+            outputStream = null;
+        }
+        if (previousChannel != null) previousChannel.disconnect();
+        if (previousSession != null) previousSession.disconnect();
+
+        JSch newJsch = new JSch();
+        jsch = newJsch;
 
         // 密钥认证：添加所有密钥
         if (privateKeyPaths != null && !privateKeyPaths.isEmpty()) {
             for (String keyPath : privateKeyPaths) {
                 if (keyPath != null && !keyPath.isEmpty()) {
                     if (password != null && !password.isEmpty()) {
-                        jsch.addIdentity(keyPath, password);
+                        newJsch.addIdentity(keyPath, password);
                     } else {
-                        jsch.addIdentity(keyPath);
+                        newJsch.addIdentity(keyPath);
                     }
                 }
             }
         }
 
-        session = jsch.getSession(username, host, port);
+        Session newSession = newJsch.getSession(username, host, port);
+        synchronized (this) {
+            ensureCurrent(attempt);
+            session = newSession;
+        }
 
         // 无密钥时使用密码认证
         if (privateKeyPaths == null || privateKeyPaths.isEmpty()) {
-            session.setPassword(password);
+            newSession.setPassword(password);
         }
 
-        session.setConfig("StrictHostKeyChecking", "no");
-        session.connect(30000);
+        newSession.setConfig("StrictHostKeyChecking", "no");
+        newSession.setServerAliveInterval(10000);
+        newSession.setServerAliveCountMax(3);
+        ChannelShell newChannel = null;
+        try {
+            newSession.connect(30000);
+            ensureCurrent(attempt);
 
-        channel = (ChannelShell) session.openChannel("shell");
-        channel.setPtyType("xterm-256color", 80, 24, 640, 480);
-        inputStream = channel.getInputStream();
-        outputStream = channel.getOutputStream();
-        channel.connect(30000);
-        connected = true;
+            newChannel = (ChannelShell) newSession.openChannel("shell");
+            newChannel.setPtyType("xterm-256color", 80, 24, 640, 480);
+            InputStream newInput = newChannel.getInputStream();
+            OutputStream newOutput = newChannel.getOutputStream();
+            synchronized (this) {
+                ensureCurrent(attempt);
+                channel = newChannel;
+            }
+            newChannel.connect(30000);
+            synchronized (this) {
+                ensureCurrent(attempt);
+                inputStream = newInput;
+                outputStream = newOutput;
+                connected = true;
+            }
+        } catch (JSchException | IOException e) {
+            if (newChannel != null) newChannel.disconnect();
+            newSession.disconnect();
+            synchronized (this) {
+                if (session == newSession) session = null;
+                if (channel == newChannel) channel = null;
+                if (lifecycle.get() == attempt) {
+                    connected = false;
+                    inputStream = null;
+                    outputStream = null;
+                }
+            }
+            throw e;
+        }
     }
 
     /**
@@ -121,16 +172,25 @@ public class SSHSession {
      * 断开连接
      */
     public void disconnect() {
-        connected = false;
-        if (channel != null) {
-            channel.disconnect();
+        ChannelShell oldChannel;
+        Session oldSession;
+        synchronized (this) {
+            lifecycle.incrementAndGet();
+            connected = false;
+            oldChannel = channel;
+            oldSession = session;
             channel = null;
-        }
-        if (session != null) {
-            session.disconnect();
             session = null;
+            inputStream = null;
+            outputStream = null;
         }
-        inputStream = null;
-        outputStream = null;
+        if (oldChannel != null) oldChannel.disconnect();
+        if (oldSession != null) oldSession.disconnect();
+    }
+
+    private void ensureCurrent(long attempt) throws JSchException {
+        if (lifecycle.get() != attempt) {
+            throw new JSchException("SSH connection was cancelled");
+        }
     }
 }

@@ -14,6 +14,7 @@ import com.tangluobo.tomato.ssh.ContainerInspectPane;
 import com.tangluobo.tomato.ssh.SFTPFileBrowser;
 import com.tangluobo.tomato.ssh.SSHSession;
 import com.tangluobo.tomato.ssh.SSHTerminalPane;
+import com.tangluobo.tomato.ssh.PortPanel;
 import com.tangluobo.tomato.ssh.StoragePanel;
 import javafx.application.Platform;
 import javafx.scene.control.*;
@@ -27,6 +28,8 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * SSH 终端连接处理器（默认分支）。
@@ -111,6 +114,122 @@ public class SshTerminalConnectHandler implements ConnectHandler {
     }
 
     /**
+     * 双击 SSH 主机下“端口”节点：在独立标签页中打开与终端右下角一致的端口面板。
+     * 标签页持有独立 SSH 会话和跳板隧道租约，关闭时统一释放。
+     */
+    public void handlePortNodeDoubleClick(ConnectModule module, ConnectionConfig config) {
+        if (!module.ensureTabPaneInstalled()) return;
+
+        String tabId = "ports_" + config.getId();
+        for (Tab existing : module.getTerminalTabPane().getTabs()) {
+            if (tabId.equals(existing.getUserData())) {
+                module.getTerminalTabPane().getSelectionModel().select(existing);
+                module.showTerminalView();
+                return;
+            }
+        }
+
+        String password = ensurePasswordAvailable(module, config);
+        if (password == null) return;
+
+        Tab tab = new Tab(config.getName() + " - 端口");
+        tab.setUserData(tabId);
+        tab.setGraphic(ConnectModule.createFixedSizeGraphic(module.getDbNodeIcon(
+                new DatabaseNodeData(DatabaseNodeData.NodeType.SSH_SERVICE_PORT,
+                        "端口", config, null))));
+        tab.setContent(new StackPane(new ProgressIndicator()));
+
+        AtomicBoolean tabClosed = new AtomicBoolean(false);
+        AtomicReference<SshTunnelManager.TunnelLease> tunnelLease = new AtomicReference<>();
+        AtomicReference<SSHSession> sessionHolder = new AtomicReference<>();
+
+        ContextMenu tabContextMenu = new ContextMenu();
+        MenuItem sessionConfigItem = new MenuItem("会话配置");
+        sessionConfigItem.setOnAction(e -> {
+            Stage stage = (Stage) module.getTerminalTabPane().getScene().getWindow();
+            SessionConfigDialog.show(stage, config);
+            module.saveConnections();
+        });
+        MenuItem globalConfigItem = new MenuItem("全局配置");
+        globalConfigItem.setOnAction(e -> module.openSettingsTabWithSshSelected());
+        tabContextMenu.getItems().addAll(sessionConfigItem, globalConfigItem);
+        tab.setContextMenu(tabContextMenu);
+
+        tab.setOnClosed(e -> {
+            tabClosed.set(true);
+            SSHSession session = sessionHolder.getAndSet(null);
+            if (session != null) {
+                session.disconnect();
+            }
+            closeTunnelLease(tunnelLease);
+            if (module.getTerminalTabPane().getTabs().isEmpty()) {
+                module.showWelcomeView();
+            }
+        });
+
+        module.getTerminalTabPane().getTabs().add(tab);
+        module.getTerminalTabPane().getSelectionModel().select(tab);
+        module.showTerminalView();
+
+        new Thread(() -> {
+            SSHSession sshSession = null;
+            try {
+                SshTunnelManager.TunnelLease acquiredLease = SshTunnelManager.acquire(config);
+                if (tabClosed.get() || !tunnelLease.compareAndSet(null, acquiredLease)) {
+                    acquiredLease.close();
+                    return;
+                }
+
+                String host = config.getHost();
+                int port = config.getPort();
+                int tunnelLocalPort = acquiredLease.getLocalPort();
+                if (tunnelLocalPort != -1) {
+                    host = "localhost";
+                    port = tunnelLocalPort;
+                }
+
+                List<String> keyPaths = config.isUseKey() ? config.getPrivateKeyPaths() : null;
+                sshSession = new SSHSession(host, port, config.getUsername(), password, keyPaths);
+                sessionHolder.set(sshSession);
+                sshSession.connect();
+
+                SSHSession connectedSession = sshSession;
+                Platform.runLater(() -> {
+                    if (tabClosed.get()) {
+                        connectedSession.disconnect();
+                        closeTunnelLease(tunnelLease);
+                        return;
+                    }
+                    PortPanel panel = new PortPanel(connectedSession, true);
+                    tab.setContent(panel);
+                    Thread refreshThread = new Thread(panel::refresh, "SSH-PortRefresh");
+                    refreshThread.setDaemon(true);
+                    refreshThread.start();
+                });
+            } catch (Exception e) {
+                if (sshSession != null) {
+                    try { sshSession.disconnect(); } catch (Exception ignored) {}
+                }
+                closeTunnelLease(tunnelLease);
+                if (!tabClosed.get()) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("连接失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("打开端口列表失败: " + e.getMessage());
+                        alert.showAndWait();
+                        module.getTerminalTabPane().getTabs().remove(tab);
+                        if (module.getTerminalTabPane().getTabs().isEmpty()) {
+                            module.showWelcomeView();
+                        }
+                    });
+                }
+                e.printStackTrace();
+            }
+        }, "SSH-PortConnect").start();
+    }
+
+    /**
      * 双击 SSH 主机下"文件"子节点：打开独立文件浏览器标签页。
      * 建立独立的 SSH 会话（复用跳板隧道引用计数），打开 SFTP 通道，
      * 以 SFTPFileBrowser（standalone 模式）作为标签页内容。
@@ -147,6 +266,10 @@ public class SshTerminalConnectHandler implements ConnectHandler {
 
         // 持有 browser 引用，供右键菜单使用
         final SFTPFileBrowser[] browserHolder = new SFTPFileBrowser[1];
+        AtomicBoolean tabClosed = new AtomicBoolean(false);
+        AtomicReference<SshTunnelManager.TunnelLease> tunnelLease = new AtomicReference<>();
+        AtomicReference<SSHSession> sessionHolder = new AtomicReference<>();
+        AtomicReference<SFTPClient> sftpHolder = new AtomicReference<>();
 
         ContextMenu tabContextMenu = new ContextMenu();
 
@@ -175,6 +298,22 @@ public class SshTerminalConnectHandler implements ConnectHandler {
 
         tabContextMenu.getItems().addAll(sessionConfigItem, globalConfigItem);
         tab.setContextMenu(tabContextMenu);
+        tab.setOnClosed(e -> {
+            tabClosed.set(true);
+            SFTPFileBrowser browser = browserHolder[0];
+            if (browser != null) {
+                browser.disconnect();
+            } else {
+                SFTPClient sftp = sftpHolder.getAndSet(null);
+                if (sftp != null) try { sftp.disconnect(); } catch (Exception ignored) {}
+                SSHSession session = sessionHolder.getAndSet(null);
+                if (session != null) try { session.disconnect(); } catch (Exception ignored) {}
+            }
+            closeTunnelLease(tunnelLease);
+            if (module.getTerminalTabPane().getTabs().isEmpty()) {
+                module.showWelcomeView();
+            }
+        });
 
         module.getTerminalTabPane().getTabs().add(tab);
         module.getTerminalTabPane().getSelectionModel().select(tab);
@@ -182,12 +321,15 @@ public class SshTerminalConnectHandler implements ConnectHandler {
 
         // 后台建立 SSH 会话 + SFTP 通道
         new Thread(() -> {
-            int tunnelLocalPort = -1;
             SSHSession sshSession = null;
             SFTPClient sftpClient = null;
             try {
-                // 复用跳板隧道（引用计数 +1）
-                tunnelLocalPort = SshTunnelManager.resolve(config);
+                SshTunnelManager.TunnelLease acquiredLease = SshTunnelManager.acquire(config);
+                if (tabClosed.get() || !tunnelLease.compareAndSet(null, acquiredLease)) {
+                    acquiredLease.close();
+                    return;
+                }
+                int tunnelLocalPort = acquiredLease.getLocalPort();
 
                 String host = config.getHost();
                 int port = config.getPort();
@@ -198,16 +340,23 @@ public class SshTerminalConnectHandler implements ConnectHandler {
 
                 List<String> keyPaths = config.isUseKey() ? config.getPrivateKeyPaths() : null;
                 sshSession = new SSHSession(host, port, config.getUsername(), config.getPassword(), keyPaths);
+                sessionHolder.set(sshSession);
                 sshSession.connect();
 
                 sftpClient = new SFTPClient();
+                sftpHolder.set(sftpClient);
                 sftpClient.connect(sshSession.getJschSession());
 
                 final SSHSession session = sshSession;
                 final SFTPClient sftp = sftpClient;
-                final int tunnelPort = tunnelLocalPort;
 
                 Platform.runLater(() -> {
+                    if (tabClosed.get()) {
+                        try { sftp.disconnect(); } catch (Exception ignored) {}
+                        try { session.disconnect(); } catch (Exception ignored) {}
+                        closeTunnelLease(tunnelLease);
+                        return;
+                    }
                     SFTPFileBrowser browser = new SFTPFileBrowser(session, sftp, true);
                     browserHolder[0] = browser;
                     // 设置初始视图模式：会话级覆盖优先，否则用全局配置
@@ -224,31 +373,21 @@ public class SshTerminalConnectHandler implements ConnectHandler {
                     }
                     tab.setContent(browser);
                     browser.initConnection();
-
-                    tab.setOnClosed(e -> {
-                        browser.disconnect();
-                        if (tunnelPort != -1) {
-                            SshTunnelManager.release(config);
-                        }
-                        if (module.getTerminalTabPane().getTabs().isEmpty()) {
-                            module.showWelcomeView();
-                        }
-                    });
                 });
             } catch (Exception e) {
                 // 连接失败：释放资源
                 if (sftpClient != null) try { sftpClient.disconnect(); } catch (Exception ignored) {}
                 if (sshSession != null) try { sshSession.disconnect(); } catch (Exception ignored) {}
-                if (tunnelLocalPort != -1) {
-                    SshTunnelManager.release(config);
+                closeTunnelLease(tunnelLease);
+                if (!tabClosed.get()) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("连接失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("建立SFTP文件浏览器失败: " + e.getMessage());
+                        alert.showAndWait();
+                    });
                 }
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("连接失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("建立SFTP文件浏览器失败: " + e.getMessage());
-                    alert.showAndWait();
-                });
                 e.printStackTrace();
             }
         }, "SFTP-Connect").start();
@@ -527,6 +666,10 @@ public class SshTerminalConnectHandler implements ConnectHandler {
         tab.setContent(loading);
 
         ContextMenu tabContextMenu = new ContextMenu();
+        AtomicBoolean tabClosed = new AtomicBoolean(false);
+        AtomicReference<SshTunnelManager.TunnelLease> tunnelLease = new AtomicReference<>();
+        AtomicReference<SSHSession> inspectSession = new AtomicReference<>();
+        AtomicReference<ContainerInspectPane> inspectPane = new AtomicReference<>();
         MenuItem sessionConfigItem = new MenuItem("会话配置");
         sessionConfigItem.setOnAction(e -> {
             Stage stage = (Stage) module.getTerminalTabPane().getScene().getWindow();
@@ -537,6 +680,20 @@ public class SshTerminalConnectHandler implements ConnectHandler {
         globalConfigItem.setOnAction(e -> module.openSettingsTabWithSshSelected());
         tabContextMenu.getItems().addAll(sessionConfigItem, globalConfigItem);
         tab.setContextMenu(tabContextMenu);
+        tab.setOnClosed(e -> {
+            tabClosed.set(true);
+            ContainerInspectPane pane = inspectPane.getAndSet(null);
+            if (pane != null) {
+                pane.disconnect();
+            } else {
+                SSHSession session = inspectSession.getAndSet(null);
+                if (session != null) try { session.disconnect(); } catch (Exception ignored) {}
+            }
+            closeTunnelLease(tunnelLease);
+            if (module.getTerminalTabPane().getTabs().isEmpty()) {
+                module.showWelcomeView();
+            }
+        });
 
         module.getTerminalTabPane().getTabs().add(tab);
         module.getTerminalTabPane().getSelectionModel().select(tab);
@@ -544,11 +701,14 @@ public class SshTerminalConnectHandler implements ConnectHandler {
 
         // 后台建立 SSH 会话 + 创建属性面板
         new Thread(() -> {
-            int tunnelLocalPort = -1;
             SSHSession sshSession = null;
             try {
-                // 复用跳板隧道（引用计数 +1）
-                tunnelLocalPort = SshTunnelManager.resolve(config);
+                SshTunnelManager.TunnelLease acquiredLease = SshTunnelManager.acquire(config);
+                if (tabClosed.get() || !tunnelLease.compareAndSet(null, acquiredLease)) {
+                    acquiredLease.close();
+                    return;
+                }
+                int tunnelLocalPort = acquiredLease.getLocalPort();
 
                 String host = config.getHost();
                 int port = config.getPort();
@@ -559,44 +719,40 @@ public class SshTerminalConnectHandler implements ConnectHandler {
 
                 List<String> keyPaths = config.isUseKey() ? config.getPrivateKeyPaths() : null;
                 sshSession = new SSHSession(host, port, config.getUsername(), password, keyPaths);
+                inspectSession.set(sshSession);
                 sshSession.connect();
 
                 final SSHSession session = sshSession;
-                final int tunnelPort = tunnelLocalPort;
 
                 Platform.runLater(() -> {
+                    if (tabClosed.get()) {
+                        session.disconnect();
+                        closeTunnelLease(tunnelLease);
+                        return;
+                    }
                     ContainerInspectPane pane = new ContainerInspectPane(session, containerName, dockerPrefix);
+                    inspectPane.set(pane);
                     tab.setContent(pane);
                     pane.refresh();
-
-                    tab.setOnClosed(e -> {
-                        pane.disconnect();
-                        if (tunnelPort != -1) {
-                            SshTunnelManager.release(config);
-                        }
-                        if (module.getTerminalTabPane().getTabs().isEmpty()) {
-                            module.showWelcomeView();
-                        }
-                    });
                 });
             } catch (Exception e) {
                 // 连接失败：释放资源
                 if (sshSession != null) try { sshSession.disconnect(); } catch (Exception ignored) {}
-                if (tunnelLocalPort != -1) {
-                    try { SshTunnelManager.release(config); } catch (Exception ignored) {}
+                closeTunnelLease(tunnelLease);
+                if (!tabClosed.get()) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("连接失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("打开容器属性失败: " + e.getMessage());
+                        alert.showAndWait();
+                        // 移除加载占位标签页
+                        module.getTerminalTabPane().getTabs().remove(tab);
+                        if (module.getTerminalTabPane().getTabs().isEmpty()) {
+                            module.showWelcomeView();
+                        }
+                    });
                 }
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("连接失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("打开容器属性失败: " + e.getMessage());
-                    alert.showAndWait();
-                    // 移除加载占位标签页
-                    module.getTerminalTabPane().getTabs().remove(tab);
-                    if (module.getTerminalTabPane().getTabs().isEmpty()) {
-                        module.showWelcomeView();
-                    }
-                });
                 e.printStackTrace();
             }
         }, "Docker-InspectConnect").start();
@@ -630,10 +786,9 @@ public class SshTerminalConnectHandler implements ConnectHandler {
     }
 
     private String withTempSession(ConnectionConfig config, String password, SshWork work) throws Exception {
-        int tunnelLocalPort = -1;
         SSHSession sshSession = null;
-        try {
-            tunnelLocalPort = SshTunnelManager.resolve(config);
+        try (SshTunnelManager.TunnelLease tunnelLease = SshTunnelManager.acquire(config)) {
+            int tunnelLocalPort = tunnelLease.getLocalPort();
             String host = config.getHost();
             int port = config.getPort();
             if (tunnelLocalPort != -1) {
@@ -646,9 +801,6 @@ public class SshTerminalConnectHandler implements ConnectHandler {
             return work.run(sshSession);
         } finally {
             if (sshSession != null) try { sshSession.disconnect(); } catch (Exception ignored) {}
-            if (tunnelLocalPort != -1) {
-                try { SshTunnelManager.release(config); } catch (Exception ignored) {}
-            }
         }
     }
 
@@ -702,6 +854,8 @@ public class SshTerminalConnectHandler implements ConnectHandler {
      */
     private void createSshTerminalTab(ConnectModule module, ConnectionConfig config, String tabTitle, String initialCommand) {
         SSHTerminalPane terminalPane = new SSHTerminalPane();
+        AtomicBoolean tabClosed = new AtomicBoolean(false);
+        AtomicReference<SshTunnelManager.TunnelLease> tunnelLease = new AtomicReference<>();
 
         int scrollback = config.getScrollbackLines() != null ?
                 config.getScrollbackLines() : GlobalConfig.getInstance().getScrollbackLines();
@@ -748,8 +902,9 @@ public class SshTerminalConnectHandler implements ConnectHandler {
         tab.setContextMenu(tabContextMenu);
 
         tab.setOnClosed(e -> {
+            tabClosed.set(true);
             terminalPane.disconnect();
-            SshTunnelManager.release(config);
+            closeTunnelLease(tunnelLease);
             if (module.getTerminalTabPane().getTabs().isEmpty()) {
                 module.showWelcomeView();
             }
@@ -759,25 +914,26 @@ public class SshTerminalConnectHandler implements ConnectHandler {
         module.getTerminalTabPane().getSelectionModel().select(tab);
         module.showTerminalView();
 
-        // 注入跳板隧道解析回调：重连时判断是否重建隧道。
-        // 先 peek 复用活跃隧道（不改变引用计数，避免误断共享隧道）；
-        // 隧道已失效则 release 旧引用并 resolve 重建（引用计数保持平衡，未使用隧道时两步均为 -1）。
+        // 重连始终刷新本标签实际持有的租约。租约按隧道实例释放，旧会话不会误断
+        // 其他会话已经重建的新隧道。
         terminalPane.setTunnelResolver(() -> {
-            int p = SshTunnelManager.peek(config);
-            if (p != -1) {
-                return p;
+            SshTunnelManager.TunnelLease lease = tunnelLease.get();
+            if (lease == null) {
+                throw new IllegalStateException("当前 SSH 会话未持有跳板隧道");
             }
-            SshTunnelManager.release(config);
-            return SshTunnelManager.resolve(config);
+            return lease.refresh();
         });
 
-        doConnect(module, terminalPane, config, initialCommand);
+        doConnect(module, terminalPane, config, initialCommand, tunnelLease, tabClosed);
     }
 
     /**
      * 处理密码输入并触发连接
      */
-    private void doConnect(ConnectModule module, SSHTerminalPane terminalPane, ConnectionConfig config, String initialCommand) {
+    private void doConnect(ConnectModule module, SSHTerminalPane terminalPane, ConnectionConfig config,
+                           String initialCommand,
+                           AtomicReference<SshTunnelManager.TunnelLease> tunnelLease,
+                           AtomicBoolean tabClosed) {
         if (config.isUsePassword() && config.getPassword() == null) {
             PasswordPromptDialog.Result pwdResult = PasswordPromptDialog.show(
                     "输入密码",
@@ -789,60 +945,85 @@ public class SshTerminalConnectHandler implements ConnectHandler {
                 config.setSavePassword(true);
                 module.saveConnections();
             }
-            connectWithAuth(terminalPane, config, pwdResult.getPassword(), initialCommand);
+            connectWithAuth(terminalPane, config, pwdResult.getPassword(), initialCommand,
+                    tunnelLease, tabClosed);
         } else {
-            connectWithAuth(terminalPane, config, config.getPassword(), initialCommand);
+            connectWithAuth(terminalPane, config, config.getPassword(), initialCommand,
+                    tunnelLease, tabClosed);
         }
     }
 
     /**
      * 后台建立 SSH 连接（若配置了SSH跳板隧道则先建立隧道，再连接 localhost:转发端口）
      */
-    private void connectWithAuth(SSHTerminalPane terminalPane, ConnectionConfig config, String password, String initialCommand) {
+    private void connectWithAuth(SSHTerminalPane terminalPane, ConnectionConfig config, String password,
+                                 String initialCommand,
+                                 AtomicReference<SshTunnelManager.TunnelLease> tunnelLease,
+                                 AtomicBoolean tabClosed) {
         List<String> keyPaths = config.isUseKey() ? config.getPrivateKeyPaths() : null;
         new Thread(() -> {
-            // 先建立/复用跳板隧道（引用方式，按 configId+host:port 缓存并引用计数）
-            int tunnelLocalPort = -1;
+            SshTunnelManager.TunnelLease acquiredLease;
             try {
-                tunnelLocalPort = SshTunnelManager.resolve(config);
+                acquiredLease = SshTunnelManager.acquire(config);
             } catch (Exception te) {
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("连接失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("建立SSH跳板隧道失败: " + te.getMessage());
-                    alert.showAndWait();
-                    terminalPane.disconnect();
-                });
+                if (!tabClosed.get()) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("连接失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("建立SSH跳板隧道失败: " + te.getMessage());
+                        alert.showAndWait();
+                        terminalPane.disconnect();
+                    });
+                }
                 te.printStackTrace();
+                return;
+            }
+            // 标签可能在后台建隧道期间已被关闭；此时立即归还刚取得的租约。
+            if (tabClosed.get() || !tunnelLease.compareAndSet(null, acquiredLease)) {
+                acquiredLease.close();
                 return;
             }
             try {
                 String host = config.getHost();
                 int port = config.getPort();
+                int tunnelLocalPort = acquiredLease.getLocalPort();
                 if (tunnelLocalPort != -1) {
                     host = "localhost";
                     port = tunnelLocalPort;
                 }
                 terminalPane.connect(host, port, config.getUsername(), password, keyPaths);
+                if (tabClosed.get()) {
+                    terminalPane.disconnect();
+                    closeTunnelLease(tunnelLease);
+                    return;
+                }
                 // 连接成功后自动执行初始命令（如 docker exec 进入容器终端、docker logs -f 跟踪日志）
                 if (initialCommand != null && !initialCommand.isEmpty()) {
                     terminalPane.sendCommand(initialCommand);
                 }
             } catch (Exception e) {
-                if (tunnelLocalPort != -1) {
-                    SshTunnelManager.release(config);
+                closeTunnelLease(tunnelLease);
+                if (!tabClosed.get()) {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("连接失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("SSH连接失败: " + e.getMessage());
+                        alert.showAndWait();
+                        terminalPane.disconnect();
+                    });
                 }
-                Platform.runLater(() -> {
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("连接失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("SSH连接失败: " + e.getMessage());
-                    alert.showAndWait();
-                    terminalPane.disconnect();
-                });
                 e.printStackTrace();
             }
         }, "SSH-Connect").start();
+    }
+
+    private static void closeTunnelLease(
+            AtomicReference<SshTunnelManager.TunnelLease> tunnelLease) {
+        SshTunnelManager.TunnelLease lease = tunnelLease.getAndSet(null);
+        if (lease != null) {
+            lease.close();
+        }
     }
 }

@@ -25,6 +25,8 @@ import java.io.File;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * SFTP文件浏览器面板
@@ -39,6 +41,8 @@ public class SFTPFileBrowserPane extends AbstractFileBrowserPane {
     // SSH/SFTP
     private Session jschSession;
     private final SFTPClient sftpClient = new SFTPClient();
+    private final AtomicReference<SshTunnelManager.TunnelLease> tunnelLease = new AtomicReference<>();
+    private final AtomicBoolean disposed = new AtomicBoolean(false);
 
     // 编辑器 Tab 页（中心区域：文件浏览 + 多个 markdown 编辑器）
     private TabPane editorTabPane;
@@ -294,24 +298,30 @@ public class SFTPFileBrowserPane extends AbstractFileBrowserPane {
      */
     private void connectAndLoad() {
         new Thread(() -> {
-            int tunnelLocalPort = -1;
             try {
-                // 先建立/复用跳板隧道（引用方式，按 configId+host:port 缓存并引用计数）
+                SshTunnelManager.TunnelLease acquiredLease;
                 try {
-                    tunnelLocalPort = SshTunnelManager.resolve(config);
+                    acquiredLease = SshTunnelManager.acquire(config);
                 } catch (Exception te) {
-                    Platform.runLater(() -> {
-                        statusDot.setFill(Color.RED);
-                        stateLabel.setText("连接失败");
-                        Alert alert = new Alert(Alert.AlertType.ERROR);
-                        alert.setTitle("连接失败");
-                        alert.setHeaderText(null);
-                        alert.setContentText("建立SSH跳板隧道失败: " + te.getMessage());
-                        alert.showAndWait();
-                    });
+                    if (!disposed.get()) {
+                        Platform.runLater(() -> {
+                            statusDot.setFill(Color.RED);
+                            stateLabel.setText("连接失败");
+                            Alert alert = new Alert(Alert.AlertType.ERROR);
+                            alert.setTitle("连接失败");
+                            alert.setHeaderText(null);
+                            alert.setContentText("建立SSH跳板隧道失败: " + te.getMessage());
+                            alert.showAndWait();
+                        });
+                    }
                     te.printStackTrace();
                     return;
                 }
+                if (disposed.get() || !tunnelLease.compareAndSet(null, acquiredLease)) {
+                    acquiredLease.close();
+                    return;
+                }
+                int tunnelLocalPort = acquiredLease.getLocalPort();
                 String host = config.getHost();
                 int port = config.getPort();
                 if (tunnelLocalPort != -1) {
@@ -337,9 +347,16 @@ public class SFTPFileBrowserPane extends AbstractFileBrowserPane {
                     jschSession.setPassword(config.getPassword());
                 }
                 jschSession.setConfig("StrictHostKeyChecking", "no");
+                jschSession.setServerAliveInterval(10000);
+                jschSession.setServerAliveCountMax(3);
                 jschSession.connect(30000);
 
                 sftpClient.connect(jschSession);
+
+                if (disposed.get()) {
+                    disconnectResources();
+                    return;
+                }
 
                 String home = sftpClient.pwd();
                 Platform.runLater(() -> {
@@ -348,18 +365,18 @@ public class SFTPFileBrowserPane extends AbstractFileBrowserPane {
                     navigateTo(home);
                 });
             } catch (Exception e) {
-                if (tunnelLocalPort != -1) {
-                    SshTunnelManager.release(config);
+                disconnectResources();
+                if (!disposed.get()) {
+                    Platform.runLater(() -> {
+                        statusDot.setFill(Color.RED);
+                        stateLabel.setText("连接失败");
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("连接失败");
+                        alert.setHeaderText(null);
+                        alert.setContentText("无法连接到 " + config.getName() + ": " + e.getMessage());
+                        alert.showAndWait();
+                    });
                 }
-                Platform.runLater(() -> {
-                    statusDot.setFill(Color.RED);
-                    stateLabel.setText("连接失败");
-                    Alert alert = new Alert(Alert.AlertType.ERROR);
-                    alert.setTitle("连接失败");
-                    alert.setHeaderText(null);
-                    alert.setContentText("无法连接到 " + config.getName() + ": " + e.getMessage());
-                    alert.showAndWait();
-                });
                 e.printStackTrace();
             }
         }, "SFTP-Connect").start();
@@ -905,17 +922,25 @@ public class SFTPFileBrowserPane extends AbstractFileBrowserPane {
      * 断开连接，释放资源
      */
     public void disconnect() {
+        disposed.set(true);
         new Thread(() -> {
-            try {
-                sftpClient.disconnect();
-            } catch (Exception ignored) {}
-            if (jschSession != null && jschSession.isConnected()) {
-                jschSession.disconnect();
-            }
-            jschSession = null;
-            // 释放跳板隧道引用（引用计数归零时才真正断开隧道，支持多会话共享）
-            SshTunnelManager.release(config);
+            disconnectResources();
         }, "SFTP-Disconnect").start();
+    }
+
+    private void disconnectResources() {
+        try {
+            sftpClient.disconnect();
+        } catch (Exception ignored) {}
+        Session session = jschSession;
+        jschSession = null;
+        if (session != null && session.isConnected()) {
+            session.disconnect();
+        }
+        SshTunnelManager.TunnelLease lease = tunnelLease.getAndSet(null);
+        if (lease != null) {
+            lease.close();
+        }
     }
 
     // ==================== 工具方法 ====================

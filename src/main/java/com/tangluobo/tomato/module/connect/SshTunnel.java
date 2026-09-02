@@ -3,8 +3,6 @@ package com.tangluobo.tomato.module.connect;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
 
-import java.io.IOException;
-import java.net.ServerSocket;
 import java.util.List;
 
 /**
@@ -13,9 +11,9 @@ import java.util.List;
  */
 public class SshTunnel {
 
-    private Session session;
-    private int forwardedLocalPort;
-    private boolean active = false;
+    private volatile Session session;
+    private volatile int forwardedLocalPort;
+    private volatile boolean active = false;
 
     private final String sshHost;
     private final int sshPort;
@@ -74,7 +72,9 @@ public class SshTunnel {
      *
      * @return 本地转发端口号
      */
-    public int connect() throws Exception {
+    public synchronized int connect() throws Exception {
+        // 同一个对象重连前先清理旧转发，避免遗留监听端口和 JSch 线程。
+        disconnect();
         JSch jsch = new JSch();
 
         // 密钥认证
@@ -90,28 +90,31 @@ public class SshTunnel {
             }
         }
 
-        session = jsch.getSession(sshUsername, sshHost, sshPort);
+        Session newSession = jsch.getSession(sshUsername, sshHost, sshPort);
 
         // 无密钥时使用密码认证
         if (sshPrivateKeyPaths == null || sshPrivateKeyPaths.isEmpty()) {
-            session.setPassword(sshPassword);
+            newSession.setPassword(sshPassword);
         }
 
-        session.setConfig("StrictHostKeyChecking", "no");
+        newSession.setConfig("StrictHostKeyChecking", "no");
         // 开启SSH服务端保活：每10s发送keepalive，连续3次未响应则判定连接已断开，
         // 使 session.isConnected() 能在约30s内反映出真实连接状态，避免隧道已死但isActive()仍返回true导致复用死端口无法重连。
-        session.setServerAliveInterval(10000);
-        session.setServerAliveCountMax(3);
-        session.connect(30000);
+        newSession.setServerAliveInterval(10000);
+        newSession.setServerAliveCountMax(3);
+        try {
+            newSession.connect(30000);
 
-        // 分配本地空闲端口
-        int localPort = findFreePort();
-
-        // 创建本地端口转发：localhost:localPort -> targetHost:targetPort
-        forwardedLocalPort = session.setPortForwardingL(localPort, targetHost, targetPort);
-        active = true;
-
-        return forwardedLocalPort;
+            // 让 JSch 原子地分配空闲端口，避免“先探测再绑定”之间被其他进程抢占。
+            int localPort = newSession.setPortForwardingL(0, targetHost, targetPort);
+            session = newSession;
+            forwardedLocalPort = localPort;
+            active = true;
+            return localPort;
+        } catch (Exception e) {
+            newSession.disconnect();
+            throw e;
+        }
     }
 
     /**
@@ -131,24 +134,19 @@ public class SshTunnel {
     /**
      * 关闭SSH通道
      */
-    public void disconnect() {
+    public synchronized void disconnect() {
         active = false;
-        if (session != null) {
+        Session oldSession = session;
+        session = null;
+        if (oldSession != null) {
             try {
-                session.delPortForwardingL(forwardedLocalPort);
+                if (forwardedLocalPort > 0) {
+                    oldSession.delPortForwardingL(forwardedLocalPort);
+                }
             } catch (Exception ignored) {}
-            session.disconnect();
-            session = null;
+            oldSession.disconnect();
         }
+        forwardedLocalPort = 0;
     }
 
-    /**
-     * 查找本地空闲端口
-     */
-    private static int findFreePort() throws IOException {
-        try (ServerSocket ss = new ServerSocket(0)) {
-            ss.setReuseAddress(true);
-            return ss.getLocalPort();
-        }
-    }
 }

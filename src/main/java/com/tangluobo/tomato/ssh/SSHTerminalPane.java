@@ -62,7 +62,7 @@ public class SSHTerminalPane extends BorderPane {
     // 断开连接回调
     private Runnable onDisconnect;
 
-    // SSH跳板隧道解析回调：重连时判断是否需要重建隧道（先peek复用活跃隧道，失效则release+resolve重建），
+    // SSH跳板隧道解析回调：重连时刷新当前终端持有的隧道租约，
     // 返回本地转发端口；未使用隧道返回 -1。由持有ConnectionConfig的连接处理器注入，避免ssh包反向依赖module.connect。
     private TunnelResolver tunnelResolver;
 
@@ -914,7 +914,7 @@ public class SSHTerminalPane extends BorderPane {
 
                 // 走跳板隧道时，重连必须重新解析隧道：旧隧道可能已随SSH断开而失效，
                 // 直接复用初始连接缓存的 localhost:旧转发端口 会因本地转发端口无监听而 Connection refused。
-                // 回调内部先 peek 复用活跃隧道，失效则 release 旧引用并 resolve 重建（引用计数保持平衡）。
+                // 回调只刷新当前终端的租约，旧隧道的释放不会影响其他终端重建的新隧道。
                 if (tunnelResolver != null) {
                     int tunnelPort = tunnelResolver.resolve();
                     if (tunnelPort != -1) {
@@ -997,7 +997,7 @@ public class SSHTerminalPane extends BorderPane {
 
     /**
      * SSH跳板隧道解析回调：重连时调用，返回本地转发端口；未使用隧道返回 -1。
-     * 实现应先 peek 复用活跃隧道，失效时 release 旧引用并 resolve 重建。
+     * 实现应刷新当前终端持有的租约，并返回该租约对应的端口。
      */
     @FunctionalInterface
     public interface TunnelResolver {

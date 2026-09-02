@@ -1600,13 +1600,19 @@ public class ConnectModule implements Module {
                     ssh.handleStorageNodeDoubleClick(this, data.getConnectionConfig());
                 }
             }
+            case SSH_SERVICE_PORT -> {
+                ConnectHandler handler = createConnectHandler(data.getConnectionConfig());
+                if (handler instanceof SshTerminalConnectHandler ssh) {
+                    ssh.handlePortNodeDoubleClick(this, data.getConnectionConfig());
+                }
+            }
             case SSH_CONTAINER -> {
                 ConnectHandler handler = createConnectHandler(data.getConnectionConfig());
                 if (handler instanceof SshTerminalConnectHandler ssh) {
                     ssh.handleContainerNodeDoubleClick(this, item, data);
                 }
             }
-            case SSH_SERVICE_SERVICE, SSH_SERVICE_PORT -> { /* TODO */ }
+            case SSH_SERVICE_SERVICE -> { /* TODO */ }
         }
     }
 

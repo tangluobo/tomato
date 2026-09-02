@@ -2,9 +2,8 @@ package com.tangluobo.tomato.module.connect.service;
 
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.google.gson.JsonParseException;
-import com.tangluobo.tomato.module.connect.ConfigManager;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
-import com.tangluobo.tomato.module.connect.SshTunnel;
+import com.tangluobo.tomato.module.connect.SshTunnelManager;
 import io.minio.CopyObjectArgs;
 import io.minio.CopySource;
 import io.minio.GetObjectArgs;
@@ -47,8 +46,8 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class S3Service {
 
-    // SSH隧道缓存：configId + "_" + targetHost:targetPort -> SshTunnel
-    private static final Map<String, SshTunnel> tunnelCache = new ConcurrentHashMap<>();
+    // SSH隧道租约缓存：configId + "_" + targetHost:targetPort -> TunnelLease
+    private static final Map<String, SshTunnelManager.TunnelLease> tunnelCache = new ConcurrentHashMap<>();
 
     /**
      * 创建MinIO客户端连接
@@ -205,7 +204,7 @@ public class S3Service {
      * 建立/复用 SSH 隧道，返回指向本地转发端口的 endpoint。
      * 隧道通过引用的 SSH 主机（sshTunnelHostId）建立，目标为 S3 endpoint 解析出的 host:port。
      */
-    private static String setupSshTunnel(ConnectionConfig config, String originalEndpoint) throws Exception {
+    private static synchronized String setupSshTunnel(ConnectionConfig config, String originalEndpoint) {
         URI uri = URI.create(originalEndpoint);
         String targetHost = uri.getHost();
         int targetPort = uri.getPort();
@@ -215,62 +214,27 @@ public class S3Service {
         String scheme = uri.getScheme() != null ? uri.getScheme() : "http";
 
         String tunnelKey = config.getId() + "_" + targetHost + ":" + targetPort;
-        SshTunnel tunnel = tunnelCache.get(tunnelKey);
-        if (tunnel != null && tunnel.isActive()) {
-            return scheme + "://localhost:" + tunnel.getForwardedLocalPort();
-        }
-
-        // 查找引用的 SSH 主机配置
-        ConnectionConfig sshHost = findSshHostConfig(config.getSshTunnelHostId());
-        if (sshHost == null) {
-            throw new RuntimeException("找不到引用的SSH主机配置(ID: " + config.getSshTunnelHostId() + ")");
-        }
-
-        // 用 SSH 主机的认证信息建立隧道，目标为 S3 endpoint 的 host:port
-        List<String> keyPaths = sshHost.isUseKey() ? sshHost.getPrivateKeyPaths() : null;
-        String password = sshHost.isUsePassword() ? sshHost.getPassword() : null;
-        if (!sshHost.isUsePassword() && sshHost.isUseKey() && sshHost.getPassword() != null) {
-            password = sshHost.getPassword();
-        }
-
-        tunnel = new SshTunnel(
-            sshHost.getHost(),
-            sshHost.getPort(),
-            sshHost.getUsername(),
-            password,
-            keyPaths,
-            targetHost,
-            targetPort
-        );
-        int localPort = tunnel.connect();
-        tunnelCache.put(tunnelKey, tunnel);
-
-        return scheme + "://localhost:" + localPort;
-    }
-
-    /**
-     * 根据 sshTunnelHostId 查找引用的 SSH 主机配置
-     */
-    private static ConnectionConfig findSshHostConfig(String hostId) {
-        if (hostId == null) return null;
-        try {
-            List<ConnectionConfig> all = ConfigManager.loadConnections();
-            for (ConnectionConfig c : all) {
-                if (hostId.equals(c.getId())) return c;
+        SshTunnelManager.TunnelLease lease = tunnelCache.get(tunnelKey);
+        if (lease != null) {
+            try {
+                return scheme + "://localhost:" + lease.refresh();
+            } catch (IllegalStateException e) {
+                tunnelCache.remove(tunnelKey, lease);
             }
-        } catch (Exception e) {
-            e.printStackTrace();
         }
-        return null;
+
+        lease = SshTunnelManager.acquire(config, targetHost, targetPort);
+        tunnelCache.put(tunnelKey, lease);
+        return scheme + "://localhost:" + lease.getLocalPort();
     }
 
     /**
      * 关闭指定连接的所有 SSH 隧道（关闭S3标签页时调用）
      */
-    public static void closeSshTunnel(String configId) {
+    public static synchronized void closeSshTunnel(String configId) {
         tunnelCache.entrySet().removeIf(entry -> {
             if (entry.getKey().startsWith(configId + "_")) {
-                entry.getValue().disconnect();
+                entry.getValue().close();
                 return true;
             }
             return false;
