@@ -2,6 +2,8 @@ package com.tangluobo.tomato.module.connect;
 
 import com.tangluobo.tomato.module.connect.service.OssService;
 import com.tangluobo.tomato.module.connect.service.S3Service;
+import com.tangluobo.tomato.module.connect.markdown.syntaxhighlighter.IdeaCodeHighlighter;
+import com.tangluobo.tomato.module.connect.markdown.syntaxhighlighter.IdeaCodeHighlighter.Token;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
@@ -15,6 +17,7 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.input.MouseButton;
+import javafx.scene.image.ImageView;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Text;
@@ -60,12 +63,14 @@ import org.commonmark.renderer.html.HtmlNodeRendererFactory;
 import org.commonmark.renderer.html.HtmlRenderer;
 import org.commonmark.renderer.html.HtmlWriter;
 import org.fxmisc.flowless.VirtualizedScrollPane;
+import org.fxmisc.richtext.LineNumberFactory;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
 
 import de.jensd.fx.glyphs.fontawesome.FontAwesomeIcon;
 import de.jensd.fx.glyphs.fontawesome.utils.FontAwesomeIconFactory;
 
 import java.io.ByteArrayOutputStream;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -95,16 +100,19 @@ public class MarkdownEditorPane extends BorderPane {
         void save(String content, Runnable onSuccess, Consumer<String> onError);
     }
 
+    /** 异步读取 Markdown 引用的相对资源（图片等），回调始终应切回 JavaFX 线程。 */
+    @FunctionalInterface
+    public interface ResourceLoader {
+        void load(String source, Consumer<byte[]> onSuccess, Consumer<String> onError);
+    }
+
     private final String displayName;
     private final Storage storage;
+    private final ResourceLoader resourceLoader;
 
     private final MarkdownTextArea editor;
     private final VirtualizedScrollPane<MarkdownTextArea> editorScroll;
     private final HBox editorBox;
-    private final VBox lineNumberBox;
-    private final java.util.List<Label> lineNumberLabels = new java.util.ArrayList<>();
-    private static final int LINE_HEIGHT_PX = 17; // Consolas 13px 行高，与编辑区一致
-    private static final int MAX_PREALLOC_LINES = 5000;
     // 预览面板：VBox 内混合 TextFlow/VBox/StackPane（段落/标题/引用/代码块等块级结构）+ GridPane（可视表格）
     private final VBox previewBox;
     private final ScrollPane previewScroll;
@@ -142,6 +150,8 @@ public class MarkdownEditorPane extends BorderPane {
     private static final Collection<String> STYLE_ITALIC = List.of("md-italic");
     private static final Collection<String> STYLE_LISTMARK = List.of("md-listmark");
     private static final Collection<String> STYLE_QUOTEMARK = List.of("md-quotemark");
+    private static final Collection<String> STYLE_CODE_FENCE = List.of("md-code-fence");
+    private static final Collection<String> STYLE_CODE_LANGUAGE = List.of("md-code-language");
     private static final Collection<String> STYLE_EMPTY = List.of();
 
     // 预览解析器：解析非表格片段的 Markdown（Parser 线程安全，构建一次复用）。
@@ -158,6 +168,9 @@ public class MarkdownEditorPane extends BorderPane {
             "|(?<QUOTEMARK>^>\\s)",
             java.util.regex.Pattern.MULTILINE
     );
+    private static final java.util.regex.Pattern OPEN_FENCE_PATTERN = java.util.regex.Pattern.compile(
+            "^( {0,3})(`{3,}|~{3,})(?:[ \\t]*([^\\s`]+).*)?$"
+    );
 
     // 自动续行匹配：前缀（列表/引用/任务标记）+ 行内容
     private static final java.util.regex.Pattern AUTO_INDENT_PATTERN = java.util.regex.Pattern.compile(
@@ -168,6 +181,9 @@ public class MarkdownEditorPane extends BorderPane {
 
     // 预览渲染防抖
     private final PauseTransition previewDebounce = new PauseTransition(new Duration(250));
+    // 全文语法高亮防抖，避免输入时每个按键都重新扫描整篇文档。
+    private final PauseTransition highlightDebounce = new PauseTransition(new Duration(75));
+    private String lastPreviewContent;
 
     // ==================== Alt+鼠标矩形（列）选择 ====================
     private boolean rectSelecting = false;           // 是否正在进行矩形选择
@@ -177,7 +193,7 @@ public class MarkdownEditorPane extends BorderPane {
 
     /**
      * S3/OSS 编辑器构造：通过 config/bucket/key 保存到对象存储。
-     * 委托给通用 {@link #MarkdownEditorPane(String, String, Storage)}。
+     * 同时注入基于当前 key 的相对图片加载器。
      */
     public MarkdownEditorPane(ConnectionConfig config, String bucket, String key, String displayName, String initialContent) {
         this(displayName, initialContent, (content, onSuccess, onError) -> new Thread(() -> {
@@ -192,7 +208,7 @@ public class MarkdownEditorPane extends BorderPane {
             } catch (Exception e) {
                 Platform.runLater(() -> onError.accept(e.getMessage()));
             }
-        }, "MD-Save").start());
+        }, "MD-Save").start(), createObjectStorageResourceLoader(config, bucket, key));
     }
 
     /**
@@ -200,8 +216,20 @@ public class MarkdownEditorPane extends BorderPane {
      * 可对接 S3/OSS/本地文件等任意后端。
      */
     public MarkdownEditorPane(String displayName, String initialContent, Storage storage) {
+        this(displayName, initialContent, storage, null);
+    }
+
+    /** 通用构造，可额外注入相对图片资源加载器。 */
+    public MarkdownEditorPane(String displayName, String initialContent, Storage storage, ResourceLoader resourceLoader) {
         this.displayName = displayName;
         this.storage = storage;
+        this.resourceLoader = resourceLoader;
+        this.highlightDebounce.setOnFinished(event -> refreshHighlightWithRect());
+        this.previewDebounce.setOnFinished(event -> {
+            if (currentMode != Mode.EDIT) {
+                updatePreview();
+            }
+        });
 
         this.editor = new MarkdownTextArea();
         this.editor.setWrapText(false);
@@ -210,6 +238,8 @@ public class MarkdownEditorPane extends BorderPane {
                 "-fx-background-color: white; -fx-padding: 0; -fx-text-fill: #333;"
         );
         this.editor.getStylesheets().add(getClass().getResource("/css/markdown-editor-highlight.css").toExternalForm());
+        // RichTextFX 仅为当前可见段落创建行号节点，替代原先每次打开都创建 5000 个 Label。
+        this.editor.setParagraphGraphicFactory(LineNumberFactory.get(editor));
 
         this.editorScroll = new VirtualizedScrollPane<>(editor);
         this.editorScroll.getStyleClass().add("session-scroll-pane");
@@ -218,56 +248,14 @@ public class MarkdownEditorPane extends BorderPane {
                 "-fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0; -fx-border-insets: 0;"
         );
 
-        // 编辑器行号区：VBox + Label 列表（参考 SqlEditorView，避免 TextArea 自带多余滚动条）
-        this.lineNumberBox = new VBox();
-        this.lineNumberBox.setStyle("-fx-background-color: #f5f5f5; -fx-padding: 0;");
-        this.lineNumberBox.setMinWidth(40);
-        this.lineNumberBox.setPrefWidth(40);
-        this.lineNumberBox.setMaxWidth(40);
-        // 不驱动父布局高度，由父容器(HBox)分配空间后被动填充
-        this.lineNumberBox.setMinHeight(0);
-        this.lineNumberBox.setPrefHeight(0);
-
-        // 预分配 MAX_PREALLOC_LINES 个 Label，避免运行时频繁创建
-        for (int i = 1; i <= MAX_PREALLOC_LINES; i++) {
-            Label label = new Label(Integer.toString(i));
-            label.setStyle(
-                    "-fx-font-family: 'Consolas', monospace; -fx-font-size: 13px; " +
-                    "-fx-text-fill: #999; -fx-alignment: CENTER_RIGHT; " +
-                    "-fx-padding: 0 6 0 4; -fx-pref-height: " + LINE_HEIGHT_PX + "; -fx-min-height: " + LINE_HEIGHT_PX + ";"
-            );
-            label.setVisible(false);
-            label.setManaged(false);
-            lineNumberLabels.add(label);
-            lineNumberBox.getChildren().add(label);
-        }
-        // 底部占位，撑住高度
-        Region filler = new Region();
-        VBox.setVgrow(filler, Priority.ALWAYS);
-        lineNumberBox.getChildren().add(filler);
-
-        // 将行号区和编辑器滚动面板组合
+        // 编辑器容器；行号由 RichTextFX 的虚拟段落图形提供。
         this.editorBox = new HBox(0);
-        this.editorBox.getChildren().addAll(lineNumberBox, editorScroll);
+        this.editorBox.getChildren().add(editorScroll);
         this.editorBox.setStyle("-fx-background-color: white; -fx-background-insets: 0; -fx-padding: 0;");
-        HBox.setHgrow(lineNumberBox, Priority.NEVER);
         HBox.setHgrow(editorScroll, Priority.ALWAYS);
         HBox.setHgrow(editorBox, Priority.ALWAYS);
         // 不驱动SplitPane分配，被动接受SplitPane给的空间
         this.editorBox.setMinHeight(0);
-
-        // 同步行号内容
-        editor.textProperty().addListener((obs, oldVal, newVal) -> {
-            updateLineNumbers(newVal);
-        });
-        
-        // 同步滚动：监听编辑器的 estimatedScrollYProperty，行号直接 translateY 反平移（参考 SqlEditorView）
-        editor.estimatedScrollYProperty().addListener((obs, oldVal, newVal) -> {
-            lineNumberBox.setTranslateY(-newVal.doubleValue());
-        });
-
-        // 初始行号
-        updateLineNumbers("");
 
         // 编辑器右键菜单：剪切/复制/粘贴/全选
         setupEditorContextMenu();
@@ -301,16 +289,14 @@ public class MarkdownEditorPane extends BorderPane {
         if (initialContent == null) initialContent = "";
         this.originalContent = initialContent;
         this.editor.replaceText(initialContent);
-        refreshHighlightWithRect();
-        updatePreview();
 
-        // 编辑器内容变化：实时更新高亮与预览（纯编辑模式下不渲染预览以省开销）
+        // 编辑器内容变化：防抖更新全文高亮与预览，避免每次按键同步重建整篇内容。
         editor.textProperty().addListener((obs, oldVal, newVal) -> {
             // 文本改变后矩形选择的偏移不再可靠，清除之
             if (hasRectSelection()) clearRectSelection();
-            refreshHighlightWithRect();
+            scheduleHighlightUpdate();
             if (currentMode != Mode.EDIT) {
-                updatePreview();
+                schedulePreviewUpdate();
             }
             boolean nowModified = !newVal.equals(originalContent);
             if (nowModified != modified) {
@@ -424,6 +410,8 @@ public class MarkdownEditorPane extends BorderPane {
         });
 
         applyMode();
+        // 首屏先挂载编辑器，再异步完成全文高亮；applyMode 已安排首次预览。
+        scheduleHighlightUpdate();
     }
 
     // ==================== 工具栏 ====================
@@ -522,16 +510,27 @@ public class MarkdownEditorPane extends BorderPane {
     private void applyMode() {
         centerContainer.getChildren().clear();
         switch (currentMode) {
-            case EDIT -> centerContainer.getChildren().setAll(editorBox);
+            case EDIT -> {
+                previewDebounce.stop();
+                centerContainer.getChildren().setAll(editorBox);
+            }
             case EDIT_PREVIEW -> {
                 centerContainer.getChildren().setAll(splitPane);
-                updatePreview();
+                schedulePreviewUpdate();
             }
             case PREVIEW -> {
                 centerContainer.getChildren().setAll(previewScroll);
-                updatePreview();
+                schedulePreviewUpdate();
             }
         }
+    }
+
+    private void scheduleHighlightUpdate() {
+        highlightDebounce.playFromStart();
+    }
+
+    private void schedulePreviewUpdate() {
+        previewDebounce.playFromStart();
     }
 
     // ==================== 编辑器操作 ====================
@@ -741,32 +740,151 @@ public class MarkdownEditorPane extends BorderPane {
 
     // ==================== 语法高亮 ====================
 
+    private record StyledRange(int start, int end, Collection<String> style) {
+    }
+
+    private record FencedRegion(int openStart, int markerStart, int markerEnd, int openLineEnd,
+                                int contentStart, int contentEnd, int closeStart, int closeEnd,
+                                String language) {
+    }
+
     private void applyHighlighting() {
         String text = editor.getText();
-        if (text.isEmpty()) return;
+        if (text.isEmpty()) {
+            editor.setStyleSpans(0,
+                    new StyleSpansBuilder<Collection<String>>().add(STYLE_EMPTY, 0).create());
+            return;
+        }
         try {
-            java.util.regex.Matcher m = MD_PATTERN.matcher(text);
             StyleSpansBuilder<Collection<String>> b = new StyleSpansBuilder<>();
-            int last = 0;
-            while (m.find()) {
-                Collection<String> style;
-                if (m.group("HEADING") != null) style = STYLE_HEADING;
-                else if (m.group("CODE") != null) style = STYLE_CODE;
-                else if (m.group("LINK") != null) style = STYLE_LINK;
-                else if (m.group("BOLD") != null) style = STYLE_BOLD;
-                else if (m.group("ITALIC") != null) style = STYLE_ITALIC;
-                else if (m.group("LISTMARK") != null) style = STYLE_LISTMARK;
-                else if (m.group("QUOTEMARK") != null) style = STYLE_QUOTEMARK;
-                else style = STYLE_EMPTY;
-                if (m.start() > last) b.add(STYLE_EMPTY, m.start() - last);
-                b.add(style, m.end() - m.start());
-                last = m.end();
+            for (StyledRange range : editorStyleRanges(text)) {
+                b.add(range.style(), range.end() - range.start());
             }
-            if (last < text.length()) b.add(STYLE_EMPTY, text.length() - last);
             editor.setStyleSpans(0, b.create());
         } catch (Exception e) {
             System.err.println("Markdown高亮异常: " + e.getMessage());
         }
+    }
+
+    /**
+     * 先识别 fenced code block，再分别处理普通 Markdown 与代码 token，避免 Markdown
+     * 的星号、井号等规则污染代码内容。返回的区间连续覆盖全文。
+     */
+    private static List<StyledRange> editorStyleRanges(String text) {
+        List<StyledRange> ranges = new ArrayList<>();
+        int cursor = 0;
+        for (FencedRegion fence : findFencedRegions(text)) {
+            addMarkdownRanges(ranges, text, cursor, fence.openStart());
+            addRange(ranges, fence.openStart(), fence.markerStart(), STYLE_EMPTY);
+            addRange(ranges, fence.markerStart(), fence.markerEnd(), STYLE_CODE_FENCE);
+            addRange(ranges, fence.markerEnd(), fence.openLineEnd(), STYLE_CODE_LANGUAGE);
+            addRange(ranges, fence.openLineEnd(), fence.contentStart(), STYLE_EMPTY);
+
+            int codeOffset = fence.contentStart();
+            String code = text.substring(fence.contentStart(), fence.contentEnd());
+            for (Token token : IdeaCodeHighlighter.tokenize(code, fence.language())) {
+                Collection<String> style = List.of(token.type().cssClass());
+                addRange(ranges, codeOffset, codeOffset + token.text().length(), style);
+                codeOffset += token.text().length();
+            }
+            addRange(ranges, fence.closeStart(), fence.closeEnd(), STYLE_CODE_FENCE);
+            cursor = fence.closeEnd();
+        }
+        addMarkdownRanges(ranges, text, cursor, text.length());
+        return ranges;
+    }
+
+    private static void addMarkdownRanges(List<StyledRange> ranges, String text, int start, int end) {
+        if (start >= end) return;
+        java.util.regex.Matcher matcher = MD_PATTERN.matcher(text.substring(start, end));
+        int cursor = start;
+        while (matcher.find()) {
+            int matchStart = start + matcher.start();
+            int matchEnd = start + matcher.end();
+            addRange(ranges, cursor, matchStart, STYLE_EMPTY);
+            addRange(ranges, matchStart, matchEnd, markdownStyle(matcher));
+            cursor = matchEnd;
+        }
+        addRange(ranges, cursor, end, STYLE_EMPTY);
+    }
+
+    private static Collection<String> markdownStyle(java.util.regex.Matcher matcher) {
+        if (matcher.group("HEADING") != null) return STYLE_HEADING;
+        if (matcher.group("CODE") != null) return STYLE_CODE;
+        if (matcher.group("LINK") != null) return STYLE_LINK;
+        if (matcher.group("BOLD") != null) return STYLE_BOLD;
+        if (matcher.group("ITALIC") != null) return STYLE_ITALIC;
+        if (matcher.group("LISTMARK") != null) return STYLE_LISTMARK;
+        if (matcher.group("QUOTEMARK") != null) return STYLE_QUOTEMARK;
+        return STYLE_EMPTY;
+    }
+
+    private static void addRange(List<StyledRange> ranges, int start, int end, Collection<String> style) {
+        if (start >= end) return;
+        if (!ranges.isEmpty()) {
+            StyledRange previous = ranges.get(ranges.size() - 1);
+            if (previous.end() == start && previous.style().equals(style)) {
+                ranges.set(ranges.size() - 1, new StyledRange(previous.start(), end, style));
+                return;
+            }
+        }
+        ranges.add(new StyledRange(start, end, style));
+    }
+
+    private static List<FencedRegion> findFencedRegions(String text) {
+        List<FencedRegion> result = new ArrayList<>();
+        int lineStart = 0;
+        while (lineStart < text.length()) {
+            int rawLineEnd = text.indexOf('\n', lineStart);
+            if (rawLineEnd < 0) rawLineEnd = text.length();
+            int lineEnd = rawLineEnd > lineStart && text.charAt(rawLineEnd - 1) == '\r'
+                    ? rawLineEnd - 1 : rawLineEnd;
+            String line = text.substring(lineStart, lineEnd);
+            java.util.regex.Matcher opener = OPEN_FENCE_PATTERN.matcher(line);
+            if (!opener.matches()) {
+                lineStart = rawLineEnd < text.length() ? rawLineEnd + 1 : text.length();
+                continue;
+            }
+
+            String marker = opener.group(2);
+            char markerChar = marker.charAt(0);
+            int markerLength = marker.length();
+            int contentStart = rawLineEnd < text.length() ? rawLineEnd + 1 : text.length();
+            int scanStart = contentStart;
+            int closeStart = text.length();
+            int closeEnd = text.length();
+            while (scanStart < text.length()) {
+                int closeRawEnd = text.indexOf('\n', scanStart);
+                if (closeRawEnd < 0) closeRawEnd = text.length();
+                int closeLineEnd = closeRawEnd > scanStart && text.charAt(closeRawEnd - 1) == '\r'
+                        ? closeRawEnd - 1 : closeRawEnd;
+                String candidate = text.substring(scanStart, closeLineEnd);
+                if (isClosingFence(candidate, markerChar, markerLength)) {
+                    closeStart = scanStart;
+                    closeEnd = closeRawEnd < text.length() ? closeRawEnd + 1 : closeRawEnd;
+                    break;
+                }
+                scanStart = closeRawEnd < text.length() ? closeRawEnd + 1 : text.length();
+            }
+            String language = IdeaCodeHighlighter.languageFromInfo(opener.group(3));
+            result.add(new FencedRegion(lineStart, lineStart + opener.start(2), lineStart + opener.end(2),
+                    lineEnd, contentStart, closeStart, closeStart, closeEnd, language));
+            lineStart = closeEnd;
+        }
+        return result;
+    }
+
+    private static boolean isClosingFence(String line, char marker, int minimumLength) {
+        int i = 0;
+        while (i < line.length() && i < 3 && line.charAt(i) == ' ') i++;
+        int markerStart = i;
+        while (i < line.length() && line.charAt(i) == marker) i++;
+        if (i - markerStart < minimumLength) return false;
+        while (i < line.length()) {
+            if (!Character.isWhitespace(line.charAt(i))) return false;
+            i++;
+        }
+        return true;
     }
 
     // ==================== Alt+鼠标矩形选择辅助方法 ====================
@@ -824,26 +942,20 @@ public class MarkdownEditorPane extends BorderPane {
             editor.setStyleSpans(0, new StyleSpansBuilder<Collection<String>>().add(STYLE_EMPTY, 0).create());
             return;
         }
+        if (!hasRectSelection()) {
+            // 普通编辑无需创建“每字符一个元素”的临时数组，直接使用紧凑 StyleSpans。
+            applyHighlighting();
+            return;
+        }
         try {
-            // 第一步：生成语法高亮 spans（与 applyHighlighting 相同）
-            java.util.regex.Matcher m = MD_PATTERN.matcher(text);
             // 用列表保存每个字符的样式，以便后续叠加
             int len = text.length();
             @SuppressWarnings("unchecked")
             Collection<String>[] baseStyles = new Collection[len];
             java.util.Arrays.fill(baseStyles, STYLE_EMPTY);
-            while (m.find()) {
-                Collection<String> style;
-                if (m.group("HEADING") != null) style = STYLE_HEADING;
-                else if (m.group("CODE") != null) style = STYLE_CODE;
-                else if (m.group("LINK") != null) style = STYLE_LINK;
-                else if (m.group("BOLD") != null) style = STYLE_BOLD;
-                else if (m.group("ITALIC") != null) style = STYLE_ITALIC;
-                else if (m.group("LISTMARK") != null) style = STYLE_LISTMARK;
-                else if (m.group("QUOTEMARK") != null) style = STYLE_QUOTEMARK;
-                else style = STYLE_EMPTY;
-                for (int i = m.start(); i < m.end() && i < len; i++) {
-                    baseStyles[i] = style;
+            for (StyledRange range : editorStyleRanges(text)) {
+                for (int i = range.start(); i < range.end() && i < len; i++) {
+                    baseStyles[i] = range.style();
                 }
             }
 
@@ -960,6 +1072,10 @@ public class MarkdownEditorPane extends BorderPane {
 
     private void updatePreview() {
         String md = editor.getText();
+        if (java.util.Objects.equals(md, lastPreviewContent)) {
+            return;
+        }
+        lastPreviewContent = md;
         previewBox.getChildren().clear();
         try {
             renderMarkdown(md, new InlineStyle(), previewBox.getChildren());
@@ -1075,20 +1191,22 @@ public class MarkdownEditorPane extends BorderPane {
 
     private void renderBlock(org.commonmark.node.Node node, InlineStyle base, ObservableList<Node> target) {
         if (node instanceof Paragraph p) {
-            List<Text> inlines = new ArrayList<>();
+            List<Node> inlines = new ArrayList<>();
             renderInline(p, base, inlines);
-            TextFlow flow = new TextFlow(inlines.toArray(new Text[0]));
+            TextFlow flow = new TextFlow(inlines.toArray(new Node[0]));
             setupSelectableTextFlow(flow);
             target.add(flow);
         } else if (node instanceof Heading h) {
-            List<Text> inlines = new ArrayList<>();
+            List<Node> inlines = new ArrayList<>();
             renderInline(h, base, inlines);
             int size = headingSize(h.getLevel());
-            for (Text t : inlines) {
-                String s = t.getStyle() == null ? "" : t.getStyle();
-                t.setStyle(s + " -fx-font-size: " + size + "px; -fx-font-weight: bold;");
+            for (Node inline : inlines) {
+                if (inline instanceof Text t) {
+                    String s = t.getStyle() == null ? "" : t.getStyle();
+                    t.setStyle(s + " -fx-font-size: " + size + "px; -fx-font-weight: bold;");
+                }
             }
-            TextFlow flow = new TextFlow(inlines.toArray(new Text[0]));
+            TextFlow flow = new TextFlow(inlines.toArray(new Node[0]));
             flow.setPadding(new Insets(6, 0, 4, 0));
             setupSelectableTextFlow(flow);
             target.add(flow);
@@ -1119,20 +1237,6 @@ public class MarkdownEditorPane extends BorderPane {
             target.add(l);
         } else {
             renderBlocks(node, base, target);
-        }
-    }
-
-    /** 更新编辑器行号显示：复用 Label，根据行数切换 visible/managed */
-    private void updateLineNumbers(String text) {
-        int lineCount = 1;
-        if (text != null && !text.isEmpty()) {
-            lineCount = text.split("\n", -1).length;
-        }
-        int visibleCount = Math.min(lineCount, lineNumberLabels.size());
-        for (int i = 0; i < lineNumberLabels.size(); i++) {
-            boolean show = i < visibleCount;
-            lineNumberLabels.get(i).setVisible(show);
-            lineNumberLabels.get(i).setManaged(show);
         }
     }
 
@@ -1257,7 +1361,7 @@ public class MarkdownEditorPane extends BorderPane {
 
     /** 渲染代码块：按语言做轻量语法高亮，放入带背景的容器，左侧带行号 */
     private Node renderCodeBlock(String literal, String info) {
-        String lang = info == null ? "" : info.trim().toLowerCase();
+        String lang = IdeaCodeHighlighter.languageFromInfo(info);
         List<Text> parts = new ArrayList<>();
         highlightCode(literal, lang, parts);
         if (parts.isEmpty()) {
@@ -1319,13 +1423,7 @@ public class MarkdownEditorPane extends BorderPane {
     }
 
     // 代码高亮配色
-    private static final String HL_KEYWORD = "-fx-fill: #d73a49;";   // 关键字 红
-    private static final String HL_STRING = "-fx-fill: #032f62;";   // 字符串 深蓝
-    private static final String HL_COMMENT = "-fx-fill: #6a737d;";  // 注释 灰
-    private static final String HL_NUMBER = "-fx-fill: #005cc5;";    // 数字 蓝
-    private static final String HL_ANNOT = "-fx-fill: #6f42c1;";    // 注解/装饰器 紫
-    private static final String HL_BASE = "-fx-fill: #24292e;";     // 默认文本
-    private static final String HL_FUNC = "-fx-fill: #6f42c1;";     // 函数名 紫
+    private static final String HL_BASE = "-fx-fill: #080808;";
 
     /** 各语言关键字集合（按规范语言名分组，每组包含该语言全部关键字）。 */
     private static final java.util.Map<String, java.util.Set<String>> LANG_KEYWORDS = new java.util.HashMap<>();
@@ -1514,72 +1612,8 @@ public class MarkdownEditorPane extends BorderPane {
 
     /** 轻量正则语法高亮：按语言做差异化关键字/注释/字符串着色，结果追加到 out。非线程安全（仅 JavaFX 线程调用）。 */
     private void highlightCode(String code, String lang, List<Text> out) {
-        if (code == null || code.isEmpty()) return;
-        String linePrefix = lineCommentPrefix(lang);
-        java.util.Set<String> keywords = keywordsFor(lang);
-        boolean blockCommentEnabled = hasBlockComment(lang);
-        // Python 三引号字符串（多行，含文档字符串）
-        boolean pythonStrings = "python".equals(lang) || "py".equals(lang);
-
-        // token 顺序：块注释 → 三引号字符串(Python) → 字符串(含模板/原始) → 行注释 → 数字 → 注解 → 标识符(关键字/函数)
-        String blockComment = "/\\*[\\s\\S]*?\\*/";
-        String tripleString = pythonStrings ? "(\"\"\"[\\s\\S]*?\"\"\"|'''[\\s\\S]*?''')" : null;
-        String stringPat = "\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|`(?:\\\\.|[^`\\\\])*`";
-        String lineComment = java.util.regex.Pattern.quote(linePrefix) + "[^\\n]*";
-        String number = "\\b\\d[\\d_]*\\.?\\d*([eE][+-]?\\d+)?[fFdDuUlL]?\\b|0[xX][0-9a-fA-F_]+|0[bB][01_]+";
-        String annotation = "@[A-Za-z_][A-Za-z0-9_]*";
-        String ident = "[A-Za-z_$][A-Za-z0-9_$]*";
-
-        StringBuilder pat = new StringBuilder();
-        if (blockCommentEnabled) {
-            pat.append("(?<BLOCK>").append(blockComment).append(")|");
-        }
-        if (tripleString != null) {
-            pat.append("(?<TRIPLE>").append(tripleString).append(")|");
-        }
-        pat.append("(?<STRING>").append(stringPat).append(")");
-        pat.append("|(?<LINE>").append(lineComment).append(")");
-        pat.append("|(?<NUMBER>").append(number).append(")");
-        pat.append("|(?<ANNOT>").append(annotation).append(")");
-        pat.append("|(?<IDENT>").append(ident).append(")");
-
-        java.util.regex.Pattern p = java.util.regex.Pattern.compile(pat.toString());
-        java.util.regex.Matcher m = p.matcher(code);
-        int last = 0;
-        while (m.find()) {
-            if (m.start() > last) {
-                out.add(codeText(code.substring(last, m.start()), HL_BASE));
-            }
-            String style;
-            if (blockCommentEnabled && m.group("BLOCK") != null) {
-                style = HL_COMMENT;
-            } else if (tripleString != null && m.group("TRIPLE") != null) {
-                style = HL_STRING;
-            } else if (m.group("LINE") != null) {
-                style = HL_COMMENT;
-            } else if (m.group("STRING") != null) {
-                style = HL_STRING;
-            } else if (m.group("NUMBER") != null) {
-                style = HL_NUMBER;
-            } else if (m.group("ANNOT") != null) {
-                style = HL_ANNOT;
-            } else {
-                String word = m.group("IDENT");
-                if (keywords.contains(word)) {
-                    style = HL_KEYWORD;
-                } else {
-                    // 函数调用：标识符后跟空白*(
-                    int end = m.end();
-                    int j = end;
-                    while (j < code.length() && (code.charAt(j) == ' ' || code.charAt(j) == '\t')) j++;
-                    style = (j < code.length() && code.charAt(j) == '(') ? HL_FUNC : HL_BASE;
-                }
-            }
-            out.add(codeText(m.group(), style));
-            last = m.end();
-        }
-        if (last < code.length()) {
-            out.add(codeText(code.substring(last), HL_BASE));
+        for (Token token : IdeaCodeHighlighter.tokenize(code, lang)) {
+            out.add(codeText(token.text(), "-fx-fill: " + token.type().color() + ";"));
         }
     }
 
@@ -1632,7 +1666,7 @@ public class MarkdownEditorPane extends BorderPane {
 
     /** 渲染单个表格单元格为带边框/背景的 StackPane，内部为解析行内格式的 TextFlow */
     private StackPane tableCell(String content, CellAlign align, boolean header, InlineStyle base) {
-        List<Text> inlines = new ArrayList<>();
+        List<Node> inlines = new ArrayList<>();
         if (content.isEmpty()) {
             inlines.add(styledText("", base));
         } else {
@@ -1646,12 +1680,14 @@ public class MarkdownEditorPane extends BorderPane {
             }
         }
         if (header) {
-            for (Text t : inlines) {
-                String s = t.getStyle() == null ? "" : t.getStyle();
-                t.setStyle(s + " -fx-font-weight: bold;");
+            for (Node inline : inlines) {
+                if (inline instanceof Text t) {
+                    String s = t.getStyle() == null ? "" : t.getStyle();
+                    t.setStyle(s + " -fx-font-weight: bold;");
+                }
             }
         }
-        TextFlow flow = new TextFlow(inlines.toArray(new Text[0]));
+        TextFlow flow = new TextFlow(inlines.toArray(new Node[0]));
         setupSelectableTextFlow(flow);
         StackPane pane = new StackPane(flow);
         pane.setPadding(new Insets(6, 10, 6, 10));
@@ -1674,14 +1710,14 @@ public class MarkdownEditorPane extends BorderPane {
             String marker = ordered ? (index + ". ") : "• ";
             org.commonmark.node.Node firstChild = item.getFirstChild();
 
-            List<Text> inlines = new ArrayList<>();
+            List<Node> inlines = new ArrayList<>();
             inlines.add(styledText(marker, base));
             if (firstChild instanceof Paragraph p) {
                 renderInline(p, base, inlines);
             } else {
                 renderInline(item, base, inlines);
             }
-            TextFlow flow = new TextFlow(inlines.toArray(new Text[0]));
+            TextFlow flow = new TextFlow(inlines.toArray(new Node[0]));
             setupSelectableTextFlow(flow);
             HBox itemBox = new HBox(flow);
             itemBox.setPadding(new Insets(0, 0, 0, 16));
@@ -1695,9 +1731,9 @@ public class MarkdownEditorPane extends BorderPane {
                 } else if (child instanceof OrderedList ol2) {
                     renderList(ol2, base, listBox.getChildren(), true, ol2.getStartNumber());
                 } else if (child instanceof Paragraph p2) {
-                    List<Text> sub = new ArrayList<>();
+                    List<Node> sub = new ArrayList<>();
                     renderInline(p2, base, sub);
-                    TextFlow subFlow = new TextFlow(sub.toArray(new Text[0]));
+                    TextFlow subFlow = new TextFlow(sub.toArray(new Node[0]));
                     subFlow.setPadding(new Insets(0, 0, 0, 16));
                     setupSelectableTextFlow(subFlow);
                     listBox.getChildren().add(subFlow);
@@ -1711,7 +1747,7 @@ public class MarkdownEditorPane extends BorderPane {
         target.add(listBox);
     }
 
-    private void renderInline(org.commonmark.node.Node node, InlineStyle style, List<Text> out) {
+    private void renderInline(org.commonmark.node.Node node, InlineStyle style, List<Node> out) {
         for (org.commonmark.node.Node child = node.getFirstChild(); child != null; child = child.getNext()) {
             if (child instanceof org.commonmark.node.Text textNode) {
                 out.add(styledText(textNode.getLiteral(), style));
@@ -1731,11 +1767,8 @@ public class MarkdownEditorPane extends BorderPane {
                 InlineStyle cs = style.copy();
                 cs.linkUrl = link.getDestination();
                 renderInline(child, cs, out);
-            } else if (child instanceof Image) {
-                InlineStyle cs = style.copy();
-                cs.italic = true;
-                out.add(styledText("[图片]", cs));
-                renderInline(child, cs, out);
+            } else if (child instanceof Image imageNode) {
+                out.add(renderImage(imageNode, style));
             } else if (child instanceof SoftLineBreak || child instanceof HardLineBreak) {
                 out.add(new Text("\n"));
             } else if (child instanceof HtmlInline html) {
@@ -1743,6 +1776,119 @@ public class MarkdownEditorPane extends BorderPane {
             } else {
                 renderInline(child, style, out);
             }
+        }
+    }
+
+    /** 将图片节点渲染为真正的 JavaFX ImageView；加载失败时保留可读的 alt 文本。 */
+    private Node renderImage(Image imageNode, InlineStyle style) {
+        String source = imageNode.getDestination() == null ? "" : imageNode.getDestination().trim();
+        String alt = collectPlainText(imageNode);
+        if (alt.isBlank()) alt = "图片";
+
+        Label status = new Label("正在加载图片：" + alt);
+        status.setStyle("-fx-text-fill: #777; -fx-font-size: 12px; -fx-font-style: italic; -fx-padding: 6 10;");
+        StackPane holder = new StackPane(status);
+        holder.setAlignment(Pos.CENTER_LEFT);
+        holder.setMinSize(40, 28);
+        holder.setMaxWidth(Double.MAX_VALUE);
+        Tooltip.install(holder, new Tooltip(imageNode.getTitle() == null || imageNode.getTitle().isBlank()
+                ? alt : imageNode.getTitle()));
+
+        final String imageAlt = alt;
+        Consumer<javafx.scene.image.Image> showImage = image -> runOnFxThread(() -> {
+            if (image == null || image.isError() || image.getWidth() <= 0) {
+                showImageError(holder, imageAlt, image == null || image.getException() == null
+                        ? "无法识别图片格式" : image.getException().getMessage());
+                return;
+            }
+            ImageView view = new ImageView(image);
+            view.setPreserveRatio(true);
+            view.setSmooth(true);
+            view.setCache(true);
+            view.fitWidthProperty().bind(javafx.beans.binding.Bindings.createDoubleBinding(
+                    () -> Math.min(image.getWidth(), Math.max(80, previewScroll.getViewportBounds().getWidth() - 28)),
+                    previewScroll.viewportBoundsProperty()));
+            if (style.linkUrl != null && !style.linkUrl.isBlank()) {
+                view.setStyle("-fx-cursor: hand;");
+                view.setOnMouseClicked(event -> openExternalLink(style.linkUrl));
+            }
+            holder.getChildren().setAll(view);
+        });
+
+        if (source.isBlank()) {
+            showImageError(holder, imageAlt, "图片地址为空");
+        } else if (isDirectImageSource(source)) {
+            try {
+                String imageUrl = toImageUrl(source);
+                javafx.scene.image.Image image = new javafx.scene.image.Image(imageUrl, true);
+                image.errorProperty().addListener((obs, oldValue, error) -> {
+                    if (Boolean.TRUE.equals(error)) showImage.accept(image);
+                });
+                image.progressProperty().addListener((obs, oldValue, progress) -> {
+                    if (progress.doubleValue() >= 1.0 && !image.isError()) showImage.accept(image);
+                });
+                if (image.getProgress() >= 1.0) showImage.accept(image);
+            } catch (Exception e) {
+                showImageError(holder, imageAlt, e.getMessage());
+            }
+        } else if (resourceLoader != null) {
+            resourceLoader.load(source, bytes -> {
+                try {
+                    showImage.accept(new javafx.scene.image.Image(new ByteArrayInputStream(bytes)));
+                } catch (Exception ex) {
+                    runOnFxThread(() -> showImageError(holder, imageAlt, ex.getMessage()));
+                }
+            }, error -> runOnFxThread(() -> showImageError(holder, imageAlt, error)));
+        } else {
+            showImageError(holder, imageAlt, "相对图片缺少文件上下文");
+        }
+        return holder;
+    }
+
+    private static String collectPlainText(org.commonmark.node.Node node) {
+        StringBuilder result = new StringBuilder();
+        collectPlainText(node, result);
+        return result.toString();
+    }
+
+    private static void collectPlainText(org.commonmark.node.Node node, StringBuilder result) {
+        for (org.commonmark.node.Node child = node.getFirstChild(); child != null; child = child.getNext()) {
+            if (child instanceof org.commonmark.node.Text text) result.append(text.getLiteral());
+            else if (child instanceof Code code) result.append(code.getLiteral());
+            else collectPlainText(child, result);
+        }
+    }
+
+    private static void showImageError(StackPane holder, String alt, String error) {
+        Label fallback = new Label("[图片：" + alt + "]");
+        fallback.setStyle("-fx-text-fill: #b3261e; -fx-font-size: 12px; -fx-font-style: italic; -fx-padding: 6 10;");
+        fallback.setTooltip(new Tooltip(error == null || error.isBlank() ? "图片加载失败" : error));
+        holder.getChildren().setAll(fallback);
+    }
+
+    private static boolean isDirectImageSource(String source) {
+        String lower = source.toLowerCase(java.util.Locale.ROOT);
+        return lower.startsWith("http://") || lower.startsWith("https://") || lower.startsWith("data:")
+                || lower.startsWith("file:") || source.matches("^[A-Za-z]:[\\\\/].*");
+    }
+
+    private static String toImageUrl(String source) {
+        if (source.matches("^[A-Za-z]:[\\\\/].*")) return java.nio.file.Path.of(source).toUri().toString();
+        return source;
+    }
+
+    private static void runOnFxThread(Runnable action) {
+        if (Platform.isFxApplicationThread()) action.run();
+        else Platform.runLater(action);
+    }
+
+    private static void openExternalLink(String destination) {
+        try {
+            if (java.awt.Desktop.isDesktopSupported()) {
+                java.awt.Desktop.getDesktop().browse(java.net.URI.create(destination));
+            }
+        } catch (Exception ignored) {
+            // 链接仍保留可复制文本；打不开时不打断 Markdown 预览。
         }
     }
 
@@ -1762,6 +1908,10 @@ public class MarkdownEditorPane extends BorderPane {
             sb.append(" -fx-fill: #333;");
         }
         t.setStyle(sb.toString());
+        if (style.linkUrl != null && !style.linkUrl.isBlank()) {
+            t.setOnMouseClicked(event -> openExternalLink(style.linkUrl));
+            t.setStyle(t.getStyle() + " -fx-cursor: hand;");
+        }
         return t;
     }
 
@@ -1841,6 +1991,87 @@ public class MarkdownEditorPane extends BorderPane {
 
     private void notifyTitleChange() {
         if (onTitleChange != null) onTitleChange.accept(getDisplayTitle());
+    }
+
+    // ==================== Markdown 相对资源 ====================
+
+    /** 为本地 Markdown 文件创建相对资源加载器（相对路径以 Markdown 所在目录为基准）。 */
+    public static ResourceLoader createLocalResourceLoader(String markdownFile) {
+        java.nio.file.Path markdownPath = java.nio.file.Path.of(markdownFile).toAbsolutePath().normalize();
+        java.nio.file.Path baseDirectory = markdownPath.getParent();
+        return (source, onSuccess, onError) -> new Thread(() -> {
+            try {
+                String cleanSource = cleanResourceSource(source);
+                java.nio.file.Path imagePath = java.nio.file.Path.of(cleanSource);
+                if (!imagePath.isAbsolute()) imagePath = baseDirectory.resolve(imagePath);
+                byte[] bytes = Files.readAllBytes(imagePath.normalize());
+                Platform.runLater(() -> onSuccess.accept(bytes));
+            } catch (Exception e) {
+                Platform.runLater(() -> onError.accept(e.getMessage()));
+            }
+        }, "MD-LocalResource").start();
+    }
+
+    /** 为 S3/OSS Markdown 文件创建相对资源加载器。 */
+    public static ResourceLoader createObjectStorageResourceLoader(ConnectionConfig config, String bucket,
+                                                                    String markdownKey) {
+        return (source, onSuccess, onError) -> new Thread(() -> {
+            try {
+                String resourceKey = resolveRemoteResourcePath(markdownKey, source, false);
+                boolean isOss = config.getType() == ConnectType.ALIYUN_OSS;
+                try (InputStream input = isOss
+                        ? OssService.getObjectStream(config, bucket, resourceKey)
+                        : S3Service.getObjectStream(config, bucket, resourceKey)) {
+                    byte[] bytes = input.readAllBytes();
+                    Platform.runLater(() -> onSuccess.accept(bytes));
+                }
+            } catch (Exception e) {
+                Platform.runLater(() -> onError.accept(e.getMessage()));
+            }
+        }, "MD-ObjectResource").start();
+    }
+
+    /**
+     * 解析 SFTP/S3 一类斜杠路径中的相对资源，消解 ./ 与 ../。
+     * preserveLeadingSlash=true 用于 SFTP 绝对路径，false 用于对象存储 key。
+     */
+    public static String resolveRemoteResourcePath(String markdownPath, String source,
+                                                    boolean preserveLeadingSlash) {
+        String cleanSource = cleanResourceSource(source).replace('\\', '/');
+        String normalizedMarkdown = markdownPath == null ? "" : markdownPath.replace('\\', '/');
+        boolean absolute = cleanSource.startsWith("/");
+        String base = "";
+        if (!absolute) {
+            int slash = normalizedMarkdown.lastIndexOf('/');
+            if (slash >= 0) base = normalizedMarkdown.substring(0, slash + 1);
+        }
+        String combined = (absolute ? cleanSource : base + cleanSource);
+        java.util.ArrayDeque<String> segments = new java.util.ArrayDeque<>();
+        for (String segment : combined.split("/+")) {
+            if (segment.isEmpty() || ".".equals(segment)) continue;
+            if ("..".equals(segment)) {
+                if (!segments.isEmpty()) segments.removeLast();
+            } else {
+                segments.addLast(segment);
+            }
+        }
+        String result = String.join("/", segments);
+        boolean leadingSlash = preserveLeadingSlash && (absolute || normalizedMarkdown.startsWith("/"));
+        return leadingSlash ? "/" + result : result;
+    }
+
+    private static String cleanResourceSource(String source) {
+        String value = source == null ? "" : source.trim();
+        int query = value.indexOf('?');
+        int fragment = value.indexOf('#');
+        int cut = query < 0 ? fragment : fragment < 0 ? query : Math.min(query, fragment);
+        if (cut >= 0) value = value.substring(0, cut);
+        try {
+            // URLDecoder 会把 + 当空格，先转义以保留合法文件名中的加号。
+            return java.net.URLDecoder.decode(value.replace("+", "%2B"), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException ignored) {
+            return value;
+        }
     }
 
     // ==================== 静态工具：下载文件内容 ====================
@@ -2023,68 +2254,12 @@ public class MarkdownEditorPane extends BorderPane {
     /** 代码 → 带语法高亮 span 的 HTML（与预览区 highlightCode 同款分词与配色） */
     private static String codeToHtml(String code, String lang) {
         if (code == null || code.isEmpty()) return "";
-        String l = lang == null ? "" : lang.trim().toLowerCase();
-        String linePrefix = lineCommentPrefix(l);
-        java.util.Set<String> keywords = keywordsFor(l);
-        boolean blockCommentEnabled = hasBlockComment(l);
-        boolean pythonStrings = "python".equals(l) || "py".equals(l);
-
-        String blockComment = "/\\*[\\s\\S]*?\\*/";
-        String tripleString = pythonStrings ? "(\"\"\"[\\s\\S]*?\"\"\"|'''[\\s\\S]*?''')" : null;
-        String stringPat = "\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|`(?:\\\\.|[^`\\\\])*`";
-        String lineComment = java.util.regex.Pattern.quote(linePrefix) + "[^\\n]*";
-        String number = "\\b\\d[\\d_]*\\.?\\d*([eE][+-]?\\d+)?[fFdDuUlL]?\\b|0[xX][0-9a-fA-F_]+|0[bB][01_]+";
-        String annotation = "@[A-Za-z_][A-Za-z0-9_]*";
-        String ident = "[A-Za-z_$][A-Za-z0-9_$]*";
-
-        StringBuilder pat = new StringBuilder();
-        if (blockCommentEnabled) {
-            pat.append("(?<BLOCK>").append(blockComment).append(")|");
-        }
-        if (tripleString != null) {
-            pat.append("(?<TRIPLE>").append(tripleString).append(")|");
-        }
-        pat.append("(?<STRING>").append(stringPat).append(")");
-        pat.append("|(?<LINE>").append(lineComment).append(")");
-        pat.append("|(?<NUMBER>").append(number).append(")");
-        pat.append("|(?<ANNOT>").append(annotation).append(")");
-        pat.append("|(?<IDENT>").append(ident).append(")");
-
-        java.util.regex.Pattern p = java.util.regex.Pattern.compile(pat.toString());
-        java.util.regex.Matcher m = p.matcher(code);
         StringBuilder sb = new StringBuilder();
-        int last = 0;
-        while (m.find()) {
-            if (m.start() > last) sb.append(escapeHtml(code.substring(last, m.start())));
-            String color;
-            if (blockCommentEnabled && m.group("BLOCK") != null) {
-                color = "#6a737d";
-            } else if (tripleString != null && m.group("TRIPLE") != null) {
-                color = "#032f62";
-            } else if (m.group("LINE") != null) {
-                color = "#6a737d";
-            } else if (m.group("STRING") != null) {
-                color = "#032f62";
-            } else if (m.group("NUMBER") != null) {
-                color = "#005cc5";
-            } else if (m.group("ANNOT") != null) {
-                color = "#6f42c1";
-            } else {
-                String word = m.group("IDENT");
-                if (keywords.contains(word)) {
-                    color = "#d73a49";
-                } else {
-                    int end = m.end();
-                    int j = end;
-                    while (j < code.length() && (code.charAt(j) == ' ' || code.charAt(j) == '\t')) j++;
-                    color = (j < code.length() && code.charAt(j) == '(') ? "#6f42c1" : "#24292e";
-                }
-            }
-            sb.append("<span style=\"color:").append(color).append("\">")
-              .append(escapeHtml(m.group())).append("</span>");
-            last = m.end();
+        String language = IdeaCodeHighlighter.languageFromInfo(lang);
+        for (Token token : IdeaCodeHighlighter.tokenize(code, language)) {
+            sb.append("<span style=\"color:").append(token.type().color()).append("\">")
+                    .append(escapeHtml(token.text())).append("</span>");
         }
-        if (last < code.length()) sb.append(escapeHtml(code.substring(last)));
         return sb.toString();
     }
 

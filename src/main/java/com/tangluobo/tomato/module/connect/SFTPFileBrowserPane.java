@@ -414,7 +414,26 @@ public class SFTPFileBrowserPane extends AbstractFileBrowserPane {
                         }
                     }, "SFTP-MDSave").start();
 
-                    MarkdownEditorPane editor = new MarkdownEditorPane(fileName, content, storage);
+                    MarkdownEditorPane.ResourceLoader resourceLoader = (source, onSuccess, onError) ->
+                            new Thread(() -> {
+                                File imageTemp = null;
+                                try {
+                                    String remotePath = MarkdownEditorPane.resolveRemoteResourcePath(
+                                            filePath, source, true);
+                                    imageTemp = File.createTempFile("tomato-sftp-md-image-", ".bin");
+                                    synchronized (sftpClient) {
+                                        sftpClient.download(remotePath, imageTemp.getAbsolutePath());
+                                    }
+                                    byte[] bytes = Files.readAllBytes(imageTemp.toPath());
+                                    Platform.runLater(() -> onSuccess.accept(bytes));
+                                } catch (Exception e) {
+                                    Platform.runLater(() -> onError.accept(e.getMessage()));
+                                } finally {
+                                    if (imageTemp != null && !imageTemp.delete()) imageTemp.deleteOnExit();
+                                }
+                            }, "SFTP-MDImage").start();
+
+                    MarkdownEditorPane editor = new MarkdownEditorPane(fileName, content, storage, resourceLoader);
                     editorTab.setContent(editor);
                     editor.setOnTitleChange(title -> editorTab.setText(title));
                     editorTab.setText(editor.getDisplayTitle());

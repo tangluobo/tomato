@@ -188,7 +188,7 @@ public class LocalDirectoryConnectHandler implements ConnectHandler {
                             } catch (Exception e) {
                                 Platform.runLater(() -> onError.accept(e.getMessage()));
                             }
-                        }, "MD-SaveLocal").start());
+                        }, "MD-SaveLocal").start(), MarkdownEditorPane.createLocalResourceLoader(absolutePath));
                 editorTab.setContent(editor);
                 editor.setOnTitleChange(title -> editorTab.setText(title));
                 editorTab.setText(editor.getDisplayTitle());
@@ -839,7 +839,8 @@ public class LocalDirectoryConnectHandler implements ConnectHandler {
                         } catch (Exception e) {
                             Platform.runLater(() -> onError.accept(e.getMessage()));
                         }
-                    }, "MD-SaveS3").start());
+                    }, "MD-SaveS3").start(), MarkdownEditorPane.createObjectStorageResourceLoader(
+                            data.getConnectionConfig(), bucket, fileKey));
             editorTab.setContent(editor);
             editor.setOnTitleChange(title -> editorTab.setText(title));
             editorTab.setText(editor.getDisplayTitle());

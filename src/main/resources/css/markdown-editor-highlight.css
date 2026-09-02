@@ -1,5 +1,16 @@
 .md-heading { -fx-fill: #1163a6; -fx-font-weight: bold; }
 .md-code { -fx-fill: #c7254e; -fx-font-family: 'Consolas','Courier New',monospace; }
+.md-code-fence { -fx-fill: #787878; -fx-font-weight: bold; }
+.md-code-language { -fx-fill: #9E880D; -fx-font-style: italic; }
+.code-base { -fx-fill: #080808; }
+.code-keyword { -fx-fill: #0033B3; -fx-font-weight: bold; }
+.code-string { -fx-fill: #067D17; }
+.code-comment { -fx-fill: #8C8C8C; -fx-font-style: italic; }
+.code-number { -fx-fill: #1750EB; }
+.code-annotation { -fx-fill: #9E880D; }
+.code-function { -fx-fill: #00627A; }
+.code-tag { -fx-fill: #0033B3; }
+.code-attribute { -fx-fill: #174AD4; }
 .md-link { -fx-fill: #1a73e8; }
 .md-bold { -fx-font-weight: bold; }
 .md-italic { -fx-font-posture: italic; }
