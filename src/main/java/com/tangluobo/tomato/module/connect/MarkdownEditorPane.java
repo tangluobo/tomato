@@ -237,7 +237,7 @@ public class MarkdownEditorPane extends BorderPane {
                 "-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 13px; " +
                 "-fx-background-color: white; -fx-padding: 0; -fx-text-fill: #333;"
         );
-        this.editor.getStylesheets().add(getClass().getResource("/css/markdown-editor-highlight.css").toExternalForm());
+        addStylesheetIfPresent(this.editor.getStylesheets(), "/css/markdown-editor-highlight.css");
         // RichTextFX 仅为当前可见段落创建行号节点，替代原先每次打开都创建 5000 个 Label。
         this.editor.setParagraphGraphicFactory(LineNumberFactory.get(editor));
 
@@ -277,7 +277,7 @@ public class MarkdownEditorPane extends BorderPane {
         this.splitPane.setOrientation(javafx.geometry.Orientation.HORIZONTAL);
         this.splitPane.getItems().addAll(editorBox, previewScroll);
         this.splitPane.setDividerPositions(0.5);
-        this.splitPane.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+        addStylesheetIfPresent(this.splitPane.getStylesheets(), "/css/connect-tree.css");
 
         this.centerContainer = new StackPane();
         setCenter(centerContainer);
@@ -421,7 +421,7 @@ public class MarkdownEditorPane extends BorderPane {
     private Node buildToolbar() {
         ToolBar toolBar = new ToolBar();
         toolBar.getStyleClass().add("markdown-tool-bar");
-        toolBar.getStylesheets().add(getClass().getResource("/css/markdown-editor-toolbar.css").toExternalForm());
+        addStylesheetIfPresent(toolBar.getStylesheets(), "/css/markdown-editor-toolbar.css");
 
         // 撤销 / 重做
         toolBar.getItems().addAll(
@@ -490,7 +490,7 @@ public class MarkdownEditorPane extends BorderPane {
     /** 工具栏图标按钮：FontAwesome 图标 + tooltip(文字+快捷键) + 不抢焦点 */
     private Button iconBtn(FontAwesomeIcon icon, String text, String shortcut, Runnable action) {
         Button b = new Button();
-        b.setGraphic(FontAwesomeIconFactory.get().createIcon(icon, "1.2em"));
+        b.setGraphic(createIconSafely(icon, "1.2em", text));
         b.setTooltip(new Tooltip(shortcut != null ? text + " (" + shortcut + ")" : text));
         b.setFocusTraversable(false);
         b.setOnAction(e -> action.run());
@@ -500,11 +500,34 @@ public class MarkdownEditorPane extends BorderPane {
     private ToggleButton modeToggle(ToggleGroup group, FontAwesomeIcon icon, String text, Mode mode) {
         ToggleButton b = new ToggleButton();
         b.setToggleGroup(group);
-        b.setGraphic(FontAwesomeIconFactory.get().createIcon(icon, "1.2em"));
+        b.setGraphic(createIconSafely(icon, "1.2em", text));
         b.setTooltip(new Tooltip(text));
         b.setFocusTraversable(false);
         b.setOnAction(e -> { currentMode = mode; applyMode(); });
         return b;
+    }
+
+    /**
+     * 图标字体在 native-image 中可能因资源或反射元数据缺失而加载失败。
+     * 工具栏仍应可用，因此降级为简短文本，而不是让整个 Markdown 编辑器构造失败。
+     */
+    private Node createIconSafely(FontAwesomeIcon icon, String size, String fallbackText) {
+        try {
+            return FontAwesomeIconFactory.get().createIcon(icon, size);
+        } catch (RuntimeException | LinkageError ignored) {
+            Label fallback = new Label(fallbackText == null || fallbackText.isEmpty()
+                    ? "?" : fallbackText.substring(0, 1));
+            fallback.setStyle("-fx-font-size: 11px; -fx-text-fill: #555;");
+            return fallback;
+        }
+    }
+
+    /** 缺少可选 CSS 资源时仅使用 JavaFX 默认样式，不中断文档打开。 */
+    private void addStylesheetIfPresent(ObservableList<String> stylesheets, String resourcePath) {
+        java.net.URL resource = getClass().getResource(resourcePath);
+        if (resource != null) {
+            stylesheets.add(resource.toExternalForm());
+        }
     }
 
     private void applyMode() {
@@ -1390,7 +1413,7 @@ public class MarkdownEditorPane extends BorderPane {
 
         // 右上角复制按钮：点击复制代码内容到剪贴板
         Label copyBtn = new Label();
-        copyBtn.setGraphic(FontAwesomeIconFactory.get().createIcon(FontAwesomeIcon.COPY, "12"));
+        copyBtn.setGraphic(createIconSafely(FontAwesomeIcon.COPY, "12", "C"));
         copyBtn.setStyle("-fx-background-color: transparent; -fx-cursor: hand; " +
                 "-fx-text-fill: #888; -fx-padding: 2;");
         copyBtn.setTooltip(new Tooltip("复制代码"));
@@ -1399,12 +1422,12 @@ public class MarkdownEditorPane extends BorderPane {
             cc.putString(literal);
             javafx.scene.input.Clipboard.getSystemClipboard().setContent(cc);
             // 切换图标为对勾反馈
-            copyBtn.setGraphic(FontAwesomeIconFactory.get().createIcon(FontAwesomeIcon.CHECK, "12"));
+            copyBtn.setGraphic(createIconSafely(FontAwesomeIcon.CHECK, "12", "OK"));
             copyBtn.setStyle("-fx-background-color: transparent; -fx-cursor: hand; " +
                     "-fx-text-fill: #28a745; -fx-padding: 2;");
             PauseTransition revert = new PauseTransition(javafx.util.Duration.millis(1200));
             revert.setOnFinished(ev -> {
-                copyBtn.setGraphic(FontAwesomeIconFactory.get().createIcon(FontAwesomeIcon.COPY, "12"));
+                copyBtn.setGraphic(createIconSafely(FontAwesomeIcon.COPY, "12", "C"));
                 copyBtn.setStyle("-fx-background-color: transparent; -fx-cursor: hand; " +
                         "-fx-text-fill: #888; -fx-padding: 2;");
             });
@@ -2442,7 +2465,7 @@ public class MarkdownEditorPane extends BorderPane {
 
         Scene scene = new Scene(root);
         // 标签样式参考设计表（connect-tree.css 的 Firefox 风格标签）
-        scene.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+        addStylesheetIfPresent(scene.getStylesheets(), "/css/connect-tree.css");
         // Esc 关闭
         root.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
             if (e.getCode() == KeyCode.ESCAPE) {

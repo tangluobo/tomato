@@ -10,6 +10,7 @@ import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.layout.StackPane;
@@ -285,7 +286,9 @@ public class DevelopmentManagerPane extends VBox {
     private final Label directoryPathLabel = new Label("暂未选择目录");
 
     private final Label versionHintLabel = new Label("请先在左侧选择目录");
-    private final Button commitButton = new Button("提交选中文件");
+    private final TextArea commitMessageArea = new TextArea();
+    private final Button commitButton = new Button("提交");
+    private final Button commitAndPushButton = new Button("提交并推送");
     private final ToggleButton gitModeBtn = new ToggleButton("git仓库");
     private final ToggleButton realModeBtn = new ToggleButton("实时");
     private final SqlEditorPane codeEditor = new SqlEditorPane(true, false);
@@ -295,7 +298,9 @@ public class DevelopmentManagerPane extends VBox {
     private final Label dependencyStatusLabel = new Label("请选择 Maven 项目");
     private final HighlightedLogPane runOutputArea = new HighlightedLogPane();
     private static final int MAX_PROJECT_LOG_CHARS = 2_000_000;
+    private static final int MAX_INCREMENTAL_JAVA_FILES = 24;
     private final Map<String, StringBuilder> projectLogs = new HashMap<>();
+    private final Map<String, MavenIncrementalState> mavenIncrementalStates = new ConcurrentHashMap<>();
     private final ThreadLocal<DevDirectory> projectLogContext = new ThreadLocal<>();
     private final Button stopRunButton = new Button("停止");
     private final Button rerunButton = new Button("重新运行");
@@ -316,6 +321,7 @@ public class DevelopmentManagerPane extends VBox {
     private File currentEditingFile;
     private boolean editorLoading;
     private boolean editorDirty;
+    private boolean editorReadOnly;
     private final Map<String, Process> runningProcesses = new ConcurrentHashMap<>();
     private DevDirectory lastRunProject;
     private File lastRunSourceFile;
@@ -324,6 +330,17 @@ public class DevelopmentManagerPane extends VBox {
     private final Set<String> launchingProjects = ConcurrentHashMap.newKeySet();
     private final Set<String> cancelledProjects = ConcurrentHashMap.newKeySet();
     private boolean projectControlsLoading;
+
+    private static final class MavenIncrementalState {
+        private long configurationStamp;
+        private String profileKey;
+        private String dependencies;
+        private Map<String, Long> sources = Map.of();
+        private Map<String, Long> mainResources = Map.of();
+        private Map<String, Long> testResources = Map.of();
+    }
+
+    private record MavenBuildPreparation(boolean success, String dependencies) {}
 
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "development-versions-watch");
@@ -693,9 +710,15 @@ public class DevelopmentManagerPane extends VBox {
         fileTree.setStyle("-fx-background-color: transparent; -fx-cell-size: 35px;");
         fileTree.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
         fileTree.setCellFactory(tv -> new TreeCell<>() {
-            private final javafx.scene.shape.SVGPath itemIcon = new javafx.scene.shape.SVGPath();
+            private final javafx.scene.image.ImageView itemIcon = new javafx.scene.image.ImageView();
+            private final javafx.scene.shape.Path arrowPath = createTreeDisclosureArrow();
+            private final StackPane disclosurePane = createTreeDisclosurePane(arrowPath);
+            private TreeItem<File> disclosureTreeItem;
+            private javafx.beans.value.ChangeListener<Boolean> expandedListener;
 
             {
+                setAlignment(Pos.CENTER_LEFT);
+                setDisclosureNode(disclosurePane);
                 setOnContextMenuRequested(event -> {
                     File file = getItem();
                     if (file == null || !file.isFile() || !file.getName().endsWith(".java")
@@ -712,20 +735,33 @@ public class DevelopmentManagerPane extends VBox {
             @Override
             protected void updateItem(File item, boolean empty) {
                 super.updateItem(item, empty);
+                updateDisclosureArrow();
                 if (empty || item == null) {
                     setText(null);
                     setGraphic(null);
                     return;
                 }
-                itemIcon.setContent(item.isDirectory()
-                        ? "M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"
-                        : "M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm0 2.5L17.5 8H14V4.5z");
-                itemIcon.setFill(javafx.scene.paint.Color.web(item.isDirectory() ? "#E0A800" : "#78909C"));
-                itemIcon.setScaleX(0.68);
-                itemIcon.setScaleY(0.68);
+                itemIcon.setImage(getDevelopmentItemIcon(item.getName(), item.isDirectory()));
+                itemIcon.setFitWidth(16);
+                itemIcon.setFitHeight(16);
+                itemIcon.setPreserveRatio(true);
+                itemIcon.setSmooth(true);
                 setText(item.getName());
                 setGraphic(itemIcon);
                 setTooltip(new Tooltip(item.getAbsolutePath()));
+            }
+
+            private void updateDisclosureArrow() {
+                if (disclosureTreeItem != null && expandedListener != null) {
+                    disclosureTreeItem.expandedProperty().removeListener(expandedListener);
+                }
+                disclosureTreeItem = getTreeItem();
+                expandedListener = null;
+                if (disclosureTreeItem == null) return;
+                arrowPath.setRotate(disclosureTreeItem.isExpanded() ? 90 : 0);
+                expandedListener = (obs, wasExpanded, isExpanded) ->
+                        arrowPath.setRotate(isExpanded ? 90 : 0);
+                disclosureTreeItem.expandedProperty().addListener(expandedListener);
             }
         });
         fileTree.getSelectionModel().selectedItemProperty().addListener((obs, oldItem, newItem) -> {
@@ -799,12 +835,14 @@ public class DevelopmentManagerPane extends VBox {
             }
             String content = Files.readString(file.toPath(), StandardCharsets.UTF_8);
             currentEditingFile = file;
+            editorReadOnly = false;
             editorLoading = true;
             codeEditor.setText(content);
             editorLoading = false;
             editorDirty = false;
             codeEditor.setEditable(true);
             updateEditorHeader();
+            loadEditorGitChangesAsync(file);
         } catch (Exception e) {
             editorLoading = false;
             showEditorError("无法打开文件：" + e.getMessage());
@@ -812,7 +850,7 @@ public class DevelopmentManagerPane extends VBox {
     }
 
     private void saveCurrentFile() {
-        if (currentEditingFile == null) {
+        if (currentEditingFile == null || editorReadOnly) {
             return;
         }
         try {
@@ -820,6 +858,7 @@ public class DevelopmentManagerPane extends VBox {
             editorDirty = false;
             updateEditorHeader();
             refreshVersionListAsync();
+            loadEditorGitChangesAsync(currentEditingFile);
         } catch (Exception e) {
             showEditorError("保存文件失败：" + e.getMessage());
         }
@@ -827,6 +866,7 @@ public class DevelopmentManagerPane extends VBox {
 
     private void clearEditor() {
         currentEditingFile = null;
+        editorReadOnly = false;
         editorLoading = true;
         codeEditor.clear();
         editorLoading = false;
@@ -841,9 +881,142 @@ public class DevelopmentManagerPane extends VBox {
             saveEditorButton.setDisable(true);
             return;
         }
-        editorFileLabel.setText(currentEditingFile.getName() + (editorDirty ? " *" : ""));
+        editorFileLabel.setText(currentEditingFile.getName()
+                + (editorReadOnly ? "  [已删除，只读]" : "")
+                + (editorDirty ? " *" : ""));
         editorFileLabel.setTooltip(new Tooltip(currentEditingFile.getAbsolutePath()));
-        saveEditorButton.setDisable(!editorDirty);
+        saveEditorButton.setDisable(editorReadOnly || !editorDirty);
+    }
+
+    private void openVersionFile(ChangeItem item) {
+        if (currentDirectory == null || item == null || item.directory) return;
+        File file = new File(currentDirectory.getPath(), item.relativePath);
+        if (file.isFile()) {
+            openCodeFile(file);
+        } else if ("已删除".equals(item.statusText)) {
+            openDeletedVersionFile(currentDirectory, file);
+        }
+    }
+
+    private void openDeletedVersionFile(DevDirectory project, File file) {
+        asyncExecutor.execute(() -> {
+            java.nio.file.Path repositoryRoot = findGitRepositoryRoot(project);
+            if (repositoryRoot == null) {
+                Platform.runLater(() -> showEditorError("无法读取 Git 仓库根目录"));
+                return;
+            }
+            java.nio.file.Path target = file.toPath().toAbsolutePath().normalize();
+            if (!target.startsWith(repositoryRoot)) return;
+            String relativePath = repositoryRoot.relativize(target).toString().replace('\\', '/');
+            CommandResult result = runGitCommand(repositoryRoot.toFile(), List.of("show", "HEAD:" + relativePath));
+            Platform.runLater(() -> {
+                if (currentDirectory != project) return;
+                if (!result.success) {
+                    showEditorError("无法读取已删除文件：" + result.output);
+                    return;
+                }
+                currentEditingFile = file;
+                editorReadOnly = true;
+                editorLoading = true;
+                codeEditor.setText(result.output);
+                editorLoading = false;
+                editorDirty = false;
+                codeEditor.setEditable(false);
+                int lineCount = countEditorLines(result.output);
+                List<SqlEditorPane.ChangeHighlight> highlights = new ArrayList<>(lineCount);
+                for (int line = 1; line <= lineCount; line++) {
+                    highlights.add(new SqlEditorPane.ChangeHighlight(line, SqlEditorPane.ChangeKind.DELETED));
+                }
+                codeEditor.setChangeHighlights(highlights);
+                updateEditorHeader();
+            });
+        });
+    }
+
+    private void loadEditorGitChangesAsync(File file) {
+        DevDirectory project = currentDirectory;
+        codeEditor.clearChangeHighlights();
+        if (project == null || file == null || !file.isFile()) return;
+        asyncExecutor.execute(() -> {
+            List<SqlEditorPane.ChangeHighlight> highlights = readGitChangeHighlights(project, file);
+            Platform.runLater(() -> {
+                if (file.equals(currentEditingFile)) codeEditor.setChangeHighlights(highlights);
+            });
+        });
+    }
+
+    private List<SqlEditorPane.ChangeHighlight> readGitChangeHighlights(DevDirectory project, File file) {
+        java.nio.file.Path repositoryRoot = findGitRepositoryRoot(project);
+        if (repositoryRoot == null) return List.of();
+        java.nio.file.Path target = file.toPath().toAbsolutePath().normalize();
+        if (!target.startsWith(repositoryRoot)) return List.of();
+        String relativePath = repositoryRoot.relativize(target).toString().replace('\\', '/');
+        CommandResult status = runGitCommand(repositoryRoot.toFile(),
+                List.of("status", "--porcelain=v1", "--untracked-files=all", "--", relativePath));
+        if (!status.success || status.output.isBlank()) return List.of();
+
+        String statusCode = status.output.length() >= 2 ? status.output.substring(0, 2) : status.output;
+        boolean newFile = statusCode.contains("?") || statusCode.contains("A");
+        CommandResult diff = runGitCommand(repositoryRoot.toFile(),
+                List.of("diff", "--no-ext-diff", "--no-color", "--unified=0", "HEAD", "--", relativePath));
+        if (!diff.success || diff.output.isBlank()) {
+            if (!newFile) return List.of();
+            int lineCount;
+            try {
+                lineCount = countEditorLines(Files.readString(file.toPath(), StandardCharsets.UTF_8));
+            } catch (Exception ignored) {
+                return List.of();
+            }
+            List<SqlEditorPane.ChangeHighlight> added = new ArrayList<>(lineCount);
+            for (int line = 1; line <= lineCount; line++) {
+                added.add(new SqlEditorPane.ChangeHighlight(line, SqlEditorPane.ChangeKind.ADDED));
+            }
+            return added;
+        }
+        return parseGitDiffHighlights(diff.output);
+    }
+
+    private java.nio.file.Path findGitRepositoryRoot(DevDirectory project) {
+        CommandResult root = runGitCommand(project.getPath(), List.of("rev-parse", "--show-toplevel"));
+        if (!root.success) return null;
+        try {
+            return java.nio.file.Path.of(lastMeaningfulLine(root.output)).toAbsolutePath().normalize();
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private List<SqlEditorPane.ChangeHighlight> parseGitDiffHighlights(String diffOutput) {
+        Pattern hunkPattern = Pattern.compile("^@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@.*$");
+        List<SqlEditorPane.ChangeHighlight> highlights = new ArrayList<>();
+        for (String line : diffOutput.split("\\R")) {
+            java.util.regex.Matcher matcher = hunkPattern.matcher(line);
+            if (!matcher.matches()) continue;
+            int oldCount = matcher.group(2) == null ? 1 : Integer.parseInt(matcher.group(2));
+            int newStart = Integer.parseInt(matcher.group(3));
+            int newCount = matcher.group(4) == null ? 1 : Integer.parseInt(matcher.group(4));
+            if (newCount == 0) {
+                highlights.add(new SqlEditorPane.ChangeHighlight(
+                        Math.max(1, newStart), SqlEditorPane.ChangeKind.DELETED));
+                continue;
+            }
+            SqlEditorPane.ChangeKind commonKind = oldCount == 0
+                    ? SqlEditorPane.ChangeKind.ADDED
+                    : SqlEditorPane.ChangeKind.MODIFIED;
+            int commonCount = oldCount == 0 ? newCount : Math.min(oldCount, newCount);
+            for (int offset = 0; offset < commonCount; offset++) {
+                highlights.add(new SqlEditorPane.ChangeHighlight(newStart + offset, commonKind));
+            }
+            for (int offset = commonCount; offset < newCount; offset++) {
+                highlights.add(new SqlEditorPane.ChangeHighlight(
+                        newStart + offset, SqlEditorPane.ChangeKind.ADDED));
+            }
+        }
+        return highlights;
+    }
+
+    private int countEditorLines(String content) {
+        return content == null || content.isEmpty() ? 1 : content.split("\\R", -1).length;
     }
 
     private void showEditorError(String message) {
@@ -873,15 +1046,19 @@ public class DevelopmentManagerPane extends VBox {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        commitButton.setStyle("-fx-background-color: #07c160; -fx-text-fill: #fff; -fx-border-radius: 4; -fx-background-radius: 4; -fx-font-size: 12px;");
+        commitButton.setStyle("-fx-background-color: #475569; -fx-text-fill: #fff; -fx-border-radius: 4; -fx-background-radius: 4; -fx-font-size: 12px;");
+        commitAndPushButton.setStyle("-fx-background-color: #2563eb; -fx-text-fill: #fff; -fx-border-radius: 4; -fx-background-radius: 4; -fx-font-size: 12px;");
         commitButton.setDisable(true);
-        commitButton.setOnAction(e -> commitSelectedFiles());
+        commitAndPushButton.setDisable(true);
+        commitButton.setOnAction(e -> commitSelectedFiles(false));
+        commitAndPushButton.setOnAction(e -> commitSelectedFiles(true));
         commitButton.setCursor(javafx.scene.Cursor.HAND);
+        commitAndPushButton.setCursor(javafx.scene.Cursor.HAND);
 
         versionHintLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #888;");
         versionHintLabel.setTextAlignment(TextAlignment.LEFT);
 
-        titleBar.getChildren().addAll(title, modeBox, spacer, commitButton);
+        titleBar.getChildren().addAll(title, modeBox, spacer);
 
         versionRoot = new TreeItem<>(new ChangeItem("变更文件", "", "root", true));
         versionRoot.setExpanded(true);
@@ -898,16 +1075,37 @@ public class DevelopmentManagerPane extends VBox {
 
         versionTree.setCellFactory(tv -> new TreeCell<>() {
             private final CheckBox checkBox = new CheckBox();
-            private final Label iconLabel = new Label();
+            private final javafx.scene.image.ImageView iconView = new javafx.scene.image.ImageView();
             private final Label textLabel = new Label();
-            private final HBox box = new HBox(6, checkBox, iconLabel, textLabel);
+            private final HBox box = new HBox(6, checkBox, iconView, textLabel);
+            private final javafx.scene.shape.Path arrowPath = createTreeDisclosureArrow();
+            private final StackPane disclosurePane = createTreeDisclosurePane(arrowPath);
+            private TreeItem<ChangeItem> disclosureTreeItem;
+            private javafx.beans.value.ChangeListener<Boolean> expandedListener;
+            private final MenuItem rollbackItem = new MenuItem("回滚变更");
+            private final MenuItem ignoreItem = new MenuItem("添加到 .gitignore");
+            private final ContextMenu contextMenu = new ContextMenu(
+                    rollbackItem,
+                    new SeparatorMenuItem(),
+                    ignoreItem
+            );
+
+            {
+                box.setAlignment(Pos.CENTER_LEFT);
+                setAlignment(Pos.CENTER_LEFT);
+                setDisclosureNode(disclosurePane);
+                rollbackItem.setOnAction(event -> rollbackVersionNode(getTreeItem()));
+                ignoreItem.setOnAction(event -> addVersionNodeToGitIgnore(getTreeItem()));
+            }
 
             @Override
             protected void updateItem(ChangeItem item, boolean empty) {
                 super.updateItem(item, empty);
+                updateDisclosureArrow();
                 if (empty || item == null) {
                     setText(null);
                     setGraphic(null);
+                    setContextMenu(null);
                     return;
                 }
                 boolean canChoose = currentMode == VersionMode.GIT && currentDirectoryGitRepo;
@@ -924,14 +1122,53 @@ public class DevelopmentManagerPane extends VBox {
                     setVersionNodeSelected(treeItem, checkBox.isSelected());
                     updateVersionParentSelection(treeItem.getParent());
                     versionTree.refresh();
+                    updateCommitButtons();
                 });
-                iconLabel.setText(item.directory ? "📁" : "📄");
+                iconView.setImage(getVersionItemIcon(item));
+                iconView.setFitWidth(16);
+                iconView.setFitHeight(16);
+                iconView.setPreserveRatio(true);
+                iconView.setSmooth(true);
                 textLabel.setText(item.name + (item.directory || item.statusText == null ? "" : "  [" + item.statusText + "]"));
+                textLabel.setStyle("-fx-text-fill: " + versionStatusColor(item) + ";");
+                setContextMenu(currentMode == VersionMode.GIT && currentDirectoryGitRepo ? contextMenu : null);
                 setGraphic(box);
                 setText(null);
             }
+
+            private void updateDisclosureArrow() {
+                if (disclosureTreeItem != null && expandedListener != null) {
+                    disclosureTreeItem.expandedProperty().removeListener(expandedListener);
+                }
+                disclosureTreeItem = getTreeItem();
+                expandedListener = null;
+                if (disclosureTreeItem == null) return;
+                arrowPath.setRotate(disclosureTreeItem.isExpanded() ? 90 : 0);
+                expandedListener = (obs, wasExpanded, isExpanded) ->
+                        arrowPath.setRotate(isExpanded ? 90 : 0);
+                disclosureTreeItem.expandedProperty().addListener(expandedListener);
+            }
         });
-        panel.getChildren().addAll(titleBar, versionHintLabel, versionTreeContainer);
+        versionTree.setOnMouseClicked(event -> {
+            if (event.getButton() != MouseButton.PRIMARY || event.getClickCount() != 2) return;
+            TreeItem<ChangeItem> selected = versionTree.getSelectionModel().getSelectedItem();
+            if (selected == null || selected.getValue() == null || selected.getValue().directory) return;
+            openVersionFile(selected.getValue());
+            event.consume();
+        });
+        Label messageTitle = new Label("提交说明");
+        messageTitle.setStyle("-fx-font-size: 12px; -fx-font-weight: bold; -fx-text-fill: #475569;");
+        commitMessageArea.setPromptText("填写本次提交说明...");
+        commitMessageArea.setWrapText(true);
+        commitMessageArea.setPrefRowCount(5);
+        commitMessageArea.setMinHeight(100);
+        commitMessageArea.setMaxHeight(180);
+        commitMessageArea.textProperty().addListener((obs, oldValue, newValue) -> updateCommitButtons());
+        HBox commitActions = new HBox(8, commitButton, commitAndPushButton);
+        commitActions.setAlignment(Pos.CENTER_RIGHT);
+        Separator commitSeparator = new Separator();
+        panel.getChildren().addAll(versionHintLabel, versionTreeContainer,
+                commitSeparator, messageTitle, commitMessageArea, commitActions);
         VBox.setVgrow(versionTreeContainer, Priority.ALWAYS);
         VBox.setVgrow(panel, Priority.ALWAYS);
 
@@ -946,6 +1183,219 @@ public class DevelopmentManagerPane extends VBox {
         }
         for (TreeItem<ChangeItem> child : node.getChildren()) {
             setVersionNodeSelected(child, selected);
+        }
+    }
+
+    private String versionStatusColor(ChangeItem item) {
+        if (item == null || item.directory || item.statusText == null) return "#3c3f41";
+        return switch (item.statusText) {
+            case "未添加" -> "#c75450";
+            case "已添加" -> "#57965c";
+            case "变更" -> "#0a65bf";
+            case "已删除" -> "#7a7e85";
+            case "重命名", "拷贝" -> "#7e57c2";
+            case "冲突" -> "#d32f2f";
+            default -> "#3c3f41";
+        };
+    }
+
+    private javafx.scene.image.Image getVersionItemIcon(ChangeItem item) {
+        return getDevelopmentItemIcon(item.name, item.directory);
+    }
+
+    private javafx.scene.shape.Path createTreeDisclosureArrow() {
+        javafx.scene.shape.Path arrow = new javafx.scene.shape.Path(
+                new javafx.scene.shape.MoveTo(2, 0),
+                new javafx.scene.shape.LineTo(7, 5),
+                new javafx.scene.shape.LineTo(2, 10)
+        );
+        arrow.setStroke(javafx.scene.paint.Color.valueOf("#888888"));
+        arrow.setStrokeWidth(1.8);
+        arrow.setFill(null);
+        arrow.setStrokeLineCap(javafx.scene.shape.StrokeLineCap.ROUND);
+        arrow.setStrokeLineJoin(javafx.scene.shape.StrokeLineJoin.ROUND);
+        return arrow;
+    }
+
+    private StackPane createTreeDisclosurePane(javafx.scene.shape.Path arrow) {
+        StackPane pane = new StackPane(arrow);
+        pane.setAlignment(Pos.CENTER);
+        pane.setPrefSize(16, 35);
+        pane.setMinSize(16, 35);
+        return pane;
+    }
+
+    private javafx.scene.image.Image getDevelopmentItemIcon(String fileName, boolean directory) {
+        String resource = directory
+                ? "/images/connect/folder.png"
+                : "/images/connect/fileTypes/" + getVersionFileIconType(fileName) + ".png";
+        String cacheKey = "version-tree-icon:" + resource;
+        Object cached = getProperties().get(cacheKey);
+        if (cached instanceof javafx.scene.image.Image image) return image;
+
+        javafx.scene.image.Image image = loadVersionItemIcon(resource);
+        if (image == null && !directory) {
+            image = loadVersionItemIcon("/images/connect/fileTypes/TXT.png");
+        }
+        if (image != null) getProperties().put(cacheKey, image);
+        return image;
+    }
+
+    private javafx.scene.image.Image loadVersionItemIcon(String resource) {
+        try (java.io.InputStream stream = getClass().getResourceAsStream(resource)) {
+            return stream == null ? null : new javafx.scene.image.Image(stream);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private String getVersionFileIconType(String fileName) {
+        String lowerName = fileName == null ? "" : fileName.toLowerCase(java.util.Locale.ROOT);
+        if (lowerName.equals("dockerfile") || lowerName.startsWith("dockerfile.")) return "DOCKERFILE";
+        if (lowerName.equals("makefile") || lowerName.startsWith("makefile.")) return "MAKEFILE";
+        if (lowerName.equals(".gitignore") || lowerName.equals(".gitattributes")
+                || lowerName.equals(".editorconfig")) return "CONF";
+
+        int dotIndex = lowerName.lastIndexOf('.');
+        if (dotIndex < 0 || dotIndex == lowerName.length() - 1) return "TXT";
+        String extension = lowerName.substring(dotIndex + 1);
+        return switch (extension) {
+            case "yml" -> "YAML";
+            case "jpeg", "jfif" -> "JPG";
+            case "htm" -> "HTML";
+            case "kts" -> "KT";
+            case "cc", "cxx" -> "CPP";
+            case "hpp", "hxx" -> "H";
+            case "bash", "zsh" -> "SH";
+            case "properties", "config" -> "CONF";
+            case "ai" -> "Ai";
+            default -> extension.toUpperCase(java.util.Locale.ROOT);
+        };
+    }
+
+    private void rollbackVersionNode(TreeItem<ChangeItem> node) {
+        if (node == null || currentDirectory == null || currentMode != VersionMode.GIT
+                || !currentDirectoryGitRepo) return;
+        List<ChangeItem> changes = new ArrayList<>();
+        collectVersionLeafItems(node, changes);
+        if (changes.isEmpty()) return;
+
+        Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION,
+                "确定回滚选中的 " + changes.size() + " 个文件吗？未添加的文件将被删除，此操作不可撤销。",
+                ButtonType.OK, ButtonType.CANCEL);
+        confirmation.setTitle("回滚变更");
+        confirmation.setHeaderText(node.getValue() == null ? null : node.getValue().name);
+        DialogPositionUtil.centerOnOwner(confirmation, this);
+        if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
+
+        DevDirectory project = currentDirectory;
+        asyncExecutor.execute(() -> {
+            String error = doGitRollback(project, changes);
+            Platform.runLater(() -> {
+                if (error != null) {
+                    Alert alert = new Alert(Alert.AlertType.ERROR, "回滚失败：\n" + error, ButtonType.OK);
+                    DialogPositionUtil.centerOnOwner(alert, this);
+                    alert.showAndWait();
+                }
+                if (currentDirectory == project) refreshVersionListAsync();
+            });
+        });
+    }
+
+    private void collectVersionLeafItems(TreeItem<ChangeItem> node, List<ChangeItem> result) {
+        ChangeItem item = node.getValue();
+        if (item != null && !item.directory) result.add(item);
+        for (TreeItem<ChangeItem> child : node.getChildren()) collectVersionLeafItems(child, result);
+    }
+
+    private String doGitRollback(DevDirectory project, List<ChangeItem> changes) {
+        for (ChangeItem item : changes) {
+            if ("未添加".equals(item.statusText)) {
+                CommandResult clean = runGitCommand(project.getPath(), List.of("clean", "-fd", "--", item.relativePath));
+                if (!clean.success) return clean.output;
+                continue;
+            }
+            if ("已添加".equals(item.statusText)) {
+                runGitCommand(project.getPath(), List.of("restore", "--staged", "--", item.relativePath));
+                CommandResult clean = runGitCommand(project.getPath(), List.of("clean", "-fd", "--", item.relativePath));
+                if (!clean.success) return clean.output;
+                continue;
+            }
+            CommandResult restore = runGitCommand(project.getPath(),
+                    List.of("restore", "--staged", "--worktree", "--", item.relativePath));
+            if (!restore.success) return restore.output;
+        }
+        return null;
+    }
+
+    private void addVersionNodeToGitIgnore(TreeItem<ChangeItem> node) {
+        if (node == null || node.getValue() == null || currentDirectory == null
+                || currentMode != VersionMode.GIT || !currentDirectoryGitRepo) return;
+
+        DevDirectory project = currentDirectory;
+        ChangeItem item = node.getValue();
+        asyncExecutor.execute(() -> {
+            String result = doAddToGitIgnore(project, item);
+            Platform.runLater(() -> {
+                if (result.startsWith("ERROR:")) {
+                    Alert alert = new Alert(Alert.AlertType.ERROR,
+                            result.substring("ERROR:".length()).trim(), ButtonType.OK);
+                    alert.setTitle("添加失败");
+                    alert.setHeaderText("无法添加到 .gitignore");
+                    DialogPositionUtil.centerOnOwner(alert, this);
+                    alert.showAndWait();
+                    return;
+                }
+                versionHintLabel.setText(result);
+                if (currentDirectory == project) refreshVersionListAsync();
+            });
+        });
+    }
+
+    private String doAddToGitIgnore(DevDirectory project, ChangeItem item) {
+        CommandResult rootResult = runGitCommand(project.getPath(), List.of("rev-parse", "--show-toplevel"));
+        if (!rootResult.success) return "ERROR:" + rootResult.output;
+
+        try {
+            java.nio.file.Path repositoryRoot = java.nio.file.Path.of(lastMeaningfulLine(rootResult.output))
+                    .toAbsolutePath().normalize();
+            java.nio.file.Path target = project.getPath().toPath().resolve(item.relativePath)
+                    .toAbsolutePath().normalize();
+            if (!target.startsWith(repositoryRoot)) {
+                return "ERROR:所选路径不在当前 Git 仓库中";
+            }
+
+            String relativePath = repositoryRoot.relativize(target).toString().replace('\\', '/');
+            if (relativePath.isBlank() || ".gitignore".equals(relativePath)) {
+                return "ERROR:不能将该路径添加到 .gitignore";
+            }
+
+            boolean directory = item.directory || java.nio.file.Files.isDirectory(target);
+            String rule = "/" + relativePath + (directory ? "/" : "");
+            java.nio.file.Path ignoreFile = repositoryRoot.resolve(".gitignore");
+            String existing = java.nio.file.Files.isRegularFile(ignoreFile)
+                    ? java.nio.file.Files.readString(ignoreFile, java.nio.charset.StandardCharsets.UTF_8)
+                    : "";
+            boolean exists = existing.lines().map(String::trim).anyMatch(rule::equals);
+            if (!exists) {
+                String separator = existing.isEmpty() || existing.endsWith("\n") || existing.endsWith("\r")
+                        ? ""
+                        : System.lineSeparator();
+                java.nio.file.Files.writeString(
+                        ignoreFile,
+                        separator + rule + System.lineSeparator(),
+                        java.nio.charset.StandardCharsets.UTF_8,
+                        java.nio.file.StandardOpenOption.CREATE,
+                        java.nio.file.StandardOpenOption.APPEND
+                );
+            }
+
+            String trackedHint = "未添加".equals(item.statusText)
+                    ? ""
+                    : "；已跟踪的文件需先取消 Git 跟踪才会被忽略";
+            return (exists ? "忽略规则已存在：" : "已添加忽略规则：") + rule + trackedHint;
+        } catch (Exception ex) {
+            return "ERROR:" + ex.getMessage();
         }
     }
 
@@ -1748,65 +2198,12 @@ public class DevelopmentManagerPane extends VBox {
             executeGradleMainClass(project, jdk, moduleRoot, mainClass, testSource);
             return;
         }
-        Path classpathFile = null;
         Process launchedProcess = null;
         try {
-            appendRunOutput("[Maven] 正在编译项目..." + System.lineSeparator());
-            CommandResult compile = runMavenCommand(project, project.getPath(),
-                    List.of(testSource ? "test-compile" : "compile"), 300);
-            appendRunOutput(compile.output);
-            boolean legacyLocalFallback = false;
-            if (!compile.success && isCachedResolutionFailure(compile.output)) {
-                appendRunOutput("[Maven] 检测到依赖失败缓存，使用 -U 强制刷新后重试..."
-                        + System.lineSeparator());
-                compile = runMavenCommand(project, project.getPath(),
-                        List.of("-U", testSource ? "test-compile" : "compile"), 300);
-                appendRunOutput(compile.output);
-            }
-            if (!compile.success && isCachedResolutionFailure(compile.output)) {
-                appendRunOutput("[Maven] 远程仓库仍不可用，尝试使用本地已有 JAR..."
-                        + System.lineSeparator());
-                compile = runMavenCommand(project, project.getPath(),
-                        List.of("-o", "-Daether.artifactResolver.simpleLrmInterop=true",
-                                testSource ? "test-compile" : "compile"), 300);
-                appendRunOutput(compile.output);
-                legacyLocalFallback = compile.success;
-            }
-            if (!compile.success) {
-                appendRunOutput("[Maven] 编译失败" + System.lineSeparator());
-                return;
-            }
-
-            classpathFile = Files.createTempFile("tomato-maven-classpath-", ".txt");
-            List<String> repositoryGoals = new ArrayList<>();
-            if (legacyLocalFallback) {
-                repositoryGoals.add("-o");
-                repositoryGoals.add("-Daether.artifactResolver.simpleLrmInterop=true");
-            }
-            repositoryGoals.addAll(List.of("help:evaluate", "-Dexpression=settings.localRepository",
-                    "-q", "-DforceStdout"));
-            CommandResult repositoryResult = runMavenCommand(project, moduleRoot, repositoryGoals, 120);
-            if (repositoryResult.success) {
-                appendRunOutput("[Maven] 本地仓库：" + lastMeaningfulLine(repositoryResult.output)
-                        + System.lineSeparator());
-            }
-            List<String> dependencyGoals = new ArrayList<>();
-            if (legacyLocalFallback) {
-                dependencyGoals.add("-o");
-                dependencyGoals.add("-Daether.artifactResolver.simpleLrmInterop=true");
-            }
-            dependencyGoals.add("dependency:build-classpath");
-            dependencyGoals.add("-Dmdep.outputFile=" + classpathFile.toAbsolutePath());
-            dependencyGoals.add("-Dmdep.includeScope=" + (testSource ? "test" : "runtime"));
-            CommandResult classpathResult = runMavenCommand(project, moduleRoot, dependencyGoals, 180);
-            if (!classpathResult.success) {
-                appendRunOutput(classpathResult.output);
-                appendRunOutput("[Maven] 无法生成依赖类路径" + System.lineSeparator());
-                return;
-            }
-
-            String dependencies = Files.exists(classpathFile)
-                    ? Files.readString(classpathFile, StandardCharsets.UTF_8).trim() : "";
+            MavenBuildPreparation preparation = prepareMavenBuild(
+                    project, jdk, moduleRoot, testSource);
+            if (!preparation.success) return;
+            String dependencies = preparation.dependencies;
             List<String> classpathParts = new ArrayList<>();
             if (testSource) classpathParts.add(new File(moduleRoot, "target/test-classes").getAbsolutePath());
             classpathParts.add(new File(moduleRoot, "target/classes").getAbsolutePath());
@@ -1856,9 +2253,305 @@ public class DevelopmentManagerPane extends VBox {
                 refreshDirectoryTree();
                 updateRunControlState();
             });
+        }
+    }
+
+    private MavenBuildPreparation prepareMavenBuild(DevDirectory project,
+                                                     DevelopmentConfigManager.RuntimeEntry jdk,
+                                                     File moduleRoot,
+                                                     boolean testSource) {
+        String stateKey = moduleRoot.toPath().toAbsolutePath().normalize()
+                + "|test=" + testSource;
+        long configurationStamp = getMavenConfigurationStamp(project.getPath());
+        String profileKey = project.mavenId + "|" + String.join(",", project.activeProfiles);
+        Map<String, Long> sources = snapshotJavaSources(moduleRoot, testSource);
+        Map<String, Long> mainResources = snapshotFiles(
+                new File(moduleRoot, "src/main/resources").toPath(), false);
+        Map<String, Long> testResources = testSource
+                ? snapshotFiles(new File(moduleRoot, "src/test/resources").toPath(), false)
+                : Map.of();
+        MavenIncrementalState state = mavenIncrementalStates.get(stateKey);
+
+        boolean outputReady = containsClassFile(new File(moduleRoot, "target/classes").toPath())
+                && (!testSource || Files.isDirectory(new File(moduleRoot, "target/test-classes").toPath()));
+        boolean canIncrement = state != null
+                && state.configurationStamp == configurationStamp
+                && profileKey.equals(state.profileKey)
+                && state.dependencies != null
+                && outputReady
+                && !containsDeletedPath(state.sources, sources);
+
+        if (canIncrement) {
+            List<Path> changedSources = changedPaths(state.sources, sources);
+            if (changedSources.size() <= MAX_INCREMENTAL_JAVA_FILES) {
+                appendRunOutput(changedSources.isEmpty()
+                        ? "[Javac] 未发现 Java 类变更，跳过编译" + System.lineSeparator()
+                        : "[Javac] 增量编译 " + changedSources.size() + " 个变更文件..."
+                                + System.lineSeparator());
+                CommandResult incremental = compileChangedJavaFiles(
+                        project, jdk, moduleRoot, testSource, state.dependencies, changedSources);
+                String resourceError = incremental.success
+                        ? copyChangedResources(state.mainResources, mainResources,
+                                new File(moduleRoot, "src/main/resources").toPath(),
+                                new File(moduleRoot, "target/classes").toPath())
+                        : null;
+                if (incremental.success && resourceError == null && testSource) {
+                    resourceError = copyChangedResources(state.testResources, testResources,
+                            new File(moduleRoot, "src/test/resources").toPath(),
+                            new File(moduleRoot, "target/test-classes").toPath());
+                }
+                if (incremental.success && resourceError == null) {
+                    if (!incremental.output.isBlank()) appendRunOutput(incremental.output);
+                    state.sources = sources;
+                    state.mainResources = mainResources;
+                    state.testResources = testResources;
+                    return new MavenBuildPreparation(true, state.dependencies);
+                }
+                if (!incremental.output.isBlank()) appendRunOutput(incremental.output);
+                if (resourceError != null) {
+                    appendRunOutput("[资源] 增量复制失败：" + resourceError + System.lineSeparator());
+                }
+                appendRunOutput("[Javac] 增量编译不可用，回退 Maven 完整编译..."
+                        + System.lineSeparator());
+            } else {
+                appendRunOutput("[Javac] 变更文件较多，回退 Maven 完整编译..."
+                        + System.lineSeparator());
+            }
+        }
+
+        appendRunOutput("[Maven] 正在编译项目..." + System.lineSeparator());
+        CommandResult compile = runMavenCommand(project, project.getPath(),
+                List.of(testSource ? "test-compile" : "compile"), 300);
+        appendRunOutput(compile.output);
+        boolean legacyLocalFallback = false;
+        if (!compile.success && isCachedResolutionFailure(compile.output)) {
+            appendRunOutput("[Maven] 检测到依赖失败缓存，使用 -U 强制刷新后重试..."
+                    + System.lineSeparator());
+            compile = runMavenCommand(project, project.getPath(),
+                    List.of("-U", testSource ? "test-compile" : "compile"), 300);
+            appendRunOutput(compile.output);
+        }
+        if (!compile.success && isCachedResolutionFailure(compile.output)) {
+            appendRunOutput("[Maven] 远程仓库仍不可用，尝试使用本地已有 JAR..."
+                    + System.lineSeparator());
+            compile = runMavenCommand(project, project.getPath(),
+                    List.of("-o", "-Daether.artifactResolver.simpleLrmInterop=true",
+                            testSource ? "test-compile" : "compile"), 300);
+            appendRunOutput(compile.output);
+            legacyLocalFallback = compile.success;
+        }
+        if (!compile.success) {
+            appendRunOutput("[Maven] 编译失败" + System.lineSeparator());
+            return new MavenBuildPreparation(false, "");
+        }
+
+        Path classpathFile = null;
+        try {
+            classpathFile = Files.createTempFile("tomato-maven-classpath-", ".txt");
+            List<String> repositoryGoals = new ArrayList<>();
+            if (legacyLocalFallback) {
+                repositoryGoals.add("-o");
+                repositoryGoals.add("-Daether.artifactResolver.simpleLrmInterop=true");
+            }
+            repositoryGoals.addAll(List.of("help:evaluate", "-Dexpression=settings.localRepository",
+                    "-q", "-DforceStdout"));
+            CommandResult repositoryResult = runMavenCommand(project, moduleRoot, repositoryGoals, 120);
+            if (repositoryResult.success) {
+                appendRunOutput("[Maven] 本地仓库：" + lastMeaningfulLine(repositoryResult.output)
+                        + System.lineSeparator());
+            }
+
+            List<String> dependencyGoals = new ArrayList<>();
+            if (legacyLocalFallback) {
+                dependencyGoals.add("-o");
+                dependencyGoals.add("-Daether.artifactResolver.simpleLrmInterop=true");
+            }
+            dependencyGoals.add("dependency:build-classpath");
+            dependencyGoals.add("-Dmdep.outputFile=" + classpathFile.toAbsolutePath());
+            dependencyGoals.add("-Dmdep.includeScope=" + (testSource ? "test" : "runtime"));
+            CommandResult classpathResult = runMavenCommand(project, moduleRoot, dependencyGoals, 180);
+            if (!classpathResult.success) {
+                appendRunOutput(classpathResult.output);
+                appendRunOutput("[Maven] 无法生成依赖类路径" + System.lineSeparator());
+                return new MavenBuildPreparation(false, "");
+            }
+
+            String dependencies = Files.exists(classpathFile)
+                    ? Files.readString(classpathFile, StandardCharsets.UTF_8).trim() : "";
+            MavenIncrementalState newState = new MavenIncrementalState();
+            newState.configurationStamp = configurationStamp;
+            newState.profileKey = profileKey;
+            newState.dependencies = dependencies;
+            newState.sources = snapshotJavaSources(moduleRoot, testSource);
+            newState.mainResources = snapshotFiles(
+                    new File(moduleRoot, "src/main/resources").toPath(), false);
+            newState.testResources = testSource
+                    ? snapshotFiles(new File(moduleRoot, "src/test/resources").toPath(), false)
+                    : Map.of();
+            mavenIncrementalStates.put(stateKey, newState);
+            return new MavenBuildPreparation(true, dependencies);
+        } catch (Exception e) {
+            appendRunOutput("[Maven] 无法准备启动类路径：" + e.getMessage() + System.lineSeparator());
+            return new MavenBuildPreparation(false, "");
+        } finally {
             if (classpathFile != null) {
                 try { Files.deleteIfExists(classpathFile); } catch (Exception ignored) {}
             }
+        }
+    }
+
+    private CommandResult compileChangedJavaFiles(DevDirectory project,
+                                                  DevelopmentConfigManager.RuntimeEntry jdk,
+                                                  File moduleRoot,
+                                                  boolean testSource,
+                                                  String dependencies,
+                                                  List<Path> changedSources) {
+        if (changedSources.isEmpty()) return new CommandResult(true, 0, "");
+        List<Path> mainSources = changedSources.stream()
+                .filter(path -> path.startsWith(new File(moduleRoot, "src/main/java").toPath()
+                        .toAbsolutePath().normalize()))
+                .toList();
+        List<Path> testSources = testSource
+                ? changedSources.stream()
+                        .filter(path -> path.startsWith(new File(moduleRoot, "src/test/java").toPath()
+                                .toAbsolutePath().normalize()))
+                        .toList()
+                : List.of();
+
+        if (!mainSources.isEmpty()) {
+            CommandResult result = runJavac(project, jdk, moduleRoot, false, dependencies, mainSources);
+            if (!result.success) return result;
+        }
+        if (!testSources.isEmpty()) {
+            return runJavac(project, jdk, moduleRoot, true, dependencies, testSources);
+        }
+        return new CommandResult(true, 0, "");
+    }
+
+    private CommandResult runJavac(DevDirectory project,
+                                   DevelopmentConfigManager.RuntimeEntry jdk,
+                                   File moduleRoot,
+                                   boolean testSource,
+                                   String dependencies,
+                                   List<Path> sourceFiles) {
+        Path output = new File(moduleRoot, testSource
+                ? "target/test-classes" : "target/classes").toPath().toAbsolutePath().normalize();
+        try {
+            Files.createDirectories(output);
+        } catch (Exception e) {
+            return new CommandResult(false, -1, e.getMessage());
+        }
+
+        List<String> classpathParts = new ArrayList<>();
+        if (testSource) {
+            classpathParts.add(new File(moduleRoot, "target/test-classes").getAbsolutePath());
+        }
+        classpathParts.add(new File(moduleRoot, "target/classes").getAbsolutePath());
+        if (!dependencies.isBlank()) classpathParts.add(dependencies);
+
+        List<String> command = new ArrayList<>();
+        command.add(Path.of(jdk.getPath(), "bin", windows() ? "javac.exe" : "javac").toString());
+        command.add("-encoding");
+        command.add("UTF-8");
+        command.add("-parameters");
+        command.add("-proc:full");
+        command.add("-classpath");
+        command.add(String.join(File.pathSeparator, classpathParts));
+        command.add("-d");
+        command.add(output.toString());
+        List<String> sourceRoots = new ArrayList<>();
+        sourceRoots.add(new File(moduleRoot, "src/main/java").getAbsolutePath());
+        if (testSource) sourceRoots.add(new File(moduleRoot, "src/test/java").getAbsolutePath());
+        command.add("-sourcepath");
+        command.add(String.join(File.pathSeparator, sourceRoots));
+        sourceFiles.stream().map(Path::toString).sorted().forEach(command::add);
+        return runBuildCommand(project, moduleRoot, command, jdk, 180, "Javac");
+    }
+
+    private Map<String, Long> snapshotJavaSources(File moduleRoot, boolean testSource) {
+        Map<String, Long> snapshot = new LinkedHashMap<>();
+        snapshot.putAll(snapshotFiles(new File(moduleRoot, "src/main/java").toPath(), true));
+        if (testSource) {
+            snapshot.putAll(snapshotFiles(new File(moduleRoot, "src/test/java").toPath(), true));
+        }
+        return snapshot;
+    }
+
+    private Map<String, Long> snapshotFiles(Path root, boolean javaOnly) {
+        if (!Files.isDirectory(root)) return Map.of();
+        Map<String, Long> snapshot = new LinkedHashMap<>();
+        try (java.util.stream.Stream<Path> paths = Files.walk(root)) {
+            paths.filter(Files::isRegularFile)
+                    .filter(path -> javaOnly == path.getFileName().toString().endsWith(".java"))
+                    .sorted()
+                    .forEach(path -> {
+                        try {
+                            snapshot.put(path.toAbsolutePath().normalize().toString(),
+                                    Files.getLastModifiedTime(path).toMillis());
+                        } catch (Exception ignored) {}
+                    });
+        } catch (Exception ignored) {}
+        return snapshot;
+    }
+
+    private List<Path> changedPaths(Map<String, Long> previous, Map<String, Long> current) {
+        List<Path> changed = new ArrayList<>();
+        for (Map.Entry<String, Long> entry : current.entrySet()) {
+            Long oldTime = previous.get(entry.getKey());
+            if (oldTime == null || oldTime.longValue() != entry.getValue()) {
+                changed.add(Path.of(entry.getKey()));
+            }
+        }
+        return changed;
+    }
+
+    private boolean containsDeletedPath(Map<String, Long> previous, Map<String, Long> current) {
+        return previous.keySet().stream().anyMatch(path -> !current.containsKey(path));
+    }
+
+    private String copyChangedResources(Map<String, Long> previous,
+                                        Map<String, Long> current,
+                                        Path sourceRoot,
+                                        Path outputRoot) {
+        try {
+            for (String oldPath : previous.keySet()) {
+                if (!current.containsKey(oldPath)) {
+                    Files.deleteIfExists(outputRoot.resolve(sourceRoot.relativize(Path.of(oldPath))));
+                }
+            }
+            for (Path changed : changedPaths(previous, current)) {
+                Path target = outputRoot.resolve(sourceRoot.relativize(changed));
+                if (target.getParent() != null) Files.createDirectories(target.getParent());
+                Files.copy(changed, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            return null;
+        } catch (Exception e) {
+            return e.getMessage();
+        }
+    }
+
+    private long getMavenConfigurationStamp(File projectRoot) {
+        if (projectRoot == null || !projectRoot.isDirectory()) return 0;
+        final long[] latest = {0};
+        try (java.util.stream.Stream<Path> paths = Files.walk(projectRoot.toPath())) {
+            paths.filter(Files::isRegularFile)
+                    .filter(path -> "pom.xml".equalsIgnoreCase(path.getFileName().toString()))
+                    .forEach(path -> {
+                        try {
+                            latest[0] = Math.max(latest[0], Files.getLastModifiedTime(path).toMillis());
+                        } catch (Exception ignored) {}
+                    });
+        } catch (Exception ignored) {}
+        return latest[0];
+    }
+
+    private boolean containsClassFile(Path outputRoot) {
+        if (!Files.isDirectory(outputRoot)) return false;
+        try (java.util.stream.Stream<Path> paths = Files.walk(outputRoot)) {
+            return paths.anyMatch(path -> Files.isRegularFile(path)
+                    && path.getFileName().toString().endsWith(".class"));
+        } catch (Exception ignored) {
+            return false;
         }
     }
 
@@ -2354,7 +3047,7 @@ public class DevelopmentManagerPane extends VBox {
         if (result.changes.isEmpty()) {
             TreeItem<ChangeItem> emptyRoot = new TreeItem<>(new ChangeItem("变更文件", "", "root", true));
             versionTree.setRoot(emptyRoot);
-            commitButton.setDisable(true);
+            updateCommitButtons();
             return;
         }
 
@@ -2365,7 +3058,7 @@ public class DevelopmentManagerPane extends VBox {
         sortVersionTree(root);
         root.setExpanded(true);
         versionTree.setRoot(root);
-        commitButton.setDisable(!(currentMode == VersionMode.GIT && result.isGitRepo));
+        updateCommitButtons();
     }
 
     private void addPathToVersionTree(TreeItem<ChangeItem> root, String rawPath, String statusText) {
@@ -2444,7 +3137,14 @@ public class DevelopmentManagerPane extends VBox {
         realtimeTask = null;
     }
 
-    private void commitSelectedFiles() {
+    private void updateCommitButtons() {
+        boolean disabled = currentMode != VersionMode.GIT || !currentDirectoryGitRepo
+                || commitMessageArea.getText().isBlank() || collectSelectedFiles().isEmpty();
+        commitButton.setDisable(disabled);
+        commitAndPushButton.setDisable(disabled);
+    }
+
+    private void commitSelectedFiles(boolean pushAfterCommit) {
         if (currentDirectory == null || !currentDirectoryGitRepo || currentMode != VersionMode.GIT) {
             Alert alert = new Alert(Alert.AlertType.WARNING, "请先在 git 仓库目录下切到“git仓库”模式后再提交", ButtonType.OK);
             DialogPositionUtil.centerOnOwner(alert, this);
@@ -2458,17 +3158,7 @@ public class DevelopmentManagerPane extends VBox {
             alert.showAndWait();
             return;
         }
-        TextInputDialog dialog = new TextInputDialog();
-        dialog.setTitle("提交说明");
-        dialog.setHeaderText("请填写提交信息");
-        dialog.setContentText("提交内容：");
-        dialog.initModality(Modality.WINDOW_MODAL);
-        if (this.getScene() != null) dialog.initOwner((Stage) this.getScene().getWindow());
-        Optional<String> msgOpt = dialog.showAndWait();
-        if (msgOpt.isEmpty()) {
-            return;
-        }
-        String msg = msgOpt.get().trim();
+        String msg = commitMessageArea.getText().trim();
         if (msg.isBlank()) {
             Alert alert = new Alert(Alert.AlertType.WARNING, "提交信息不能为空", ButtonType.OK);
             DialogPositionUtil.centerOnOwner(alert, this);
@@ -2476,39 +3166,148 @@ public class DevelopmentManagerPane extends VBox {
             return;
         }
 
+        DevDirectory project = currentDirectory;
+        PushTarget pushTarget = null;
+        if (pushAfterCommit) {
+            Optional<PushTarget> target = showPushDialog(project, selectedFiles);
+            if (target.isEmpty()) return;
+            pushTarget = target.get();
+        }
+
         commitButton.setDisable(true);
+        commitAndPushButton.setDisable(true);
+        PushTarget finalPushTarget = pushTarget;
         asyncExecutor.execute(() -> {
-            String err = doGitCommit(selectedFiles, msg);
+            String commitError = doGitCommit(project, selectedFiles, msg);
+            String pushError = commitError == null && finalPushTarget != null
+                    ? doGitPush(project, finalPushTarget) : null;
             Platform.runLater(() -> {
-                if (err == null) {
-                    Alert alert = new Alert(Alert.AlertType.INFORMATION, "提交成功", ButtonType.OK);
+                if (commitError == null && pushError == null) {
+                    commitMessageArea.clear();
+                    Alert alert = new Alert(Alert.AlertType.INFORMATION,
+                            finalPushTarget == null ? "提交成功" : "提交并推送成功", ButtonType.OK);
                     DialogPositionUtil.centerOnOwner(alert, this);
                     alert.showAndWait();
-                    refreshVersionListAsync();
+                    if (currentDirectory == project) refreshVersionListAsync();
                 } else {
-                    Alert alert = new Alert(Alert.AlertType.ERROR, "提交失败：\n" + err, ButtonType.OK);
+                    String message = commitError != null
+                            ? "提交失败：\n" + commitError
+                            : "提交成功，但推送失败：\n" + pushError;
+                    Alert alert = new Alert(Alert.AlertType.ERROR, message, ButtonType.OK);
                     DialogPositionUtil.centerOnOwner(alert, this);
                     alert.showAndWait();
-                    commitButton.setDisable(!(currentMode == VersionMode.GIT && currentDirectoryGitRepo));
+                    updateCommitButtons();
                 }
             });
         });
     }
 
-    private String doGitCommit(List<String> files, String message) {
+    private record PushTarget(String remote, String branch) {
+    }
+
+    private Optional<PushTarget> showPushDialog(DevDirectory project, List<String> files) {
+        List<String> remotes = commandLines(runGitCommand(project.getPath(), "remote"));
+        if (remotes.isEmpty()) {
+            Alert alert = new Alert(Alert.AlertType.WARNING, "当前仓库没有可用的 Git remote", ButtonType.OK);
+            DialogPositionUtil.centerOnOwner(alert, this);
+            alert.showAndWait();
+            return Optional.empty();
+        }
+        String currentBranch = lastMeaningfulLine(
+                runGitCommand(project.getPath(), "branch", "--show-current").output);
+        List<String> branches = commandLines(runGitCommand(project.getPath(),
+                "branch", "--format=%(refname:short)"));
+
+        ComboBox<String> remoteCombo = new ComboBox<>(FXCollections.observableArrayList(remotes));
+        remoteCombo.setMaxWidth(Double.MAX_VALUE);
+        remoteCombo.getSelectionModel().select(remotes.contains("origin") ? "origin" : remotes.get(0));
+        ComboBox<String> branchCombo = new ComboBox<>(FXCollections.observableArrayList(branches));
+        branchCombo.setEditable(true);
+        branchCombo.setMaxWidth(Double.MAX_VALUE);
+        branchCombo.setValue(currentBranch);
+
+        GridPane targetForm = new GridPane();
+        targetForm.setHgap(10);
+        targetForm.setVgap(12);
+        targetForm.setPadding(new Insets(14));
+        targetForm.add(new Label("Git remote："), 0, 0);
+        targetForm.add(remoteCombo, 1, 0);
+        targetForm.add(new Label("目标分支："), 0, 1);
+        targetForm.add(branchCombo, 1, 1);
+        GridPane.setHgrow(remoteCombo, Priority.ALWAYS);
+        GridPane.setHgrow(branchCombo, Priority.ALWAYS);
+
+        TreeView<String> filesTree = new TreeView<>(createSelectedFilesTree(project.getName(), files));
+        filesTree.getRoot().setExpanded(true);
+        filesTree.setShowRoot(true);
+        filesTree.setStyle("-fx-background-color: transparent;");
+        filesTree.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+        VBox filePanel = new VBox(8, new Label("提交文件（" + files.size() + "）"), filesTree);
+        filePanel.setPadding(new Insets(14));
+        VBox.setVgrow(filesTree, Priority.ALWAYS);
+
+        SplitPane split = new SplitPane(targetForm, filePanel);
+        split.setDividerPositions(0.38);
+        split.setPrefSize(760, 460);
+
+        Dialog<PushTarget> dialog = new Dialog<>();
+        dialog.setTitle("提交并推送 - " + project.getName());
+        if (getScene() != null) dialog.initOwner(getScene().getWindow());
+        ButtonType pushType = new ButtonType("提交并推送", ButtonBar.ButtonData.OK_DONE);
+        dialog.getDialogPane().getButtonTypes().addAll(pushType, ButtonType.CANCEL);
+        dialog.getDialogPane().setContent(split);
+        Node pushButton = dialog.getDialogPane().lookupButton(pushType);
+        pushButton.disableProperty().bind(remoteCombo.valueProperty().isNull()
+                .or(branchCombo.getEditor().textProperty().isEmpty()));
+        dialog.setResultConverter(button -> button == pushType
+                ? new PushTarget(remoteCombo.getValue(), branchCombo.getEditor().getText().trim()) : null);
+        return dialog.showAndWait();
+    }
+
+    private TreeItem<String> createSelectedFilesTree(String projectName, List<String> files) {
+        TreeItem<String> root = new TreeItem<>(projectName);
+        for (String file : files) {
+            TreeItem<String> parent = root;
+            for (String part : file.replace('\\', '/').split("/")) {
+                if (part.isBlank()) continue;
+                TreeItem<String> next = parent.getChildren().stream()
+                        .filter(item -> part.equals(item.getValue())).findFirst().orElse(null);
+                if (next == null) {
+                    next = new TreeItem<>(part);
+                    parent.getChildren().add(next);
+                }
+                parent = next;
+                parent.setExpanded(true);
+            }
+        }
+        return root;
+    }
+
+    private List<String> commandLines(CommandResult result) {
+        if (result == null || !result.success || result.output == null) return List.of();
+        return result.output.lines().map(String::trim).filter(line -> !line.isBlank()).toList();
+    }
+
+    private String doGitCommit(DevDirectory project, List<String> files, String message) {
         List<String> addCmd = new ArrayList<>();
         addCmd.add("add");
         addCmd.add("--");
         addCmd.addAll(files);
-        CommandResult addResult = runGitCommand(currentDirectory.getPath(), addCmd);
+        CommandResult addResult = runGitCommand(project.getPath(), addCmd);
         if (!addResult.success) {
             return "git add 失败：" + addResult.output;
         }
-        CommandResult commitResult = runGitCommand(currentDirectory.getPath(), List.of("commit", "-m", message));
+        CommandResult commitResult = runGitCommand(project.getPath(), List.of("commit", "-m", message));
         if (!commitResult.success) {
             return "git commit 失败：" + commitResult.output;
         }
         return null;
+    }
+
+    private String doGitPush(DevDirectory project, PushTarget target) {
+        CommandResult result = runGitCommand(project.getPath(), List.of(
+                "push", "-u", target.remote(), "HEAD:refs/heads/" + target.branch()));
+        return result.success ? null : result.output;
     }
 
     private List<String> collectSelectedFiles() {
@@ -2556,12 +3355,12 @@ public class DevelopmentManagerPane extends VBox {
 
     private String normalizeGitStatus(String code) {
         if (code.contains("U")) return "冲突";
-        if (code.contains("A")) return "新增";
-        if (code.contains("M")) return "修改";
-        if (code.contains("D")) return "删除";
+        if (code.contains("A")) return "已添加";
+        if (code.contains("M")) return "变更";
+        if (code.contains("D")) return "已删除";
         if (code.contains("R")) return "重命名";
         if (code.contains("C")) return "拷贝";
-        if (code.contains("?")) return "未跟踪";
+        if (code.contains("?")) return "未添加";
         return code.isBlank() ? "变更" : code;
     }
 

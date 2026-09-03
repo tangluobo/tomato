@@ -102,6 +102,15 @@ public class MarkdownTextArea
 	}
 
 	private void suspendScrollYUntilLayout(Runnable runnable) {
+		// GenericStyledArea may call an overridden mutation method while its own
+		// constructor is still running.  At that point this subclass field has not
+		// been initialized yet, so execute normally and begin scroll guarding only
+		// after construction has completed.
+		if (scrollY == null) {
+			runnable.run();
+			return;
+		}
+
 		if (scrollYguard != null) {
 			// nested call --> already suspended
 			runnable.run();
@@ -125,6 +134,11 @@ public class MarkdownTextArea
 
 	@Override
 	protected void layoutChildren() {
+		if (scrollY == null) {
+			super.layoutChildren();
+			return;
+		}
+
 		scrollY.suspendWhile(() -> {
 			super.layoutChildren();
 

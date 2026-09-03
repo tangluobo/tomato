@@ -87,6 +87,8 @@ public class SqlEditorPane extends HBox {
     private final VirtualizedScrollPane<InlineCssTextArea> scrollPane;
     private final VBox lineNumberBox;
     private final List<Label> lineNumberLabels;
+    private final javafx.scene.layout.Pane changeMarkerPane;
+    private List<ChangeHighlight> changeHighlights = List.of();
     private final boolean syntaxHighlighting;
 
     private Consumer<String> onModified;
@@ -98,6 +100,12 @@ public class SqlEditorPane extends HBox {
     private final ListView<CompletionItem> completionList = new ListView<>();
     private final List<CompletionItem> completionItems = new ArrayList<>();
     private int completionWordStart = -1;
+
+    public enum ChangeKind {
+        ADDED, MODIFIED, DELETED
+    }
+
+    public record ChangeHighlight(int line, ChangeKind kind) {}
 
     /** 自动补全候选项。kind 用于标识关键字、数据库、表或字段。 */
     public static final class CompletionItem {
@@ -138,6 +146,15 @@ public class SqlEditorPane extends HBox {
 
         scrollPane = new VirtualizedScrollPane<>(textArea);
 
+        changeMarkerPane = new javafx.scene.layout.Pane();
+        changeMarkerPane.setMinWidth(12);
+        changeMarkerPane.setPrefWidth(12);
+        changeMarkerPane.setMaxWidth(12);
+        changeMarkerPane.setStyle("-fx-background-color: #f3f4f6; -fx-border-color: #d7d9dc; "
+                + "-fx-border-width: 0 0 0 1;");
+        changeMarkerPane.heightProperty().addListener((obs, oldHeight, newHeight) -> renderChangeMarkers());
+        changeMarkerPane.setOnMouseClicked(event -> scrollToNearestChange(event.getY()));
+
         lineNumberBox = new VBox();
         lineNumberBox.setStyle("-fx-background-color: #f8f8f8; -fx-padding: 0;");
         lineNumberBox.setPrefWidth(40);
@@ -164,7 +181,7 @@ public class SqlEditorPane extends HBox {
         // 初始显示第 1 行
         updateLineNumbers(1);
 
-        getChildren().addAll(lineNumberBox, scrollPane);
+        getChildren().addAll(lineNumberBox, scrollPane, changeMarkerPane);
         HBox.setHgrow(scrollPane, Priority.ALWAYS);
         // 不驱动 SplitPane 分配，被动接受父容器给的空间
         setMinHeight(0);
@@ -178,6 +195,7 @@ public class SqlEditorPane extends HBox {
         textArea.textProperty().addListener((obs, oldVal, newVal) -> {
             if (syntaxHighlighting) applyHighlighting();
             updateLineNumbers(textArea.getParagraphs().size());
+            if (!changeHighlights.isEmpty()) renderChangeMarkers();
             if (onModified != null) onModified.accept(newVal);
             if (textArea.isFocused() && textArea.isEditable()) {
                 javafx.application.Platform.runLater(this::refreshCompletionPopup);
@@ -405,12 +423,109 @@ public class SqlEditorPane extends HBox {
 
     // ==================== 公开 API ====================
 
+    public void setChangeHighlights(List<ChangeHighlight> highlights) {
+        clearChangeHighlights();
+        if (highlights == null || highlights.isEmpty()) return;
+        int paragraphCount = textArea.getParagraphs().size();
+        changeHighlights = highlights.stream()
+                .filter(change -> change != null && change.kind() != null
+                        && change.line() > 0 && change.line() <= paragraphCount)
+                .sorted(Comparator.comparingInt(ChangeHighlight::line))
+                .toList();
+        for (ChangeHighlight change : changeHighlights) {
+            textArea.setParagraphStyle(change.line() - 1, paragraphStyle(change.kind()));
+        }
+        renderChangeMarkers();
+    }
+
+    public void clearChangeHighlights() {
+        for (int i = 0; i < textArea.getParagraphs().size(); i++) {
+            textArea.setParagraphStyle(i, "");
+        }
+        changeHighlights = List.of();
+        changeMarkerPane.getChildren().clear();
+        changeMarkerPane.setCursor(javafx.scene.Cursor.DEFAULT);
+    }
+
+    private String paragraphStyle(ChangeKind kind) {
+        return switch (kind) {
+            case ADDED -> "-fx-background-color: #e4f2df;";
+            case MODIFIED -> "-fx-background-color: #dcecff;";
+            case DELETED -> "-fx-background-color: #f7d9dc;";
+        };
+    }
+
+    private String markerColor(ChangeKind kind) {
+        return switch (kind) {
+            case ADDED -> "#62a852";
+            case MODIFIED -> "#3574b9";
+            case DELETED -> "#c75450";
+        };
+    }
+
+    private String changeKindText(ChangeKind kind) {
+        return switch (kind) {
+            case ADDED -> "新增";
+            case MODIFIED -> "修改";
+            case DELETED -> "删除";
+        };
+    }
+
+    private void renderChangeMarkers() {
+        changeMarkerPane.getChildren().clear();
+        if (changeHighlights.isEmpty()) {
+            changeMarkerPane.setCursor(javafx.scene.Cursor.DEFAULT);
+            return;
+        }
+        changeMarkerPane.setCursor(javafx.scene.Cursor.HAND);
+        int lineCount = Math.max(1, textArea.getParagraphs().size());
+        double height = Math.max(1, changeMarkerPane.getHeight());
+        double markerHeight = Math.max(4, Math.min(10, height / lineCount));
+        double travel = Math.max(0, height - markerHeight);
+        for (ChangeHighlight change : changeHighlights) {
+            Region marker = new Region();
+            marker.setManaged(false);
+            marker.setPrefSize(9, markerHeight);
+            marker.resize(9, markerHeight);
+            marker.setLayoutX(2);
+            marker.setLayoutY(lineCount == 1 ? 0
+                    : ((double) (change.line() - 1) / (lineCount - 1)) * travel);
+            marker.setStyle("-fx-background-color: " + markerColor(change.kind())
+                    + "; -fx-background-radius: 1;");
+            javafx.scene.control.Tooltip.install(marker,
+                    new javafx.scene.control.Tooltip("第 " + change.line() + " 行：" + changeKindText(change.kind())));
+            marker.setOnMouseClicked(event -> {
+                scrollToChange(change);
+                event.consume();
+            });
+            changeMarkerPane.getChildren().add(marker);
+        }
+    }
+
+    private void scrollToNearestChange(double y) {
+        if (changeHighlights.isEmpty()) return;
+        int lineCount = Math.max(1, textArea.getParagraphs().size());
+        double ratio = Math.max(0, Math.min(1, y / Math.max(1, changeMarkerPane.getHeight())));
+        ChangeHighlight nearest = changeHighlights.stream()
+                .min(Comparator.comparingDouble(change ->
+                        Math.abs(((double) (change.line() - 1) / Math.max(1, lineCount - 1)) - ratio)))
+                .orElse(changeHighlights.get(0));
+        scrollToChange(nearest);
+    }
+
+    private void scrollToChange(ChangeHighlight change) {
+        int paragraph = Math.max(0, Math.min(textArea.getParagraphs().size() - 1, change.line() - 1));
+        textArea.showParagraphAtCenter(paragraph);
+        textArea.requestFocus();
+    }
+
     public String getText() {
         return textArea.getText();
     }
 
     public void setText(String text) {
         textArea.replaceText(text == null ? "" : text);
+        clearChangeHighlights();
     }
 
     public String getSelectedText() {
@@ -551,6 +666,6 @@ public class SqlEditorPane extends HBox {
 
     /** 清空全部内容 */
     public void clear() {
-        textArea.replaceText("");
+        setText("");
     }
 }
