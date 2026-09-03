@@ -17,7 +17,7 @@ import javafx.scene.shape.SVGPath;
 
 /**
  * 服务器模块
- * 左侧 sidebar 显示三个服务类型选项：HTTP / FTP / SMB
+ * 左侧 sidebar 显示服务类型选项：HTTP / FTP / SMB
  * 右侧 content 为对应的服务器管理面板
  */
 public class ServerModule implements Module {
@@ -25,12 +25,16 @@ public class ServerModule implements Module {
     private VBox contentArea;
     private HBox currentSelectedBox = null;
 
-    // 三种服务类型对应的侧边栏列表项
+    // 服务类型对应的侧边栏列表项
     private static class ServerItem {
+        final String displayName;
+        final String iconPath;
         final ServerType type;
         final String description;
 
         ServerItem(ServerType type, String description) {
+            this.displayName = type.getDisplayName();
+            this.iconPath = type.getIconPath();
             this.type = type;
             this.description = description;
         }
@@ -39,7 +43,7 @@ public class ServerModule implements Module {
     private final ServerItem[] serverItems = {
             new ServerItem(ServerType.HTTP, "HTTP 文件服务器，支持浏览器访问"),
             new ServerItem(ServerType.FTP, "FTP 文件服务器，支持 FTP 客户端访问"),
-            new ServerItem(ServerType.SMB, "SMB 文件共享服务器，局域网文件共享"),
+            new ServerItem(ServerType.SMB, "SMB 文件共享服务器，局域网文件共享")
     };
 
     @Override
@@ -107,7 +111,7 @@ public class ServerModule implements Module {
         Label welcomeLabel = new Label("选择一个服务类型开始使用");
         welcomeLabel.setStyle("-fx-font-size: 18px; -fx-text-fill: #999;");
 
-        Label hintLabel = new Label("从左侧选择 HTTP / FTP / SMB 服务类型");
+        Label hintLabel = new Label("从左侧选择 HTTP / FTP / SMB");
         hintLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: #bbb;");
 
         welcomeBox.getChildren().addAll(welcomeLabel, hintLabel);
@@ -135,14 +139,14 @@ public class ServerModule implements Module {
         icon.setFitWidth(24);
         icon.setFitHeight(24);
         try {
-            Image img = new Image(getClass().getResourceAsStream(item.type.getIconPath()));
+            Image img = new Image(getClass().getResourceAsStream(item.iconPath));
             icon.setImage(img);
         } catch (Exception ignored) {}
         iconContainer.getChildren().add(icon);
 
         // 右侧文字
         VBox textContainer = new VBox(2);
-        Label nameLabel = new Label(item.type.getDisplayName());
+        Label nameLabel = new Label(item.displayName);
         nameLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #333;");
 
         Label descLabel = new Label(item.description);
@@ -192,8 +196,7 @@ public class ServerModule implements Module {
         contentArea.setMaxHeight(Double.MAX_VALUE);
 
         // 创建对应类型的服务器管理面板
-        com.tangluobo.tomato.module.tools.ServerManagerPane pane =
-                new com.tangluobo.tomato.module.tools.ServerManagerPane(item.type);
+        javafx.scene.layout.Region pane = new com.tangluobo.tomato.module.tools.ServerManagerPane(item.type);
         contentArea.getChildren().add(pane);
         VBox.setVgrow(pane, Priority.ALWAYS);
     }

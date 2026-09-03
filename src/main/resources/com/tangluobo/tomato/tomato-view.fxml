@@ -43,6 +43,14 @@
                      fill="WHITE" stroke="WHITE" strokeWidth="1.5"/>
           </graphic>
         </Button>
+        <Button onAction="#onModuleClick"
+                style="-fx-background-color: transparent; -fx-pref-width: 40px; -fx-pref-height: 40px; -fx-background-radius: 8px;"
+                userData="development">
+          <graphic>
+            <SVGPath content="M7 7l-4 5 4 5M17 7l4 5-4 5M11 5l-1.5 14"
+                     fill="WHITE" stroke="WHITE" strokeWidth="1.5"/>
+          </graphic>
+        </Button>
         <Button onAction="#onModuleClick" 
                 style="-fx-background-color: transparent; -fx-pref-width: 40px; -fx-pref-height: 40px; -fx-background-radius: 8px;"
                 userData="settings">

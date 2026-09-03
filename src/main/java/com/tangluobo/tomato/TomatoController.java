@@ -3,6 +3,7 @@ package com.tangluobo.tomato;
 import com.tangluobo.tomato.module.Module;
 import com.tangluobo.tomato.module.connect.ConnectModule;
 import com.tangluobo.tomato.module.connect.GlobalConfig;
+import com.tangluobo.tomato.module.tools.DevelopmentModule;
 import com.tangluobo.tomato.module.server.ServerModule;
 import com.tangluobo.tomato.module.settings.SettingsModule;
 import com.tangluobo.tomato.module.tools.ToolsModule;
@@ -132,6 +133,8 @@ public class TomatoController {
                     return new ToolsModule();
                 case "server":
                     return new ServerModule();
+                case "development":
+                    return new DevelopmentModule();
                 case "settings":
                     return new SettingsModule();
                 default:
