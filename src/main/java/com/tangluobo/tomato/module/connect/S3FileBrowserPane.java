@@ -25,6 +25,8 @@ import javafx.stage.Stage;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FilterInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
@@ -36,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongConsumer;
 
 /**
  * S3/OSS 文件浏览器面板
@@ -426,6 +429,12 @@ public class S3FileBrowserPane extends AbstractFileBrowserPane {
 
     @Override
     protected void doUploadSingle(File localFile, String relativePath) throws Exception {
+        doUploadSingle(localFile, relativePath, null);
+    }
+
+    @Override
+    protected void doUploadSingle(File localFile, String relativePath,
+                                  LongConsumer progressCallback) throws Exception {
         // 规范化前缀：保证带尾斜杠，避免把 key 拼成 "dir1file.txt"
         String prefix = currentPrefix != null ? currentPrefix : "";
         if (!prefix.isEmpty() && !prefix.endsWith("/")) {
@@ -435,12 +444,44 @@ public class S3FileBrowserPane extends AbstractFileBrowserPane {
         long size = localFile.length();
         String contentType = java.net.URLConnection.guessContentTypeFromName(localFile.getName());
         if (contentType == null) contentType = "application/octet-stream";
-        try (java.io.FileInputStream fis = new java.io.FileInputStream(localFile)) {
+        if (progressCallback != null) progressCallback.accept(0L);
+        try (java.io.FileInputStream fis = new java.io.FileInputStream(localFile);
+             InputStream uploadStream = new UploadProgressInputStream(fis, progressCallback)) {
             if (isAliyunOSS) {
-                OssService.uploadFile(config, currentBucket, key, fis, size, contentType);
+                OssService.uploadFile(config, currentBucket, key, uploadStream, size, contentType);
             } else {
-                S3Service.uploadFile(config, currentBucket, key, fis, size, contentType);
+                S3Service.uploadFile(config, currentBucket, key, uploadStream, size, contentType);
             }
+        }
+        if (progressCallback != null) progressCallback.accept(size);
+    }
+
+    private static final class UploadProgressInputStream extends FilterInputStream {
+        private final LongConsumer progressCallback;
+        private long transferred;
+
+        private UploadProgressInputStream(InputStream input, LongConsumer progressCallback) {
+            super(input);
+            this.progressCallback = progressCallback;
+        }
+
+        @Override
+        public int read() throws IOException {
+            int value = in.read();
+            if (value >= 0) report(1L);
+            return value;
+        }
+
+        @Override
+        public int read(byte[] bytes, int offset, int length) throws IOException {
+            int count = in.read(bytes, offset, length);
+            if (count > 0) report(count);
+            return count;
+        }
+
+        private void report(long count) {
+            transferred += count;
+            if (progressCallback != null) progressCallback.accept(transferred);
         }
     }
 

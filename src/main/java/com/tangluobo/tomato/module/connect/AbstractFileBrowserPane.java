@@ -49,6 +49,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongConsumer;
 
 /**
  * 文件浏览器抽象基类。
@@ -275,7 +277,7 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
             boolean uploaded = uploadFilesFromClipboard(event.getDragboard());
             event.setDropCompleted(uploaded);
             if (!uploaded) {
-                setStatus("无法读取拖入的 ZIP 文件（格式: " + describeClipboardFormats(event.getDragboard()) + ")");
+                setStatus("无法读取拖入的文件（格式: " + describeClipboardFormats(event.getDragboard()) + ")");
             }
             event.consume();
         });
@@ -1578,9 +1580,20 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
             if (clipboard.hasFiles() && clipboard.getFiles() != null) {
                 files.addAll(clipboard.getFiles());
             }
-            // Shell IDList retains the hierarchy of directories dragged out of ZIP folders.
-            // FILECONTENTS descriptors may enumerate only leaf files, which would flatten the
-            // tree before SFTP sees it, so prefer the Shell representation whenever available.
+            boolean hasVirtualFiles = clipboard.getContentTypes().stream()
+                    .anyMatch(this::isWindowsVirtualFileFormat);
+            if (!hasVirtualFiles) {
+                // Ordinary Explorer drags also advertise Shell IDList Array. In that case the
+                // JavaFX file list is the payload (including a ZIP dragged as a single file),
+                // and sending the ID list to the ZIP-entry extractor misclassifies the drop.
+                if (files.isEmpty()) return false;
+                doUpload(files);
+                return true;
+            }
+
+            // For entries dragged out of a Windows ZIP folder, Shell IDList retains directory
+            // hierarchy that FILECONTENTS descriptors may flatten. Only prefer it when virtual
+            // FILECONTENTS formats prove that this is an archive-entry drag.
             byte[] shellIdList = readShellIdList(clipboard);
             if (shellIdList != null) {
                 return uploadWindowsVirtualFiles(shellIdList);
@@ -1592,7 +1605,7 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
         } catch (Exception ex) {
             Alert alert = new Alert(Alert.AlertType.ERROR);
             alert.setTitle("上传失败");
-            alert.setHeaderText("无法读取压缩包中的文件");
+            alert.setHeaderText("无法读取拖入的文件");
             alert.setContentText(ex.getMessage() != null ? ex.getMessage() : ex.toString());
             DialogPositionUtil.centerOnOwner(alert, this);
             alert.showAndWait();
@@ -1763,21 +1776,46 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
             return;
         }
         final int total = uploadEntries.size();
+        final long totalBytes = uploadEntries.stream()
+                .filter(entry -> !entry.directory())
+                .mapToLong(entry -> Math.max(0L, entry.file().length()))
+                .reduce(0L, AbstractFileBrowserPane::saturatedAdd);
         uploadCancelled.set(false);
         showUploadProgressDialog(total);
         setStatus("上传中... (0/" + total + ")");
         new Thread(() -> {
             int success = 0, failed = 0;
+            long processedBytes = 0;
             String lastError = null;
             for (int i = 0; i < total; i++) {
                 if (uploadCancelled.get()) break;
                 UploadEntry entry = uploadEntries.get(i);
                 File file = entry.file();
+                final int currentIndex = i + 1;
+                final int completedBefore = success + failed;
+                final String name = entry.relativePath();
+                final long size = entry.directory() ? 0L : Math.max(0L, file.length());
+                final long bytesBefore = processedBytes;
+                Platform.runLater(() -> updateUploadProgress(completedBefore, total, currentIndex,
+                        name, 0L, size, bytesBefore, totalBytes));
                 try {
                     if (entry.directory()) {
                         doUploadDirectory(entry.relativePath(), entry.emptyDirectory());
                     } else {
-                        doUploadSingle(file, entry.relativePath());
+                        AtomicLong lastUiUpdate = new AtomicLong(0L);
+                        doUploadSingle(file, entry.relativePath(), transferred -> {
+                            long uploaded = Math.max(0L, Math.min(transferred, size));
+                            long now = System.nanoTime();
+                            long previous = lastUiUpdate.get();
+                            if (uploaded < size && previous != 0L
+                                    && now - previous < 100_000_000L) {
+                                return;
+                            }
+                            if (lastUiUpdate.compareAndSet(previous, now)) {
+                                Platform.runLater(() -> updateUploadProgress(completedBefore, total,
+                                        currentIndex, name, uploaded, size, bytesBefore, totalBytes));
+                            }
+                        });
                     }
                     success++;
                 } catch (Exception ex) {
@@ -1785,10 +1823,10 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
                     lastError = ex.getMessage();
                     if (lastError == null) lastError = ex.toString();
                 }
+                processedBytes = saturatedAdd(processedBytes, size);
                 final int done = success + failed;
-                final String name = entry.relativePath();
-                final long size = file.length();
-                Platform.runLater(() -> updateUploadProgress(done, total, name, size));
+                Platform.runLater(() -> updateUploadProgress(done, total, currentIndex,
+                        name, size, size, bytesBefore, totalBytes));
             }
             final int okCount = success;
             final int failCount = failed;
@@ -1813,6 +1851,11 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
             });
             deleteUploadTempDirectory(uploadFiles.tempDirectory());
         }, "Upload").start();
+    }
+
+    private static long saturatedAdd(long left, long right) {
+        if (right > 0L && left > Long.MAX_VALUE - right) return Long.MAX_VALUE;
+        return left + right;
     }
 
     private List<UploadEntry> buildUploadEntries(List<File> roots) throws IOException {
@@ -1978,14 +2021,24 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
         }
     }
 
-    private void updateUploadProgress(int done, int total, String fileName, long fileSize) {
+    private void updateUploadProgress(int done, int total, int currentIndex, String fileName,
+                                      long transferred, long fileSize,
+                                      long processedBytes, long totalBytes) {
         if (uploadProgressBar == null || uploadProgressLabel == null) return;
-        double progress = total > 0 ? (double) done / total : 0;
+        long overallTransferred = Math.min(totalBytes,
+                saturatedAdd(processedBytes, Math.min(transferred, fileSize)));
+        double progress = totalBytes > 0
+                ? (double) overallTransferred / totalBytes
+                : (total > 0 ? (double) done / total : 0);
         uploadProgressBar.setProgress(progress);
-        uploadProgressLabel.setText(String.format("正在上传: %s (%d/%d)", fileName, done, total));
+        uploadProgressLabel.setText(String.format("正在上传: %s (%d/%d)",
+                fileName, Math.min(currentIndex, total), total));
         if (uploadProgressDetailLabel != null) {
-            uploadProgressDetailLabel.setText(String.format("%s · 大小 %s",
-                    done >= total ? "完成" : "传输中...", formatFileSize(fileSize)));
+            String fileProgress = fileSize > 0
+                    ? formatFileSize(Math.min(transferred, fileSize)) + " / " + formatFileSize(fileSize)
+                    : (done >= currentIndex ? "完成" : "处理中...");
+            uploadProgressDetailLabel.setText(String.format("%s · 总进度 %.1f%%",
+                    fileProgress, progress * 100.0));
         }
     }
 
@@ -2465,6 +2518,13 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
     /** Upload a file using its path relative to the dropped/copied root. */
     protected void doUploadSingle(File localFile, String relativePath) throws Exception {
         doUploadSingle(localFile);
+    }
+
+    /** Upload hook with a byte-level progress callback; backends may override for live progress. */
+    protected void doUploadSingle(File localFile, String relativePath,
+                                  LongConsumer progressCallback) throws Exception {
+        doUploadSingle(localFile, relativePath);
+        if (progressCallback != null) progressCallback.accept(Math.max(0L, localFile.length()));
     }
 
     /** Create one directory from a dropped/copied directory tree; default backends ignore it. */
