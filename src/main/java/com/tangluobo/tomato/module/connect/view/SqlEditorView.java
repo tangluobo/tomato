@@ -833,6 +833,8 @@ public class SqlEditorView extends BorderPane {
         String fontStyle = String.format("-fx-font-family: '%s'; -fx-font-size: %dpx;",
                 globalConfig.getTableFontName(), globalConfig.getTableFontSize());
         tableView.setStyle(fontStyle + " -fx-padding: 0; -fx-background-insets: 0; -fx-background-color: transparent; -fx-border-color: transparent; -fx-border-insets: 0; -fx-table-header-height: " + rowHeight + ";");
+        // 查询结果使用 TableView 自己的水平滚动条，使右侧垂直滚动条固定在视口边缘。
+        tableView.getStyleClass().add("data-table-view");
         tableView.setPlaceholder(new Label("无数据"));
         tableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         tableView.getSelectionModel().setCellSelectionEnabled(true);
@@ -932,7 +934,9 @@ public class SqlEditorView extends BorderPane {
                 tableView.getSelectionModel().getSelectedItems().addListener(selectionListener);
             }
         });
-        tableView.getColumns().add(selectorCol);
+        FrozenRowSelectorPane<ObservableList<String>> frozenTablePane =
+                new FrozenRowSelectorPane<>(tableView, 15);
+        frozenTablePane.setRowSelectorColumn(selectorCol);
         for (int i = 0; i < columns.size(); i++) {
             final int colIndex = i;
             TableColumn<ObservableList<String>, String> col = new TableColumn<>(columns.get(i));
@@ -968,21 +972,13 @@ public class SqlEditorView extends BorderPane {
             }
         }
 
-        ScrollPane scrollPane = new ScrollPane(tableView);
-        scrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent;");
-        scrollPane.setFitToHeight(true);
-        scrollPane.setFitToWidth(false);
-        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
-        scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        // TableView宽度跟随视口（让垂直滚动条位于面板最右，右侧空白属于表格）
-        tableView.minWidthProperty().bind(scrollPane.widthProperty());
         // 鼠标拖拽选中多个cell
         setupDragSelection(tableView);
         // Ctrl+C 复制选中cell
         setupKeyboardShortcuts(tableView, finalEditContext);
         setupQueryResultContextMenu(tableView, finalEditContext, sourceTableName);
 
-        if (finalEditContext == null) return scrollPane;
+        if (finalEditContext == null) return frozenTablePane;
 
         Button saveButton = new Button("保存修改");
         saveButton.getStyleClass().add("toolbar-button");
@@ -1004,7 +1000,7 @@ public class SqlEditorView extends BorderPane {
         tableView.getSelectionModel().getSelectedCells().addListener(
                 (javafx.beans.InvalidationListener) observable -> updateQueryResultButtons(finalEditContext));
 
-        BorderPane wrapper = new BorderPane(scrollPane);
+        BorderPane wrapper = new BorderPane(frozenTablePane);
         wrapper.setTop(editToolbar);
         loadQueryResultEditMetadata(finalEditContext);
         return wrapper;
@@ -1391,26 +1387,33 @@ public class SqlEditorView extends BorderPane {
             connLock.lock();
             try {
                 try {
-                    List<String> pks = DatabaseService.getPrimaryKeys(context.config,
-                            context.target.databaseName, context.target.schemaName, context.target.tableName);
-                    if (pks.isEmpty() || !containsAllColumns(context.columnNames, pks)) return;
-
                     List<Map<String, String>> tableColumns = DatabaseService.getTableColumns(context.config,
                             context.target.databaseName, context.target.schemaName, context.target.tableName);
                     Set<String> actualColumns = new HashSet<>();
+                    Map<String, String> comments = new java.util.LinkedHashMap<>();
+                    List<String> pks = new ArrayList<>();
                     for (Map<String, String> column : tableColumns) {
                         String name = column.get("字段名");
-                        if (name != null) actualColumns.add(name.toLowerCase(java.util.Locale.ROOT));
+                        if (name == null) continue;
+                        actualColumns.add(name.toLowerCase(java.util.Locale.ROOT));
+                        comments.put(name, Objects.requireNonNullElse(column.get("注释"), ""));
+                        if ("是".equals(column.get("主键"))) pks.add(name);
                     }
                     Set<Integer> editableIndexes = new LinkedHashSet<>();
-                    for (int i = 0; i < context.columnNames.size(); i++) {
-                        if (actualColumns.contains(context.columnNames.get(i).toLowerCase(java.util.Locale.ROOT))) {
-                            editableIndexes.add(i);
+                    boolean hasCompletePrimaryKey = !pks.isEmpty()
+                            && containsAllColumns(context.columnNames, pks);
+                    if (hasCompletePrimaryKey) {
+                        for (int i = 0; i < context.columnNames.size(); i++) {
+                            if (actualColumns.contains(context.columnNames.get(i).toLowerCase(java.util.Locale.ROOT))) {
+                                editableIndexes.add(i);
+                            }
                         }
                     }
-                    if (editableIndexes.isEmpty()) return;
 
                     Platform.runLater(() -> {
+                        context.columnComments.clear();
+                        context.columnComments.putAll(comments);
+                        if (editableIndexes.isEmpty()) return;
                         context.primaryKeyColumns = List.copyOf(pks);
                         context.editableColumnIndexes.clear();
                         context.editableColumnIndexes.addAll(editableIndexes);
@@ -1459,7 +1462,8 @@ public class SqlEditorView extends BorderPane {
         MenuItem copyItem = new MenuItem("复制");
         copyItem.setOnAction(e -> handleCopySelectedCells(tableView));
         Menu copyAsMenu = TableCellContextMenuUtils.createCopyAsMenu(
-                tableView, 1, () -> sourceTableName, java.util.List::of);
+                tableView, 1, () -> sourceTableName, java.util.List::of,
+                () -> context == null ? Map.of() : context.columnComments);
         MenuItem pasteItem = new MenuItem("粘贴");
         pasteItem.setOnAction(e -> {
             if (context != null) pasteIntoQueryResult(context);
@@ -1828,6 +1832,7 @@ public class SqlEditorView extends BorderPane {
         final List<String> columnNames;
         final Map<ObservableList<String>, ObservableList<String>> originalRows = new IdentityHashMap<>();
         final Set<Integer> editableColumnIndexes = new LinkedHashSet<>();
+        final Map<String, String> columnComments = new java.util.LinkedHashMap<>();
         List<String> primaryKeyColumns = List.of();
         Button saveButton;
         Button deleteButton;

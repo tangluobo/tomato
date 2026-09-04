@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
@@ -39,7 +40,8 @@ final class TableCellContextMenuUtils {
     static Menu createCopyAsMenu(TableView<ObservableList<String>> tableView,
                                  int dataColumnOffset,
                                  Supplier<String> tableNameSupplier,
-                                 Supplier<List<String>> primaryKeysSupplier) {
+                                 Supplier<List<String>> primaryKeysSupplier,
+                                 Supplier<Map<String, String>> columnCommentsSupplier) {
         Menu menu = new Menu("复制为");
         MenuItem insertItem = new MenuItem("Insert 语句");
         insertItem.setOnAction(e -> copySql(tableView, dataColumnOffset,
@@ -47,14 +49,32 @@ final class TableCellContextMenuUtils {
         MenuItem updateItem = new MenuItem("Update 语句");
         updateItem.setOnAction(e -> copySql(tableView, dataColumnOffset,
                 tableNameSupplier.get(), primaryKeysSupplier.get(), true));
+        Menu jsonMenu = new Menu("JSON 格式");
+        MenuItem originalFieldJsonItem = new MenuItem("原字段");
+        originalFieldJsonItem.setOnAction(e -> copyText(selectedJson(tableView, dataColumnOffset, false)));
+        MenuItem camelFieldJsonItem = new MenuItem("字段转驼峰");
+        camelFieldJsonItem.setOnAction(e -> copyText(selectedJson(tableView, dataColumnOffset, true)));
+        jsonMenu.getItems().setAll(originalFieldJsonItem, camelFieldJsonItem);
+        MenuItem commentValueItem = new MenuItem("注释：值");
+        commentValueItem.setOnAction(e -> copyText(selectedCommentValues(
+                tableView, dataColumnOffset, columnCommentsSupplier.get())));
         MenuItem dataItem = new MenuItem("制表符分隔值（数据）");
         dataItem.setOnAction(e -> copyText(selectedTsv(tableView, dataColumnOffset, false, true)));
         MenuItem headerItem = new MenuItem("制表符分隔值（字段名）");
         headerItem.setOnAction(e -> copyText(selectedTsv(tableView, dataColumnOffset, true, false)));
         MenuItem headerDataItem = new MenuItem("制表符分隔值（字段名和数据）");
         headerDataItem.setOnAction(e -> copyText(selectedTsv(tableView, dataColumnOffset, true, true)));
-        menu.getItems().setAll(insertItem, updateItem, new javafx.scene.control.SeparatorMenuItem(),
-                dataItem, headerItem, headerDataItem);
+        menu.getItems().setAll(
+                insertItem,
+                updateItem,
+                new javafx.scene.control.SeparatorMenuItem(),
+                jsonMenu,
+                commentValueItem,
+                new javafx.scene.control.SeparatorMenuItem(),
+                dataItem,
+                headerItem,
+                headerDataItem
+        );
         menu.setOnShowing(e -> {
             String tableName = tableNameSupplier.get();
             List<String> primaryKeys = primaryKeysSupplier.get();
@@ -440,6 +460,152 @@ final class TableCellContextMenuUtils {
             }
         }
         return toTsv(tableView, dataColumnOffset, rows, columns, includeHeaders, includeData);
+    }
+
+    /**
+     * 将选中的表格区域转换成 JSON 对象数组。数据库 NULL 输出为 JSON null，
+     * 其他值按字符串进行 JSON 转义。
+     */
+    static String selectedJson(TableView<ObservableList<String>> tableView,
+                               int dataColumnOffset,
+                               boolean camelCaseFields) {
+        SelectedArea selected = selectedArea(tableView, dataColumnOffset);
+        if (selected.rows().isEmpty() || selected.columns().isEmpty()) return "";
+
+        StringBuilder result = new StringBuilder("[\n");
+        int outputRow = 0;
+        for (int rowIndex : selected.rows()) {
+            if (rowIndex < 0 || rowIndex >= tableView.getItems().size()) continue;
+            if (outputRow++ > 0) result.append(",\n");
+            ObservableList<String> row = tableView.getItems().get(rowIndex);
+            result.append("  {\n");
+            int outputColumn = 0;
+            for (int tableColumnIndex : selected.columns()) {
+                if (outputColumn++ > 0) result.append(",\n");
+                String field = tableView.getColumns().get(tableColumnIndex).getText();
+                if (camelCaseFields) field = toLowerCamelCase(field);
+                result.append("    \"").append(escapeJson(field)).append("\": ");
+                String value = valueAt(row, tableColumnIndex - dataColumnOffset);
+                if (value == null) {
+                    result.append("null");
+                } else {
+                    result.append('"').append(escapeJson(value)).append('"');
+                }
+            }
+            result.append("\n  }");
+        }
+        result.append("\n]");
+        return outputRow == 0 ? "" : result.toString();
+    }
+
+    /**
+     * 将选中单元格按“列注释：值”逐行输出；没有列注释时回退为原字段名。
+     */
+    static String selectedCommentValues(TableView<ObservableList<String>> tableView,
+                                        int dataColumnOffset,
+                                        Map<String, String> columnComments) {
+        SelectedArea selected = selectedArea(tableView, dataColumnOffset);
+        if (selected.rows().isEmpty() || selected.columns().isEmpty()) return "";
+
+        StringBuilder result = new StringBuilder();
+        int outputRow = 0;
+        for (int rowIndex : selected.rows()) {
+            if (rowIndex < 0 || rowIndex >= tableView.getItems().size()) continue;
+            if (outputRow++ > 0) result.append(System.lineSeparator()).append(System.lineSeparator());
+            ObservableList<String> row = tableView.getItems().get(rowIndex);
+            int outputColumn = 0;
+            for (int tableColumnIndex : selected.columns()) {
+                if (outputColumn++ > 0) result.append(System.lineSeparator());
+                String field = tableView.getColumns().get(tableColumnIndex).getText();
+                String comment = findColumnComment(columnComments, field);
+                String label = comment == null || comment.isBlank() ? field : comment;
+                String value = valueAt(row, tableColumnIndex - dataColumnOffset);
+                result.append(label).append('：').append(singleLine(value == null ? "NULL" : value));
+            }
+        }
+        return result.toString();
+    }
+
+    private static SelectedArea selectedArea(TableView<ObservableList<String>> tableView,
+                                             int dataColumnOffset) {
+        Set<Integer> rows = new TreeSet<>();
+        Set<Integer> columns = new TreeSet<>();
+        for (TablePosition<ObservableList<String>, ?> position : tableView.getSelectionModel().getSelectedCells()) {
+            int column = tableView.getColumns().indexOf(position.getTableColumn());
+            if (column >= dataColumnOffset) {
+                rows.add(position.getRow());
+                columns.add(column);
+            }
+        }
+        return new SelectedArea(rows, columns);
+    }
+
+    private static String findColumnComment(Map<String, String> comments, String field) {
+        if (comments == null || comments.isEmpty()) return null;
+        String exact = comments.get(field);
+        if (exact != null) return exact;
+        for (Map.Entry<String, String> entry : comments.entrySet()) {
+            if (entry.getKey().equalsIgnoreCase(field)) return entry.getValue();
+        }
+        return null;
+    }
+
+    static String toLowerCamelCase(String value) {
+        if (value == null || value.isEmpty()) return "";
+        String[] parts = value.split("[_\\-\\s]+", -1);
+        if (parts.length == 1) {
+            if (value.equals(value.toUpperCase(java.util.Locale.ROOT))) {
+                return value.toLowerCase(java.util.Locale.ROOT);
+            }
+            int firstCodePoint = value.codePointAt(0);
+            int firstLength = Character.charCount(firstCodePoint);
+            return new String(Character.toChars(Character.toLowerCase(firstCodePoint)))
+                    + value.substring(firstLength);
+        }
+
+        StringBuilder result = new StringBuilder();
+        for (String part : parts) {
+            if (part.isEmpty()) continue;
+            String lower = part.toLowerCase(java.util.Locale.ROOT);
+            if (result.isEmpty()) {
+                result.append(lower);
+            } else {
+                int firstCodePoint = lower.codePointAt(0);
+                int firstLength = Character.charCount(firstCodePoint);
+                result.appendCodePoint(Character.toUpperCase(firstCodePoint));
+                result.append(lower.substring(firstLength));
+            }
+        }
+        return result.isEmpty() ? value : result.toString();
+    }
+
+    private static String escapeJson(String value) {
+        StringBuilder result = new StringBuilder(value.length() + 16);
+        for (int offset = 0; offset < value.length();) {
+            int codePoint = value.codePointAt(offset);
+            offset += Character.charCount(codePoint);
+            switch (codePoint) {
+                case '"' -> result.append("\\\"");
+                case '\\' -> result.append("\\\\");
+                case '\b' -> result.append("\\b");
+                case '\f' -> result.append("\\f");
+                case '\n' -> result.append("\\n");
+                case '\r' -> result.append("\\r");
+                case '\t' -> result.append("\\t");
+                default -> {
+                    if (codePoint < 0x20) result.append(String.format("\\u%04x", codePoint));
+                    else result.appendCodePoint(codePoint);
+                }
+            }
+        }
+        return result.toString();
+    }
+
+    private static String singleLine(String value) {
+        return value.replace("\r", " ").replace("\n", " ");
+    }
+
+    private record SelectedArea(Set<Integer> rows, Set<Integer> columns) {
     }
 
     private static String allTsv(TableView<ObservableList<String>> tableView, int dataColumnOffset) {

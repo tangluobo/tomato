@@ -786,6 +786,37 @@
     -fx-max-height: 15;
 }
 
+/* 冻结行选择器：滚动条由右侧数据表统一显示，左侧只负责渲染行头。 */
+.frozen-row-selector-table {
+    -fx-background-color: white;
+    -fx-background-insets: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-padding: 0;
+}
+
+.frozen-row-selector-table .virtual-flow .scroll-bar:vertical {
+    -fx-opacity: 0;
+    -fx-pref-width: 0;
+    -fx-min-width: 0;
+    -fx-max-width: 0;
+}
+
+.frozen-row-selector-table .virtual-flow .scroll-bar:horizontal,
+.frozen-row-selector-table .virtual-flow .scroll-bar:horizontal .track,
+.frozen-row-selector-table .virtual-flow .scroll-bar:horizontal .thumb {
+    -fx-opacity: 0;
+    -fx-pref-height: 0;
+    -fx-min-height: 0;
+    -fx-max-height: 0;
+}
+
+.frozen-row-selector-scrollbar-spacer {
+    -fx-background-color: #f4f4f4;
+    -fx-border-color: #d5d5d5 transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+
 .table-view .corner {
     -fx-background-color: transparent;
     -fx-padding: 0;

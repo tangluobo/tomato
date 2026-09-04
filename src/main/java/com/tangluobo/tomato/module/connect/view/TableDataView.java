@@ -46,7 +46,7 @@ public class TableDataView extends BorderPane {
     private final String tableName;
 
     private TableView<ObservableList<String>> tableView;
-    private ScrollPane tableScrollPane;
+    private FrozenRowSelectorPane<ObservableList<String>> frozenTablePane;
     private Label pageInfoLabel;
     private Label sqlStatusLabel;
     private String pendingStatusSql;
@@ -78,6 +78,8 @@ public class TableDataView extends BorderPane {
 
     // 主键列名缓存
     private List<String> primaryKeyColumns;
+    // 列注释缓存（字段名 -> 注释），用于“复制为/注释：值”
+    private Map<String, String> columnComments = Map.of();
     private boolean isLoading = false;
 
     // 列名缓存（数据列，不含行选择器列）
@@ -107,15 +109,25 @@ public class TableDataView extends BorderPane {
     }
 
     /**
-     * 在当前线程中加载主键信息（与数据查询共用同一线程，避免JDBC连接并发使用）
+     * 在当前线程中加载主键和列注释（与数据查询共用同一线程，避免 JDBC 连接并发使用）
      */
-    private void loadPrimaryKeysInCurrentThread() {
-        // 每次加载数据都重新查询主键：表结构可能被"设计表"修改，主键信息不能永久缓存；
-        // 失败时也不静默置空列表，保留原值(可能为null)以便下次 loadData 能重试，避免"实际有主键却提示无主键"
+    private void loadColumnMetadataInCurrentThread() {
+        // 每次加载数据都重新查询字段元数据：表结构和字段注释可能被“设计表”修改。
+        // 失败时保留旧缓存，以便下次 loadData 重试。
         try {
-            List<String> pks = DatabaseService.getPrimaryKeys(config, databaseName, schemaName, tableName);
+            List<Map<String, String>> columns = DatabaseService.getTableColumns(
+                    config, databaseName, schemaName, tableName);
+            List<String> pks = new ArrayList<>();
+            Map<String, String> comments = new LinkedHashMap<>();
+            for (Map<String, String> column : columns) {
+                String name = column.get("字段名");
+                if (name == null || name.isBlank()) continue;
+                if ("是".equals(column.get("主键"))) pks.add(name);
+                comments.put(name, Objects.requireNonNullElse(column.get("注释"), ""));
+            }
             Platform.runLater(() -> {
                 this.primaryKeyColumns = pks;
+                this.columnComments = Map.copyOf(comments);
                 setupRowContextMenu();
             });
         } catch (Exception e) {
@@ -144,7 +156,7 @@ public class TableDataView extends BorderPane {
         MenuItem copyItem = new MenuItem("复制");
         copyItem.setOnAction(e -> handleCopySelectedCells());
         Menu copyAsMenu = TableCellContextMenuUtils.createCopyAsMenu(
-                tableView, 1, () -> tableName, () -> primaryKeyColumns);
+                tableView, 1, () -> tableName, () -> primaryKeyColumns, () -> columnComments);
         MenuItem pasteItem = new MenuItem("粘贴");
         pasteItem.setOnAction(e -> handlePasteRows());
         MenuItem saveAsItem = TableCellContextMenuUtils.createSaveDataAsItem(tableView, 1);
@@ -1077,15 +1089,9 @@ public class TableDataView extends BorderPane {
         loadingIndicator.setMaxSize(40, 40);
         loadingIndicator.setVisible(false);
 
-        // ScrollPane包裹TableView：仅用于填充视口，滚动由TableView内部处理
-        // TableView内部水平滚动条滚动内容，垂直滚动条始终在视口右侧（不被水平滚动移出视野）
-        tableScrollPane = new ScrollPane(tableView);
-        tableScrollPane.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; -fx-background-insets: 0; -fx-padding: 0; -fx-border-insets: 0;");
-        tableScrollPane.getStyleClass().add("session-scroll-pane");
-        tableScrollPane.setFitToHeight(true);
-        tableScrollPane.setFitToWidth(true);
-        tableScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        tableScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        // 行选择器单独固定在左侧，数据区域使用 TableView 内部滚动条。
+        // 这样横向滚动时，左侧行选择器和右侧垂直滚动条都会始终可见。
+        frozenTablePane = new FrozenRowSelectorPane<>(tableView, 15);
 
         // 拖拽范围选择矩形：半透明蓝色（与选中色#3592CB一致），鼠标透明，置于最上层
         dragSelectRect.setFill(Color.rgb(53, 146, 203, 0.15));
@@ -1095,7 +1101,7 @@ public class TableDataView extends BorderPane {
         dragSelectRect.setManaged(false);
         dragSelectRect.setVisible(false);
 
-        centerPane = new StackPane(tableScrollPane, loadingIndicator, dragSelectRect);
+        centerPane = new StackPane(frozenTablePane, loadingIndicator, dragSelectRect);
         centerPane.setPadding(Insets.EMPTY);
         centerPane.setStyle("-fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
 
@@ -1179,7 +1185,7 @@ public class TableDataView extends BorderPane {
         this.setBottom(statusBar);
         this.setPadding(Insets.EMPTY);
         this.setStyle("-fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
-        // 加载统一样式表：使 session-scroll-pane 等规则对 tableScrollPane 的 .viewport 生效
+        // 加载统一表格样式
         this.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
     }
 
@@ -1639,8 +1645,8 @@ public class TableDataView extends BorderPane {
             java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
             connLock.lock();
             try {
-                // 首次加载时获取主键（与数据查询共用同一线程，避免JDBC连接并发使用）
-                loadPrimaryKeysInCurrentThread();
+                // 加载主键和列注释（与数据查询共用同一线程，避免 JDBC 连接并发使用）
+                loadColumnMetadataInCurrentThread();
 
                 TableRowData data = DatabaseService.queryTableData(config, databaseName, schemaName, tableName, page, DEFAULT_PAGE_SIZE, sortColumn, sortDescending);
                 Platform.runLater(() -> {
@@ -1770,7 +1776,7 @@ public class TableDataView extends BorderPane {
                 tableView.getSelectionModel().getSelectedCells().addListener(selectionListener);
             }
         });
-        tableView.getColumns().add(selectorCol);
+        frozenTablePane.setRowSelectorColumn(selectorCol);
 
         // 创建数据列（可编辑）
         List<String> columnNames = data.getColumnNames();
