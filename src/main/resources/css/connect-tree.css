@@ -625,6 +625,46 @@
     -fx-border-width: 1px;
 }
 
+/* 工具栏分体按钮：抹掉 Modena 给文字区和箭头区添加的独立立体边框，
+   使其尺寸、底色及交互状态与相邻的普通 toolbar-button 保持一致。 */
+.toolbar-split-button {
+    -fx-padding: 0;
+    -fx-background-insets: 0;
+    -fx-effect: none;
+}
+
+.toolbar-split-button > .label,
+.toolbar-split-button > .arrow-button {
+    -fx-background-color: #f8f8f8;
+    -fx-background-insets: 0;
+    -fx-background-radius: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-border-radius: 0;
+    -fx-effect: none;
+}
+
+.toolbar-split-button > .label {
+    -fx-padding: 4 6 4 8;
+    -fx-content-display: LEFT;
+    -fx-graphic-text-gap: 4;
+}
+
+.toolbar-split-button > .arrow-button {
+    -fx-padding: 4 7 4 6;
+}
+
+.toolbar-split-button:hover > .label,
+.toolbar-split-button:hover > .arrow-button {
+    -fx-background-color: #D8E6F2;
+}
+
+.toolbar-split-button:armed > .label,
+.toolbar-split-button > .arrow-button:pressed,
+.toolbar-split-button:showing > .arrow-button {
+    -fx-background-color: #C0DCF3;
+}
+
 /* 视图切换按钮：背景与图标同尺寸，透明背景，仅保留按下效果 */
 .view-toggle-btn {
     -fx-background-color: transparent;

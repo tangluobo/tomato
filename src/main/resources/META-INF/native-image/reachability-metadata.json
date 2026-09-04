@@ -6252,6 +6252,161 @@
     {
       "type": "com.tangluobo.tomato.module.connect.ConnectionConfig",
       "allDeclaredFields": true,
+      "fields": [
+        {
+          "name": "bucket"
+        },
+        {
+          "name": "certificateEmail"
+        },
+        {
+          "name": "colorDepth"
+        },
+        {
+          "name": "database"
+        },
+        {
+          "name": "defaultFileViewMode"
+        },
+        {
+          "name": "description"
+        },
+        {
+          "name": "directoryType"
+        },
+        {
+          "name": "domain"
+        },
+        {
+          "name": "enableSound"
+        },
+        {
+          "name": "endpoint"
+        },
+        {
+          "name": "fullscreen"
+        },
+        {
+          "name": "host"
+        },
+        {
+          "name": "id"
+        },
+        {
+          "name": "localDirectoryPath"
+        },
+        {
+          "name": "mapClipboard"
+        },
+        {
+          "name": "name"
+        },
+        {
+          "name": "parentId"
+        },
+        {
+          "name": "password"
+        },
+        {
+          "name": "pathStyleAccess"
+        },
+        {
+          "name": "port"
+        },
+        {
+          "name": "privateKeyPaths"
+        },
+        {
+          "name": "publicAccessUrl"
+        },
+        {
+          "name": "rdpFullScreenShortcut"
+        },
+        {
+          "name": "rdpOpenMode"
+        },
+        {
+          "name": "redisCluster"
+        },
+        {
+          "name": "redisClusterNodes"
+        },
+        {
+          "name": "redisDatabase"
+        },
+        {
+          "name": "region"
+        },
+        {
+          "name": "s3Prefix"
+        },
+        {
+          "name": "savePassword"
+        },
+        {
+          "name": "screenHeight"
+        },
+        {
+          "name": "screenWidth"
+        },
+        {
+          "name": "scrollbackLines"
+        },
+        {
+          "name": "serverConfig"
+        },
+        {
+          "name": "sshTunnelHost"
+        },
+        {
+          "name": "sshTunnelHostId"
+        },
+        {
+          "name": "sshTunnelPassword"
+        },
+        {
+          "name": "sshTunnelPort"
+        },
+        {
+          "name": "sshTunnelPrivateKeyPaths"
+        },
+        {
+          "name": "sshTunnelSavePassword"
+        },
+        {
+          "name": "sshTunnelUseKey"
+        },
+        {
+          "name": "sshTunnelUsePassword"
+        },
+        {
+          "name": "sshTunnelUsername"
+        },
+        {
+          "name": "terminalType"
+        },
+        {
+          "name": "toolType"
+        },
+        {
+          "name": "type"
+        },
+        {
+          "name": "useKey"
+        },
+        {
+          "name": "usePassword"
+        },
+        {
+          "name": "useSshTunnel"
+        },
+        {
+          "name": "useSsl"
+        },
+        {
+          "name": "username"
+        }
+      ],
       "methods": [
         {
           "name": "<init>",
@@ -6265,6 +6420,53 @@
     {
       "type": "com.tangluobo.tomato.module.connect.GlobalConfig",
       "allDeclaredFields": true,
+      "fields": [
+        {
+          "name": "aiApiBaseUrl"
+        },
+        {
+          "name": "aiApiKey"
+        },
+        {
+          "name": "aiIncludeSchema"
+        },
+        {
+          "name": "aiModel"
+        },
+        {
+          "name": "aiRequestTimeoutSeconds"
+        },
+        {
+          "name": "rdpFullScreenShortcut"
+        },
+        {
+          "name": "rdpOpenMode"
+        },
+        {
+          "name": "scrollbackLines"
+        },
+        {
+          "name": "sidebarVisible"
+        },
+        {
+          "name": "sshDefaultFileViewMode"
+        },
+        {
+          "name": "sshServiceManagementEnabled"
+        },
+        {
+          "name": "sshTerminalFontName"
+        },
+        {
+          "name": "sshTerminalFontSize"
+        },
+        {
+          "name": "tableFontName"
+        },
+        {
+          "name": "tableFontSize"
+        }
+      ],
       "methods": [
         {
           "name": "<init>",
@@ -6387,6 +6589,29 @@
     {
       "type": "com.tangluobo.tomato.module.connect.service.DdnsService$DdnsEntry",
       "allDeclaredFields": true,
+      "fields": [
+        {
+          "name": "connectionId"
+        },
+        {
+          "name": "domainName"
+        },
+        {
+          "name": "line"
+        },
+        {
+          "name": "recordId"
+        },
+        {
+          "name": "rr"
+        },
+        {
+          "name": "ttl"
+        },
+        {
+          "name": "type"
+        }
+      ],
       "methods": [
         {
           "name": "<init>",
@@ -6524,6 +6749,20 @@
     {
       "type": "com.tangluobo.tomato.module.tools.server.ServerAccount",
       "allDeclaredFields": true,
+      "fields": [
+        {
+          "name": "enabled"
+        },
+        {
+          "name": "homeDirectory"
+        },
+        {
+          "name": "password"
+        },
+        {
+          "name": "username"
+        }
+      ],
       "methods": [
         {
           "name": "<init>",
@@ -6534,6 +6773,29 @@
     {
       "type": "com.tangluobo.tomato.module.tools.server.ServerConfig",
       "allDeclaredFields": true,
+      "fields": [
+        {
+          "name": "accounts"
+        },
+        {
+          "name": "anonymousAccess"
+        },
+        {
+          "name": "bindAddress"
+        },
+        {
+          "name": "port"
+        },
+        {
+          "name": "rootDirectory"
+        },
+        {
+          "name": "sharedDirectories"
+        },
+        {
+          "name": "type"
+        }
+      ],
       "methods": [
         {
           "name": "<init>",
@@ -16275,6 +16537,9 @@
       "glob": "images/connect/backup.png"
     },
     {
+      "glob": "images/connect/beautiful.png"
+    },
+    {
       "glob": "images/connect/code.png"
     },
     {
@@ -16291,6 +16556,9 @@
     },
     {
       "glob": "images/connect/copy_tables.png"
+    },
+    {
+      "glob": "images/connect/create_query_tool.png"
     },
     {
       "glob": "images/connect/database.png"

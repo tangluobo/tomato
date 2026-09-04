@@ -305,7 +305,7 @@ public class SqlEditorView extends BorderPane {
 
         SplitMenuButton button = new SplitMenuButton(generateItem, settingsItem);
         button.setText("AI SQL");
-        button.getStyleClass().add("toolbar-button");
+        button.getStyleClass().addAll("toolbar-button", "toolbar-split-button");
         button.setTooltip(new Tooltip("根据自然语言和当前库表结构生成 SQL（Ctrl+I）"));
         button.setOnAction(e -> handleAiSqlRequest());
         try {
