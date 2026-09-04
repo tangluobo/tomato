@@ -2,6 +2,7 @@ package com.tangluobo.tomato.module.connect;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.tangluobo.tomato.utils.SecurityUtils;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -16,6 +17,7 @@ public class GlobalConfig {
     private static final String CONFIG_DIR = System.getProperty("user.home") + "/.tomato";
     private static final String CONFIG_FILE = CONFIG_DIR + "/global.json";
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final String ENCRYPTED_VALUE_PREFIX = "TOMATO_ENCRYPTED:";
 
     private int scrollbackLines = 1000;
 
@@ -38,6 +40,13 @@ public class GlobalConfig {
 
     // RDP打开方式：WINDOW（独立窗口，默认）/ TAB（连接标签页）
     private String rdpOpenMode = "WINDOW";
+
+    // AI SQL：使用 OpenAI 兼容的 /chat/completions 接口。
+    private String aiApiBaseUrl = "https://api.openai.com/v1";
+    private String aiModel = "";
+    private String aiApiKey = "";
+    private boolean aiIncludeSchema = true;
+    private int aiRequestTimeoutSeconds = 60;
 
     public int getScrollbackLines() {
         return scrollbackLines;
@@ -117,6 +126,59 @@ public class GlobalConfig {
 
     public void setRdpOpenMode(String rdpOpenMode) {
         this.rdpOpenMode = rdpOpenMode;
+    }
+
+    public String getAiApiBaseUrl() {
+        return aiApiBaseUrl == null ? "" : aiApiBaseUrl.trim();
+    }
+
+    public void setAiApiBaseUrl(String aiApiBaseUrl) {
+        this.aiApiBaseUrl = aiApiBaseUrl == null ? "" : aiApiBaseUrl.trim();
+    }
+
+    public String getAiModel() {
+        return aiModel == null ? "" : aiModel.trim();
+    }
+
+    public void setAiModel(String aiModel) {
+        this.aiModel = aiModel == null ? "" : aiModel.trim();
+    }
+
+    public String getAiApiKey() {
+        if (aiApiKey == null || aiApiKey.isBlank()) return "";
+        if (!aiApiKey.startsWith(ENCRYPTED_VALUE_PREFIX)) return aiApiKey;
+        try {
+            return SecurityUtils.decrypt(aiApiKey.substring(ENCRYPTED_VALUE_PREFIX.length()));
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
+    public void setAiApiKey(String aiApiKey) {
+        String value = aiApiKey == null ? "" : aiApiKey.trim();
+        this.aiApiKey = value.isEmpty()
+                ? ""
+                : ENCRYPTED_VALUE_PREFIX + SecurityUtils.encrypt(value);
+    }
+
+    public boolean isAiIncludeSchema() {
+        return aiIncludeSchema;
+    }
+
+    public void setAiIncludeSchema(boolean aiIncludeSchema) {
+        this.aiIncludeSchema = aiIncludeSchema;
+    }
+
+    public int getAiRequestTimeoutSeconds() {
+        return aiRequestTimeoutSeconds <= 0 ? 60 : aiRequestTimeoutSeconds;
+    }
+
+    public void setAiRequestTimeoutSeconds(int aiRequestTimeoutSeconds) {
+        this.aiRequestTimeoutSeconds = Math.max(5, Math.min(300, aiRequestTimeoutSeconds));
+    }
+
+    public boolean isAiSqlConfigured() {
+        return !getAiApiBaseUrl().isBlank() && !getAiModel().isBlank();
     }
 
     private static GlobalConfig instance;

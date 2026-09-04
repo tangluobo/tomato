@@ -29,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -53,7 +54,7 @@ public class SqlEditorPane extends HBox {
     // 内联 CSS 样式，直接应用到文本段
     private static final String STYLE_KEYWORD = "-fx-fill: #0000FF; -fx-font-weight: bold;";
     private static final String STYLE_STRING = "-fx-fill: #A31515;";
-    private static final String STYLE_COMMENT = "-fx-fill: #6A9955; -fx-font-style: italic;";
+    private static final String STYLE_COMMENT = "-fx-fill: #2F6234; -fx-font-style: italic;";
     private static final String STYLE_NUMBER = "-fx-fill: #098658;";
 
     private static final String[] KEYWORDS = {
@@ -94,6 +95,7 @@ public class SqlEditorPane extends HBox {
     private Consumer<String> onModified;
     private Runnable onRunRequest;
     private Runnable onRunSelectedRequest;
+    private Runnable onAiSqlRequest;
     private Runnable onSaveRequest;
     private ContextMenu editorContextMenu;
     private final Popup completionPopup = new Popup();
@@ -138,6 +140,7 @@ public class SqlEditorPane extends HBox {
     public SqlEditorPane(boolean editable, boolean syntaxHighlighting) {
         this.syntaxHighlighting = syntaxHighlighting;
         textArea = new InlineCssTextArea();
+        textArea.getStyleClass().add("sql-editor-area");
         textArea.setEditable(editable);
         textArea.setStyle(
                 "-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 13px; " +
@@ -532,6 +535,35 @@ public class SqlEditorPane extends HBox {
         return textArea.getSelectedText();
     }
 
+    public int getCaretPosition() {
+        return textArea.getCaretPosition();
+    }
+
+    public int getSelectionStart() {
+        return textArea.getSelection().getStart();
+    }
+
+    public int getSelectionEnd() {
+        return textArea.getSelection().getEnd();
+    }
+
+    public void replaceText(int start, int end, String text) {
+        textArea.replaceText(start, end, text == null ? "" : text);
+    }
+
+    public void selectRange(int anchor, int caretPosition) {
+        textArea.selectRange(anchor, caretPosition);
+    }
+
+    /** 当前选区（优先）或光标的屏幕坐标，用于贴近编辑内容放置提示。 */
+    public Optional<Bounds> getSelectionOrCaretBounds() {
+        if (getSelectionStart() != getSelectionEnd()) {
+            Optional<Bounds> selectionBounds = textArea.getSelectionBounds();
+            if (selectionBounds.isPresent()) return selectionBounds;
+        }
+        return textArea.getCaretBounds();
+    }
+
     public void setEditable(boolean editable) {
         textArea.setEditable(editable);
     }
@@ -550,9 +582,10 @@ public class SqlEditorPane extends HBox {
         this.onRunRequest = onRunRequest;
     }
 
-    /** 右键菜单“运行已选择”回调；设置后同时提供常用剪切、复制、粘贴菜单。 */
-    public void setOnRunSelectedRequest(Runnable onRunSelectedRequest) {
+    /** 设置编辑器右键菜单动作，同时提供运行、AI 生成及常用编辑菜单。 */
+    public void setContextMenuActions(Runnable onRunSelectedRequest, Runnable onAiSqlRequest) {
         this.onRunSelectedRequest = onRunSelectedRequest;
+        this.onAiSqlRequest = onAiSqlRequest;
         if (editorContextMenu != null) return;
 
         MenuItem runSelectedItem = new MenuItem("运行已选择");
@@ -560,6 +593,10 @@ public class SqlEditorPane extends HBox {
             if (this.onRunSelectedRequest != null && !getSelectedText().isBlank()) {
                 this.onRunSelectedRequest.run();
             }
+        });
+        MenuItem aiSqlItem = new MenuItem("AI 生成 SQL");
+        aiSqlItem.setOnAction(e -> {
+            if (this.onAiSqlRequest != null) this.onAiSqlRequest.run();
         });
         MenuItem cutItem = new MenuItem("剪切");
         cutItem.setOnAction(e -> textArea.cut());
@@ -570,7 +607,7 @@ public class SqlEditorPane extends HBox {
         MenuItem selectAllItem = new MenuItem("全选");
         selectAllItem.setOnAction(e -> textArea.selectAll());
 
-        editorContextMenu = new ContextMenu(runSelectedItem, new SeparatorMenuItem(),
+        editorContextMenu = new ContextMenu(runSelectedItem, aiSqlItem, new SeparatorMenuItem(),
                 cutItem, copyItem, pasteItem, new SeparatorMenuItem(), selectAllItem);
         editorContextMenu.setAutoHide(true);
         editorContextMenu.setHideOnEscape(true);

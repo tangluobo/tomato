@@ -2127,6 +2127,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             dialog.setTitle("保存查询");
             dialog.setHeaderText(null);
             dialog.setContentText("查询名称：");
+            DialogPositionUtil.centerOnOwner(dialog, editorView);
             dialog.showAndWait().ifPresent(name -> {
                 if (name.trim().isEmpty()) return;
 
@@ -2201,6 +2202,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             dialog.setTitle("保存查询");
             dialog.setHeaderText(null);
             dialog.setContentText("查询名称：");
+            DialogPositionUtil.centerOnOwner(dialog, editorView);
             dialog.showAndWait().ifPresent(name -> {
                 if (name.trim().isEmpty()) return;
                 editorView.doSave(name.trim());

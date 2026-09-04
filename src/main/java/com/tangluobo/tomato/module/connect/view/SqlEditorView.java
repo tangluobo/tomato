@@ -1,12 +1,17 @@
 package com.tangluobo.tomato.module.connect.view;
 
 import com.tangluobo.tomato.module.connect.*;
+import com.tangluobo.tomato.module.connect.dialog.AiSqlConfigDialog;
+import com.tangluobo.tomato.module.connect.dialog.AiSqlPromptDialog;
+import com.tangluobo.tomato.module.connect.service.AiSqlService;
 import com.tangluobo.tomato.module.connect.service.DatabaseService;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
 import com.tangluobo.tomato.utils.RowSelectorDragSelection;
 import javafx.application.Platform;
 import javafx.collections.ObservableList;
+import javafx.geometry.Bounds;
 import javafx.geometry.Insets;
+import javafx.geometry.Point2D;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Parent;
@@ -34,6 +39,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * SQL编辑器视图
@@ -43,6 +50,10 @@ public class SqlEditorView extends BorderPane {
 
     /** 行选择器列的标识名，用于在获取数据列名时跳过 */
     private static final String ROW_SELECTOR_COL = "__ROW_SELECTOR__";
+    private static final Pattern AI_DIRECTIVE = Pattern.compile(
+            "^\\s*--\\s*ai\\s*[:：]\\s*(.+?)\\s*$", Pattern.CASE_INSENSITIVE);
+    private static final int MAX_AI_SCHEMA_CHARS = 48_000;
+    private static final int MAX_AI_SCHEMA_TABLES = 80;
 
     private final SqlEditor editor;
 
@@ -64,6 +75,11 @@ public class SqlEditorView extends BorderPane {
     private final String initialDatabase;
     private final String initialSchema;
     private ContextMenu activeResultContextMenu;
+    private SplitMenuButton aiSqlButton;
+    private StackPane editorContainer;
+    private HBox aiSqlProgressOverlay;
+    private boolean aiSqlGenerating;
+    private volatile List<AiSchemaTable> aiSchemaTables = List.of();
 
     public SqlEditorView(List<ConnectionConfig> connections, ConnectionConfig initialConfig, String initialDatabase) {
         this(connections, initialConfig, initialDatabase, null);
@@ -85,6 +101,8 @@ public class SqlEditorView extends BorderPane {
 
         Button beautifyBtn = createToolbarButton("美化", "/images/connect/beautiful.png");
         beautifyBtn.setOnAction(e -> beautifySql());
+
+        aiSqlButton = createAiSqlButton();
 
         Button createQueryToolBtn = createToolbarButton("创建查询工具", "/images/connect/create_query_tool.png");
         createQueryToolBtn.setOnAction(e -> createQueryTool());
@@ -184,7 +202,8 @@ public class SqlEditorView extends BorderPane {
         databaseCombo.getStyleClass().add("combo-box-database");
         databaseCombo.valueProperty().addListener((obs, oldVal, newVal) -> refreshCompletionMetadata());
 
-        toolbar.getChildren().addAll(connectionCombo, databaseCombo, sep1, saveBtn, createQueryToolBtn, beautifyBtn, runBtn, explainBtn);
+        toolbar.getChildren().addAll(connectionCombo, databaseCombo, sep1, saveBtn,
+                createQueryToolBtn, beautifyBtn, aiSqlButton, runBtn, explainBtn);
 
         // ---- 编辑器区域 ----
         // 优先尝试 RichTextFX CodeArea，失败回退到 TextArea
@@ -199,7 +218,13 @@ public class SqlEditorView extends BorderPane {
             createdEditor = new PlainSqlEditor(this::markModified);
         }
         editor = createdEditor;
-        editor.installRunSelectedContextMenu(this::executeQuery);
+        editor.installContextMenu(this::executeQuery, this::handleAiSqlContextMenuRequest);
+        editor.getNode().addEventFilter(KeyEvent.KEY_PRESSED, e -> {
+            if (e.isShortcutDown() && e.getCode() == KeyCode.I) {
+                e.consume();
+                handleAiSqlRequest();
+            }
+        });
 
         // 接入编辑器快捷键回调（Ctrl+Enter 运行 / Ctrl+S 保存）
         if (editor instanceof RichTextSqlEditor) {
@@ -208,6 +233,11 @@ public class SqlEditorView extends BorderPane {
             rte.getPane().setOnSaveRequest(this::handleSave);
             rte.getPane().setMetadataCompletions(databaseCombo.getItems(), List.of(), List.of());
         }
+
+        aiSqlProgressOverlay = createAiSqlProgressOverlay();
+        editorContainer = new StackPane(editor.getNode(), aiSqlProgressOverlay);
+        editorContainer.setMinHeight(0);
+        StackPane.setAlignment(aiSqlProgressOverlay, Pos.TOP_LEFT);
 
         // ---- 结果区域 ----
         resultTabPane = new TabPane();
@@ -226,7 +256,7 @@ public class SqlEditorView extends BorderPane {
         // ---- 主布局 ----
         SplitPane splitPane = new SplitPane();
         splitPane.setOrientation(javafx.geometry.Orientation.VERTICAL);
-        splitPane.getItems().addAll(editor.getNode(), resultTabPane);
+        splitPane.getItems().addAll(editorContainer, resultTabPane);
         splitPane.setDividerPositions(0.6);
 
         this.setTop(toolbar);
@@ -265,6 +295,50 @@ public class SqlEditorView extends BorderPane {
         }
 
         return button;
+    }
+
+    private SplitMenuButton createAiSqlButton() {
+        MenuItem generateItem = new MenuItem("生成 SQL（Ctrl+I）");
+        generateItem.setOnAction(e -> handleAiSqlRequest());
+        MenuItem settingsItem = new MenuItem("AI SQL 设置...");
+        settingsItem.setOnAction(e -> AiSqlConfigDialog.show(this));
+
+        SplitMenuButton button = new SplitMenuButton(generateItem, settingsItem);
+        button.setText("AI SQL");
+        button.getStyleClass().add("toolbar-button");
+        button.setTooltip(new Tooltip("根据自然语言和当前库表结构生成 SQL（Ctrl+I）"));
+        button.setOnAction(e -> handleAiSqlRequest());
+        try {
+            ImageView iconView = new ImageView(new Image(
+                    getClass().getResourceAsStream("/images/connect/code.png")));
+            iconView.setFitWidth(16);
+            iconView.setFitHeight(16);
+            button.setGraphic(iconView);
+        } catch (Exception ignored) {
+        }
+        return button;
+    }
+
+    private HBox createAiSqlProgressOverlay() {
+        ProgressIndicator indicator = new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS);
+        indicator.setMinSize(18, 18);
+        indicator.setPrefSize(18, 18);
+        indicator.setMaxSize(18, 18);
+
+        Label label = new Label("AI 正在生成 SQL...");
+        label.setStyle("-fx-text-fill: #333333; -fx-font-size: 12px;");
+
+        HBox overlay = new HBox(7, indicator, label);
+        overlay.setAlignment(Pos.CENTER_LEFT);
+        overlay.setPadding(new Insets(6, 10, 6, 8));
+        overlay.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
+        overlay.setStyle("-fx-background-color: rgba(255,255,255,0.96); "
+                + "-fx-background-radius: 5; -fx-border-color: #BEDCFA; "
+                + "-fx-border-radius: 5; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.16), 8, 0, 0, 2);");
+        overlay.setMouseTransparent(true);
+        overlay.setVisible(false);
+        overlay.setManaged(false);
+        return overlay;
     }
 
     // ==================== 保存逻辑 ====================
@@ -477,26 +551,47 @@ public class SqlEditorView extends BorderPane {
 
     /** 后台加载当前库的表和字段，加载期间关键字和数据库名补全仍然可用。 */
     private void refreshCompletionMetadata() {
-        if (!(editor instanceof RichTextSqlEditor rte)) return;
+        RichTextSqlEditor rte = editor instanceof RichTextSqlEditor richTextEditor
+                ? richTextEditor : null;
         ConnectionConfig config = connectionCombo.getValue();
         String dbName = databaseCombo.getValue();
         long version = ++completionLoadVersion;
         List<String> databases = new ArrayList<>(databaseCombo.getItems());
-        rte.getPane().setMetadataCompletions(databases, List.of(), List.of());
+        if (rte != null) rte.getPane().setMetadataCompletions(databases, List.of(), List.of());
+        aiSchemaTables = List.of();
         if (config == null || dbName == null || dbName.isBlank() || config.getPassword() == null) return;
 
         Thread loader = new Thread(() -> {
             Set<String> tables = new LinkedHashSet<>();
             Set<String> columns = new LinkedHashSet<>();
+            List<AiSchemaTable> schemaTables = new ArrayList<>();
             java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, dbName);
             connLock.lock();
             try {
-                tables.addAll(DatabaseService.getTables(config, dbName));
+                tables.addAll(DatabaseService.getTables(config, dbName, initialSchema));
+                int tableOrder = 0;
                 for (String table : tables) {
-                    for (Map<String, String> column : DatabaseService.getTableColumns(config, dbName, table)) {
+                    List<Map<String, String>> tableColumns = DatabaseService.getTableColumns(
+                            config, dbName, initialSchema, table);
+                    StringBuilder schemaText = new StringBuilder("TABLE ").append(table).append('\n');
+                    List<String> searchTerms = new ArrayList<>();
+                    searchTerms.add(table);
+                    for (Map<String, String> column : tableColumns) {
                         String name = column.get("字段名");
-                        if (name != null && !name.isBlank()) columns.add(name);
+                        if (name == null || name.isBlank()) continue;
+                        columns.add(name);
+                        searchTerms.add(name);
+                        String type = Objects.requireNonNullElse(column.get("类型"), "");
+                        String comment = Objects.requireNonNullElse(column.get("注释"), "");
+                        if (!comment.isBlank()) searchTerms.add(comment);
+                        schemaText.append("  ").append(name);
+                        if (!type.isBlank()) schemaText.append(' ').append(type);
+                        if ("是".equals(column.get("主键"))) schemaText.append(" PRIMARY KEY");
+                        if (!comment.isBlank()) schemaText.append(" -- ").append(comment.replace('\n', ' '));
+                        schemaText.append('\n');
                     }
+                    schemaTables.add(new AiSchemaTable(schemaText.toString().trim(),
+                            List.copyOf(searchTerms), tableOrder++));
                 }
             } catch (Exception e) {
                 System.err.println("加载 SQL 自动补全元数据失败: " + e.getMessage());
@@ -507,7 +602,8 @@ public class SqlEditorView extends BorderPane {
                 if (version == completionLoadVersion
                         && config == connectionCombo.getValue()
                         && dbName.equals(databaseCombo.getValue())) {
-                    rte.getPane().setMetadataCompletions(databases, tables, columns);
+                    if (rte != null) rte.getPane().setMetadataCompletions(databases, tables, columns);
+                    aiSchemaTables = List.copyOf(schemaTables);
                 }
             });
         }, "SQL-CompletionMetadata");
@@ -519,6 +615,215 @@ public class SqlEditorView extends BorderPane {
         if (editor instanceof RichTextSqlEditor rte) {
             rte.getPane().setMetadataCompletions(databases, List.of(), List.of());
         }
+    }
+
+    // ==================== AI SQL ====================
+
+    private void handleAiSqlRequest() {
+        handleAiSqlRequest(false);
+    }
+
+    /** 右键触发时，优先把选中的文字直接作为生成需求。 */
+    private void handleAiSqlContextMenuRequest() {
+        handleAiSqlRequest(true);
+    }
+
+    private void handleAiSqlRequest(boolean useSelectedTextAsPrompt) {
+        if (aiSqlGenerating) return;
+        ConnectionConfig connection = connectionCombo.getValue();
+        String database = databaseCombo.getValue();
+        if (connection == null || database == null || database.isBlank()) {
+            showInfo("请先选择连接和数据库");
+            return;
+        }
+
+        GlobalConfig aiConfig = GlobalConfig.getInstance();
+        if (!aiConfig.isAiSqlConfigured()) {
+            if (!AiSqlConfigDialog.show(this) || !aiConfig.isAiSqlConfigured()) return;
+        }
+
+        String editorSnapshot = editor.getText();
+        AiDirective directive = findAiDirective(editorSnapshot, editor.getCaretPosition());
+        String selectedSql = editor.getSelectedText();
+        int selectionStart = editor.getSelectionStart();
+        int selectionEnd = editor.getSelectionEnd();
+        String prompt;
+        AiInsertion insertion;
+        if (useSelectedTextAsPrompt && selectedSql != null && !selectedSql.isBlank()) {
+            prompt = selectedSql.trim();
+            insertion = createAiInsertionAfter(editorSnapshot, selectionEnd);
+            selectedSql = "";
+        } else if (directive != null) {
+            prompt = directive.prompt();
+            int insertionPoint;
+            String prefix;
+            String suffix;
+            if (directive.lineEnd() < editorSnapshot.length()) {
+                insertionPoint = directive.lineEnd() + 1;
+                prefix = "";
+                suffix = "\n";
+            } else {
+                insertionPoint = directive.lineEnd();
+                prefix = "\n";
+                suffix = "";
+            }
+            insertion = new AiInsertion(editorSnapshot, insertionPoint, insertionPoint, prefix, suffix);
+            selectedSql = "";
+        } else {
+            java.util.Optional<String> entered = AiSqlPromptDialog.show(this, "");
+            if (entered.isEmpty()) return;
+            prompt = entered.get();
+            if (selectionStart != selectionEnd) {
+                insertion = createAiInsertionAfter(editorSnapshot, selectionEnd);
+            } else {
+                insertion = createAiInsertionAfter(editorSnapshot, editor.getCaretPosition());
+            }
+        }
+
+        String schemaContext = aiConfig.isAiIncludeSchema() ? buildAiSchemaContext(prompt) : "";
+        String dialect = connection.getType() == null ? "SQL" : connection.getType().getDisplayName();
+        String finalSelectedSql = selectedSql;
+        setAiSqlGenerating(true);
+        Thread worker = new Thread(() -> {
+            try {
+                String sql = AiSqlService.generateSql(aiConfig, dialect, database, initialSchema,
+                        prompt, finalSelectedSql, schemaContext);
+                Platform.runLater(() -> {
+                    insertGeneratedSql(insertion, sql);
+                    setAiSqlGenerating(false);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> {
+                    setAiSqlGenerating(false);
+                    showInfo("AI 生成失败: " + Objects.requireNonNullElse(e.getMessage(), e.getClass().getSimpleName()));
+                });
+            }
+        }, "AI-SQL-Generate");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private void setAiSqlGenerating(boolean generating) {
+        aiSqlGenerating = generating;
+        aiSqlButton.setDisable(generating);
+        aiSqlButton.setText(generating ? "AI 生成中..." : "AI SQL");
+        aiSqlProgressOverlay.setManaged(generating);
+        aiSqlProgressOverlay.setVisible(generating);
+        if (generating) {
+            positionAiSqlProgressOverlay();
+            Platform.runLater(this::positionAiSqlProgressOverlay);
+        }
+    }
+
+    /** 将生成状态放在选区右侧；空间不足时放到选区下方并限制在编辑器内。 */
+    private void positionAiSqlProgressOverlay() {
+        if (!aiSqlGenerating || editorContainer == null || aiSqlProgressOverlay == null) return;
+        double overlayWidth = aiSqlProgressOverlay.prefWidth(-1);
+        double overlayHeight = aiSqlProgressOverlay.prefHeight(overlayWidth);
+        double containerWidth = editorContainer.getWidth();
+        double containerHeight = editorContainer.getHeight();
+        double inset = 6;
+        double x = inset;
+        double y = inset;
+
+        java.util.Optional<Bounds> anchorBounds = editor.getAnchorBounds();
+        if (anchorBounds.isPresent() && editorContainer.getScene() != null) {
+            Bounds screenBounds = anchorBounds.get();
+            Point2D topLeft = editorContainer.screenToLocal(screenBounds.getMinX(), screenBounds.getMinY());
+            Point2D bottomRight = editorContainer.screenToLocal(screenBounds.getMaxX(), screenBounds.getMaxY());
+            if (topLeft != null && bottomRight != null) {
+                x = bottomRight.getX() + 8;
+                y = topLeft.getY() + Math.max(0, (bottomRight.getY() - topLeft.getY() - overlayHeight) / 2.0);
+                if (x + overlayWidth > containerWidth - inset) {
+                    x = topLeft.getX();
+                    y = bottomRight.getY() + 6;
+                }
+                if (y + overlayHeight > containerHeight - inset) {
+                    y = topLeft.getY() - overlayHeight - 6;
+                }
+            }
+        }
+
+        double maxX = Math.max(inset, containerWidth - overlayWidth - inset);
+        double maxY = Math.max(inset, containerHeight - overlayHeight - inset);
+        aiSqlProgressOverlay.setTranslateX(Math.max(inset, Math.min(x, maxX)));
+        aiSqlProgressOverlay.setTranslateY(Math.max(inset, Math.min(y, maxY)));
+    }
+
+    /** 在指定位置后新增 SQL，保留原有选区或提示文字。 */
+    private AiInsertion createAiInsertionAfter(String editorSnapshot, int requestedPosition) {
+        String snapshot = Objects.requireNonNullElse(editorSnapshot, "");
+        int position = Math.max(0, Math.min(requestedPosition, snapshot.length()));
+        String prefix = position > 0 && !isLineBreak(snapshot.charAt(position - 1)) ? "\n" : "";
+        String suffix = position < snapshot.length() && !isLineBreak(snapshot.charAt(position)) ? "\n" : "";
+        return new AiInsertion(snapshot, position, position, prefix, suffix);
+    }
+
+    private boolean isLineBreak(char value) {
+        return value == '\n' || value == '\r';
+    }
+
+    private void insertGeneratedSql(AiInsertion requestedInsertion, String sql) {
+        AiInsertion insertion = requestedInsertion;
+        String currentText = editor.getText();
+        if (!currentText.equals(requestedInsertion.editorSnapshot())) {
+            insertion = createAiInsertionAfter(currentText, editor.getCaretPosition());
+        }
+        String replacement = insertion.prefix() + sql + insertion.suffix();
+        int sqlStart = insertion.start() + insertion.prefix().length();
+        editor.replaceText(insertion.start(), insertion.end(), replacement);
+        editor.selectRange(sqlStart, sqlStart + sql.length());
+        editor.requestFocus();
+    }
+
+    private AiDirective findAiDirective(String text, int caretPosition) {
+        if (text == null || text.isEmpty()) return null;
+        int caret = Math.max(0, Math.min(caretPosition, text.length()));
+        int lineStart = text.lastIndexOf('\n', Math.max(0, caret - 1)) + 1;
+        int lineEnd = text.indexOf('\n', caret);
+        if (lineEnd < 0) lineEnd = text.length();
+        String line = text.substring(lineStart, lineEnd);
+        if (line.endsWith("\r")) line = line.substring(0, line.length() - 1);
+        Matcher matcher = AI_DIRECTIVE.matcher(line);
+        return matcher.matches() ? new AiDirective(matcher.group(1).trim(), lineEnd) : null;
+    }
+
+    private String buildAiSchemaContext(String prompt) {
+        List<AiSchemaTable> sorted = new ArrayList<>(aiSchemaTables);
+        sorted.sort(java.util.Comparator
+                .comparingInt((AiSchemaTable table) -> aiSchemaScore(table, prompt)).reversed()
+                .thenComparingInt(AiSchemaTable::order));
+        StringBuilder result = new StringBuilder();
+        int included = 0;
+        for (AiSchemaTable table : sorted) {
+            if (included >= MAX_AI_SCHEMA_TABLES) break;
+            int extraLength = table.schemaText().length() + (result.isEmpty() ? 0 : 2);
+            if (result.length() + extraLength > MAX_AI_SCHEMA_CHARS) break;
+            if (!result.isEmpty()) result.append("\n\n");
+            result.append(table.schemaText());
+            included++;
+        }
+        if (included < sorted.size()) {
+            result.append("\n\n-- 其余表结构因上下文长度限制未发送");
+        }
+        return result.toString();
+    }
+
+    private int aiSchemaScore(AiSchemaTable table, String prompt) {
+        String normalizedPrompt = normalizeAiSearchText(prompt);
+        int score = 0;
+        for (String term : table.searchTerms()) {
+            String normalizedTerm = normalizeAiSearchText(term);
+            if (normalizedTerm.length() >= 2 && normalizedPrompt.contains(normalizedTerm)) {
+                score += Math.min(normalizedTerm.length(), 20);
+            }
+        }
+        return score;
+    }
+
+    private String normalizeAiSearchText(String value) {
+        return value == null ? "" : value.toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[\\s_\\-`\".]+", "");
     }
 
     // ==================== SQL操作 ====================
@@ -762,7 +1067,7 @@ public class SqlEditorView extends BorderPane {
         Tab tab = new Tab(tabName);
         if (stmtResult.getResultData() != null) {
             tab.setContent(createTableView(stmtResult.getResultData(), stmtResult.getSourceTableName(),
-                    config, databaseName));
+                    config, databaseName, true));
         } else {
             Label label = new Label("无结果集");
             label.setStyle("-fx-text-fill: #888; -fx-padding: 16;");
@@ -815,16 +1120,18 @@ public class SqlEditorView extends BorderPane {
      * 从TableRowData创建TableView（复用逻辑）
      */
     private Node createTableView(TableRowData result) {
-        return createTableView(result, null, null, null);
+        return createTableView(result, null, null, null, false);
     }
 
     /**
      * 从TableRowData创建TableView，可指定源表名以支持右键删除行
      * @param result 表格数据
      * @param sourceTableName 源表名，若非null且有主键则启用右键删除
+     * @param showResultFooter 是否显示查询结果专用的底部图标栏和状态栏
      */
     private Node createTableView(TableRowData result, String sourceTableName,
-                                 ConnectionConfig resultConfig, String resultDatabase) {
+                                 ConnectionConfig resultConfig, String resultDatabase,
+                                 boolean showResultFooter) {
         TableView<ObservableList<String>> tableView = new TableView<>();
         GlobalConfig globalConfig = GlobalConfig.getInstance();
         // 固定行高（读取全局配置 tableFontSize 派生）：避免内容多的行把整行撑得过高
@@ -978,32 +1285,106 @@ public class SqlEditorView extends BorderPane {
         setupKeyboardShortcuts(tableView, finalEditContext);
         setupQueryResultContextMenu(tableView, finalEditContext, sourceTableName);
 
-        if (finalEditContext == null) return frozenTablePane;
-
-        Button saveButton = new Button("保存修改");
-        saveButton.getStyleClass().add("toolbar-button");
-        saveButton.setOnAction(e -> saveQueryResultChanges(finalEditContext));
-        Button deleteButton = new Button("删除");
-        deleteButton.getStyleClass().add("toolbar-button");
-        deleteButton.setOnAction(e -> handleQueryResultDeleteRows(finalEditContext));
-        Label editHint = new Label("双击单元格编辑，Ctrl+V 粘贴修改");
-        editHint.setStyle("-fx-text-fill: #777; -fx-padding: 0 0 0 6;");
-        HBox editToolbar = new HBox(6, saveButton, deleteButton, editHint);
-        editToolbar.setAlignment(Pos.CENTER_LEFT);
-        editToolbar.setPadding(new Insets(4, 8, 4, 8));
-        editToolbar.setStyle("-fx-background-color: #f8f8f8; -fx-border-color: #ddd; -fx-border-width: 0 0 1 0;");
-        editToolbar.setVisible(false);
-        editToolbar.setManaged(false);
-        finalEditContext.saveButton = saveButton;
-        finalEditContext.deleteButton = deleteButton;
-        finalEditContext.toolbar = editToolbar;
-        tableView.getSelectionModel().getSelectedCells().addListener(
-                (javafx.beans.InvalidationListener) observable -> updateQueryResultButtons(finalEditContext));
+        if (!showResultFooter) return frozenTablePane;
 
         BorderPane wrapper = new BorderPane(frozenTablePane);
-        wrapper.setTop(editToolbar);
-        loadQueryResultEditMetadata(finalEditContext);
+        wrapper.setBottom(createQueryResultFooter(tableView, finalEditContext));
+        if (finalEditContext != null) loadQueryResultEditMetadata(finalEditContext);
         return wrapper;
+    }
+
+    /** 查询结果底部：第一行图标操作栏，第二行状态栏。 */
+    private VBox createQueryResultFooter(TableView<ObservableList<String>> tableView,
+                                         QueryResultEditContext context) {
+        Button deleteButton = createQueryResultToolButton("删除选中记录", "M2 7H12");
+        Button saveButton = createQueryResultToolButton("保存修改", "M2 7L6 11L13 4");
+        Button cancelButton = createQueryResultToolButton("取消修改", "M3 3L11 11 M11 3L3 11");
+
+        deleteButton.setOnAction(e -> {
+            if (context != null) handleQueryResultDeleteRows(context);
+        });
+        saveButton.setOnAction(e -> {
+            if (context != null) saveQueryResultChanges(context);
+        });
+        cancelButton.setOnAction(e -> {
+            if (context != null) cancelQueryResultChanges(context);
+        });
+
+        HBox actionBar = new HBox(2, deleteButton, saveButton, cancelButton);
+        actionBar.setAlignment(Pos.CENTER_LEFT);
+        actionBar.setPadding(new Insets(1, 5, 1, 5));
+        actionBar.setMinHeight(27);
+        actionBar.setStyle("-fx-background-color: #f3f3f3; -fx-border-color: #d7d7d7; "
+                + "-fx-border-width: 1 0 1 0;");
+
+        Label modeStatusLabel = new Label(context == null ? "只读结果" : "正在检查结果是否可编辑...");
+        modeStatusLabel.setMinWidth(0);
+        modeStatusLabel.setMaxWidth(Double.MAX_VALUE);
+        modeStatusLabel.setTextOverrun(OverrunStyle.ELLIPSIS);
+        modeStatusLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #555;");
+        HBox.setHgrow(modeStatusLabel, Priority.ALWAYS);
+
+        Label recordStatusLabel = new Label();
+        recordStatusLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #222;");
+        HBox statusBar = new HBox(8, modeStatusLabel, recordStatusLabel);
+        statusBar.setAlignment(Pos.CENTER_LEFT);
+        statusBar.setPadding(new Insets(2, 5, 2, 5));
+        statusBar.setMinHeight(21);
+        statusBar.setStyle("-fx-background-color: #fafafa; -fx-border-color: #e0e0e0; "
+                + "-fx-border-width: 0 0 1 0;");
+
+        if (context == null) {
+            deleteButton.setDisable(true);
+            saveButton.setDisable(true);
+            cancelButton.setDisable(true);
+        } else {
+            context.saveButton = saveButton;
+            context.deleteButton = deleteButton;
+            context.cancelButton = cancelButton;
+            context.modeStatusLabel = modeStatusLabel;
+            context.recordStatusLabel = recordStatusLabel;
+            updateQueryResultButtons(context);
+        }
+
+        tableView.getSelectionModel().getSelectedCells().addListener(
+                (javafx.beans.InvalidationListener) observable -> {
+                    updateQueryResultRecordStatus(tableView, recordStatusLabel);
+                    if (context != null) updateQueryResultButtons(context);
+                });
+        updateQueryResultRecordStatus(tableView, recordStatusLabel);
+        return new VBox(actionBar, statusBar);
+    }
+
+    private Button createQueryResultToolButton(String tooltip, String pathData) {
+        javafx.scene.shape.SVGPath icon = new javafx.scene.shape.SVGPath();
+        icon.setContent(pathData);
+        icon.setFill(Color.TRANSPARENT);
+        icon.setStroke(Color.BLACK);
+        icon.setStrokeWidth(1.8);
+        icon.setStrokeLineCap(javafx.scene.shape.StrokeLineCap.SQUARE);
+        icon.setStrokeLineJoin(javafx.scene.shape.StrokeLineJoin.MITER);
+
+        Button button = new Button();
+        button.setAccessibleText(tooltip);
+        button.setGraphic(icon);
+        button.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+        button.setTooltip(new Tooltip(tooltip));
+        button.getStyleClass().add("toolbar-button");
+        button.setStyle("-fx-background-color: transparent; -fx-border-color: transparent; "
+                + "-fx-padding: 2 5; -fx-content-display: GRAPHIC_ONLY;");
+        return button;
+    }
+
+    private void updateQueryResultRecordStatus(TableView<ObservableList<String>> tableView,
+                                               Label recordStatusLabel) {
+        int count = tableView.getItems().size();
+        if (count == 0) {
+            recordStatusLabel.setText("无数据");
+            return;
+        }
+        int selectedIndex = tableView.getSelectionModel().getSelectedIndex();
+        int recordNumber = Math.min(count, selectedIndex >= 0 ? selectedIndex + 1 : 1);
+        recordStatusLabel.setText(String.format("第 %d 条记录（共 %d 条）", recordNumber, count));
     }
 
     /**
@@ -1413,7 +1794,11 @@ public class SqlEditorView extends BorderPane {
                     Platform.runLater(() -> {
                         context.columnComments.clear();
                         context.columnComments.putAll(comments);
-                        if (editableIndexes.isEmpty()) return;
+                        context.metadataLoaded = true;
+                        if (editableIndexes.isEmpty()) {
+                            updateQueryResultButtons(context);
+                            return;
+                        }
                         context.primaryKeyColumns = List.copyOf(pks);
                         context.editableColumnIndexes.clear();
                         context.editableColumnIndexes.addAll(editableIndexes);
@@ -1421,12 +1806,14 @@ public class SqlEditorView extends BorderPane {
                         for (int i = 0; i < context.columnNames.size(); i++) {
                             context.tableView.getColumns().get(i + 1).setEditable(editableIndexes.contains(i));
                         }
-                        context.toolbar.setManaged(true);
-                        context.toolbar.setVisible(true);
                         updateQueryResultButtons(context);
                     });
                 } catch (Exception e) {
                     // 无法可靠定位源表时保持只读，复制仍然可用。
+                    Platform.runLater(() -> {
+                        context.metadataLoaded = true;
+                        updateQueryResultButtons(context);
+                    });
                 }
             } finally {
                 connLock.unlock();
@@ -1614,8 +2001,9 @@ public class SqlEditorView extends BorderPane {
         if (currentRows.isEmpty()) return;
 
         context.saving = true;
-        context.saveButton.setDisable(true);
-        context.saveButton.setText("保存中...");
+        context.saveButton.setAccessibleText("保存中");
+        context.saveButton.setTooltip(new Tooltip("保存中..."));
+        updateQueryResultButtons(context);
         new Thread(() -> {
             java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(
                     context.config, context.target.databaseName);
@@ -1633,13 +2021,15 @@ public class SqlEditorView extends BorderPane {
                         }
                         context.tableView.refresh();
                         context.saving = false;
-                        context.saveButton.setText("保存修改");
+                        context.saveButton.setAccessibleText("保存修改");
+                        context.saveButton.setTooltip(new Tooltip("保存修改"));
                         updateQueryResultButtons(context);
                     });
                 } catch (Exception e) {
                     Platform.runLater(() -> {
                         context.saving = false;
-                        context.saveButton.setText("保存修改");
+                        context.saveButton.setAccessibleText("保存修改");
+                        context.saveButton.setTooltip(new Tooltip("保存修改"));
                         updateQueryResultButtons(context);
                         showQueryResultError("保存失败", "保存修改失败: " + e.getMessage());
                     });
@@ -1761,11 +2151,36 @@ public class SqlEditorView extends BorderPane {
         return false;
     }
 
+    /** 放弃查询结果中尚未保存的单元格修改。 */
+    private void cancelQueryResultChanges(QueryResultEditContext context) {
+        if (context == null || context.saving || !context.isEditable()) return;
+        for (ObservableList<String> row : context.tableView.getItems()) {
+            ObservableList<String> original = context.originalRows.get(row);
+            if (original != null && !row.equals(original)) row.setAll(original);
+        }
+        context.tableView.refresh();
+        updateQueryResultButtons(context);
+    }
+
     private void updateQueryResultButtons(QueryResultEditContext context) {
-        if (context.saveButton == null || context.deleteButton == null) return;
-        context.saveButton.setDisable(!context.isEditable() || context.saving || !hasQueryResultChanges(context));
+        if (context.saveButton == null || context.deleteButton == null || context.cancelButton == null) return;
+        boolean changed = context.isEditable() && hasQueryResultChanges(context);
+        context.saveButton.setDisable(!context.isEditable() || context.saving || !changed);
         context.deleteButton.setDisable(!context.isEditable() || context.saving
                 || context.tableView.getSelectionModel().getSelectedItems().isEmpty());
+        context.cancelButton.setDisable(context.saving || !changed);
+        if (context.modeStatusLabel != null) {
+            String status;
+            if (context.saving) status = "正在保存修改...";
+            else if (!context.metadataLoaded) status = "正在检查结果是否可编辑...";
+            else if (!context.isEditable()) status = "只读结果";
+            else if (changed) status = "有未保存的修改";
+            else status = "可编辑 · 双击单元格编辑，Ctrl+V 粘贴修改";
+            context.modeStatusLabel.setText(status);
+        }
+        if (context.recordStatusLabel != null) {
+            updateQueryResultRecordStatus(context.tableView, context.recordStatusLabel);
+        }
     }
 
     private void showQueryResultError(String title, String message) {
@@ -1836,7 +2251,10 @@ public class SqlEditorView extends BorderPane {
         List<String> primaryKeyColumns = List.of();
         Button saveButton;
         Button deleteButton;
-        HBox toolbar;
+        Button cancelButton;
+        Label modeStatusLabel;
+        Label recordStatusLabel;
+        boolean metadataLoaded;
         boolean saving;
 
         QueryResultEditContext(TableView<ObservableList<String>> tableView, ConnectionConfig config,
@@ -1850,6 +2268,15 @@ public class SqlEditorView extends BorderPane {
         boolean isEditable() {
             return !primaryKeyColumns.isEmpty() && !editableColumnIndexes.isEmpty();
         }
+    }
+
+    private record AiSchemaTable(String schemaText, List<String> searchTerms, int order) {
+    }
+
+    private record AiDirective(String prompt, int lineEnd) {
+    }
+
+    private record AiInsertion(String editorSnapshot, int start, int end, String prefix, String suffix) {
     }
 
     // ==================== Getter/Setter ====================
@@ -1914,7 +2341,21 @@ public class SqlEditorView extends BorderPane {
 
         String getSelectedText();
 
-        void installRunSelectedContextMenu(Runnable action);
+        int getCaretPosition();
+
+        int getSelectionStart();
+
+        int getSelectionEnd();
+
+        void replaceText(int start, int end, String text);
+
+        void selectRange(int anchor, int caretPosition);
+
+        void requestFocus();
+
+        java.util.Optional<Bounds> getAnchorBounds();
+
+        void installContextMenu(Runnable runSelectedAction, Runnable aiSqlAction);
 
         void hideContextMenu();
     }
@@ -1956,8 +2397,43 @@ public class SqlEditorView extends BorderPane {
         }
 
         @Override
-        public void installRunSelectedContextMenu(Runnable action) {
-            pane.setOnRunSelectedRequest(action);
+        public int getCaretPosition() {
+            return pane.getCaretPosition();
+        }
+
+        @Override
+        public int getSelectionStart() {
+            return pane.getSelectionStart();
+        }
+
+        @Override
+        public int getSelectionEnd() {
+            return pane.getSelectionEnd();
+        }
+
+        @Override
+        public void replaceText(int start, int end, String text) {
+            pane.replaceText(start, end, text);
+        }
+
+        @Override
+        public void selectRange(int anchor, int caretPosition) {
+            pane.selectRange(anchor, caretPosition);
+        }
+
+        @Override
+        public void requestFocus() {
+            pane.requestFocus();
+        }
+
+        @Override
+        public java.util.Optional<Bounds> getAnchorBounds() {
+            return pane.getSelectionOrCaretBounds();
+        }
+
+        @Override
+        public void installContextMenu(Runnable runSelectedAction, Runnable aiSqlAction) {
+            pane.setContextMenuActions(runSelectedAction, aiSqlAction);
         }
 
         @Override
@@ -2024,11 +2500,51 @@ public class SqlEditorView extends BorderPane {
         }
 
         @Override
-        public void installRunSelectedContextMenu(Runnable action) {
+        public int getCaretPosition() {
+            return textArea.getCaretPosition();
+        }
+
+        @Override
+        public int getSelectionStart() {
+            return textArea.getSelection().getStart();
+        }
+
+        @Override
+        public int getSelectionEnd() {
+            return textArea.getSelection().getEnd();
+        }
+
+        @Override
+        public void replaceText(int start, int end, String text) {
+            textArea.replaceText(start, end, text == null ? "" : text);
+        }
+
+        @Override
+        public void selectRange(int anchor, int caretPosition) {
+            textArea.selectRange(anchor, caretPosition);
+        }
+
+        @Override
+        public void requestFocus() {
+            textArea.requestFocus();
+        }
+
+        @Override
+        public java.util.Optional<Bounds> getAnchorBounds() {
+            Node caret = textArea.lookup(".caret");
+            return caret == null
+                    ? java.util.Optional.empty()
+                    : java.util.Optional.ofNullable(caret.localToScreen(caret.getBoundsInLocal()));
+        }
+
+        @Override
+        public void installContextMenu(Runnable runSelectedAction, Runnable aiSqlAction) {
             MenuItem runSelectedItem = new MenuItem("运行已选择");
             runSelectedItem.setOnAction(e -> {
-                if (!textArea.getSelectedText().isBlank()) action.run();
+                if (!textArea.getSelectedText().isBlank()) runSelectedAction.run();
             });
+            MenuItem aiSqlItem = new MenuItem("AI 生成 SQL");
+            aiSqlItem.setOnAction(e -> aiSqlAction.run());
             MenuItem cutItem = new MenuItem("剪切");
             cutItem.setOnAction(e -> textArea.cut());
             MenuItem copyItem = new MenuItem("复制");
@@ -2037,7 +2553,7 @@ public class SqlEditorView extends BorderPane {
             pasteItem.setOnAction(e -> textArea.paste());
             MenuItem selectAllItem = new MenuItem("全选");
             selectAllItem.setOnAction(e -> textArea.selectAll());
-            contextMenu = new ContextMenu(runSelectedItem, new SeparatorMenuItem(),
+            contextMenu = new ContextMenu(runSelectedItem, aiSqlItem, new SeparatorMenuItem(),
                     cutItem, copyItem, pasteItem, new SeparatorMenuItem(), selectAllItem);
             contextMenu.setAutoHide(true);
             contextMenu.setHideOnEscape(true);

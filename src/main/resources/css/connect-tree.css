@@ -1011,6 +1011,12 @@
     -fx-padding: 0;
 }
 
+/* SQL 编辑器使用浅色选区，确保绿色注释及其他语法颜色在选中时仍清晰可读。 */
+.sql-editor-area .selection,
+.sql-editor-area .main-selection {
+    -fx-highlight-fill: #BEDCFA;
+}
+
 .styled-text-area .paragraph-box {
     -fx-background-insets: 0;
     -fx-padding: 0;
