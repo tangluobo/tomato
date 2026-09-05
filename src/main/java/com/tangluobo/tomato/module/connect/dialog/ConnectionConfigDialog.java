@@ -415,6 +415,7 @@ public class ConnectionConfigDialog {
         tilePane.setAlignment(Pos.CENTER);
 
         for (ToolType toolType : ToolType.values()) {
+            if (toolType == ToolType.COLOR_TRANSPOSE_GAME) continue;
             tilePane.getChildren().add(createToolTile(toolType));
         }
         return tilePane;
