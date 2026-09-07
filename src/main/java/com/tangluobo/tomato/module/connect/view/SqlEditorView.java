@@ -1255,7 +1255,7 @@ public class SqlEditorView extends BorderPane {
                 return new javafx.beans.property.SimpleStringProperty(colIndex < row.size() ? row.get(colIndex) : "");
             });
             final int colType = (colIndex < columnTypes.size()) ? columnTypes.get(colIndex) : java.sql.Types.OTHER;
-            col.setCellFactory(tc -> new QueryResultEditableTableCell(colType));
+            col.setCellFactory(tc -> new QueryResultEditableTableCell(colType, finalEditContext));
             if (finalEditContext != null) {
                 col.setEditable(false);
                 col.setOnEditCommit(event -> {
@@ -1276,6 +1276,8 @@ public class SqlEditorView extends BorderPane {
         if (finalEditContext != null) {
             for (ObservableList<String> row : tableView.getItems()) {
                 finalEditContext.originalRows.put(row, javafx.collections.FXCollections.observableArrayList(row));
+                row.addListener((javafx.beans.InvalidationListener) ignored ->
+                        updateQueryResultButtons(finalEditContext));
             }
         }
 
@@ -1395,11 +1397,13 @@ public class SqlEditorView extends BorderPane {
         private TextField textField;
         private boolean escapePressed = false;
         private final int sqlType;
+        private final QueryResultEditContext editContext;
         private final javafx.scene.text.Text displayText;
         private String editingOriginalValue = "";
 
-        QueryResultEditableTableCell(int sqlType) {
+        QueryResultEditableTableCell(int sqlType, QueryResultEditContext editContext) {
             this.sqlType = sqlType;
+            this.editContext = editContext;
             getStyleClass().add("data-cell");
             setAlignment(Pos.CENTER_LEFT);
             displayText = new javafx.scene.text.Text();
@@ -1428,6 +1432,7 @@ public class SqlEditorView extends BorderPane {
         @Override
         public void startEdit() {
             escapePressed = false;
+            setPendingEditChanged(false);
             super.startEdit();
             editingOriginalValue = getItem();
             if (textField == null) {
@@ -1461,6 +1466,13 @@ public class SqlEditorView extends BorderPane {
             setGraphic(displayText);
             setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
             setText(null);
+            setPendingEditChanged(false);
+        }
+
+        @Override
+        public void commitEdit(String newValue) {
+            super.commitEdit(newValue);
+            setPendingEditChanged(false);
         }
 
         @Override
@@ -1519,12 +1531,23 @@ public class SqlEditorView extends BorderPane {
             textField.setMinWidth(this.getWidth() - this.getGraphicTextGap() * 2);
             textField.setStyle("-fx-background-color: white; -fx-border-color: transparent; -fx-border-width: 0; -fx-padding: 0 4; -fx-focus-color: transparent; -fx-faint-focus-color: transparent; -fx-text-fill: black;");
             textField.setOnKeyPressed(event -> escapePressed = (event.getCode() == javafx.scene.input.KeyCode.ESCAPE));
+            textField.textProperty().addListener((obs, oldText, newText) -> {
+                if (!isEditing()) return;
+                String pendingValue = normalizeEditValueForModel(newText, editingOriginalValue);
+                setPendingEditChanged(!Objects.equals(pendingValue, editingOriginalValue));
+            });
             textField.setOnAction(e -> commitEdit(normalizeEditValueForModel(textField.getText(), editingOriginalValue)));
             textField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
                 if (!isNowFocused) {
                     commitEdit(normalizeEditValueForModel(textField.getText(), editingOriginalValue));
                 }
             });
+        }
+
+        private void setPendingEditChanged(boolean changed) {
+            if (editContext == null || editContext.activeEditChanged == changed) return;
+            editContext.activeEditChanged = changed;
+            updateQueryResultButtons(editContext);
         }
 
         private void updateDisplayText(String value) {
@@ -1977,6 +2000,9 @@ public class SqlEditorView extends BorderPane {
     /** 保存查询结果中通过编辑或粘贴产生的修改。 */
     private void saveQueryResultChanges(QueryResultEditContext context) {
         if (!context.isEditable() || context.saving) return;
+        if (context.tableView.getEditingCell() != null) {
+            context.tableView.edit(-1, null);
+        }
 
         List<ObservableList<String>> uiRows = new ArrayList<>();
         List<ObservableList<String>> currentRows = new ArrayList<>();
@@ -2001,6 +2027,7 @@ public class SqlEditorView extends BorderPane {
         if (currentRows.isEmpty()) return;
 
         context.saving = true;
+        context.tableView.setDisable(true);
         context.saveButton.setAccessibleText("保存中");
         context.saveButton.setTooltip(new Tooltip("保存中..."));
         updateQueryResultButtons(context);
@@ -2021,6 +2048,8 @@ public class SqlEditorView extends BorderPane {
                         }
                         context.tableView.refresh();
                         context.saving = false;
+                        context.tableView.setDisable(false);
+                        context.activeEditChanged = false;
                         context.saveButton.setAccessibleText("保存修改");
                         context.saveButton.setTooltip(new Tooltip("保存修改"));
                         updateQueryResultButtons(context);
@@ -2028,6 +2057,7 @@ public class SqlEditorView extends BorderPane {
                 } catch (Exception e) {
                     Platform.runLater(() -> {
                         context.saving = false;
+                        context.tableView.setDisable(false);
                         context.saveButton.setAccessibleText("保存修改");
                         context.saveButton.setTooltip(new Tooltip("保存修改"));
                         updateQueryResultButtons(context);
@@ -2144,9 +2174,8 @@ public class SqlEditorView extends BorderPane {
         for (ObservableList<String> row : context.tableView.getItems()) {
             ObservableList<String> original = context.originalRows.get(row);
             if (original == null) continue;
-            for (int index : context.editableColumnIndexes) {
-                if (!Objects.equals(row.get(index), original.get(index))) return true;
-            }
+            if (TableDataChangeDetector.hasChanges(
+                    row, original, context.editableColumnIndexes)) return true;
         }
         return false;
     }
@@ -2154,6 +2183,10 @@ public class SqlEditorView extends BorderPane {
     /** 放弃查询结果中尚未保存的单元格修改。 */
     private void cancelQueryResultChanges(QueryResultEditContext context) {
         if (context == null || context.saving || !context.isEditable()) return;
+        if (context.tableView.getEditingCell() != null) {
+            context.tableView.edit(-1, null);
+        }
+        context.activeEditChanged = false;
         for (ObservableList<String> row : context.tableView.getItems()) {
             ObservableList<String> original = context.originalRows.get(row);
             if (original != null && !row.equals(original)) row.setAll(original);
@@ -2164,7 +2197,8 @@ public class SqlEditorView extends BorderPane {
 
     private void updateQueryResultButtons(QueryResultEditContext context) {
         if (context.saveButton == null || context.deleteButton == null || context.cancelButton == null) return;
-        boolean changed = context.isEditable() && hasQueryResultChanges(context);
+        boolean changed = context.isEditable()
+                && (context.activeEditChanged || hasQueryResultChanges(context));
         context.saveButton.setDisable(!context.isEditable() || context.saving || !changed);
         context.deleteButton.setDisable(!context.isEditable() || context.saving
                 || context.tableView.getSelectionModel().getSelectedItems().isEmpty());
@@ -2256,6 +2290,7 @@ public class SqlEditorView extends BorderPane {
         Label recordStatusLabel;
         boolean metadataLoaded;
         boolean saving;
+        boolean activeEditChanged;
 
         QueryResultEditContext(TableView<ObservableList<String>> tableView, ConnectionConfig config,
                                QueryTableTarget target, List<String> columnNames) {

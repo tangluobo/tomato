@@ -3,6 +3,7 @@ package com.tangluobo.tomato.module.connect.view;
 import com.tangluobo.tomato.module.connect.ToolType;
 import com.tangluobo.tomato.module.tools.DatasetConverterPane;
 import com.tangluobo.tomato.module.tools.DesktopShortcutPane;
+import com.tangluobo.tomato.module.tools.DownloaderPane;
 import com.tangluobo.tomato.module.tools.HostsFilePane;
 import com.tangluobo.tomato.module.tools.ImageBackgroundRemoverPane;
 import com.tangluobo.tomato.module.tools.ImageFormatConverterPane;
@@ -59,6 +60,7 @@ public class ToolPane extends BorderPane {
             case TRAE_SESSION -> pane = new TraeSessionPane();
             case RESOURCE_EXTRACTOR -> pane = new ResourceExtractorPane();
             case PORT_MAPPING -> pane = new PortMappingPane();
+            case DOWNLOADER -> pane = new DownloaderPane();
             default -> {
                 return buildPlaceholder();
             }

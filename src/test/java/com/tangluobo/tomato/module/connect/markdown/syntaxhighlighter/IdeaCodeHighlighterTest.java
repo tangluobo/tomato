@@ -45,6 +45,32 @@ class IdeaCodeHighlighterTest {
         assertToken(tokens, "\"demo.png\"", IdeaCodeHighlighter.TokenType.STRING);
     }
 
+    @Test
+    void detectsLanguageFromCommonDevelopmentFileNames() {
+        assertEquals("java", IdeaCodeHighlighter.languageFromFileName("UserService.java"));
+        assertEquals("typescript", IdeaCodeHighlighter.languageFromFileName("user-card.test.tsx"));
+        assertEquals("kotlin", IdeaCodeHighlighter.languageFromFileName("build.gradle.kts"));
+        assertEquals("groovy", IdeaCodeHighlighter.languageFromFileName("Jenkinsfile"));
+        assertEquals("dockerfile", IdeaCodeHighlighter.languageFromFileName("Dockerfile.prod"));
+        assertEquals("xml", IdeaCodeHighlighter.languageFromFileName("pom.xml"));
+        assertEquals("plaintext", IdeaCodeHighlighter.languageFromFileName("README.md"));
+        assertEquals("plaintext", IdeaCodeHighlighter.languageFromFileName("archive.bin"));
+    }
+
+    @Test
+    void sourceLanguagesUseTheirOwnKeywords() {
+        List<IdeaCodeHighlighter.Token> dart = IdeaCodeHighlighter.tokenize(
+                "sealed class Account { final int id = 7; }", "dart");
+        assertToken(dart, "sealed", IdeaCodeHighlighter.TokenType.KEYWORD);
+        assertToken(dart, "final", IdeaCodeHighlighter.TokenType.KEYWORD);
+
+        List<IdeaCodeHighlighter.Token> python = IdeaCodeHighlighter.tokenize(
+                "async def load():\n    return None", "python");
+        assertToken(python, "async", IdeaCodeHighlighter.TokenType.KEYWORD);
+        assertToken(python, "def", IdeaCodeHighlighter.TokenType.KEYWORD);
+        assertToken(python, "None", IdeaCodeHighlighter.TokenType.KEYWORD);
+    }
+
     private static void assertToken(List<IdeaCodeHighlighter.Token> tokens, String text,
                                     IdeaCodeHighlighter.TokenType type) {
         assertTrue(tokens.stream().anyMatch(token -> token.text().equals(text) && token.type() == type),

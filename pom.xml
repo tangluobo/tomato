@@ -54,7 +54,7 @@
         <dependency>
             <groupId>com.tangluobo</groupId>
             <artifactId>rdp4j</artifactId>
-            <version>1.0.5</version>
+            <version>1.0.6</version>
         </dependency>
         <dependency>
             <groupId>org.openjfx</groupId>
@@ -75,6 +75,42 @@
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
             <version>2.11.0</version>
+        </dependency>
+        <!-- Embedded pure-Java BitTorrent engine (magnet, torrent, DHT and HTTP trackers). -->
+        <dependency>
+            <groupId>com.github.atomashpolskiy</groupId>
+            <artifactId>bt-embedded</artifactId>
+            <version>1.10</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/third_party/bt/bt-embedded-1.10.jar</systemPath>
+        </dependency>
+        <dependency>
+            <groupId>com.google.inject</groupId>
+            <artifactId>guice</artifactId>
+            <version>5.0.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpclient</artifactId>
+            <version>4.5.13</version>
+        </dependency>
+        <!-- Embedded pure-Java ED2K engine, built from the pinned Apache-licensed jed2k core. -->
+        <dependency>
+            <groupId>org.dkf</groupId>
+            <artifactId>jed2k-core</artifactId>
+            <version>2.0-tomata-r3</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/third_party/jed2k/jed2k-core-2.0-tomata-r4.jar</systemPath>
+        </dependency>
+        <dependency>
+            <groupId>com.google.re2j</groupId>
+            <artifactId>re2j</artifactId>
+            <version>1.6</version>
+        </dependency>
+        <dependency>
+            <groupId>com.squareup.okhttp</groupId>
+            <artifactId>okhttp</artifactId>
+            <version>2.7.5</version>
         </dependency>
         <dependency>
             <groupId>com.github.mwiede</groupId>
@@ -561,6 +597,33 @@
                 <artifactId>maven-antrun-plugin</artifactId>
                 <version>3.1.0</version>
                 <executions>
+                    <execution>
+                        <id>embed-pure-java-download-engines</id>
+                        <phase>process-classes</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <unzip src="${project.basedir}/third_party/bt/bt-embedded-1.10.jar"
+                                       dest="${project.build.outputDirectory}">
+                                    <patternset>
+                                        <exclude name="META-INF/MANIFEST.MF"/>
+                                    </patternset>
+                                </unzip>
+                                <unzip src="${project.basedir}/third_party/jed2k/jed2k-core-2.0-tomata-r4.jar"
+                                       dest="${project.build.outputDirectory}">
+                                    <patternset>
+                                        <exclude name="META-INF/MANIFEST.MF"/>
+                                    </patternset>
+                                </unzip>
+                                <copy file="${project.basedir}/third_party/bt/LICENSE"
+                                      tofile="${project.build.outputDirectory}/META-INF/LICENSE-bt.txt"/>
+                                <copy file="${project.basedir}/third_party/jed2k/LICENSE.txt"
+                                      tofile="${project.build.outputDirectory}/META-INF/LICENSE-jed2k.txt"/>
+                            </target>
+                        </configuration>
+                    </execution>
                     <execution>
                         <id>archive-native-image</id>
                         <phase>package</phase>

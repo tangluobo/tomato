@@ -53,7 +53,8 @@ public class ServerModule implements Module {
 
     @Override
     public void loadSidebar(VBox sidebarContainer) {
-        sidebarContainer.setStyle("-fx-background-color: #ffffff; -fx-border-color: #e5e5e5; -fx-border-width: 0 1 0 0;");
+        // 主布局已经提供 1px Region 分隔条，侧栏不再叠加右边框。
+        sidebarContainer.setStyle("-fx-background-color: #ffffff; -fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0;");
 
         // 搜索栏（标题栏）
         HBox searchBar = new HBox(8);

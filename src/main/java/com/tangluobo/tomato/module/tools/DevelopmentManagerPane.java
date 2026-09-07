@@ -190,14 +190,31 @@ public class DevelopmentManagerPane extends VBox {
 
     private static final class HighlightedLogPane extends BorderPane {
         private static final Pattern ANSI_ESCAPE = Pattern.compile("\\u001B\\[[;\\d]*m");
+        private static final Pattern URL_PATTERN = Pattern.compile("(?i)\\bhttps?://\\S+");
+        private static final String LINK_STYLE =
+                " -fx-fill: #1976D2; -fx-underline: true;";
         private final org.fxmisc.richtext.InlineCssTextArea area =
                 new org.fxmisc.richtext.InlineCssTextArea();
+        private final List<LogLink> links = new ArrayList<>();
+
+        private record LogLink(int start, int end, String url) {}
 
         private HighlightedLogPane() {
             area.setEditable(false);
             area.setWrapText(false);
             area.setStyle("-fx-font-family: 'Consolas', 'Courier New', monospace; "
                     + "-fx-font-size: 12px; -fx-background-color: #fbfbfc;");
+            area.setOnMouseMoved(event -> area.setCursor(
+                    findLinkAt(event.getX(), event.getY()) == null
+                            ? javafx.scene.Cursor.TEXT : javafx.scene.Cursor.HAND));
+            area.setOnMouseExited(event -> area.setCursor(javafx.scene.Cursor.TEXT));
+            area.setOnMouseClicked(event -> {
+                if (event.getButton() != MouseButton.PRIMARY || event.getClickCount() != 1) return;
+                LogLink link = findLinkAt(event.getX(), event.getY());
+                if (link == null) return;
+                openExternalLink(link.url);
+                event.consume();
+            });
             setCenter(new org.fxmisc.flowless.VirtualizedScrollPane<>(area));
         }
 
@@ -209,10 +226,64 @@ public class DevelopmentManagerPane extends VBox {
                 if (line.isEmpty()) continue;
                 int start = area.getLength();
                 area.appendText(line);
-                area.setStyle(start, area.getLength(), styleFor(line));
+                String baseStyle = styleFor(line);
+                area.setStyle(start, area.getLength(), baseStyle);
+                Matcher urlMatcher = URL_PATTERN.matcher(line);
+                while (urlMatcher.find()) {
+                    int urlEnd = trimUrlEnd(line, urlMatcher.start(), urlMatcher.end());
+                    if (urlEnd <= urlMatcher.start()) continue;
+                    int linkStart = start + urlMatcher.start();
+                    int linkEnd = start + urlEnd;
+                    String url = line.substring(urlMatcher.start(), urlEnd);
+                    area.setStyle(linkStart, linkEnd, baseStyle + LINK_STYLE);
+                    links.add(new LogLink(linkStart, linkEnd, url));
+                }
             }
             area.moveTo(area.getLength());
             area.requestFollowCaret();
+        }
+
+        private static int trimUrlEnd(String text, int start, int end) {
+            while (end > start && "\"'.,;!?)]}>".indexOf(text.charAt(end - 1)) >= 0) {
+                end--;
+            }
+            return end;
+        }
+
+        private LogLink findLinkAt(double x, double y) {
+            try {
+                int characterIndex = area.hit(x, y).getCharacterIndex().orElse(-1);
+                if (characterIndex < 0) return null;
+                int low = 0;
+                int high = links.size() - 1;
+                while (low <= high) {
+                    int middle = (low + high) >>> 1;
+                    LogLink link = links.get(middle);
+                    if (characterIndex < link.start) {
+                        high = middle - 1;
+                    } else if (characterIndex >= link.end) {
+                        low = middle + 1;
+                    } else {
+                        return link;
+                    }
+                }
+            } catch (Exception ignored) {
+                // 鼠标位于文本区域外时不命中链接。
+            }
+            return null;
+        }
+
+        private static void openExternalLink(String url) {
+            CompletableFuture.runAsync(() -> {
+                try {
+                    if (java.awt.Desktop.isDesktopSupported()
+                            && java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.BROWSE)) {
+                        java.awt.Desktop.getDesktop().browse(java.net.URI.create(url));
+                    }
+                } catch (Exception ignored) {
+                    // 链接文本仍可复制，浏览器不可用时不影响日志查看。
+                }
+            });
         }
 
         private String styleFor(String line) {
@@ -246,10 +317,12 @@ public class DevelopmentManagerPane extends VBox {
 
         private void clear() {
             area.clear();
+            links.clear();
         }
 
         private void setText(String text) {
             area.clear();
+            links.clear();
             appendText(text);
         }
 
@@ -283,7 +356,6 @@ public class DevelopmentManagerPane extends VBox {
     private final StackPane directoryTreeContainer = new StackPane();
     private final StackPane fileTreeContainer = new StackPane();
     private final StackPane versionTreeContainer = new StackPane();
-    private final Label directoryPathLabel = new Label("暂未选择目录");
 
     private final Label versionHintLabel = new Label("请先在左侧选择目录");
     private final TextArea commitMessageArea = new TextArea();
@@ -291,7 +363,7 @@ public class DevelopmentManagerPane extends VBox {
     private final Button commitAndPushButton = new Button("提交并推送");
     private final ToggleButton gitModeBtn = new ToggleButton("git仓库");
     private final ToggleButton realModeBtn = new ToggleButton("实时");
-    private final SqlEditorPane codeEditor = new SqlEditorPane(true, false);
+    private final SqlEditorPane codeEditor = new SqlEditorPane(true, true);
     private final Label editorFileLabel = new Label("请选择目录中的文件");
     private final Button saveEditorButton = new Button("保存");
     private final TreeView<String> dependencyTree = new TreeView<>();
@@ -302,15 +374,23 @@ public class DevelopmentManagerPane extends VBox {
     private final Map<String, StringBuilder> projectLogs = new HashMap<>();
     private final Map<String, MavenIncrementalState> mavenIncrementalStates = new ConcurrentHashMap<>();
     private final ThreadLocal<DevDirectory> projectLogContext = new ThreadLocal<>();
-    private final Button stopRunButton = new Button("停止");
-    private final Button rerunButton = new Button("重新运行");
     private final MenuButton profilesMenuButton = new MenuButton("Profiles");
     private final ComboBox<RunConfiguration> runConfigurationCombo = new ComboBox<>();
     private final Button startProjectButton = new Button();
-    private final Button stopProjectButton = new Button("停止");
+    private final Button stopProjectButton = new Button();
+    private ImageView startProjectIcon;
+    private ImageView restartProjectIcon;
     private final ListView<String> npmScriptsList = new ListView<>();
     private final Map<String, String> npmScriptCommands = new LinkedHashMap<>();
+    private Region editorPanel;
+    private SplitPane directoryEditorSplitPane;
+    private SplitPane versionEditorSplitPane;
+    private SplitPane activeEditorSplitPane;
+    private double directoryEditorDividerPosition = 0.38;
+    private double versionEditorDividerPosition = 0.38;
     private TabPane navigationTabPane;
+    private Tab directoryTab;
+    private Tab versionTab;
     private Tab dependencyTab;
     private Tab runTab;
 
@@ -323,12 +403,10 @@ public class DevelopmentManagerPane extends VBox {
     private boolean editorDirty;
     private boolean editorReadOnly;
     private final Map<String, Process> runningProcesses = new ConcurrentHashMap<>();
-    private DevDirectory lastRunProject;
-    private File lastRunSourceFile;
-    private RunConfiguration lastRunConfiguration;
     private final Map<String, Process> buildProcesses = new ConcurrentHashMap<>();
     private final Set<String> launchingProjects = ConcurrentHashMap.newKeySet();
     private final Set<String> cancelledProjects = ConcurrentHashMap.newKeySet();
+    private final Set<String> restartingProjects = ConcurrentHashMap.newKeySet();
     private boolean projectControlsLoading;
 
     private static final class MavenIncrementalState {
@@ -375,22 +453,27 @@ public class DevelopmentManagerPane extends VBox {
         setMaxWidth(Double.MAX_VALUE);
         setMaxHeight(Double.MAX_VALUE);
         setPadding(Insets.EMPTY);
+        getStylesheets().add(
+                getClass().getResource("/css/connect-tree.css").toExternalForm());
 
-        SplitPane splitPane = new SplitPane();
-        splitPane.setDividerPositions(0.38);
+        editorPanel = createEditorPanel();
+        Region navigationPanel = createNavigationTabs();
+        navigationTabPane.getSelectionModel().selectedItemProperty().addListener(
+                (observable, previous, selected) -> moveEditorToSelectedTab(selected));
+        moveEditorToSelectedTab(navigationTabPane.getSelectionModel().getSelectedItem());
 
-        splitPane.getItems().addAll(createNavigationTabs(), createEditorPanel());
-        VBox.setVgrow(splitPane, Priority.ALWAYS);
-
-        getChildren().add(splitPane);
-        VBox.setVgrow(splitPane, Priority.ALWAYS);
+        getChildren().add(navigationPanel);
+        VBox.setVgrow(navigationPanel, Priority.ALWAYS);
     }
 
     private Region createNavigationTabs() {
         navigationTabPane = new TabPane();
+        navigationTabPane.getStyleClass().add("development-tab-pane");
         navigationTabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
-        Tab directoryTab = new Tab("目录", createFilesPanel());
-        Tab versionTab = new Tab("版本", createVersionPanel());
+        directoryEditorSplitPane = createEditorTabSplitPane(createFilesPanel());
+        versionEditorSplitPane = createEditorTabSplitPane(createVersionPanel());
+        directoryTab = new Tab("目录", directoryEditorSplitPane);
+        versionTab = new Tab("版本", versionEditorSplitPane);
         dependencyTab = new Tab("依赖", createDependencyPanel());
         runTab = new Tab("日志", createRunPanel());
         navigationTabPane.getTabs().addAll(directoryTab, versionTab, dependencyTab, runTab);
@@ -398,6 +481,46 @@ public class DevelopmentManagerPane extends VBox {
         VBox wrapper = new VBox(createProjectControlBar(), navigationTabPane);
         VBox.setVgrow(navigationTabPane, Priority.ALWAYS);
         return wrapper;
+    }
+
+    private SplitPane createEditorTabSplitPane(Region leftPanel) {
+        SplitPane splitPane = new SplitPane(leftPanel);
+        splitPane.setPadding(Insets.EMPTY);
+        splitPane.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
+        return splitPane;
+    }
+
+    private void moveEditorToSelectedTab(Tab selectedTab) {
+        if (editorPanel == null) return;
+        SplitPane targetSplitPane = selectedTab == directoryTab
+                ? directoryEditorSplitPane
+                : selectedTab == versionTab ? versionEditorSplitPane : null;
+        if (targetSplitPane == activeEditorSplitPane) return;
+
+        if (activeEditorSplitPane != null) {
+            double[] dividerPositions = activeEditorSplitPane.getDividerPositions();
+            if (dividerPositions.length > 0) {
+                if (activeEditorSplitPane == directoryEditorSplitPane) {
+                    directoryEditorDividerPosition = dividerPositions[0];
+                } else if (activeEditorSplitPane == versionEditorSplitPane) {
+                    versionEditorDividerPosition = dividerPositions[0];
+                }
+            }
+            activeEditorSplitPane.getItems().remove(editorPanel);
+        }
+
+        activeEditorSplitPane = targetSplitPane;
+        if (targetSplitPane == null) return;
+
+        targetSplitPane.getItems().add(editorPanel);
+        double dividerPosition = targetSplitPane == directoryEditorSplitPane
+                ? directoryEditorDividerPosition : versionEditorDividerPosition;
+        // SplitPane 要在下一次布局时才能稳定恢复该标签自己的分隔位置。
+        Platform.runLater(() -> {
+            if (activeEditorSplitPane == targetSplitPane) {
+                targetSplitPane.setDividerPositions(dividerPosition);
+            }
+        });
     }
 
     private Region createProjectControlBar() {
@@ -415,17 +538,28 @@ public class DevelopmentManagerPane extends VBox {
         runConfigurationCombo.setOnAction(e -> saveSelectedRunConfiguration());
 
         startProjectButton.setDisable(true);
-        javafx.scene.image.ImageView runIcon = new javafx.scene.image.ImageView(
+        startProjectIcon = new ImageView(
                 new javafx.scene.image.Image(getClass().getResourceAsStream("/images/connect/execute.png")));
-        runIcon.setFitWidth(16);
-        runIcon.setFitHeight(16);
-        startProjectButton.setGraphic(runIcon);
+        startProjectIcon.setFitWidth(16);
+        startProjectIcon.setFitHeight(16);
+        restartProjectIcon = new ImageView(
+                new Image(getClass().getResourceAsStream("/images/connect/refresh.png")));
+        restartProjectIcon.setFitWidth(16);
+        restartProjectIcon.setFitHeight(16);
+        startProjectButton.setGraphic(startProjectIcon);
         startProjectButton.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
         startProjectButton.setTooltip(new Tooltip("启动"));
         startProjectButton.getStyleClass().add("toolbar-button");
         startProjectButton.setOnAction(e -> startSelectedRunConfiguration());
+
+        javafx.scene.shape.Rectangle stopIcon = new javafx.scene.shape.Rectangle(10, 10);
+        stopIcon.setFill(javafx.scene.paint.Color.web("#D32F2F"));
+        stopProjectButton.setGraphic(stopIcon);
+        stopProjectButton.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+        stopProjectButton.setTooltip(new Tooltip("停止"));
+        stopProjectButton.getStyleClass().add("toolbar-button");
         stopProjectButton.setDisable(true);
-        stopProjectButton.setOnAction(e -> stopRunningProcess());
+        stopProjectButton.setOnAction(e -> stopSelectedProject());
         toolbar.getChildren().addAll(profilesMenuButton, runConfigurationCombo,
                 startProjectButton, stopProjectButton);
         return toolbar;
@@ -499,20 +633,7 @@ public class DevelopmentManagerPane extends VBox {
         panel.setPadding(new Insets(10));
         Label title = new Label("项目日志");
         title.setStyle("-fx-font-size: 13px; -fx-font-weight: bold;");
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-        rerunButton.setDisable(true);
-        rerunButton.setOnAction(e -> {
-            if (lastRunProject != null && lastRunConfiguration != null
-                    && "NPM".equals(lastRunConfiguration.type)) {
-                runNpmScript(lastRunProject, lastRunConfiguration.target);
-            } else if (lastRunProject != null && lastRunSourceFile != null) {
-                runMainClass(lastRunProject, lastRunSourceFile);
-            }
-        });
-        stopRunButton.setDisable(true);
-        stopRunButton.setOnAction(e -> stopRunningProcess());
-        HBox toolbar = new HBox(8, title, spacer, rerunButton, stopRunButton);
+        HBox toolbar = new HBox(8, title);
         toolbar.setAlignment(Pos.CENTER_LEFT);
         runOutputArea.setEditable(false);
         runOutputArea.setWrapText(false);
@@ -558,7 +679,8 @@ public class DevelopmentManagerPane extends VBox {
 
     public Region createSidebarPane() {
         VBox panel = new VBox();
-        panel.setStyle("-fx-background-color: #ffffff; -fx-border-color: #e5e5e5; -fx-border-width: 0 1 0 0;");
+        // 主布局已经提供 1px Region 分隔条，侧栏面板不再叠加右边框。
+        panel.setStyle("-fx-background-color: #ffffff; -fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0;");
 
         HBox titleBar = new HBox(8);
         titleBar.setAlignment(Pos.CENTER_LEFT);
@@ -696,14 +818,9 @@ public class DevelopmentManagerPane extends VBox {
     }
 
     private Region createFilesPanel() {
-        VBox panel = new VBox(8);
-        panel.setPadding(new Insets(12, 10, 12, 12));
+        VBox panel = new VBox();
+        panel.setPadding(Insets.EMPTY);
         panel.setStyle("-fx-background-color: #ffffff;");
-
-        Label title = new Label("目录");
-        title.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #333;");
-        directoryPathLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #999;");
-        directoryPathLabel.setWrapText(true);
 
         fileTree.setShowRoot(true);
         fileTree.setFixedCellSize(35);
@@ -746,7 +863,10 @@ public class DevelopmentManagerPane extends VBox {
                 itemIcon.setFitHeight(16);
                 itemIcon.setPreserveRatio(true);
                 itemIcon.setSmooth(true);
-                setText(item.getName());
+                boolean rootItem = getTreeItem() != null && getTreeItem() == fileTree.getRoot();
+                setText(rootItem
+                        ? item.getName() + "    " + item.getAbsolutePath()
+                        : item.getName());
                 setGraphic(itemIcon);
                 setTooltip(new Tooltip(item.getAbsolutePath()));
             }
@@ -775,7 +895,7 @@ public class DevelopmentManagerPane extends VBox {
         StackPane.setAlignment(filePlaceholderLabel, Pos.CENTER);
         fileTreeContainer.getChildren().setAll(fileTree, filePlaceholderLabel);
 
-        panel.getChildren().addAll(title, directoryPathLabel, fileTreeContainer);
+        panel.getChildren().add(fileTreeContainer);
         VBox.setVgrow(fileTreeContainer, Priority.ALWAYS);
         return panel;
     }
@@ -815,14 +935,12 @@ public class DevelopmentManagerPane extends VBox {
             fileTree.setRoot(null);
             filePlaceholderLabel.setVisible(true);
             filePlaceholderLabel.setManaged(true);
-            directoryPathLabel.setText("暂未选择目录");
             return;
         }
         TreeItem<File> root = createFileItem(currentDirectory.getPath());
         loadFileChildren(root);
         root.setExpanded(true);
         fileTree.setRoot(root);
-        directoryPathLabel.setText(currentDirectory.getPath().getAbsolutePath());
         filePlaceholderLabel.setVisible(false);
         filePlaceholderLabel.setManaged(false);
     }
@@ -837,6 +955,7 @@ public class DevelopmentManagerPane extends VBox {
             currentEditingFile = file;
             editorReadOnly = false;
             editorLoading = true;
+            codeEditor.setSyntaxLanguageForFileName(file.getName());
             codeEditor.setText(content);
             editorLoading = false;
             editorDirty = false;
@@ -868,6 +987,7 @@ public class DevelopmentManagerPane extends VBox {
         currentEditingFile = null;
         editorReadOnly = false;
         editorLoading = true;
+        codeEditor.setSyntaxLanguage("plaintext");
         codeEditor.clear();
         editorLoading = false;
         editorDirty = false;
@@ -918,6 +1038,7 @@ public class DevelopmentManagerPane extends VBox {
                 currentEditingFile = file;
                 editorReadOnly = true;
                 editorLoading = true;
+                codeEditor.setSyntaxLanguageForFileName(file.getName());
                 codeEditor.setText(result.output);
                 editorLoading = false;
                 editorDirty = false;
@@ -1864,19 +1985,73 @@ public class DevelopmentManagerPane extends VBox {
             showEditorError("请先选择 Java main 或 npm script");
             return;
         }
-        if ("NPM".equals(selected.type)) {
-            runNpmScript(currentDirectory, selected.target);
-        } else if (selected.sourceFile != null) {
-            runMainClass(currentDirectory, selected.sourceFile);
+        if (isProjectBusy(currentDirectory)) {
+            restartSelectedRunConfiguration(currentDirectory, selected);
+            return;
         }
+        launchRunConfiguration(currentDirectory, selected);
+    }
+
+    private void launchRunConfiguration(DevDirectory project, RunConfiguration selected) {
+        if ("NPM".equals(selected.type)) {
+            runNpmScript(project, selected.target);
+        } else if (selected.sourceFile != null) {
+            runMainClass(project, selected.sourceFile);
+        }
+    }
+
+    private void restartSelectedRunConfiguration(DevDirectory project, RunConfiguration selected) {
+        String key = projectProcessKey(project);
+        if (!restartingProjects.add(key)) return;
+
+        appendRunOutput(project, "正在重新启动..." + System.lineSeparator());
+        stopRunningProcess(project);
+        updateRunControlState();
+
+        CompletableFuture.runAsync(() -> {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+            while (isProjectBusy(project) && System.nanoTime() < deadline) {
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            boolean stopped = !isProjectBusy(project);
+            Platform.runLater(() -> {
+                // 停止按钮会移除待重启标记，以便用户取消这次重新启动。
+                if (!restartingProjects.remove(key)) {
+                    updateRunControlState();
+                    return;
+                }
+                if (currentDirectory != project) {
+                    updateRunControlState();
+                    return;
+                }
+                if (!stopped) {
+                    appendRunOutput(project, "重新启动失败：原进程未能及时退出"
+                            + System.lineSeparator());
+                    updateRunControlState();
+                    return;
+                }
+                launchRunConfiguration(project, selected);
+            });
+        });
     }
 
     private void updateRunControlState() {
         boolean busy = isProjectBusy(currentDirectory);
+        boolean restarting = currentDirectory != null
+                && restartingProjects.contains(projectProcessKey(currentDirectory));
         startProjectButton.setDisable(currentDirectory == null
-                || runConfigurationCombo.getValue() == null || busy);
-        stopProjectButton.setDisable(!busy);
-        stopRunButton.setDisable(!busy);
+                || runConfigurationCombo.getValue() == null || restarting);
+        startProjectButton.setGraphic(busy || restarting ? restartProjectIcon : startProjectIcon);
+        if (startProjectButton.getTooltip() != null) {
+            startProjectButton.getTooltip().setText(restarting
+                    ? "正在重新启动" : busy ? "重新启动" : "启动");
+        }
+        stopProjectButton.setDisable(!busy && !restarting);
     }
 
     private void refreshDependenciesAsync() {
@@ -2087,10 +2262,6 @@ public class DevelopmentManagerPane extends VBox {
 
         navigationTabPane.getSelectionModel().select(runTab);
         clearRunOutput(project);
-        lastRunProject = project;
-        lastRunSourceFile = sourceFile;
-        lastRunConfiguration = new RunConfiguration("JAVA", mainClass, sourceFile);
-        rerunButton.setDisable(false);
         cancelledProjects.remove(projectProcessKey(project));
         launchingProjects.add(projectProcessKey(project));
         refreshDirectoryTree();
@@ -2128,10 +2299,6 @@ public class DevelopmentManagerPane extends VBox {
         project.runType = "NPM";
         project.runTarget = script;
         persistProjectRunSettings();
-        lastRunProject = project;
-        lastRunSourceFile = null;
-        lastRunConfiguration = new RunConfiguration("NPM", script, null);
-        rerunButton.setDisable(false);
         cancelledProjects.remove(projectProcessKey(project));
         launchingProjects.add(projectProcessKey(project));
         navigationTabPane.getSelectionModel().select(runTab);
@@ -2805,8 +2972,15 @@ public class DevelopmentManagerPane extends VBox {
         }).collect(java.util.stream.Collectors.joining(" "));
     }
 
-    private void stopRunningProcess() {
+    private void stopSelectedProject() {
         DevDirectory project = currentDirectory;
+        if (project == null) return;
+        restartingProjects.remove(projectProcessKey(project));
+        stopRunningProcess(project);
+        updateRunControlState();
+    }
+
+    private void stopRunningProcess(DevDirectory project) {
         if (project == null) return;
         String key = projectProcessKey(project);
         Process process = runningProcesses.get(key);

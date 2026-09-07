@@ -64,7 +64,9 @@ public class ToolsModule implements Module {
 
     @Override
     public void loadSidebar(VBox sidebarContainer) {
-        sidebarContainer.setStyle("-fx-background-color: #ffffff; -fx-border-color: #e5e5e5; -fx-border-width: 0 1 0 0;");
+        // 主布局已经用 1px Region 分隔侧栏和内容区；这里不再叠加右边框，
+        // 保持与“连接”模块相同的分隔线宽度。
+        sidebarContainer.setStyle("-fx-background-color: #ffffff; -fx-padding: 0; -fx-border-color: transparent; -fx-border-width: 0;");
 
         // 搜索栏
         HBox searchBar = new HBox(8);
@@ -182,6 +184,10 @@ public class ToolsModule implements Module {
         // 资源图标提取工具
         Node extractIcon = createExtractIcon();
         toolItems.add(new ToolItem("resource_extractor", "资源图标提取", "从EXE/DLL中提取嵌入资源", extractIcon));
+
+        // HTTP/HTTPS 多线程下载器
+        Node downloaderIcon = createDownloaderIcon();
+        toolItems.add(new ToolItem("downloader", "下载器", "多线程分段下载与动态任务再分配", downloaderIcon));
     }
 
     private Node createImageConvertIcon() {
@@ -258,6 +264,16 @@ public class ToolsModule implements Module {
         // Material Icons: extraction (资源提取图标)
         SVGPath path = new SVGPath();
         path.setContent("M21 9v10c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V9c0-1.1.9-2 2-2h3.17L8 4.17 9.41 5.58 11.83 3.17 13.24 4.58 14.66 3.17 16 4.58 15.83 7H19c1.1 0 2 .9 2 2zm-1 0H4v10h16V9z");
+        path.setFill(Color.web("#1976D2"));
+        path.setScaleX(0.9);
+        path.setScaleY(0.9);
+        return path;
+    }
+
+    private Node createDownloaderIcon() {
+        // Material Icons: file_download
+        SVGPath path = new SVGPath();
+        path.setContent("M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z");
         path.setFill(Color.web("#1976D2"));
         path.setScaleX(0.9);
         path.setScaleY(0.9);
@@ -388,6 +404,7 @@ public class ToolsModule implements Module {
             case "image_background_remover" -> new ImageBackgroundRemoverPane();
             case "trae_session" -> new TraeSessionPane();
             case "resource_extractor" -> new ResourceExtractorPane();
+            case "downloader" -> new DownloaderPane();
             default -> buildMessagePane("工具开发中...", null);
         };
     }

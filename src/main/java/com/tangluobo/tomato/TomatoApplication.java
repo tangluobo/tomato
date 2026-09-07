@@ -8,6 +8,7 @@ import javafx.scene.image.Image;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 import com.tangluobo.tomato.module.connect.service.DdnsService;
+import com.tangluobo.tomato.module.tools.DownloaderPane;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.stage.StageStyle;
 
@@ -28,6 +29,9 @@ public class TomatoApplication extends Application {
             scene.setFill(Color.WHITE);
             stage.initStyle(StageStyle.UNDECORATED);
             stage.getIcons().add(new Image(getClass().getResourceAsStream("/images/logo.png")));
+            // 无边框窗口必须保留可操作的最小尺寸，避免显示器热插拔后标题栏按钮被挤出可视区域。
+            stage.setMinWidth(TomatoController.MIN_WINDOW_WIDTH);
+            stage.setMinHeight(TomatoController.MIN_WINDOW_HEIGHT);
             stage.setScene(scene);
             stage.show();
         } catch (Throwable error) {
@@ -40,6 +44,8 @@ public class TomatoApplication extends Application {
 
     @Override
     public void stop() {
+        // 保存下载列表，并等待正在下载的数据及断点记录刷盘。
+        DownloaderPane.prepareForApplicationExit();
         // 停止 DDNS 全局调度
         DdnsService.getInstance().stop();
         // 确保所有非守护线程（如JSch SSH连接线程）被清理，使JVM能正常退出

@@ -7,6 +7,8 @@ import com.tangluobo.tomato.module.tools.DevelopmentModule;
 import com.tangluobo.tomato.module.server.ServerModule;
 import com.tangluobo.tomato.module.settings.SettingsModule;
 import com.tangluobo.tomato.module.tools.ToolsModule;
+import javafx.application.Platform;
+import javafx.collections.ListChangeListener;
 import javafx.fxml.FXML;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
@@ -25,6 +27,7 @@ import javafx.scene.Cursor;
 import javafx.scene.input.MouseButton;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
+import javafx.stage.WindowEvent;
 
 import java.nio.charset.Charset;
 import java.util.ArrayList;
@@ -92,6 +95,14 @@ public class TomatoController {
     private double savedWidth = 0;
     private double savedHeight = 0;
 
+    /** 最后一次由应用正常移动/缩放得到的尺寸，不采信系统在显示器断开瞬间强制写回的异常小尺寸。 */
+    private double normalWindowWidth = 1200;
+    private double normalWindowHeight = 900;
+    private Stage trackedStage;
+    private ListChangeListener<Screen> screenChangeListener;
+    private List<Rectangle2D> knownScreenVisualBounds = List.of();
+    private boolean windowBoundsRecoveryScheduled = false;
+
     private double dragStartX = 0;
     private double dragStartY = 0;
 
@@ -99,6 +110,8 @@ public class TomatoController {
     private static final int HORIZONTAL_EDGE_THRESHOLD = 3;
     private static final int MAXIMIZE_THRESHOLD = 5;
     private static final int DRAG_ACTIVATION_THRESHOLD = 4;
+    static final double MIN_WINDOW_WIDTH = 800;
+    static final double MIN_WINDOW_HEIGHT = 600;
 
     // 模块缓存：保留每个模块的实例及其侧边栏子节点/内容容器，切换模块时复用，保留原有窗口状态
     private final Map<String, Module> moduleCache = new HashMap<>();
@@ -155,7 +168,17 @@ public class TomatoController {
 
         // 移除当前模块的侧边栏子节点（保留节点到缓存，不销毁状态）
         sidebarPane.getChildren().clear();
-        contentPane.getChildren().removeIf(n -> n != titleBar && n != chatScrollPane);
+
+        // 开发模块包含 RichTextFX 编辑器和多棵树，反复从 Scene 脱离、重新挂载会触发
+        // 整棵控件树重新执行 CSS 与布局。切换走时仅隐藏它，返回时直接复用已挂载界面。
+        VBox retainedDevelopmentContent = moduleContentCache.get("development");
+        if (retainedDevelopmentContent != null) {
+            retainedDevelopmentContent.setVisible(false);
+            retainedDevelopmentContent.setManaged(false);
+        }
+        contentPane.getChildren().removeIf(n -> n != titleBar
+                && n != chatScrollPane
+                && n != retainedDevelopmentContent);
 
         // 隐藏 ScrollPane，直接使用模块内容容器占满右侧
         chatScrollPane.setManaged(false);
@@ -200,7 +223,13 @@ public class TomatoController {
             divider2.setManaged(true);
         }
 
-        contentPane.getChildren().add(moduleContent);
+        moduleContent.setManaged(true);
+        moduleContent.setVisible(true);
+        if (!contentPane.getChildren().contains(moduleContent)) {
+            contentPane.getChildren().add(moduleContent);
+        } else {
+            moduleContent.toFront();
+        }
 
         currentModuleId = moduleId;
     }
@@ -250,6 +279,7 @@ public class TomatoController {
     }
 
     private void maximizeWindow(Stage stage) {
+        rememberNormalWindowSize(stage);
         savedX = stage.getX();
         savedY = stage.getY();
         savedWidth = stage.getWidth();
@@ -300,11 +330,13 @@ public class TomatoController {
     }
 
     private void restoreWindow(Stage stage) {
-        stage.setX(savedX);
-        stage.setY(savedY);
-        stage.setWidth(savedWidth);
-        stage.setHeight(savedHeight);
+        Screen screen = getScreenForStage(stage);
+        Rectangle2D restoredBounds = fitWindowBounds(
+                new Rectangle2D(savedX, savedY, savedWidth, savedHeight),
+                screen.getVisualBounds(), MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT);
+        applyWindowBounds(stage, restoredBounds);
         customMaximized = false;
+        rememberNormalWindowSize(stage);
         rootPane.setStyle("-fx-border-color: #BEBEBC; -fx-border-width: 1;");
 
         // 还原窗口后图标恢复为单矩形（最大化图标样式），重建 SVGPath 替换 Group
@@ -422,6 +454,14 @@ public class TomatoController {
                 newScene.addEventFilter(MouseEvent.MOUSE_MOVED, this::onMouseMoved);
                 newScene.addEventFilter(MouseEvent.MOUSE_EXITED, this::onMouseExited);
                 newScene.addEventFilter(MouseEvent.MOUSE_RELEASED, this::onMouseReleased);
+                newScene.windowProperty().addListener((windowObs, oldWindow, newWindow) -> {
+                    if (newWindow instanceof Stage stage) {
+                        attachWindowBoundsManagement(stage);
+                    }
+                });
+                if (newScene.getWindow() instanceof Stage stage) {
+                    attachWindowBoundsManagement(stage);
+                }
             }
         });
 
@@ -655,10 +695,14 @@ public class TomatoController {
                 newY = startWindowY + deltaY;
             }
 
-            if (newWidth >= 400) stage.setWidth(newWidth);
-            if (newHeight >= 300) stage.setHeight(newHeight);
-            if (resizingLeft) stage.setX(newX);
-            if (resizingTop) stage.setY(newY);
+            if (newWidth >= stage.getMinWidth()) {
+                stage.setWidth(newWidth);
+                if (resizingLeft) stage.setX(newX);
+            }
+            if (newHeight >= stage.getMinHeight()) {
+                stage.setHeight(newHeight);
+                if (resizingTop) stage.setY(newY);
+            }
         } else {
             double newX = event.getScreenX() - xOffset;
             double newY = event.getScreenY() - yOffset;
@@ -691,6 +735,121 @@ public class TomatoController {
         resizingTop = false;
         resizingBottom = false;
         rootPane.setCursor(Cursor.DEFAULT);
+        if (!customMaximized && rootPane.getScene().getWindow() instanceof Stage stage) {
+            rememberNormalWindowSize(stage);
+        }
+    }
+
+    private void attachWindowBoundsManagement(Stage stage) {
+        if (trackedStage == stage) {
+            return;
+        }
+        if (screenChangeListener != null) {
+            Screen.getScreens().removeListener(screenChangeListener);
+        }
+
+        trackedStage = stage;
+        stage.setMinWidth(MIN_WINDOW_WIDTH);
+        stage.setMinHeight(MIN_WINDOW_HEIGHT);
+        knownScreenVisualBounds = snapshotScreenVisualBounds();
+        screenChangeListener = change -> {
+            List<Rectangle2D> currentBounds = snapshotScreenVisualBounds();
+            // 新增显示器不会影响当前窗口；仅在旧屏消失或屏幕工作区/分辨率变化时重新校正。
+            boolean screenRemovedOrChanged = !currentBounds.containsAll(knownScreenVisualBounds);
+            knownScreenVisualBounds = currentBounds;
+            if (screenRemovedOrChanged) {
+                scheduleWindowBoundsRecovery();
+            }
+        };
+        Screen.getScreens().addListener(screenChangeListener);
+        stage.addEventHandler(WindowEvent.WINDOW_HIDDEN, event -> {
+            if (trackedStage == stage && screenChangeListener != null) {
+                Screen.getScreens().removeListener(screenChangeListener);
+                screenChangeListener = null;
+                trackedStage = null;
+            }
+        });
+
+        // setScene 时窗口通常还未 show；延迟两个 FX pulse，确保系统已给出最终工作区和窗口坐标。
+        scheduleWindowBoundsRecovery();
+    }
+
+    private List<Rectangle2D> snapshotScreenVisualBounds() {
+        return Screen.getScreens().stream().map(Screen::getVisualBounds).toList();
+    }
+
+    private void scheduleWindowBoundsRecovery() {
+        if (windowBoundsRecoveryScheduled) {
+            return;
+        }
+        windowBoundsRecoveryScheduled = true;
+        Platform.runLater(() -> Platform.runLater(() -> {
+            windowBoundsRecoveryScheduled = false;
+            recoverWindowBoundsAfterScreenChange();
+        }));
+    }
+
+    private void recoverWindowBoundsAfterScreenChange() {
+        Stage stage = trackedStage;
+        if (stage == null || !stage.isShowing() || Screen.getScreens().isEmpty()) {
+            return;
+        }
+
+        Screen targetScreen = getScreenForStage(stage);
+        Rectangle2D visualBounds = targetScreen.getVisualBounds();
+        if (customMaximized) {
+            Rectangle2D restoredBounds = fitWindowBounds(
+                    new Rectangle2D(savedX, savedY, savedWidth, savedHeight),
+                    visualBounds, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT);
+            savedX = restoredBounds.getMinX();
+            savedY = restoredBounds.getMinY();
+            savedWidth = restoredBounds.getWidth();
+            savedHeight = restoredBounds.getHeight();
+            applyWindowBounds(stage, visualBounds);
+            return;
+        }
+
+        // 坐标采用系统迁移后的目标屏位置，尺寸采用断屏前缓存；只有目标工作区放不下时才缩小。
+        Rectangle2D desiredBounds = new Rectangle2D(
+                stage.getX(), stage.getY(), normalWindowWidth, normalWindowHeight);
+        Rectangle2D fittedBounds = fitWindowBounds(
+                desiredBounds, visualBounds, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT);
+        applyWindowBounds(stage, fittedBounds);
+        rememberNormalWindowSize(stage);
+    }
+
+    private void rememberNormalWindowSize(Stage stage) {
+        if (customMaximized || !Double.isFinite(stage.getWidth()) || !Double.isFinite(stage.getHeight())) {
+            return;
+        }
+        if (stage.getWidth() >= MIN_WINDOW_WIDTH && stage.getHeight() >= MIN_WINDOW_HEIGHT) {
+            normalWindowWidth = stage.getWidth();
+            normalWindowHeight = stage.getHeight();
+        }
+    }
+
+    private static void applyWindowBounds(Stage stage, Rectangle2D bounds) {
+        stage.setWidth(bounds.getWidth());
+        stage.setHeight(bounds.getHeight());
+        stage.setX(bounds.getMinX());
+        stage.setY(bounds.getMinY());
+    }
+
+    static Rectangle2D fitWindowBounds(Rectangle2D desiredBounds, Rectangle2D screenBounds,
+                                       double minimumWidth, double minimumHeight) {
+        double desiredWidth = finiteOr(desiredBounds.getWidth(), minimumWidth);
+        double desiredHeight = finiteOr(desiredBounds.getHeight(), minimumHeight);
+        double width = Math.min(Math.max(desiredWidth, minimumWidth), screenBounds.getWidth());
+        double height = Math.min(Math.max(desiredHeight, minimumHeight), screenBounds.getHeight());
+        double desiredX = finiteOr(desiredBounds.getMinX(), screenBounds.getMinX());
+        double desiredY = finiteOr(desiredBounds.getMinY(), screenBounds.getMinY());
+        double x = clamp(desiredX, screenBounds.getMinX(), screenBounds.getMaxX() - width);
+        double y = clamp(desiredY, screenBounds.getMinY(), screenBounds.getMaxY() - height);
+        return new Rectangle2D(x, y, width, height);
+    }
+
+    private static double finiteOr(double value, double fallback) {
+        return Double.isFinite(value) ? value : fallback;
     }
 
     private Screen getScreenForPoint(double screenX, double screenY) {

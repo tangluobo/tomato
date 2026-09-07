@@ -15,6 +15,7 @@ public enum ToolType {
     TRAE_SESSION("trae_session", "Trae会话管理", "/images/connect/user.png"),
     RESOURCE_EXTRACTOR("resource_extractor", "资源图标提取", "/images/connect/monitor.png"),
     PORT_MAPPING("port_mapping", "端口映射", "/images/connect/connect.png"),
+    DOWNLOADER("downloader", "下载器", "/images/connect/down.png"),
     COLOR_TRANSPOSE_GAME("color_transpose_game", "颜色转置", "/images/connect/execute.png");
 
     private final String code;

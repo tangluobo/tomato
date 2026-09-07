@@ -28,6 +28,7 @@ import com.tangluobo.tomato.ssh.SSHTerminalPane;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
 import com.tangluobo.tomato.utils.SecurityUtils;
 import javafx.animation.KeyFrame;
+import javafx.animation.PauseTransition;
 import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.collections.ObservableList;
@@ -47,6 +48,7 @@ import javafx.geometry.Pos;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javafx.beans.value.ChangeListener;
+import javafx.util.Duration;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -59,8 +61,12 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -120,6 +126,10 @@ public class ConnectModule implements Module {
     private Image dockerContainerIcon;
     private Image dockerContainerGrayIcon;
     private TextField searchField;
+    private PauseTransition searchFilterDelay;
+    private final Map<String, Image> connectionIconCache = new HashMap<>();
+
+    private static final Duration SEARCH_FILTER_DELAY = Duration.millis(150);
 
     // 内容区域
     private VBox contentArea;
@@ -191,7 +201,16 @@ public class ConnectModule implements Module {
         setupContextMenu();
         setupDragAndDrop();
 
-        searchField.textProperty().addListener((obs, oldVal, newVal) -> filterTree(newVal));
+        searchFilterDelay = new PauseTransition(SEARCH_FILTER_DELAY);
+        searchFilterDelay.setOnFinished(event -> filterTree(searchField.getText()));
+        searchField.textProperty().addListener((obs, oldVal, newVal) -> {
+            if (newVal == null || newVal.isBlank()) {
+                // Clearing the field should restore the complete tree immediately.
+                filterTree(newVal);
+            } else {
+                searchFilterDelay.playFromStart();
+            }
+        });
 
         sidebarContainer.getChildren().addAll(headerBar, treeView);
         treeView.prefHeightProperty().bind(sidebarContainer.heightProperty().subtract(50));
@@ -401,10 +420,18 @@ public class ConnectModule implements Module {
     }
 
     private void loadTree() {
+        rebuildConnectionTree(null);
+    }
+
+    private void rebuildConnectionTree(Set<String> visibleIds) {
         root.getChildren().clear();
         itemConfigMap.clear();
         dbNodeDataMap.clear();
-        buildConnectionTree();
+        // Every rebuild creates new TreeItems. Retaining the old keys here made
+        // the map grow on every search keystroke and kept all old listeners and
+        // graphics reachable for the lifetime of the application.
+        connectionStateMap.clear();
+        buildConnectionTree(visibleIds);
         root.getChildren().add(bottomSpacer);
     }
 
@@ -413,13 +440,19 @@ public class ConnectModule implements Module {
      * 先创建所有节点并建立 id→item 映射，再按 parentId 连接父子关系，
      * 避免列表中子连接排在父连接之前时（如拖动移动后）找不到父节点而丢失。
      */
-    private void buildConnectionTree() {
+    private void buildConnectionTree(Set<String> visibleIds) {
         Map<String, TreeItem<String>> idToItem = new HashMap<>();
         for (ConnectionConfig config : connections) {
+            if (visibleIds != null && !visibleIds.contains(config.getId())) {
+                continue;
+            }
             TreeItem<String> item = createTreeItem(config);
             idToItem.put(config.getId(), item);
         }
         for (ConnectionConfig config : connections) {
+            if (visibleIds != null && !visibleIds.contains(config.getId())) {
+                continue;
+            }
             TreeItem<String> item = idToItem.get(config.getId());
             String pid = config.getParentId();
             if (pid == null || pid.isEmpty()) {
@@ -437,46 +470,94 @@ public class ConnectModule implements Module {
     }
 
     private void filterTree(String keyword) {
-        if (keyword == null || keyword.trim().isEmpty()) {
+        if (searchFilterDelay != null) {
+            searchFilterDelay.stop();
+        }
+        String normalized = normalizeSearchKeyword(keyword);
+        if (normalized.isEmpty()) {
             loadTree();
             return;
         }
-        String kw = keyword.trim().toLowerCase();
-
-        root.getChildren().clear();
-        itemConfigMap.clear();
-        buildConnectionTree();
-        root.getChildren().add(bottomSpacer);
-
-        filterTreeItem(root, kw);
+        if (normalizeSearchKeyword(root.getValue()).contains(normalized)) {
+            loadTree();
+        } else {
+            rebuildConnectionTree(computeVisibleConnectionIds(connections, normalized));
+        }
         expandAll(root);
     }
 
-    private boolean filterTreeItem(TreeItem<String> item, String keyword) {
-        if (item == bottomSpacer) {
-            return true;
-        }
-        boolean selfMatch = item.getValue() != null && item.getValue().toLowerCase().contains(keyword);
-
-        if (selfMatch) {
-            for (TreeItem<String> child : item.getChildren()) {
-                filterTreeItem(child, keyword);
-            }
-            return true;
+    static Set<String> computeVisibleConnectionIds(List<ConnectionConfig> configs,
+                                                    String keyword) {
+        if (configs == null || configs.isEmpty()) {
+            return Set.of();
         }
 
-        boolean childMatch = false;
-        List<TreeItem<String>> toRemove = new ArrayList<>();
-        for (TreeItem<String> child : item.getChildren()) {
-            boolean match = filterTreeItem(child, keyword);
-            if (match) {
-                childMatch = true;
-            } else {
-                toRemove.add(child);
+        String normalized = normalizeSearchKeyword(keyword);
+        Map<String, ConnectionConfig> configById = new HashMap<>();
+        Map<String, List<String>> childrenByParent = new HashMap<>();
+        Set<String> allIds = new LinkedHashSet<>();
+        Set<String> directMatches = new LinkedHashSet<>();
+        for (ConnectionConfig config : configs) {
+            if (config == null) {
+                continue;
+            }
+            String id = config.getId();
+            if (id == null) {
+                continue;
+            }
+            allIds.add(id);
+            configById.put(id, config);
+            String parentId = config.getParentId();
+            if (parentId != null && !parentId.isBlank()) {
+                childrenByParent.computeIfAbsent(parentId, ignored -> new ArrayList<>())
+                        .add(id);
+            }
+            if (normalized.isEmpty()
+                    || normalizeSearchKeyword(config.getName()).contains(normalized)) {
+                directMatches.add(id);
             }
         }
-        item.getChildren().removeAll(toRemove);
-        return childMatch;
+        if (normalized.isEmpty()) {
+            return allIds;
+        }
+
+        Set<String> visible = new LinkedHashSet<>(directMatches);
+        for (String matchId : directMatches) {
+            ConnectionConfig current = configById.get(matchId);
+            Set<String> visitedAncestors = new HashSet<>();
+            while (current != null) {
+                String parentId = current.getParentId();
+                if (parentId == null || parentId.isBlank()
+                        || !visitedAncestors.add(parentId)) {
+                    break;
+                }
+                ConnectionConfig parent = configById.get(parentId);
+                if (parent == null) {
+                    break;
+                }
+                visible.add(parentId);
+                current = parent;
+            }
+
+            Deque<String> pending = new ArrayDeque<>();
+            Set<String> visitedDescendants = new HashSet<>();
+            pending.add(matchId);
+            while (!pending.isEmpty()) {
+                String parentId = pending.removeFirst();
+                if (!visitedDescendants.add(parentId)) {
+                    continue;
+                }
+                for (String childId : childrenByParent.getOrDefault(parentId, List.of())) {
+                    visible.add(childId);
+                    pending.addLast(childId);
+                }
+            }
+        }
+        return visible;
+    }
+
+    private static String normalizeSearchKeyword(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
     private void expandAll(TreeItem<String> item) {
@@ -520,28 +601,41 @@ public class ConnectModule implements Module {
             if (folderIcon != null) {
                 imageView.setImage(folderIcon);
             }
-        } else if (config.getType() == ConnectType.TOOL) {
-            // 工具节点：按 toolType 显示对应图标
-            ToolType toolType = ToolType.fromCode(config.getToolType());
-            String iconPath = toolType != null ? toolType.getIconPath() : ConnectType.TOOL.getIconPath();
-            try {
-                Image icon = new Image(getClass().getResourceAsStream(iconPath));
-                if (icon != null) {
-                    imageView.setImage(icon);
-                }
-            } catch (Exception e) {
-            }
         } else {
-            try {
-                String iconPath = config.getType().getIconPath();
-                Image icon = new Image(getClass().getResourceAsStream(iconPath));
-                if (icon != null) {
-                    imageView.setImage(icon);
-                }
-            } catch (Exception e) {
+            String iconPath;
+            if (config.getType() == ConnectType.TOOL) {
+                ToolType toolType = ToolType.fromCode(config.getToolType());
+                iconPath = toolType != null
+                        ? toolType.getIconPath() : ConnectType.TOOL.getIconPath();
+            } else {
+                iconPath = config.getType().getIconPath();
+            }
+            Image icon = loadCachedConnectionIcon(iconPath);
+            if (icon != null) {
+                imageView.setImage(icon);
             }
         }
         return imageView;
+    }
+
+    private Image loadCachedConnectionIcon(String iconPath) {
+        if (iconPath == null || iconPath.isBlank()) {
+            return null;
+        }
+        Image cached = connectionIconCache.get(iconPath);
+        if (cached != null) {
+            return cached;
+        }
+        try (var iconStream = getClass().getResourceAsStream(iconPath)) {
+            if (iconStream == null) {
+                return null;
+            }
+            Image loaded = new Image(iconStream, 20, 20, true, true);
+            connectionIconCache.put(iconPath, loaded);
+            return loaded;
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     /** 供 handler 调用：获取树根节点 */

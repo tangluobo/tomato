@@ -367,18 +367,21 @@
     -fx-padding: 0 !important;
 }
 
-/* 设计表、查询结果标签页：高度调低至约3/4 (26px→20px) */
+/* 设计表、查询结果、开发导航标签页：高度调低至约3/4 (26px→20px) */
 .design-tab-pane,
-.query-result-tab-pane {
+.query-result-tab-pane,
+.development-tab-pane {
     -fx-tab-min-height: 20px !important;
     -fx-tab-max-height: 20px !important;
 }
 .design-tab-pane > .tab-header-area > .headers-region > .tab,
-.query-result-tab-pane > .tab-header-area > .headers-region > .tab {
+.query-result-tab-pane > .tab-header-area > .headers-region > .tab,
+.development-tab-pane > .tab-header-area > .headers-region > .tab {
     -fx-padding: 2 12 !important;
 }
 .design-tab-pane .tab,
-.query-result-tab-pane .tab {
+.query-result-tab-pane .tab,
+.development-tab-pane .tab {
     -fx-padding: 2 12 !important;
 }
 

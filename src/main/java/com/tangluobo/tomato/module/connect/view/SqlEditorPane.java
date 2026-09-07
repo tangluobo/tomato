@@ -1,5 +1,8 @@
 package com.tangluobo.tomato.module.connect.view;
 
+import com.tangluobo.tomato.module.connect.markdown.syntaxhighlighter.IdeaCodeHighlighter;
+import javafx.animation.PauseTransition;
+import javafx.application.Platform;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
@@ -16,11 +19,13 @@ import javafx.scene.input.Clipboard;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
-import javafx.scene.layout.VBox;
 import javafx.stage.Popup;
 import org.fxmisc.flowless.VirtualizedScrollPane;
 import org.fxmisc.richtext.InlineCssTextArea;
+import org.fxmisc.richtext.LineNumberFactory;
+import org.fxmisc.richtext.model.StyleSpans;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
+import javafx.util.Duration;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -30,17 +35,18 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.function.Consumer;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * 可复用的 SQL 编辑器组件。
+ * 可复用的 SQL / 源代码编辑器组件。
  *
  * 基于 RichTextFX {@link InlineCssTextArea}，内置：
  * <ul>
  *   <li>行号显示（固定 500 行，随滚动同步）</li>
- *   <li>SQL 语法高亮（关键字蓝色粗体 / 字符串红色 / 注释绿色斜体 / 数字绿色）</li>
+ *   <li>按语言应用接近 IntelliJ IDEA 默认浅色主题的语法高亮</li>
  *   <li>Tab 缩进（4 空格）</li>
  *   <li>Ctrl+Enter 触发 {@code onRunRequest}、Ctrl+S 触发 {@code onSaveRequest}</li>
  * </ul>
@@ -49,13 +55,11 @@ import java.util.regex.Pattern;
  */
 public class SqlEditorPane extends HBox {
 
-    private static final int MAX_LINES = 500;
-
-    // 内联 CSS 样式，直接应用到文本段
-    private static final String STYLE_KEYWORD = "-fx-fill: #0000FF; -fx-font-weight: bold;";
-    private static final String STYLE_STRING = "-fx-fill: #A31515;";
-    private static final String STYLE_COMMENT = "-fx-fill: #2F6234; -fx-font-style: italic;";
-    private static final String STYLE_NUMBER = "-fx-fill: #098658;";
+    private static final ExecutorService HIGHLIGHT_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "source-code-highlighter");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     private static final String[] KEYWORDS = {
             "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET",
@@ -74,23 +78,15 @@ public class SqlEditorPane extends HBox {
             "CHARACTER", "COLLATE", "REPLACE"
     };
 
-    // 关键词不区分大小写
-    private static final String KEYWORD_PATTERN = "(?i)\\b(" + String.join("|", KEYWORDS) + ")\\b";
-    private static final Pattern SYNTAX_PATTERN = Pattern.compile(
-            "(?<KEYWORD>" + KEYWORD_PATTERN + ")" +
-                    "|(?<STRING>'[^']*')" +
-                    "|(?<COMMENT1>--[^\n]*)" +
-                    "|(?<COMMENT2>/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/)" +
-                    "|(?<NUMBER>\\b\\d+(\\.\\d+)?\\b)"
-    );
-
     private final InlineCssTextArea textArea;
     private final VirtualizedScrollPane<InlineCssTextArea> scrollPane;
-    private final VBox lineNumberBox;
-    private final List<Label> lineNumberLabels;
     private final javafx.scene.layout.Pane changeMarkerPane;
     private List<ChangeHighlight> changeHighlights = List.of();
     private final boolean syntaxHighlighting;
+    private final PauseTransition highlightDebounce = new PauseTransition(Duration.millis(75));
+    private String syntaxLanguage;
+    private Future<?> highlightTask;
+    private long highlightRevision;
 
     private Consumer<String> onModified;
     private Runnable onRunRequest;
@@ -139,6 +135,7 @@ public class SqlEditorPane extends HBox {
      */
     public SqlEditorPane(boolean editable, boolean syntaxHighlighting) {
         this.syntaxHighlighting = syntaxHighlighting;
+        this.syntaxLanguage = syntaxHighlighting ? "sql" : "plaintext";
         textArea = new InlineCssTextArea();
         textArea.getStyleClass().add("sql-editor-area");
         textArea.setEditable(editable);
@@ -149,6 +146,23 @@ public class SqlEditorPane extends HBox {
 
         scrollPane = new VirtualizedScrollPane<>(textArea);
 
+        // 行号跟随 RichTextFX 的虚拟化段落按需创建，避免每次打开编辑器时
+        // 预先构造并布局数百个 Label。
+        var lineNumberFactory = LineNumberFactory.get(textArea);
+        textArea.setParagraphGraphicFactory(paragraphIndex -> {
+            Node graphic = lineNumberFactory.apply(paragraphIndex);
+            if (graphic instanceof Label label) {
+                label.setMinWidth(40);
+                label.setPrefWidth(40);
+                label.setMaxWidth(40);
+                label.setStyle("-fx-font-family: 'Consolas', 'Courier New', monospace; "
+                        + "-fx-font-size: 13px; -fx-text-fill: #888888; "
+                        + "-fx-alignment: CENTER_RIGHT; -fx-padding: 0 8 0 4; "
+                        + "-fx-background-color: #f8f8f8;");
+            }
+            return graphic;
+        });
+
         changeMarkerPane = new javafx.scene.layout.Pane();
         changeMarkerPane.setMinWidth(12);
         changeMarkerPane.setPrefWidth(12);
@@ -158,46 +172,17 @@ public class SqlEditorPane extends HBox {
         changeMarkerPane.heightProperty().addListener((obs, oldHeight, newHeight) -> renderChangeMarkers());
         changeMarkerPane.setOnMouseClicked(event -> scrollToNearestChange(event.getY()));
 
-        lineNumberBox = new VBox();
-        lineNumberBox.setStyle("-fx-background-color: #f8f8f8; -fx-padding: 0;");
-        lineNumberBox.setPrefWidth(40);
-        lineNumberBox.setMinWidth(40);
-        lineNumberBox.setMaxWidth(40);
-        // 不驱动父布局高度，由父容器(HBox)分配空间后被动填充
-        lineNumberBox.setMinHeight(0);
-        lineNumberBox.setPrefHeight(0);
-
-        lineNumberLabels = new ArrayList<>(MAX_LINES);
-        for (int i = 1; i <= MAX_LINES; i++) {
-            Label label = new Label(Integer.toString(i));
-            label.setStyle("-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 13px; " +
-                    "-fx-text-fill: #888888; -fx-alignment: CENTER_RIGHT; -fx-padding: 0 8 0 4;");
-            label.setVisible(false);
-            label.setManaged(false);
-            lineNumberLabels.add(label);
-            lineNumberBox.getChildren().add(label);
-        }
-        Region filler = new Region();
-        VBox.setVgrow(filler, Priority.ALWAYS);
-        lineNumberBox.getChildren().add(filler);
-
-        // 初始显示第 1 行
-        updateLineNumbers(1);
-
-        getChildren().addAll(lineNumberBox, scrollPane, changeMarkerPane);
+        getChildren().addAll(scrollPane, changeMarkerPane);
         HBox.setHgrow(scrollPane, Priority.ALWAYS);
         // 不驱动 SplitPane 分配，被动接受父容器给的空间
         setMinHeight(0);
         setPrefHeight(200);
 
-        // 滚动同步行号
-        textArea.estimatedScrollYProperty().addListener((obs, oldVal, newVal) ->
-                lineNumberBox.setTranslateY(-newVal.doubleValue()));
+        highlightDebounce.setOnFinished(event -> submitHighlighting());
 
-        // 内容变化：高亮 + 行号 + 修改回调
+        // 内容变化：高亮 + 修改回调；行号由虚拟化段落自动维护。
         textArea.textProperty().addListener((obs, oldVal, newVal) -> {
-            if (syntaxHighlighting) applyHighlighting();
-            updateLineNumbers(textArea.getParagraphs().size());
+            if (syntaxHighlighting) scheduleHighlighting();
             if (!changeHighlights.isEmpty()) renderChangeMarkers();
             if (onModified != null) onModified.accept(newVal);
             if (textArea.isFocused() && textArea.isEditable()) {
@@ -245,8 +230,7 @@ public class SqlEditorPane extends HBox {
             }
         });
 
-        // 裁剪子节点超出边界的视觉：行号 lineNumberBox 用 translateY 同步滚动，
-        // 不裁剪的话行号会向上溢出 SqlEditorPane 区域，覆盖上方工具栏/选项
+        // 裁剪子节点超出边界的视觉，避免编辑器内容覆盖上方工具栏/选项。
         javafx.scene.shape.Rectangle clipRect = new javafx.scene.shape.Rectangle();
         clipRect.widthProperty().bind(widthProperty());
         clipRect.heightProperty().bind(heightProperty());
@@ -254,7 +238,7 @@ public class SqlEditorPane extends HBox {
 
         // 初始应用一次高亮（空文本时也设置默认样式）
         setMetadataCompletions(List.of(), List.of(), List.of());
-        if (syntaxHighlighting) applyHighlighting();
+        if (syntaxHighlighting) scheduleHighlighting();
     }
 
     private void configureCompletionPopup() {
@@ -329,6 +313,10 @@ public class SqlEditorPane extends HBox {
     }
 
     private void refreshCompletionPopup() {
+        if (!"sql".equals(syntaxLanguage)) {
+            completionPopup.hide();
+            return;
+        }
         int caret = textArea.getCaretPosition();
         String text = textArea.getText();
         if (caret <= 0 || caret > text.length()) { completionPopup.hide(); return; }
@@ -385,43 +373,48 @@ public class SqlEditorPane extends HBox {
         };
     }
 
-    private void updateLineNumbers(int lineCount) {
-        int visibleCount = Math.min(lineCount, lineNumberLabels.size());
-        for (int i = 0; i < lineNumberLabels.size(); i++) {
-            boolean show = i < visibleCount;
-            lineNumberLabels.get(i).setVisible(show);
-            lineNumberLabels.get(i).setManaged(show);
-        }
+    private void scheduleHighlighting() {
+        highlightRevision++;
+        if (highlightTask != null) highlightTask.cancel(true);
+        highlightDebounce.playFromStart();
     }
 
-    private void applyHighlighting() {
+    private void submitHighlighting() {
         String text = textArea.getText();
         if (text.isEmpty()) return;
-        try {
-            Matcher matcher = SYNTAX_PATTERN.matcher(text);
-            int lastKwEnd = 0;
-            StyleSpansBuilder<String> spansBuilder = new StyleSpansBuilder<>();
-            while (matcher.find()) {
-                String style;
-                if (matcher.group("KEYWORD") != null) style = STYLE_KEYWORD;
-                else if (matcher.group("STRING") != null) style = STYLE_STRING;
-                else if (matcher.group("COMMENT1") != null) style = STYLE_COMMENT;
-                else if (matcher.group("COMMENT2") != null) style = STYLE_COMMENT;
-                else if (matcher.group("NUMBER") != null) style = STYLE_NUMBER;
-                else style = "";
-                if (matcher.start() > lastKwEnd) {
-                    spansBuilder.add("", matcher.start() - lastKwEnd);
+        String language = syntaxLanguage;
+        long revision = highlightRevision;
+        highlightTask = HIGHLIGHT_EXECUTOR.submit(() -> {
+            try {
+                StyleSpans<String> spans = computeHighlighting(text, language);
+                Platform.runLater(() -> {
+                    if (revision == highlightRevision && language.equals(syntaxLanguage)) {
+                        textArea.setStyleSpans(0, spans);
+                    }
+                });
+            } catch (Exception e) {
+                if (!Thread.currentThread().isInterrupted()) {
+                    System.err.println("代码高亮异常: " + e.getMessage());
                 }
-                spansBuilder.add(style, matcher.end() - matcher.start());
-                lastKwEnd = matcher.end();
             }
-            if (lastKwEnd < text.length()) {
-                spansBuilder.add("", text.length() - lastKwEnd);
-            }
-            textArea.setStyleSpans(0, spansBuilder.create());
-        } catch (Exception e) {
-            System.err.println("SQL高亮异常: " + e.getMessage());
+        });
+    }
+
+    static StyleSpans<String> computeHighlighting(String text, String language) {
+        StyleSpansBuilder<String> spansBuilder = new StyleSpansBuilder<>();
+        for (IdeaCodeHighlighter.Token token : IdeaCodeHighlighter.tokenize(text, language)) {
+            spansBuilder.add(styleFor(token.type()), token.text().length());
         }
+        return spansBuilder.create();
+    }
+
+    private static String styleFor(IdeaCodeHighlighter.TokenType type) {
+        String color = "-fx-fill: " + type.color() + ";";
+        return switch (type) {
+            case KEYWORD -> color + " -fx-font-weight: bold;";
+            case COMMENT -> color + " -fx-font-style: italic;";
+            default -> color;
+        };
     }
 
     // ==================== 公开 API ====================
@@ -529,6 +522,18 @@ public class SqlEditorPane extends HBox {
     public void setText(String text) {
         textArea.replaceText(text == null ? "" : text);
         clearChangeHighlights();
+    }
+
+    /** 设置当前源文件语言；用于开发编辑器按扩展名切换关键字和注释规则。 */
+    public void setSyntaxLanguage(String language) {
+        String normalized = IdeaCodeHighlighter.normalizeLanguage(language);
+        syntaxLanguage = normalized.isBlank() ? "plaintext" : normalized;
+        completionPopup.hide();
+        if (syntaxHighlighting) scheduleHighlighting();
+    }
+
+    public void setSyntaxLanguageForFileName(String fileName) {
+        setSyntaxLanguage(IdeaCodeHighlighter.languageFromFileName(fileName));
     }
 
     public String getSelectedText() {

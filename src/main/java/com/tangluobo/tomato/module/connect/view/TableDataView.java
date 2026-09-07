@@ -8,7 +8,9 @@ import com.tangluobo.tomato.module.connect.service.DatabaseService;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
 import com.tangluobo.tomato.utils.RowSelectorDragSelection;
 import javafx.application.Platform;
+import javafx.beans.InvalidationListener;
 import javafx.collections.FXCollections;
+import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Point2D;
@@ -58,6 +60,10 @@ public class TableDataView extends BorderPane {
     private Button jumpBtn;
     private StackPane centerPane;
     private ProgressIndicator loadingIndicator;
+    private Button saveChangesButton;
+    private Button discardChangesButton;
+    private boolean savingChanges = false;
+    private boolean activeCellEditChanged = false;
 
     // 批量输入状态：选中多个单元格后直接键入，实时同步到所有选中单元格
     private boolean batchEditing = false;
@@ -93,6 +99,18 @@ public class TableDataView extends BorderPane {
             java.util.Collections.newSetFromMap(new IdentityHashMap<>());
     /** 现有行的原始值（加载时的快照），用于检测哪些列被修改 */
     private final Map<ObservableList<String>, ObservableList<String>> originalValuesMap = new IdentityHashMap<>();
+    private final InvalidationListener rowDataChangeListener = ignored -> updateModificationButtons();
+    private final ListChangeListener<ObservableList<String>> tableRowsChangeListener = change -> {
+        while (change.next()) {
+            for (ObservableList<String> row : change.getRemoved()) {
+                row.removeListener(rowDataChangeListener);
+            }
+            for (ObservableList<String> row : change.getAddedSubList()) {
+                row.addListener(rowDataChangeListener);
+            }
+        }
+        updateModificationButtons();
+    };
 
     public TableDataView(ConnectionConfig config, String databaseName, String tableName) {
         this(config, databaseName, null, tableName);
@@ -993,10 +1011,7 @@ public class TableDataView extends BorderPane {
      * 判断行是否完全为空（所有单元格都是空字符串）
      */
     private boolean isRowEmpty(ObservableList<String> row) {
-        for (String val : row) {
-            if (val != null && !val.isEmpty()) return false;
-        }
-        return true;
+        return !TableDataChangeDetector.hasPersistableValue(row);
     }
 
     /**
@@ -1013,10 +1028,7 @@ public class TableDataView extends BorderPane {
             ObservableList<String> original = entry.getValue();
             // 跳过新行
             if (newRows.contains(current)) continue;
-            for (int i = 0; i < current.size(); i++) {
-                String orig = i < original.size() ? original.get(i) : "";
-                if (!java.util.Objects.equals(current.get(i), orig)) return true;
-            }
+            if (TableDataChangeDetector.hasChanges(current, original)) return true;
         }
         return false;
     }
@@ -1028,11 +1040,8 @@ public class TableDataView extends BorderPane {
         if (row == null) return RowState.EXISTING;
         if (newRows.contains(row)) return RowState.NEW;
         ObservableList<String> original = originalValuesMap.get(row);
-        if (original != null) {
-            for (int i = 0; i < row.size(); i++) {
-                String orig = i < original.size() ? original.get(i) : "";
-                if (!java.util.Objects.equals(row.get(i), orig)) return RowState.EXISTING_DIRTY;
-            }
+        if (original != null && TableDataChangeDetector.hasChanges(row, original)) {
+            return RowState.EXISTING_DIRTY;
         }
         return RowState.EXISTING;
     }
@@ -1043,6 +1052,9 @@ public class TableDataView extends BorderPane {
 
         // TableView
         tableView = new TableView<>();
+        observeTableRows(null, tableView.getItems());
+        tableView.itemsProperty().addListener((obs, oldRows, newRows) ->
+                observeTableRows(oldRows, newRows));
         tableView.setEditable(true);
         // 禁用默认排序，排序由右键菜单控制
         tableView.setSortPolicy(param -> false);
@@ -1187,6 +1199,7 @@ public class TableDataView extends BorderPane {
         this.setStyle("-fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
         // 加载统一表格样式
         this.getStylesheets().add(getClass().getResource("/css/connect-tree.css").toExternalForm());
+        updateModificationButtons();
     }
 
     /**
@@ -1211,15 +1224,17 @@ public class TableDataView extends BorderPane {
         deleteBtn.setTooltip(new Tooltip("删除"));
 
         // 保存按钮：蓝色上箭头（提交所有更改）
-        Button saveBtn = createToolBarButton("保存", createSimpleToolIcon("M2 7L6 11L13 4"));
-        saveBtn.setOnAction(e -> handleSave());
-        saveBtn.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
-        saveBtn.setTooltip(new Tooltip("保存"));
+        saveChangesButton = createToolBarButton("保存", createSimpleToolIcon("M2 7L6 11L13 4"));
+        saveChangesButton.setOnAction(e -> handleSave());
+        saveChangesButton.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+        saveChangesButton.setTooltip(new Tooltip("保存"));
+        saveChangesButton.setDisable(true);
 
-        Button cancelBtn = createToolBarButton("取消修改", createSimpleToolIcon("M3 3L11 11 M11 3L3 11"));
-        cancelBtn.setOnAction(e -> refreshData());
-        cancelBtn.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
-        cancelBtn.setTooltip(new Tooltip("取消修改"));
+        discardChangesButton = createToolBarButton("取消修改", createSimpleToolIcon("M3 3L11 11 M11 3L3 11"));
+        discardChangesButton.setOnAction(e -> refreshData());
+        discardChangesButton.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+        discardChangesButton.setTooltip(new Tooltip("取消修改"));
+        discardChangesButton.setDisable(true);
 
         // 分隔符
         Separator separator = new Separator();
@@ -1232,8 +1247,41 @@ public class TableDataView extends BorderPane {
         refreshBtn.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
         refreshBtn.setTooltip(new Tooltip("刷新"));
 
-        toolBar.getChildren().addAll(addBtn, deleteBtn, saveBtn, cancelBtn, separator, refreshBtn);
+        toolBar.getChildren().addAll(addBtn, deleteBtn, saveChangesButton,
+                discardChangesButton, separator, refreshBtn);
         return toolBar;
+    }
+
+    private void updateModificationButtons() {
+        if (saveChangesButton == null || discardChangesButton == null) return;
+        boolean disable = isLoading || savingChanges
+                || !(activeCellEditChanged || hasUnsavedChanges());
+        saveChangesButton.setDisable(disable);
+        discardChangesButton.setDisable(disable);
+    }
+
+    private void setActiveCellEditChanged(boolean changed) {
+        if (activeCellEditChanged == changed) return;
+        activeCellEditChanged = changed;
+        updateModificationButtons();
+    }
+
+    private void observeTableRows(ObservableList<ObservableList<String>> oldItems,
+                                  ObservableList<ObservableList<String>> newItems) {
+        if (oldItems == newItems) return;
+        if (oldItems != null) {
+            oldItems.removeListener(tableRowsChangeListener);
+            for (ObservableList<String> row : oldItems) {
+                row.removeListener(rowDataChangeListener);
+            }
+        }
+        if (newItems != null) {
+            for (ObservableList<String> row : newItems) {
+                row.addListener(rowDataChangeListener);
+            }
+            newItems.addListener(tableRowsChangeListener);
+        }
+        updateModificationButtons();
     }
 
     /** 标签下方、数据表格上方的操作工具栏。 */
@@ -1489,6 +1537,7 @@ public class TableDataView extends BorderPane {
      * 保存所有更改：INSERT新行，UPDATE修改的现有行
      */
     private void handleSave() {
+        if (savingChanges || isLoading) return;
         // 先提交当前正在编辑的单元格
         if (tableView.getEditingCell() != null) {
             tableView.edit(-1, null);
@@ -1514,14 +1563,8 @@ public class TableDataView extends BorderPane {
             // 跳过新行
             if (newRows.contains(currentRow)) continue;
             ObservableList<String> originalRow = entry.getValue();
-            Set<Integer> modifiedCols = new LinkedHashSet<>();
-            for (int i = 0; i < currentRow.size(); i++) {
-                String current = currentRow.get(i);
-                String original = i < originalRow.size() ? originalRow.get(i) : "";
-                if (!java.util.Objects.equals(current, original)) {
-                    modifiedCols.add(i);
-                }
-            }
+            Set<Integer> modifiedCols = TableDataChangeDetector.changedColumnIndexes(
+                    currentRow, originalRow);
             if (!modifiedCols.isEmpty()) {
                 rowsToUpdate.add(currentRow);
                 originalValuesForUpdate.add(originalRow);
@@ -1550,11 +1593,26 @@ public class TableDataView extends BorderPane {
             modifiedColumnsPerRow.clear();
         }
 
-        final List<ObservableList<String>> finalRowsToInsert = new ArrayList<>(rowsToInsert);
-        final List<ObservableList<String>> finalRowsToUpdate = new ArrayList<>(rowsToUpdate);
-        final List<ObservableList<String>> finalOriginalValues = new ArrayList<>(originalValuesForUpdate);
+        if (rowsToInsert.isEmpty() && rowsToUpdate.isEmpty()) {
+            updateModificationButtons();
+            return;
+        }
+
+        // 后台线程只读取不可再被编辑器修改的行快照，避免保存过程中继续输入造成竞态。
+        final List<ObservableList<String>> finalRowsToInsert = rowsToInsert.stream()
+                .map(FXCollections::observableArrayList)
+                .toList();
+        final List<ObservableList<String>> finalRowsToUpdate = rowsToUpdate.stream()
+                .map(FXCollections::observableArrayList)
+                .toList();
+        final List<ObservableList<String>> finalOriginalValues = originalValuesForUpdate.stream()
+                .map(FXCollections::observableArrayList)
+                .toList();
         final List<Set<Integer>> finalModifiedColumns = new ArrayList<>(modifiedColumnsPerRow);
 
+        savingChanges = true;
+        tableView.setDisable(true);
+        updateModificationButtons();
         new Thread(() -> {
             java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
             connLock.lock();
@@ -1576,16 +1634,20 @@ public class TableDataView extends BorderPane {
                     }
 
                     Platform.runLater(() -> {
+                        savingChanges = false;
                         if (!executedSql.isEmpty()) {
                             String sqlText = executedSql.get(executedSql.size() - 1);
                             pendingStatusSql = sqlText;
                             showSqlStatus(sqlText);
                         }
                         // 保存成功后刷新数据，获取DB生成的值（如自增主键、默认值、触发器结果）
-                        refreshData();
+                        loadData(currentPage);
                     });
                 } catch (Exception e) {
                     Platform.runLater(() -> {
+                        savingChanges = false;
+                        tableView.setDisable(false);
+                        updateModificationButtons();
                         Alert err = new Alert(Alert.AlertType.ERROR);
                         err.setTitle("保存失败");
                         err.setHeaderText(null);
@@ -1623,6 +1685,7 @@ public class TableDataView extends BorderPane {
         // 防止并发加载（用户快速翻页时可能触发）
         if (isLoading) return;
         isLoading = true;
+        updateModificationButtons();
 
         // 检查是否有未保存的更改
         if (hasUnsavedChanges() && page != currentPage) {
@@ -1634,6 +1697,7 @@ public class TableDataView extends BorderPane {
             Optional<ButtonType> result = confirm.showAndWait();
             if (result.isEmpty() || result.get() != ButtonType.OK) {
                 isLoading = false;
+                updateModificationButtons();
                 return;
             }
         }
@@ -1661,6 +1725,7 @@ public class TableDataView extends BorderPane {
                     loadingIndicator.setVisible(false);
                     tableView.setDisable(false);
                     isLoading = false;
+                    updateModificationButtons();
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> {
@@ -1668,6 +1733,7 @@ public class TableDataView extends BorderPane {
                     tableView.setDisable(false);
                     pageInfoLabel.setText("加载失败: " + e.getMessage());
                     isLoading = false;
+                    updateModificationButtons();
                     e.printStackTrace();
                 });
             } finally {
@@ -1680,6 +1746,7 @@ public class TableDataView extends BorderPane {
     private static final String ROW_SELECTOR_COL = "__ROW_SELECTOR__";
 
     private void updateTableView(TableRowData data) {
+        activeCellEditChanged = false;
         tableView.getColumns().clear();
         tableView.getItems().clear();
 
@@ -1799,7 +1866,7 @@ public class TableDataView extends BorderPane {
                 ObservableList<String> row = event.getRowValue();
                 String oldValue = row.get(colIndex);
                 String newValue = event.getNewValue();
-                if (oldValue.equals(newValue)) return;
+                if (Objects.equals(oldValue, newValue)) return;
 
                 // 仅更新数据模型（延迟保存，不立即提交到数据库）
                 row.set(colIndex, newValue);
@@ -1815,6 +1882,7 @@ public class TableDataView extends BorderPane {
         }
 
         tableView.setItems(data.getRows());
+        updateModificationButtons();
 
         // 布局完成后绑定表头点击事件和排序箭头
         bindColumnHeaderEvents();
@@ -2087,6 +2155,7 @@ public class TableDataView extends BorderPane {
         @Override
         public void startEdit() {
             escapePressed = false;
+            setActiveCellEditChanged(false);
             super.startEdit();
             editingOriginalValue = getItem();
             if (textField == null) {
@@ -2126,6 +2195,13 @@ public class TableDataView extends BorderPane {
             setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
             setText(null);
             applyRowStateStyle();
+            setActiveCellEditChanged(false);
+        }
+
+        @Override
+        public void commitEdit(String newValue) {
+            super.commitEdit(newValue);
+            setActiveCellEditChanged(false);
         }
 
         @Override
@@ -2229,6 +2305,11 @@ public class TableDataView extends BorderPane {
             // 记录Escape按键，用于区分用户主动取消和失焦导致的取消
             textField.setOnKeyPressed(event -> {
                 escapePressed = (event.getCode() == javafx.scene.input.KeyCode.ESCAPE);
+            });
+            textField.textProperty().addListener((obs, oldText, newText) -> {
+                if (!isEditing()) return;
+                String pendingValue = normalizeEditValueForModel(newText, editingOriginalValue);
+                setActiveCellEditChanged(!Objects.equals(pendingValue, editingOriginalValue));
             });
             textField.setOnAction(e -> commitEdit(normalizeEditValueForModel(textField.getText(), editingOriginalValue)));
             textField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {

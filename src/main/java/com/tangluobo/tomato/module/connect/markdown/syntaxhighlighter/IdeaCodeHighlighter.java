@@ -143,6 +143,16 @@ public final class IdeaCodeHighlighter {
                 "operator private protocol public static struct subscript typealias var break case continue default " +
                 "defer do else fallthrough for guard if in repeat return switch where while as Any catch false is nil " +
                 "rethrows super self Self throw throws true try async await actor some any");
+        add("dart", "abstract as assert async await base break case catch class const continue covariant default " +
+                "deferred do dynamic else enum export extends extension external factory false final finally for " +
+                "function get hide if implements import in interface is late library mixin new null of on operator " +
+                "part required rethrow return sealed set show static super switch sync this throw true try type typedef " +
+                "var void when while with yield");
+        add("groovy", "as assert break case catch class const continue def default do else enum extends false finally " +
+                "for goto if implements import in instanceof interface new null package return super switch this throw " +
+                "throws trait true try var while public protected private static final abstract synchronized");
+        add("lua", "and break do else elseif end false for function goto if in local nil not or repeat return then " +
+                "true until while");
         add("css", "important inherit initial unset revert none auto block inline flex grid absolute relative fixed " +
                 "sticky transparent currentColor var calc rgb rgba hsl hsla");
     }
@@ -159,6 +169,56 @@ public final class IdeaCodeHighlighter {
         else if (value.startsWith(".")) value = value.substring(1);
         if (value.startsWith("language-")) value = value.substring("language-".length());
         return normalizeLanguage(value);
+    }
+
+    /** 根据真实文件名选择语言；无法识别的文件按纯文本处理，避免误染普通内容。 */
+    public static String languageFromFileName(String fileName) {
+        if (fileName == null || fileName.isBlank()) return "plaintext";
+        String name = fileName.trim().toLowerCase(Locale.ROOT);
+        if (name.equals("dockerfile") || name.startsWith("dockerfile.")) return "dockerfile";
+        if (name.equals("makefile") || name.equals("gnumakefile")) return "makefile";
+        if (name.equals("jenkinsfile")) return "groovy";
+        if (name.equals("gemfile") || name.equals("rakefile")) return "ruby";
+        if (name.equals("cmakelists.txt")) return "cmake";
+        if (name.endsWith(".gradle.kts")) return "kotlin";
+
+        int separator = name.lastIndexOf('.');
+        String extension = separator >= 0 && separator < name.length() - 1
+                ? name.substring(separator + 1) : "";
+        return switch (extension) {
+            case "java" -> "java";
+            case "kt", "kts" -> "kotlin";
+            case "scala", "sc" -> "scala";
+            case "groovy", "gradle" -> "groovy";
+            case "js", "mjs", "cjs", "jsx" -> "javascript";
+            case "ts", "mts", "cts", "tsx" -> "typescript";
+            case "py", "pyw", "pyi" -> "python";
+            case "sql", "psql" -> "sql";
+            case "go" -> "go";
+            case "rs" -> "rust";
+            case "c" -> "c";
+            case "h", "cc", "cpp", "cxx", "hh", "hpp", "hxx" -> "cpp";
+            case "cs" -> "csharp";
+            case "php", "phtml" -> "php";
+            case "dart" -> "dart";
+            case "swift" -> "swift";
+            case "rb" -> "ruby";
+            case "lua" -> "lua";
+            case "sh", "bash", "zsh" -> "shell";
+            case "ps1", "psm1", "psd1" -> "powershell";
+            case "bat", "cmd" -> "batch";
+            case "html", "htm", "xhtml", "vue", "svelte" -> "html";
+            case "xml", "xsd", "xsl", "xslt", "svg", "fxml" -> "xml";
+            case "css", "scss", "sass", "less" -> "css";
+            case "json", "json5", "jsonl" -> "json";
+            case "yaml", "yml" -> "yaml";
+            case "toml" -> "toml";
+            case "ini", "cfg" -> "ini";
+            case "properties", "env" -> "properties";
+            case "r" -> "r";
+            case "md", "markdown", "txt", "text", "log", "csv", "tsv", "" -> "plaintext";
+            default -> "plaintext";
+        };
     }
 
     public static String normalizeLanguage(String language) {
@@ -187,6 +247,9 @@ public final class IdeaCodeHighlighter {
     public static List<Token> tokenize(String code, String language) {
         if (code == null || code.isEmpty()) return List.of();
         String lang = normalizeLanguage(language);
+        if (lang.isEmpty() || "plaintext".equals(lang)) {
+            return List.of(new Token(code, TokenType.BASE));
+        }
         if (isMarkup(lang)) return tokenizeMarkup(code);
 
         LanguagePattern config = PATTERNS.computeIfAbsent(lang, IdeaCodeHighlighter::buildPattern);
@@ -234,6 +297,9 @@ public final class IdeaCodeHighlighter {
         String lineComment = switch (lang) {
             case "sql" -> "--[^\\n]*";
             case "php" -> "(?://|#)[^\\n]*";
+            case "lua" -> "--[^\\n]*";
+            case "batch" -> "(?im:^\\s*(?:rem(?:\\s|$)|::)[^\\n]*)";
+            case "css", "scss", "sass", "less", "json" -> "(?!)";
             case "python", "ruby", "shell", "powershell", "yaml", "toml", "ini", "properties", "conf",
                     "dockerfile", "makefile", "r", "plaintext" -> "#[^\\n]*";
             default -> "//[^\\n]*";
