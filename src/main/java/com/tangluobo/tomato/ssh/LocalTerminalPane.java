@@ -429,6 +429,7 @@ public class LocalTerminalPane extends BorderPane {
         if (clipboard.hasString()) {
             String text = clipboard.getString();
             if (text != null && !text.isEmpty()) {
+                emulator.onShellTextInput();
                 // 括号粘贴模式：用 \033[200~ ... \033[201~ 包裹
                 if (emulator.isBracketedPasteMode()) {
                     text = "\033[200~" + text + "\033[201~";

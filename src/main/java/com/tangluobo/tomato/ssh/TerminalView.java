@@ -292,6 +292,7 @@ public class TerminalView extends Canvas {
             data = "\033".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.ENTER) {
             data = "\r".getBytes();
+            emulator.onShellCommandFinished();
             fireAutoScroll();
         } else if (event.getCode() == javafx.scene.input.KeyCode.BACK_SPACE) {
             data = "\b".getBytes();
@@ -300,11 +301,17 @@ public class TerminalView extends Canvas {
         } else if (event.getCode() == javafx.scene.input.KeyCode.UP) {
             data = emulator.isApplicationCursorKeys() ? "\033OA".getBytes() : "\033[A".getBytes();
             // 非应用光标键模式（shell模式）下切换历史命令时滚动到底部
-            if (!emulator.isApplicationCursorKeys()) fireAutoScroll();
+            if (!emulator.isApplicationCursorKeys()) {
+                emulator.onShellHistoryNavigation();
+                fireAutoScroll();
+            }
         } else if (event.getCode() == javafx.scene.input.KeyCode.DOWN) {
             data = emulator.isApplicationCursorKeys() ? "\033OB".getBytes() : "\033[B".getBytes();
             // 非应用光标键模式（shell模式）下切换历史命令时滚动到底部
-            if (!emulator.isApplicationCursorKeys()) fireAutoScroll();
+            if (!emulator.isApplicationCursorKeys()) {
+                emulator.onShellHistoryNavigation();
+                fireAutoScroll();
+            }
         } else if (event.getCode() == javafx.scene.input.KeyCode.RIGHT) {
             data = emulator.isApplicationCursorKeys() ? "\033OC".getBytes() : "\033[C".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.LEFT) {
@@ -341,6 +348,7 @@ public class TerminalView extends Canvas {
             return;
         } else if (event.getCode() == javafx.scene.input.KeyCode.C && event.isControlDown() && !event.isShiftDown()) {
             data = "\003".getBytes();
+            emulator.onShellCommandFinished();
             fireAutoScroll();
         } else if (event.getCode() == javafx.scene.input.KeyCode.D && event.isControlDown() && !event.isShiftDown()) {
             data = "\004".getBytes();
@@ -350,6 +358,7 @@ public class TerminalView extends Canvas {
             data = "\014".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.A && event.isControlDown()) {
             data = "\001".getBytes();
+            emulator.onShellLineHome();
         } else if (event.getCode() == javafx.scene.input.KeyCode.E && event.isControlDown()) {
             data = "\005".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.B && event.isControlDown()) {
@@ -432,6 +441,7 @@ public class TerminalView extends Canvas {
         if (ch != null && !ch.isEmpty()) {
             char c = ch.charAt(0);
             if (c >= 0x20 && c != 0x7F) {
+                emulator.onShellTextInput();
                 keyInputHandler.handleInput(ch.getBytes());
                 fireAutoScroll();
                 event.consume();
@@ -457,6 +467,7 @@ public class TerminalView extends Canvas {
         // 处理已提交的文本（输入法确认的中文字符）
         String committed = event.getCommitted();
         if (committed != null && !committed.isEmpty()) {
+            emulator.onShellTextInput();
             keyInputHandler.handleInput(committed.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             fireAutoScroll();
             event.consume();

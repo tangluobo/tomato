@@ -819,6 +819,7 @@ public class SSHTerminalPane extends BorderPane {
         if (clipboard.hasString()) {
             String text = clipboard.getString();
             if (text != null && !text.isEmpty()) {
+                emulator.onShellTextInput();
                 // 将换行符转换为回车，适配终端输入
                 text = text.replace("\r\n", "\r").replace("\n", "\r");
                 // 括号粘贴模式：用\033[200~...\033[201~包裹内容，

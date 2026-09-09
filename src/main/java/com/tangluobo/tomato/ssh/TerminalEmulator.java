@@ -75,6 +75,23 @@ public class TerminalEmulator {
     private int guardTargetCursorX = 0;
     private int guardTargetCursorY = 0;
 
+    // Shell 行编辑光标锚点。readline 在历史命令上执行 Ctrl+A 时，可能用
+    // "CR + CUF" 重定位；一旦远端记录的提示符列与当前屏幕有偏差，照搬
+    // 这组 CUF 会把光标放进命令正文。历史导航开始时记录屏幕上的真实起点，
+    // 只校正紧随其后的这一次行首重定位，不影响 vim/top 等全屏程序。
+    private boolean shellInputAnchorValid = false;
+    private int shellInputAnchorX = 0;
+    private int shellInputAnchorY = 0;
+    private boolean shellHistoryNavigation = false;
+    private boolean shellLineHomePending = false;
+    private boolean shellLineHomeRepositioning = false;
+    private int shellLineHomeResponseRow = 0;
+
+    // SSH 输出按网络分片到达，UTF-8 字符可能横跨两次 read。保留未完成的
+    // 尾字节，避免中文被解码成替换字符后导致显示宽度与远端光标宽度不同。
+    private byte[] pendingUtf8Bytes = new byte[4];
+    private int pendingUtf8Length = 0;
+
     // 回滚历史缓冲区
     private java.util.LinkedList<char[]> scrollbackLines = new java.util.LinkedList<>();
     private java.util.LinkedList<int[]> scrollbackAttrs = new java.util.LinkedList<>();
@@ -404,10 +421,48 @@ public class TerminalEmulator {
      * 如果最短抑制时间已过，清除抑制标志，让shell输出正常显示
      */
     public void onUserInput() {
+        shellLineHomePending = false;
+        shellLineHomeRepositioning = false;
         if (suppressScreenModify && System.currentTimeMillis() >= suppressMinUntilTime) {
             suppressScreenModify = false;
             debugLogCursorState("suppressScreenModify cleared by user input (after min duration)");
         }
+    }
+
+    /** 在第一个输入字符送出前记录普通 shell 输入行的真实起点。 */
+    void onShellTextInput() {
+        if (usingAltBuffer || applicationCursorKeys) return;
+        if (!shellInputAnchorValid) {
+            shellInputAnchorX = Math.max(0, Math.min(cursorX, cols - 1));
+            shellInputAnchorY = Math.max(0, Math.min(cursorY, rows - 1));
+            shellInputAnchorValid = true;
+        }
+    }
+
+    /** 记录普通 shell 中当前输入行的真实起点，并进入历史导航状态。 */
+    void onShellHistoryNavigation() {
+        onShellTextInput();
+        if (usingAltBuffer || applicationCursorKeys) return;
+        shellHistoryNavigation = true;
+    }
+
+    /**
+     * 为历史命令上的 Ctrl+A 准备一次行首校正。普通输出以及非历史场景
+     * 仍完全按远端 ANSI 序列处理。
+     */
+    void onShellLineHome() {
+        if (!usingAltBuffer && !applicationCursorKeys
+                && shellHistoryNavigation && shellInputAnchorValid) {
+            shellLineHomePending = true;
+        }
+    }
+
+    /** 命令已提交或中断，下一条输入重新捕获起点。 */
+    void onShellCommandFinished() {
+        shellInputAnchorValid = false;
+        shellHistoryNavigation = false;
+        shellLineHomePending = false;
+        shellLineHomeRepositioning = false;
     }
 
     /**
@@ -612,8 +667,32 @@ public class TerminalEmulator {
             String hex = bytesToHex(data, offset, len);
             debugWriter.accept("[RECV " + len + "] " + hex + "\n");
         }
-        String text = new String(data, offset, len, java.nio.charset.StandardCharsets.UTF_8);
-        processString(text);
+        if (len <= 0) return;
+
+        byte[] input = new byte[pendingUtf8Length + len];
+        if (pendingUtf8Length > 0) {
+            System.arraycopy(pendingUtf8Bytes, 0, input, 0, pendingUtf8Length);
+        }
+        System.arraycopy(data, offset, input, pendingUtf8Length, len);
+
+        java.nio.charset.CharsetDecoder decoder = java.nio.charset.StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPLACE)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPLACE);
+        java.nio.ByteBuffer byteBuffer = java.nio.ByteBuffer.wrap(input);
+        java.nio.CharBuffer charBuffer = java.nio.CharBuffer.allocate(input.length);
+        decoder.decode(byteBuffer, charBuffer, false);
+        charBuffer.flip();
+        if (charBuffer.hasRemaining()) {
+            processString(charBuffer.toString());
+        }
+
+        pendingUtf8Length = byteBuffer.remaining();
+        if (pendingUtf8Length > 0) {
+            if (pendingUtf8Bytes.length < pendingUtf8Length) {
+                pendingUtf8Bytes = new byte[pendingUtf8Length];
+            }
+            byteBuffer.get(pendingUtf8Bytes, 0, pendingUtf8Length);
+        }
     }
 
     public void process(byte[] data) {
@@ -658,6 +737,18 @@ public class TerminalEmulator {
             parseState = ParseState.ESC;
             escapeSeq.setLength(0);
         } else if (ch == '\r') {
+            if (shellLineHomePending) {
+                shellLineHomePending = false;
+                shellLineHomeRepositioning = true;
+                shellLineHomeResponseRow = cursorY;
+                cursorX = shellInputAnchorX;
+                cursorY = shellInputAnchorY;
+                debugLogCursorState("shell Ctrl+A anchored after history navigation");
+                return;
+            }
+            if (shellLineHomeRepositioning) {
+                shellLineHomeRepositioning = false;
+            }
             // CR: 光标移到行首
             // 抑制交替缓冲区切回后的CR（全屏程序退出清理序列中可能包含\r）
             if (shouldSuppressScreenModify()) {
@@ -669,6 +760,7 @@ public class TerminalEmulator {
                 cursorX = 0;
             }
         } else if (ch == '\n') {
+            restoreLineHomeResponsePosition();
             // 换行：抑制交替缓冲区切回后的换行（清理序列中可能包含\n）
             if (shouldSuppressScreenModify()) {
                 debugLogCursorState("SUPPRESS \\n (LF)");
@@ -680,13 +772,16 @@ public class TerminalEmulator {
                 }
             }
         } else if (ch == '\t') {
+            restoreLineHomeResponsePosition();
             cursorX = (cursorX / 8 + 1) * 8;
             if (cursorX >= cols) cursorX = cols - 1;
         } else if (ch == '\b') {
+            if (shellLineHomeRepositioning) return;
             if (cursorX > 0) cursorX--;
         } else if (ch == 7) { // BEL
             // 忽略响铃
         } else if (ch >= 0x20 || Character.isISOControl(ch) == false) {
+            restoreLineHomeResponsePosition();
             // 可打印字符（包括CJK等Unicode字符）
             // 注意：不在此处清除suppressScreenModify
             // 退出程序可能在CSI ?1049l之后输出文本（如退出消息），这些可打印字符
@@ -893,6 +988,13 @@ public class TerminalEmulator {
         }
 
         int[] params = parseParams(cleanSeq);
+
+        if (shellLineHomeRepositioning && isCursorPositioningCommand(cmd)) {
+            cursorX = shellInputAnchorX;
+            cursorY = shellInputAnchorY;
+            debugLogCursorState("ignore remote cursor reposition after history Ctrl+A");
+            return;
+        }
 
         switch (cmd) {
             case 'H': // 光标位置
@@ -1316,6 +1418,24 @@ public class TerminalEmulator {
         if (cursorY >= rows) cursorY = rows - 1;
     }
 
+    private boolean isCursorPositioningCommand(char command) {
+        return command == 'A' || command == 'B' || command == 'C' || command == 'D'
+                || command == 'E' || command == 'F' || command == 'G'
+                || command == 'H' || command == 'f' || command == 'd'
+                || command == 'a' || command == 'e' || command == '`';
+    }
+
+    /**
+     * Ctrl+A 若触发的不是纯光标移动而是整行重绘，放弃锚点覆盖并从远端
+     * CR 所在行的第 0 列正常绘制。
+     */
+    private void restoreLineHomeResponsePosition() {
+        if (!shellLineHomeRepositioning) return;
+        shellLineHomeRepositioning = false;
+        cursorX = 0;
+        cursorY = Math.max(0, Math.min(shellLineHomeResponseRow, rows - 1));
+    }
+
     private void clearScreen(int mode) {
         switch (mode) {
             case 0: // 从光标到屏幕末尾
@@ -1512,6 +1632,10 @@ public class TerminalEmulator {
         int top = getScrollTop();
         int bottom = getScrollBottom();
         for (int i = 0; i < n; i++) {
+            if (shellInputAnchorValid && shellInputAnchorY >= top
+                    && shellInputAnchorY <= bottom) {
+                shellInputAnchorY = Math.max(top, shellInputAnchorY - 1);
+            }
             if (top == 0 && !usingAltBuffer) {
                 char[] savedLine = new char[cols];
                 int[] savedAttr = new int[cols];
@@ -1562,6 +1686,10 @@ public class TerminalEmulator {
         int top = getScrollTop();
         int bottom = getScrollBottom();
         for (int i = 0; i < n; i++) {
+            if (shellInputAnchorValid && shellInputAnchorY >= top
+                    && shellInputAnchorY <= bottom) {
+                shellInputAnchorY = Math.min(bottom, shellInputAnchorY + 1);
+            }
             for (int y = bottom; y > top; y--) {
                 System.arraycopy(buffer[y - 1], 0, buffer[y], 0, cols);
                 System.arraycopy(attrs[y - 1], 0, attrs[y], 0, cols);
@@ -1700,5 +1828,7 @@ public class TerminalEmulator {
         suppressMinUntilTime = 0;
         cursorGuardActive = false;
         cursorGuardUntilTime = 0;
+        onShellCommandFinished();
+        pendingUtf8Length = 0;
     }
 }
