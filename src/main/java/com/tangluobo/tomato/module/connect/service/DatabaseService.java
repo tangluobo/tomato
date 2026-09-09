@@ -491,6 +491,77 @@ public class DatabaseService {
     }
 
     /**
+     * 同时保存结果列的显示标签和 JDBC 底层来源信息。
+     * 查询结果编辑使用底层表/列名定位真实字段，因此列使用 AS 别名时仍可安全回写，
+     * 表达式列则会因没有底层表名而保持只读。
+     */
+    private static void populateResultColumnMetadata(TableRowData result,
+                                                     ResultSetMetaData metadata,
+                                                     int columnCount) throws SQLException {
+        List<String> columnNames = new ArrayList<>();
+        List<Integer> columnTypes = new ArrayList<>();
+        List<String> sourceColumnNames = new ArrayList<>();
+        List<String> sourceTableNames = new ArrayList<>();
+        List<String> sourceSchemaNames = new ArrayList<>();
+        List<String> sourceCatalogNames = new ArrayList<>();
+        for (int column = 1; column <= columnCount; column++) {
+            columnNames.add(metadata.getColumnLabel(column));
+            columnTypes.add(metadata.getColumnType(column));
+            sourceColumnNames.add(readSourceMetadataString(metadata, column,
+                    "getBaseColumnName", ResultSetMetaData::getColumnName));
+            sourceTableNames.add(readSourceMetadataString(metadata, column,
+                    "getBaseTableName", ResultSetMetaData::getTableName));
+            sourceSchemaNames.add(readSourceMetadataString(metadata, column,
+                    "getBaseSchemaName", ResultSetMetaData::getSchemaName));
+            sourceCatalogNames.add(readMetadataString(metadata, column, ResultSetMetaData::getCatalogName));
+        }
+        result.setColumnNames(columnNames);
+        result.setColumnTypes(columnTypes);
+        result.setSourceColumnNames(sourceColumnNames);
+        result.setSourceTableNames(sourceTableNames);
+        result.setSourceSchemaNames(sourceSchemaNames);
+        result.setSourceCatalogNames(sourceCatalogNames);
+    }
+
+    private static String readMetadataString(ResultSetMetaData metadata, int column,
+                                             MetadataStringReader reader) {
+        try {
+            return Objects.requireNonNullElse(reader.read(metadata, column), "");
+        } catch (SQLException | UnsupportedOperationException | AbstractMethodError ignored) {
+            return "";
+        }
+    }
+
+    /**
+     * pgjdbc 的标准 getColumnName/getSchemaName 不返回底层别名信息，优先调用其公开的
+     * getBase* 扩展；其他驱动没有该扩展时回退到 JDBC 标准方法。
+     */
+    private static String readSourceMetadataString(ResultSetMetaData metadata, int column,
+                                                   String baseMethodName,
+                                                   MetadataStringReader fallbackReader) {
+        final java.lang.reflect.Method baseMethod;
+        try {
+            baseMethod = metadata.getClass().getMethod(baseMethodName, int.class);
+        } catch (NoSuchMethodException e) {
+            return readMetadataString(metadata, column, fallbackReader);
+        } catch (RuntimeException | LinkageError e) {
+            return "";
+        }
+        try {
+            Object value = baseMethod.invoke(metadata, column);
+            return value instanceof String text ? text : "";
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+            // 已确认驱动声明了底层来源 API 时，读取失败宁可保持只读，也不能退回列别名。
+            return "";
+        }
+    }
+
+    @FunctionalInterface
+    private interface MetadataStringReader {
+        String read(ResultSetMetaData metadata, int column) throws SQLException;
+    }
+
+    /**
      * 分页查询表/视图数据
      * @param schemaName 模式名（PostgreSQL 使用；为 null 时 PostgreSQL 回退用 databaseName 当 schema 名）
      */
@@ -528,15 +599,7 @@ public class DatabaseService {
             ResultSetMetaData metaData = rs.getMetaData();
             int columnCount = metaData.getColumnCount();
 
-            // 获取列名与列类型（java.sql.Types，用于按类型渲染日期/时间/日期时间选择器）
-            List<String> columnNames = new ArrayList<>();
-            List<Integer> columnTypes = new ArrayList<>();
-            for (int i = 1; i <= columnCount; i++) {
-                columnNames.add(metaData.getColumnLabel(i));
-                columnTypes.add(metaData.getColumnType(i));
-            }
-            result.setColumnNames(columnNames);
-            result.setColumnTypes(columnTypes);
+            populateResultColumnMetadata(result, metaData, columnCount);
 
             // 获取数据行
             ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
@@ -690,14 +753,7 @@ public class DatabaseService {
                     ResultSetMetaData metaData = rs.getMetaData();
                     int columnCount = metaData.getColumnCount();
 
-                    List<String> columnNames = new ArrayList<>();
-                    List<Integer> columnTypes = new ArrayList<>();
-                    for (int i = 1; i <= columnCount; i++) {
-                        columnNames.add(metaData.getColumnLabel(i));
-                        columnTypes.add(metaData.getColumnType(i));
-                    }
-                    result.setColumnNames(columnNames);
-                    result.setColumnTypes(columnTypes);
+                    populateResultColumnMetadata(result, metaData, columnCount);
 
                     ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
                     long count = 0;
@@ -1280,14 +1336,7 @@ public class DatabaseService {
                         ResultSetMetaData metaData = rs.getMetaData();
                         int columnCount = metaData.getColumnCount();
 
-                        List<String> columnNames = new ArrayList<>();
-                        List<Integer> columnTypes = new ArrayList<>();
-                        for (int i = 1; i <= columnCount; i++) {
-                            columnNames.add(metaData.getColumnLabel(i));
-                            columnTypes.add(metaData.getColumnType(i));
-                        }
-                        result.setColumnNames(columnNames);
-                        result.setColumnTypes(columnTypes);
+                        populateResultColumnMetadata(result, metaData, columnCount);
 
                         ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
                         long count = 0;
@@ -1380,7 +1429,7 @@ public class DatabaseService {
 
     /**
      * 获取表的主键列名列表
-     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时读取连接当前 schema）
      */
     public static List<String> getPrimaryKeys(ConnectionConfig config, String databaseName, String schemaName, String tableName) throws Exception {
         // PostgreSQL 绑定到具体数据库，并传入 schema 给 JDBC 元数据；MySQL/Oracle 复用主连接
@@ -1393,7 +1442,10 @@ public class DatabaseService {
         String schema = null;
         if (config.getType() == ConnectType.POSTGRESQL) {
             catalog = null;
-            schema = schemaName != null ? schemaName : databaseName;
+            schema = resolveSchemaName(config, databaseName, schemaName);
+        } else if (config.getType() == ConnectType.ORACLE) {
+            catalog = null;
+            schema = databaseName;
         }
 
         try (ResultSet rs = conn.getMetaData().getPrimaryKeys(catalog, schema, tableName)) {
@@ -1421,6 +1473,15 @@ public class DatabaseService {
         return deleteRowsByPrimaryKeys(config, databaseName, null, tableName, primaryKeyColumns, columnNames, rows);
     }
 
+    /** 使用 JDBC 列类型绑定主键参数的批量删除。 */
+    public static int deleteRowsByPrimaryKeys(ConnectionConfig config, String databaseName, String tableName,
+                                               List<String> primaryKeyColumns, List<String> columnNames,
+                                               List<Integer> columnTypes,
+                                               List<ObservableList<String>> rows) throws Exception {
+        return deleteRowsByPrimaryKeys(config, databaseName, null, tableName,
+                primaryKeyColumns, columnNames, columnTypes, rows);
+    }
+
     /**
      * 根据主键删除指定行
      * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
@@ -1428,42 +1489,64 @@ public class DatabaseService {
     public static int deleteRowsByPrimaryKeys(ConnectionConfig config, String databaseName, String schemaName, String tableName,
                                                List<String> primaryKeyColumns, List<String> columnNames,
                                                List<ObservableList<String>> rows) throws Exception {
+        return deleteRowsByPrimaryKeys(config, databaseName, schemaName, tableName,
+                primaryKeyColumns, columnNames, null, rows);
+    }
+
+    /** 使用 JDBC 列类型绑定主键参数的批量删除。 */
+    public static int deleteRowsByPrimaryKeys(ConnectionConfig config, String databaseName, String schemaName, String tableName,
+                                               List<String> primaryKeyColumns, List<String> columnNames,
+                                               List<Integer> columnTypes,
+                                               List<ObservableList<String>> rows) throws Exception {
         // PostgreSQL 绑定到具体数据库；MySQL/Oracle 复用主连接（SQL 使用全限定名）
         Connection conn = (config.getType() == ConnectType.POSTGRESQL)
                 ? getConnection(config, databaseName)
                 : getConnection(config);
+        return deleteRowsByPrimaryKeysInTransaction(conn, config.getType(), databaseName, schemaName,
+                tableName, primaryKeyColumns, columnNames, columnTypes, rows);
+    }
+
+    static int deleteRowsByPrimaryKeysInTransaction(Connection conn, ConnectType connectionType,
+                                                     String databaseName, String schemaName, String tableName,
+                                                     List<String> primaryKeyColumns, List<String> columnNames,
+                                                     List<Integer> columnTypes,
+                                                     List<ObservableList<String>> rows) throws Exception {
+        Objects.requireNonNull(conn, "conn");
+        Objects.requireNonNull(connectionType, "connectionType");
+        Objects.requireNonNull(primaryKeyColumns, "primaryKeyColumns");
+        Objects.requireNonNull(columnNames, "columnNames");
+        Objects.requireNonNull(rows, "rows");
+        if (primaryKeyColumns.isEmpty()) {
+            throw new IllegalArgumentException("删除行必须提供完整主键");
+        }
+        if (rows.isEmpty()) return 0;
+
         String pgSchema = schemaName != null ? schemaName : databaseName;
         int totalDeleted = 0;
 
         // 构建主键列在columnNames中的索引
         List<Integer> pkIndexes = new ArrayList<>();
         for (String pkCol : primaryKeyColumns) {
-            int idx = -1;
-            for (int i = 0; i < columnNames.size(); i++) {
-                if (columnNames.get(i).equalsIgnoreCase(pkCol)) {
-                    idx = i;
-                    break;
-                }
-            }
+            int idx = findColumnIndex(columnNames, pkCol);
             if (idx < 0) {
-                throw new RuntimeException("主键列 " + pkCol + " 在结果集中未找到");
+                throw new IllegalArgumentException("主键列 " + pkCol + " 在结果集中未找到或存在歧义");
             }
             pkIndexes.add(idx);
         }
 
         // 构建DELETE语句的WHERE部分：WHERE pk1=? AND pk2=?
-        String qualifiedTable = switch (config.getType()) {
+        String qualifiedTable = switch (connectionType) {
             case MYSQL -> "`" + databaseName + "`.`" + tableName + "`";
             case POSTGRESQL -> "\"" + pgSchema + "\".\"" + tableName + "\"";
             case ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
-            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+            default -> throw new IllegalArgumentException("Unsupported database type: " + connectionType);
         };
 
         StringBuilder whereClause = new StringBuilder();
         for (int i = 0; i < primaryKeyColumns.size(); i++) {
             if (i > 0) whereClause.append(" AND ");
             String pkCol = primaryKeyColumns.get(i);
-            String quotedCol = switch (config.getType()) {
+            String quotedCol = switch (connectionType) {
                 case MYSQL -> "`" + pkCol + "`";
                 case POSTGRESQL, ORACLE -> "\"" + pkCol + "\"";
                 default -> pkCol;
@@ -1474,39 +1557,55 @@ public class DatabaseService {
         String deleteSql = "DELETE FROM " + qualifiedTable + " WHERE " + whereClause;
 
         // 使用事务 + 批量执行：保证多行删除的原子性（全部成功或全部回滚）
-        try (PreparedStatement pstmt = conn.prepareStatement(deleteSql)) {
-            conn.setAutoCommit(false);
-            try {
+        boolean originalAutoCommit = conn.getAutoCommit();
+        if (!originalAutoCommit) {
+            throw new IllegalStateException("当前连接存在未完成的手动事务，拒绝合并查询结果删除");
+        }
+        conn.setAutoCommit(false);
+        try {
+            int[] results;
+            try (PreparedStatement pstmt = conn.prepareStatement(deleteSql)) {
                 for (ObservableList<String> row : rows) {
                     for (int i = 0; i < pkIndexes.size(); i++) {
-                        String value = row.get(pkIndexes.get(i));
-                        if (value == null) {
-                            pstmt.setNull(i + 1, Types.VARCHAR);
-                        } else {
-                            pstmt.setString(i + 1, value);
-                        }
+                        int columnIndex = pkIndexes.get(i);
+                        bindJdbcValue(pstmt, i + 1, row.get(columnIndex),
+                                columnTypeAt(columnTypes, columnIndex), connectionType);
                     }
                     pstmt.addBatch();
                 }
-                int[] results = pstmt.executeBatch();
-                for (int r : results) {
-                    if (r >= 0) {
-                        totalDeleted += r;
-                    } else if (r == java.sql.Statement.SUCCESS_NO_INFO) {
-                        // 批量执行时驱动可能不返回确切行数
-                        totalDeleted++;
-                    }
+                results = pstmt.executeBatch();
+            }
+            if (results.length != rows.size()) {
+                throw new SQLException("删除返回了 " + results.length + " 个结果，预期 "
+                        + rows.size() + " 个");
+            }
+            for (int rowIndex = 0; rowIndex < results.length; rowIndex++) {
+                int affectedRows = results[rowIndex];
+                if (affectedRows == java.sql.Statement.SUCCESS_NO_INFO) {
+                    totalDeleted++;
+                } else if (affectedRows == 1) {
+                    totalDeleted += affectedRows;
+                } else {
+                    throw new SQLException("第 " + (rowIndex + 1) + " 行删除影响了 "
+                            + affectedRows + " 行，预期恰好影响 1 行");
                 }
-                conn.commit();
-            } catch (Exception e) {
+            }
+            conn.commit();
+            return totalDeleted;
+        } catch (Exception e) {
+            try {
                 conn.rollback();
-                throw e;
-            } finally {
-                conn.setAutoCommit(true);
+            } catch (Exception rollbackError) {
+                e.addSuppressed(rollbackError);
+            }
+            throw e;
+        } finally {
+            try {
+                conn.setAutoCommit(originalAutoCommit);
+            } catch (Exception ignored) {
+                // 事务已提交或回滚；连接恢复失败不能把已成功的数据操作伪装成可重试失败。
             }
         }
-
-        return totalDeleted;
     }
 
     /**
@@ -1565,12 +1664,11 @@ public class DatabaseService {
                 default -> pkCol;
             };
             whereClause.append(quotedCol).append(" = ?");
-            for (int j = 0; j < columnNames.size(); j++) {
-                if (columnNames.get(j).equalsIgnoreCase(pkCol)) {
-                    pkIndexes.add(j);
-                    break;
-                }
+            int pkIndex = findColumnIndex(columnNames, pkCol);
+            if (pkIndex < 0) {
+                throw new IllegalArgumentException("主键列 " + pkCol + " 在结果集中未找到或存在歧义");
             }
+            pkIndexes.add(pkIndex);
         }
 
         String sql = "UPDATE " + qualifiedTable + " SET " + quotedUpdateCol + " = ? WHERE " + whereClause;
@@ -1755,6 +1853,17 @@ public class DatabaseService {
                 currentRows, originalRows, modifiedColumnsPerRow, null);
     }
 
+    /** 使用 JDBC 列类型绑定参数的批量更新。 */
+    public static int updateRows(ConnectionConfig config, String databaseName, String schemaName, String tableName,
+                                 List<String> primaryKeyColumns, List<String> columnNames,
+                                 List<Integer> columnTypes,
+                                 List<ObservableList<String>> currentRows,
+                                 List<ObservableList<String>> originalRows,
+                                 List<java.util.Set<Integer>> modifiedColumnsPerRow) throws Exception {
+        return updateRows(config, databaseName, schemaName, tableName, primaryKeyColumns, columnNames,
+                columnTypes, currentRows, originalRows, modifiedColumnsPerRow, null);
+    }
+
     /**
      * 更新多行数据，并通过回调返回每条已执行的可读 SQL。
      * MySQL 表无主键时，使用修改前整行值作为 WHERE 条件并强制 LIMIT 1。
@@ -1765,116 +1874,237 @@ public class DatabaseService {
                                  List<ObservableList<String>> originalRows,
                                  List<java.util.Set<Integer>> modifiedColumnsPerRow,
                                  java.util.function.Consumer<String> executedSqlConsumer) throws Exception {
+        return updateRows(config, databaseName, schemaName, tableName, primaryKeyColumns, columnNames,
+                null, currentRows, originalRows, modifiedColumnsPerRow, executedSqlConsumer);
+    }
+
+    /**
+     * 使用 JDBC 列类型绑定参数的批量更新，并通过回调返回每条已执行的可读 SQL。
+     * 传入 null 或不完整的 columnTypes 时保持旧接口兼容；PostgreSQL 缺失类型时以
+     * unknown 参数交由服务端按目标列推断，避免把整型/UUID/日期错绑为 varchar。
+     */
+    public static int updateRows(ConnectionConfig config, String databaseName, String schemaName, String tableName,
+                                 List<String> primaryKeyColumns, List<String> columnNames,
+                                 List<Integer> columnTypes,
+                                 List<ObservableList<String>> currentRows,
+                                 List<ObservableList<String>> originalRows,
+                                 List<java.util.Set<Integer>> modifiedColumnsPerRow,
+                                 java.util.function.Consumer<String> executedSqlConsumer) throws Exception {
         // PostgreSQL 绑定到具体数据库；MySQL/Oracle 复用主连接（SQL 使用全限定名）
         Connection conn = (config.getType() == ConnectType.POSTGRESQL)
                 ? getConnection(config, databaseName)
                 : getConnection(config);
+        return updateRowsInTransaction(conn, config.getType(), databaseName, schemaName, tableName,
+                primaryKeyColumns, columnNames, columnTypes, currentRows, originalRows, modifiedColumnsPerRow,
+                executedSqlConsumer);
+    }
+
+    /**
+     * 在单个 JDBC 事务中执行一批行更新。每个条件只允许命中一行；
+     * 任意一行未命中或命中数异常时回滚整批，避免 UI 与数据库只保存了部分修改。
+     */
+    static int updateRowsInTransaction(Connection conn, ConnectType connectionType,
+                                       String databaseName, String schemaName, String tableName,
+                                       List<String> primaryKeyColumns, List<String> columnNames,
+                                       List<ObservableList<String>> currentRows,
+                                       List<ObservableList<String>> originalRows,
+                                       List<java.util.Set<Integer>> modifiedColumnsPerRow,
+                                       java.util.function.Consumer<String> executedSqlConsumer) throws Exception {
+        return updateRowsInTransaction(conn, connectionType, databaseName, schemaName, tableName,
+                primaryKeyColumns, columnNames, null, currentRows, originalRows, modifiedColumnsPerRow,
+                executedSqlConsumer);
+    }
+
+    static int updateRowsInTransaction(Connection conn, ConnectType connectionType,
+                                       String databaseName, String schemaName, String tableName,
+                                       List<String> primaryKeyColumns, List<String> columnNames,
+                                       List<Integer> columnTypes,
+                                       List<ObservableList<String>> currentRows,
+                                       List<ObservableList<String>> originalRows,
+                                       List<java.util.Set<Integer>> modifiedColumnsPerRow,
+                                       java.util.function.Consumer<String> executedSqlConsumer) throws Exception {
+        Objects.requireNonNull(conn, "conn");
+        Objects.requireNonNull(connectionType, "connectionType");
+        Objects.requireNonNull(columnNames, "columnNames");
+        Objects.requireNonNull(currentRows, "currentRows");
+        Objects.requireNonNull(originalRows, "originalRows");
+        Objects.requireNonNull(modifiedColumnsPerRow, "modifiedColumnsPerRow");
+        if (currentRows.size() != originalRows.size()
+                || currentRows.size() != modifiedColumnsPerRow.size()) {
+            throw new IllegalArgumentException("当前行、原始行和修改列列表的数量必须一致");
+        }
+        if (currentRows.isEmpty()) return 0;
+
         String pgSchema = schemaName != null ? schemaName : databaseName;
         int totalUpdated = 0;
         List<String> effectivePrimaryKeys = primaryKeyColumns != null ? primaryKeyColumns : List.of();
         boolean matchByOriginalRow = effectivePrimaryKeys.isEmpty();
-        if (matchByOriginalRow && config.getType() != ConnectType.MYSQL) {
+        if (matchByOriginalRow && connectionType != ConnectType.MYSQL) {
             throw new IllegalArgumentException("无主键更新目前仅支持 MySQL");
         }
 
-        String qualifiedTable = switch (config.getType()) {
+        String qualifiedTable = switch (connectionType) {
             case MYSQL -> "`" + databaseName + "`.`" + tableName + "`";
             case POSTGRESQL -> "\"" + pgSchema + "\".\"" + tableName + "\"";
             case ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
-            default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
+            default -> throw new IllegalArgumentException("Unsupported database type: " + connectionType);
         };
 
         // 构建主键列索引映射
         List<Integer> pkIndexes = new ArrayList<>();
         for (String pkCol : effectivePrimaryKeys) {
-            for (int i = 0; i < columnNames.size(); i++) {
-                if (columnNames.get(i).equalsIgnoreCase(pkCol)) {
-                    pkIndexes.add(i);
-                    break;
-                }
+            int pkIndex = findColumnIndex(columnNames, pkCol);
+            if (pkIndex < 0) {
+                throw new IllegalArgumentException("主键列 " + pkCol + " 在结果集中未找到或存在歧义");
             }
+            pkIndexes.add(pkIndex);
         }
 
-        for (int rowIdx = 0; rowIdx < currentRows.size(); rowIdx++) {
-            ObservableList<String> currentRow = currentRows.get(rowIdx);
-            ObservableList<String> originalRow = originalRows.get(rowIdx);
-            java.util.Set<Integer> modifiedCols = modifiedColumnsPerRow.get(rowIdx);
+        boolean originalAutoCommit = conn.getAutoCommit();
+        if (!originalAutoCommit) {
+            throw new IllegalStateException("当前连接存在未完成的手动事务，拒绝合并查询结果更新");
+        }
+        conn.setAutoCommit(false);
+        try {
+            for (int rowIdx = 0; rowIdx < currentRows.size(); rowIdx++) {
+                ObservableList<String> currentRow = currentRows.get(rowIdx);
+                ObservableList<String> originalRow = originalRows.get(rowIdx);
+                java.util.Set<Integer> modifiedCols = modifiedColumnsPerRow.get(rowIdx);
 
-            // SET子句仅包含修改过的列
-            StringBuilder setClause = new StringBuilder();
-            StringBuilder displaySetClause = new StringBuilder();
-            List<Integer> setColIndexes = new ArrayList<>();
-            for (int colIdx : modifiedCols) {
-                if (!setColIndexes.isEmpty()) {
-                    setClause.append(", ");
-                    displaySetClause.append(", ");
+                // SET子句仅包含修改过的列
+                StringBuilder setClause = new StringBuilder();
+                StringBuilder displaySetClause = new StringBuilder();
+                List<Integer> setColIndexes = new ArrayList<>();
+                for (int colIdx : modifiedCols) {
+                    if (!setColIndexes.isEmpty()) {
+                        setClause.append(", ");
+                        displaySetClause.append(", ");
+                    }
+                    String colName = columnNames.get(colIdx);
+                    String quotedCol = switch (connectionType) {
+                        case MYSQL -> "`" + colName + "`";
+                        case POSTGRESQL, ORACLE -> "\"" + colName + "\"";
+                        default -> colName;
+                    };
+                    setClause.append(quotedCol).append(" = ?");
+                    displaySetClause.append(quotedCol).append(" = ")
+                            .append(formatSqlLiteral(currentRow.get(colIdx)));
+                    setColIndexes.add(colIdx);
                 }
-                String colName = columnNames.get(colIdx);
-                String quotedCol = switch (config.getType()) {
-                    case MYSQL -> "`" + colName + "`";
-                    case POSTGRESQL, ORACLE -> "\"" + colName + "\"";
-                    default -> colName;
-                };
-                setClause.append(quotedCol).append(" = ?");
-                displaySetClause.append(quotedCol).append(" = ")
-                        .append(formatSqlLiteral(currentRow.get(colIdx)));
-                setColIndexes.add(colIdx);
-            }
 
-            // 有主键时按原始主键定位；MySQL 无主键时按修改前整行定位。
-            StringBuilder whereClause = new StringBuilder();
-            StringBuilder displayWhereClause = new StringBuilder();
-            List<Integer> whereIndexes = matchByOriginalRow
-                    ? java.util.stream.IntStream.range(0, columnNames.size()).boxed().toList()
-                    : pkIndexes;
-            List<Integer> whereParamIndexes = new ArrayList<>();
-            for (int i = 0; i < whereIndexes.size(); i++) {
-                if (i > 0) whereClause.append(" AND ");
-                if (i > 0) displayWhereClause.append(" AND ");
-                int whereIndex = whereIndexes.get(i);
-                String whereColumn = columnNames.get(whereIndex);
-                String quotedCol = switch (config.getType()) {
-                    case MYSQL -> "`" + whereColumn + "`";
-                    case POSTGRESQL, ORACLE -> "\"" + whereColumn + "\"";
-                    default -> whereColumn;
-                };
-                String originalValue = originalRow.get(whereIndex);
-                if (originalValue == null) {
-                    whereClause.append(quotedCol).append(" IS NULL");
-                    displayWhereClause.append(quotedCol).append(" IS NULL");
-                } else {
-                    whereClause.append(quotedCol).append(" = ?");
-                    displayWhereClause.append(quotedCol).append(" = ").append(formatSqlLiteral(originalValue));
-                    whereParamIndexes.add(whereIndex);
-                }
-            }
-
-            String limitClause = matchByOriginalRow ? " LIMIT 1" : "";
-            String sql = "UPDATE " + qualifiedTable + " SET " + setClause + " WHERE " + whereClause + limitClause;
-            String displaySql = "UPDATE " + qualifiedTable + " SET " + displaySetClause
-                    + " WHERE " + displayWhereClause + limitClause;
-
-            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                int paramIdx = 1;
-                // SET参数（新值）
-                for (int colIdx : setColIndexes) {
-                    String newValue = currentRow.get(colIdx);
-                    if (newValue == null) {
-                        pstmt.setNull(paramIdx++, Types.VARCHAR);
+                // 有主键时按原始主键定位；MySQL 无主键时按修改前整行定位。
+                StringBuilder whereClause = new StringBuilder();
+                StringBuilder displayWhereClause = new StringBuilder();
+                List<Integer> whereIndexes = matchByOriginalRow
+                        ? java.util.stream.IntStream.range(0, columnNames.size()).boxed().toList()
+                        : pkIndexes;
+                List<Integer> whereParamIndexes = new ArrayList<>();
+                for (int i = 0; i < whereIndexes.size(); i++) {
+                    if (i > 0) whereClause.append(" AND ");
+                    if (i > 0) displayWhereClause.append(" AND ");
+                    int whereIndex = whereIndexes.get(i);
+                    String whereColumn = columnNames.get(whereIndex);
+                    String quotedCol = switch (connectionType) {
+                        case MYSQL -> "`" + whereColumn + "`";
+                        case POSTGRESQL, ORACLE -> "\"" + whereColumn + "\"";
+                        default -> whereColumn;
+                    };
+                    String originalValue = originalRow.get(whereIndex);
+                    if (originalValue == null) {
+                        whereClause.append(quotedCol).append(" IS NULL");
+                        displayWhereClause.append(quotedCol).append(" IS NULL");
                     } else {
-                        pstmt.setString(paramIdx++, newValue);
+                        boolean binaryTextComparison = matchByOriginalRow
+                                && connectionType == ConnectType.MYSQL
+                                && isTextColumnType(columnTypeAt(columnTypes, whereIndex));
+                        if (binaryTextComparison) {
+                            // MySQL 默认排序规则常忽略大小写/重音；无主键定位必须按字节比较。
+                            whereClause.append("BINARY ").append(quotedCol).append(" = BINARY ?");
+                            displayWhereClause.append("BINARY ").append(quotedCol).append(" = BINARY ")
+                                    .append(formatSqlLiteral(originalValue));
+                        } else {
+                            whereClause.append(quotedCol).append(" = ?");
+                            displayWhereClause.append(quotedCol).append(" = ")
+                                    .append(formatSqlLiteral(originalValue));
+                        }
+                        whereParamIndexes.add(whereIndex);
                     }
                 }
-                // WHERE 中 NULL 已生成 IS NULL，此处只绑定非 NULL 原始值。
-                for (int whereIndex : whereParamIndexes) {
-                    pstmt.setString(paramIdx++, originalRow.get(whereIndex));
+
+                String limitClause = matchByOriginalRow ? " LIMIT 1" : "";
+                String sql = "UPDATE " + qualifiedTable + " SET " + setClause + " WHERE " + whereClause + limitClause;
+                String displaySql = "UPDATE " + qualifiedTable + " SET " + displaySetClause
+                        + " WHERE " + displayWhereClause + limitClause;
+
+                try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                    int paramIdx = 1;
+                    // SET参数（新值）
+                    for (int colIdx : setColIndexes) {
+                        String newValue = currentRow.get(colIdx);
+                        bindJdbcValue(pstmt, paramIdx++, newValue,
+                                columnTypeAt(columnTypes, colIdx), connectionType);
+                    }
+                    // WHERE 中 NULL 已生成 IS NULL，此处只绑定非 NULL 原始值。
+                    for (int whereIndex : whereParamIndexes) {
+                        bindJdbcValue(pstmt, paramIdx++, originalRow.get(whereIndex),
+                                columnTypeAt(columnTypes, whereIndex), connectionType);
+                    }
+                    int affectedRows = pstmt.executeUpdate();
+                    if (affectedRows != 1) {
+                        throw new SQLException("第 " + (rowIdx + 1) + " 行更新影响了 "
+                                + affectedRows + " 行，预期恰好影响 1 行");
+                    }
+                    totalUpdated += affectedRows;
+                    if (executedSqlConsumer != null) executedSqlConsumer.accept(displaySql);
                 }
-                totalUpdated += pstmt.executeUpdate();
-                if (executedSqlConsumer != null) executedSqlConsumer.accept(displaySql);
+            }
+            conn.commit();
+            return totalUpdated;
+        } catch (Exception e) {
+            try {
+                conn.rollback();
+            } catch (Exception rollbackError) {
+                e.addSuppressed(rollbackError);
+            }
+            throw e;
+        } finally {
+            try {
+                conn.setAutoCommit(originalAutoCommit);
+            } catch (Exception ignored) {
+                // 事务已提交或回滚；连接恢复失败不能把已成功的数据操作伪装成可重试失败。
             }
         }
+    }
 
-        return totalUpdated;
+    private static Integer columnTypeAt(List<Integer> columnTypes, int index) {
+        if (columnTypes == null || index < 0 || index >= columnTypes.size()) return null;
+        Integer sqlType = columnTypes.get(index);
+        return sqlType == null || sqlType == Types.NULL ? null : sqlType;
+    }
+
+    private static boolean isTextColumnType(Integer sqlType) {
+        if (sqlType == null) return false;
+        return switch (sqlType) {
+            case Types.CHAR, Types.VARCHAR, Types.LONGVARCHAR,
+                 Types.NCHAR, Types.NVARCHAR, Types.LONGNVARCHAR,
+                 Types.CLOB, Types.NCLOB -> true;
+            default -> false;
+        };
+    }
+
+    private static void bindJdbcValue(PreparedStatement statement, int parameterIndex,
+                                      String value, Integer sqlType,
+                                      ConnectType connectionType) throws SQLException {
+        int effectiveType = sqlType != null
+                ? sqlType
+                : (connectionType == ConnectType.POSTGRESQL ? Types.OTHER : Types.VARCHAR);
+        if (value == null) {
+            statement.setNull(parameterIndex, effectiveType);
+        } else if (sqlType != null || connectionType == ConnectType.POSTGRESQL) {
+            statement.setObject(parameterIndex, value, effectiveType);
+        } else {
+            statement.setString(parameterIndex, value);
+        }
     }
 
     private static String formatSqlLiteral(String value) {
@@ -1883,6 +2113,21 @@ public class DatabaseService {
 
     private static boolean isNullOrEmpty(String value) {
         return value == null || value.isEmpty();
+    }
+
+    /** 精确大小写优先；忽略大小写后有多个候选时拒绝猜测。 */
+    private static int findColumnIndex(List<String> columnNames, String targetColumn) {
+        for (int i = 0; i < columnNames.size(); i++) {
+            if (Objects.equals(columnNames.get(i), targetColumn)) return i;
+        }
+        int match = -1;
+        for (int i = 0; i < columnNames.size(); i++) {
+            String column = columnNames.get(i);
+            if (column == null || targetColumn == null || !column.equalsIgnoreCase(targetColumn)) continue;
+            if (match >= 0) return -1;
+            match = i;
+        }
+        return match;
     }
 
     private static boolean isPrimaryKeyColumn(String columnName, List<String> primaryKeyColumns) {
@@ -1905,8 +2150,34 @@ public class DatabaseService {
     }
 
     /**
+     * 解析数据库对象实际使用的 schema。PostgreSQL 未显式指定时使用连接当前 schema，
+     * 不能把数据库名误当成 schema 名。
+     */
+    public static String resolveSchemaName(ConnectionConfig config, String databaseName,
+                                           String schemaName) throws Exception {
+        if (schemaName != null && !schemaName.isBlank()) return schemaName;
+        if (config.getType() != ConnectType.POSTGRESQL) return schemaName;
+
+        Connection conn = getConnection(config, databaseName);
+        String currentSchema = null;
+        try {
+            currentSchema = conn.getSchema();
+        } catch (SQLException | AbstractMethodError ignored) {
+            // 部分旧版 JDBC 驱动未实现 getSchema()，继续使用 current_schema() 查询。
+        }
+        if (currentSchema != null && !currentSchema.isBlank()) return currentSchema;
+        try (Statement statement = conn.createStatement();
+             ResultSet resultSet = statement.executeQuery("SELECT current_schema()")) {
+            if (resultSet.next()) {
+                currentSchema = resultSet.getString(1);
+            }
+        }
+        return currentSchema != null && !currentSchema.isBlank() ? currentSchema : "public";
+    }
+
+    /**
      * 获取表的列信息列表
-     * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
+     * @param schemaName 模式名（PostgreSQL 使用；为 null 时读取连接当前 schema）
      */
     public static List<Map<String, String>> getTableColumns(ConnectionConfig config, String databaseName, String schemaName, String tableName) throws Exception {
         // PostgreSQL 绑定到具体数据库，并传入 schema 给 JDBC 元数据；MySQL/Oracle 复用主连接
@@ -1919,7 +2190,11 @@ public class DatabaseService {
         String schema = null;
         if (config.getType() == ConnectType.POSTGRESQL) {
             catalog = null;
-            schema = schemaName != null ? schemaName : databaseName;
+            schema = resolveSchemaName(config, databaseName, schemaName);
+        } else if (config.getType() == ConnectType.ORACLE) {
+            // Oracle 的“数据库”树节点实际是 owner/schema；JDBC catalog 在这里应为空。
+            catalog = null;
+            schema = databaseName;
         }
 
         // 获取主键列表

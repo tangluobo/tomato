@@ -938,7 +938,7 @@ public class TableDataView extends BorderPane {
                     newRows.remove(row);
                     originalValuesMap.remove(row);
                 }
-                tableView.getItems().removeAll(newRowsToDelete);
+                TableCellContextMenuUtils.removeRows(tableView, newRowsToDelete);
             }
 
             // 现有行：从DB删除
@@ -956,6 +956,7 @@ public class TableDataView extends BorderPane {
                 // 复制选中行数据（避免在删除过程中ObservableList变化）
                 List<ObservableList<String>> rowsToDelete = new ArrayList<>(existingRowsToDelete);
                 List<String> dataColumns = getDataColumnNames();
+                List<Integer> columnTypes = List.copyOf(dataColumnTypes);
 
                 new Thread(() -> {
                     java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
@@ -964,12 +965,12 @@ public class TableDataView extends BorderPane {
                         try {
                             int deleted = DatabaseService.deleteRowsByPrimaryKeys(
                                     config, databaseName, schemaName, tableName,
-                                    primaryKeyColumns, dataColumns, rowsToDelete);
+                                    primaryKeyColumns, dataColumns, columnTypes, rowsToDelete);
                             Platform.runLater(() -> {
                                 for (ObservableList<String> row : rowsToDelete) {
                                     originalValuesMap.remove(row);
                                 }
-                                tableView.getItems().removeAll(rowsToDelete);
+                                TableCellContextMenuUtils.removeRows(tableView, rowsToDelete);
                                 totalCount -= deleted;
                                 totalPages = (int) Math.ceil((double) totalCount / DEFAULT_PAGE_SIZE);
                                 if (totalPages < 1) totalPages = 1;
@@ -1609,6 +1610,7 @@ public class TableDataView extends BorderPane {
                 .map(FXCollections::observableArrayList)
                 .toList();
         final List<Set<Integer>> finalModifiedColumns = new ArrayList<>(modifiedColumnsPerRow);
+        final List<Integer> finalColumnTypes = List.copyOf(dataColumnTypes);
 
         savingChanges = true;
         tableView.setDisable(true);
@@ -1628,7 +1630,7 @@ public class TableDataView extends BorderPane {
                     // UPDATE 修改的现有行
                     if (!finalRowsToUpdate.isEmpty()) {
                         DatabaseService.updateRows(config, databaseName, schemaName, tableName,
-                                primaryKeyColumns, dataColumns,
+                                primaryKeyColumns, dataColumns, finalColumnTypes,
                                 finalRowsToUpdate, finalOriginalValues, finalModifiedColumns,
                                 executedSql::add);
                     }

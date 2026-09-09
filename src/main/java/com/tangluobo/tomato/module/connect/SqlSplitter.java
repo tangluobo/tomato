@@ -211,6 +211,8 @@ public class SqlSplitter {
 
     /** 检测 FROM 子句顶层的 JOIN/逗号，忽略字符串、引号标识符和括号内部内容。 */
     private static boolean hasTopLevelMultipleSources(String fromClause) {
+        if (hasTopLevelSetOperation(fromClause)) return true;
+
         int depth = 0;
         char quote = '\0';
         for (int i = 0; i < fromClause.length(); i++) {
@@ -237,9 +239,45 @@ public class SqlSplitter {
             if (ch == ',') return true;
             if (matchesKeywordAt(fromClause, i, "JOIN")) return true;
             if (matchesAnyKeywordAt(fromClause, i,
+                    "UNION", "EXCEPT", "INTERSECT")) {
+                return true;
+            }
+            if (matchesAnyKeywordAt(fromClause, i,
                     "WHERE", "GROUP", "ORDER", "HAVING", "LIMIT", "OFFSET",
-                    "UNION", "EXCEPT", "INTERSECT", "FOR")) {
+                    "FOR")) {
                 return false;
+            }
+        }
+        return false;
+    }
+
+    /** 集合运算可能出现在 WHERE/ORDER/LIMIT 之后，必须独立扫描完整的顶层 FROM 余部。 */
+    private static boolean hasTopLevelSetOperation(String text) {
+        int depth = 0;
+        char quote = '\0';
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (quote != '\0') {
+                if ((quote == '[' && ch == ']') || (quote != '[' && ch == quote)) {
+                    quote = '\0';
+                }
+                continue;
+            }
+            if (ch == '\'' || ch == '"' || ch == '`' || ch == '[') {
+                quote = ch;
+                continue;
+            }
+            if (ch == '(') {
+                depth++;
+                continue;
+            }
+            if (ch == ')') {
+                if (depth > 0) depth--;
+                continue;
+            }
+            if (depth == 0 && matchesAnyKeywordAt(text, i,
+                    "UNION", "EXCEPT", "INTERSECT")) {
+                return true;
             }
         }
         return false;

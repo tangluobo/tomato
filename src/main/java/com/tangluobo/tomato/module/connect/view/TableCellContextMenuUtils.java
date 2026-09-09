@@ -201,17 +201,19 @@ final class TableCellContextMenuUtils {
 
     static Menu createDisplayMenu(TableView<ObservableList<String>> tableView, int dataColumnOffset) {
         Menu menu = new Menu("显示");
+        List<TableColumn<ObservableList<String>, ?>> menuColumns = new ArrayList<>();
         for (int i = dataColumnOffset; i < tableView.getColumns().size(); i++) {
             TableColumn<ObservableList<String>, ?> column = tableView.getColumns().get(i);
             CheckMenuItem item = new CheckMenuItem(column.getText());
             item.setSelected(column.isVisible());
             item.setOnAction(e -> column.setVisible(item.isSelected()));
             menu.getItems().add(item);
+            menuColumns.add(column);
         }
         menu.setOnShowing(e -> {
             for (int i = 0; i < menu.getItems().size(); i++) {
                 ((CheckMenuItem) menu.getItems().get(i)).setSelected(
-                        tableView.getColumns().get(i + dataColumnOffset).isVisible());
+                        menuColumns.get(i).isVisible());
             }
         });
         return menu;
@@ -272,8 +274,8 @@ final class TableCellContextMenuUtils {
             TableView<ObservableList<String>> tableView, int dataColumnOffset) {
         TablePosition<ObservableList<String>, ?> focused = tableView.getFocusModel().getFocusedCell();
         if (focused == null || focused.getTableColumn() == null) return null;
-        int index = tableView.getColumns().indexOf(focused.getTableColumn());
-        return index >= dataColumnOffset ? focused.getTableColumn() : null;
+        return dataColumnIndex(tableView, focused.getTableColumn(), dataColumnOffset) >= 0
+                ? focused.getTableColumn() : null;
     }
 
     private static void filterByFocusedValue(TableView<ObservableList<String>> tableView,
@@ -282,8 +284,8 @@ final class TableCellContextMenuUtils {
         TablePosition<ObservableList<String>, ?> focused = tableView.getFocusModel().getFocusedCell();
         if (focused == null || focused.getTableColumn() == null || focused.getRow() < 0
                 || focused.getRow() >= tableView.getItems().size()) return;
-        int tableColumnIndex = tableView.getColumns().indexOf(focused.getTableColumn());
-        int dataColumnIndex = tableColumnIndex - dataColumnOffset;
+        int dataColumnIndex = dataColumnIndex(
+                tableView, focused.getTableColumn(), dataColumnOffset);
         if (dataColumnIndex < 0) return;
         ObservableList<String> focusedRow = tableView.getItems().get(focused.getRow());
         String expected = dataColumnIndex < focusedRow.size() ? focusedRow.get(dataColumnIndex) : null;
@@ -370,8 +372,7 @@ final class TableCellContextMenuUtils {
                                               int dataColumnOffset) {
         TablePosition<ObservableList<String>, ?> focused = tableView.getFocusModel().getFocusedCell();
         if (focused == null || focused.getTableColumn() == null) return -1;
-        int tableColumnIndex = tableView.getColumns().indexOf(focused.getTableColumn());
-        return tableColumnIndex >= dataColumnOffset ? tableColumnIndex - dataColumnOffset : -1;
+        return dataColumnIndex(tableView, focused.getTableColumn(), dataColumnOffset);
     }
 
     private static void removeFocusedColumnFilter(TableView<ObservableList<String>> tableView,
@@ -398,6 +399,17 @@ final class TableCellContextMenuUtils {
         // 导致这些单元格残留无边框样式，行选择器箭头也不再更新。
         tableView.refresh();
         tableView.requestLayout();
+    }
+
+    /** 从筛选前的可写源列表移除行；FilteredList/SortedList 本身不支持 remove。 */
+    @SuppressWarnings("unchecked")
+    static void removeRows(TableView<ObservableList<String>> tableView,
+                           java.util.Collection<? extends ObservableList<String>> rows) {
+        Object source = tableView.getProperties().get(FILTER_SOURCE_KEY);
+        ObservableList<ObservableList<String>> writableRows = source instanceof ObservableList<?>
+                ? (ObservableList<ObservableList<String>>) source
+                : tableView.getItems();
+        writableRows.removeAll(rows);
     }
 
     private static int compareValues(String left, String right) {
@@ -454,7 +466,7 @@ final class TableCellContextMenuUtils {
         Set<Integer> columns = new TreeSet<>();
         for (TablePosition<ObservableList<String>, ?> position : tableView.getSelectionModel().getSelectedCells()) {
             int column = tableView.getColumns().indexOf(position.getTableColumn());
-            if (column >= dataColumnOffset) {
+            if (dataColumnIndex(tableView, position.getTableColumn(), dataColumnOffset) >= 0) {
                 rows.add(position.getRow());
                 columns.add(column);
             }
@@ -485,7 +497,8 @@ final class TableCellContextMenuUtils {
                 String field = tableView.getColumns().get(tableColumnIndex).getText();
                 if (camelCaseFields) field = toLowerCamelCase(field);
                 result.append("    \"").append(escapeJson(field)).append("\": ");
-                String value = valueAt(row, tableColumnIndex - dataColumnOffset);
+                String value = valueAt(row, dataColumnIndex(
+                        tableView, tableView.getColumns().get(tableColumnIndex), dataColumnOffset));
                 if (value == null) {
                     result.append("null");
                 } else {
@@ -519,7 +532,8 @@ final class TableCellContextMenuUtils {
                 String field = tableView.getColumns().get(tableColumnIndex).getText();
                 String comment = findColumnComment(columnComments, field);
                 String label = comment == null || comment.isBlank() ? field : comment;
-                String value = valueAt(row, tableColumnIndex - dataColumnOffset);
+                String value = valueAt(row, dataColumnIndex(
+                        tableView, tableView.getColumns().get(tableColumnIndex), dataColumnOffset));
                 result.append(label).append('：').append(singleLine(value == null ? "NULL" : value));
             }
         }
@@ -532,7 +546,7 @@ final class TableCellContextMenuUtils {
         Set<Integer> columns = new TreeSet<>();
         for (TablePosition<ObservableList<String>, ?> position : tableView.getSelectionModel().getSelectedCells()) {
             int column = tableView.getColumns().indexOf(position.getTableColumn());
-            if (column >= dataColumnOffset) {
+            if (dataColumnIndex(tableView, position.getTableColumn(), dataColumnOffset) >= 0) {
                 rows.add(position.getRow());
                 columns.add(column);
             }
@@ -632,7 +646,8 @@ final class TableCellContextMenuUtils {
                 ObservableList<String> row = tableView.getItems().get(rowIndex);
                 List<String> values = new ArrayList<>();
                 for (int tableColumnIndex : columns) {
-                    int dataColumnIndex = tableColumnIndex - dataColumnOffset;
+                    int dataColumnIndex = dataColumnIndex(
+                            tableView, tableView.getColumns().get(tableColumnIndex), dataColumnOffset);
                     String value = dataColumnIndex < row.size() ? row.get(dataColumnIndex) : null;
                     values.add(value == null ? "NULL" : value);
                 }
@@ -660,7 +675,7 @@ final class TableCellContextMenuUtils {
         Set<Integer> rows = new TreeSet<>();
         for (TablePosition<ObservableList<String>, ?> position : tableView.getSelectionModel().getSelectedCells()) {
             int column = tableView.getColumns().indexOf(position.getTableColumn());
-            if (column >= dataColumnOffset) {
+            if (dataColumnIndex(tableView, position.getTableColumn(), dataColumnOffset) >= 0) {
                 rows.add(position.getRow());
             }
         }
@@ -683,14 +698,17 @@ final class TableCellContextMenuUtils {
                 for (int tableColumnIndex : columns) {
                     String columnName = tableView.getColumns().get(tableColumnIndex).getText();
                     if (containsIgnoreCase(primaryKeys, columnName)) continue;
+                    int dataColumnIndex = dataColumnIndex(
+                            tableView, tableView.getColumns().get(tableColumnIndex), dataColumnOffset);
                     assignments.add(quoteIdentifier(columnName) + " = "
-                            + sqlLiteral(valueAt(row, tableColumnIndex - dataColumnOffset)));
+                            + sqlLiteral(valueAt(row, dataColumnIndex)));
                 }
                 List<String> conditions = new ArrayList<>();
                 for (String primaryKey : primaryKeys) {
                     int tableColumnIndex = findColumn(tableView, dataColumnOffset, primaryKey);
                     if (tableColumnIndex < 0) continue;
-                    String value = valueAt(row, tableColumnIndex - dataColumnOffset);
+                    String value = valueAt(row, dataColumnIndex(
+                            tableView, tableView.getColumns().get(tableColumnIndex), dataColumnOffset));
                     conditions.add(quoteIdentifier(primaryKey) + (value == null ? " IS NULL" : " = " + sqlLiteral(value)));
                 }
                 if (!assignments.isEmpty() && conditions.size() == primaryKeys.size()) {
@@ -702,7 +720,8 @@ final class TableCellContextMenuUtils {
                 List<String> values = new ArrayList<>();
                 for (int tableColumnIndex : columns) {
                     names.add(quoteIdentifier(tableView.getColumns().get(tableColumnIndex).getText()));
-                    values.add(sqlLiteral(valueAt(row, tableColumnIndex - dataColumnOffset)));
+                    values.add(sqlLiteral(valueAt(row, dataColumnIndex(
+                            tableView, tableView.getColumns().get(tableColumnIndex), dataColumnOffset))));
                 }
                 statements.add("INSERT INTO " + quoteQualifiedName(tableName) + " ("
                         + String.join(", ", names) + ") VALUES (" + String.join(", ", values) + ");");
@@ -713,6 +732,19 @@ final class TableCellContextMenuUtils {
 
     private static String valueAt(ObservableList<String> row, int index) {
         return index >= 0 && index < row.size() ? row.get(index) : null;
+    }
+
+    /**
+     * 查询结果列会在 userData 中保存稳定的模型索引；其他旧表格继续按视觉位置兼容。
+     * 这样拖动列后，筛选、复制和导出不会把当前表头与另一列的数据拼在一起。
+     */
+    private static int dataColumnIndex(TableView<ObservableList<String>> tableView,
+                                       TableColumn<ObservableList<String>, ?> column,
+                                       int dataColumnOffset) {
+        if (column == null) return -1;
+        if (column.getUserData() instanceof Integer index && index >= 0) return index;
+        int tableColumnIndex = tableView.getColumns().indexOf(column);
+        return tableColumnIndex >= dataColumnOffset ? tableColumnIndex - dataColumnOffset : -1;
     }
 
     private static int findColumn(TableView<ObservableList<String>> tableView,

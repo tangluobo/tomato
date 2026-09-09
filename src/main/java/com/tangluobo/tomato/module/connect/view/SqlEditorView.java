@@ -31,7 +31,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -1124,9 +1123,9 @@ public class SqlEditorView extends BorderPane {
     }
 
     /**
-     * 从TableRowData创建TableView，可指定源表名以支持右键删除行
+     * 从TableRowData创建TableView，可指定源表名以支持安全编辑和删除行
      * @param result 表格数据
-     * @param sourceTableName 源表名，若非null且有主键则启用右键删除
+     * @param sourceTableName 源表名；能可靠定位原记录时启用编辑，完整包含主键时启用删除
      * @param showResultFooter 是否显示查询结果专用的底部图标栏和状态栏
      */
     private Node createTableView(TableRowData result, String sourceTableName,
@@ -1159,8 +1158,9 @@ public class SqlEditorView extends BorderPane {
         QueryResultEditContext editContext = null;
         if (sourceTableName != null && resultConfig != null && resultDatabase != null) {
             QueryTableTarget target = resolveQueryTableTarget(sourceTableName, resultConfig, resultDatabase);
+            target = refineQueryTableTargetFromMetadata(target, resultConfig, result);
             if (target != null) {
-                editContext = new QueryResultEditContext(tableView, resultConfig, target, columns);
+                editContext = new QueryResultEditContext(tableView, resultConfig, target, result);
             }
         }
         final QueryResultEditContext finalEditContext = editContext;
@@ -1247,6 +1247,8 @@ public class SqlEditorView extends BorderPane {
         for (int i = 0; i < columns.size(); i++) {
             final int colIndex = i;
             TableColumn<ObservableList<String>, String> col = new TableColumn<>(columns.get(i));
+            // 保存模型列索引，列被拖动后编辑、筛选和复制仍能取到正确字段。
+            col.setUserData(colIndex);
             // 根据表头文字长度动态设置列宽
             int headerLen = columns.get(i).length();
             col.setPrefWidth(Math.max(headerLen * 8 + 16, 60));
@@ -1255,13 +1257,14 @@ public class SqlEditorView extends BorderPane {
                 return new javafx.beans.property.SimpleStringProperty(colIndex < row.size() ? row.get(colIndex) : "");
             });
             final int colType = (colIndex < columnTypes.size()) ? columnTypes.get(colIndex) : java.sql.Types.OTHER;
-            col.setCellFactory(tc -> new QueryResultEditableTableCell(colType, finalEditContext));
+            col.setCellFactory(tc -> new QueryResultEditableTableCell(
+                    colType, finalEditContext, colIndex));
             if (finalEditContext != null) {
                 col.setEditable(false);
                 col.setOnEditCommit(event -> {
                     if (!finalEditContext.editableColumnIndexes.contains(colIndex)) return;
                     ObservableList<String> row = event.getRowValue();
-                    String newValue = event.getNewValue() == null ? "" : event.getNewValue();
+                    String newValue = event.getNewValue();
                     if (colIndex < row.size() && !Objects.equals(row.get(colIndex), newValue)) {
                         row.set(colIndex, newValue);
                         updateQueryResultButtons(finalEditContext);
@@ -1269,6 +1272,9 @@ public class SqlEditorView extends BorderPane {
                 });
             }
             tableView.getColumns().add(col);
+            if (finalEditContext != null) {
+                finalEditContext.tableColumns.add(col);
+            }
         }
         if (result.getRows() != null) {
             tableView.getItems().addAll(result.getRows());
@@ -1319,7 +1325,9 @@ public class SqlEditorView extends BorderPane {
         actionBar.setStyle("-fx-background-color: #f3f3f3; -fx-border-color: #d7d7d7; "
                 + "-fx-border-width: 1 0 1 0;");
 
-        Label modeStatusLabel = new Label(context == null ? "只读结果" : "正在检查结果是否可编辑...");
+        Label modeStatusLabel = new Label(context == null
+                ? "只读结果 · 仅安全的单表查询可编辑"
+                : "正在检查结果是否可编辑...");
         modeStatusLabel.setMinWidth(0);
         modeStatusLabel.setMaxWidth(Double.MAX_VALUE);
         modeStatusLabel.setTextOverrun(OverrunStyle.ELLIPSIS);
@@ -1398,12 +1406,15 @@ public class SqlEditorView extends BorderPane {
         private boolean escapePressed = false;
         private final int sqlType;
         private final QueryResultEditContext editContext;
+        private final int dataColumnIndex;
         private final javafx.scene.text.Text displayText;
         private String editingOriginalValue = "";
 
-        QueryResultEditableTableCell(int sqlType, QueryResultEditContext editContext) {
+        QueryResultEditableTableCell(int sqlType, QueryResultEditContext editContext,
+                                     int dataColumnIndex) {
             this.sqlType = sqlType;
             this.editContext = editContext;
+            this.dataColumnIndex = dataColumnIndex;
             getStyleClass().add("data-cell");
             setAlignment(Pos.CENTER_LEFT);
             displayText = new javafx.scene.text.Text();
@@ -1434,6 +1445,7 @@ public class SqlEditorView extends BorderPane {
             escapePressed = false;
             setPendingEditChanged(false);
             super.startEdit();
+            if (!isEditing()) return;
             editingOriginalValue = getItem();
             if (textField == null) {
                 createTextField();
@@ -1505,10 +1517,8 @@ public class SqlEditorView extends BorderPane {
             @SuppressWarnings("unchecked")
             ObservableList<String> row = (ObservableList<String>) tableRow.getItem();
             if (row == null) return;
-            int tableViewColIndex = getTableView().getColumns().indexOf(getTableColumn());
-            int dataColIndex = tableViewColIndex - 1;
-            if (dataColIndex >= 0 && dataColIndex < row.size()) {
-                row.set(dataColIndex, newValue);
+            if (dataColumnIndex >= 0 && dataColumnIndex < row.size()) {
+                row.set(dataColumnIndex, newValue);
             }
         }
 
@@ -1518,10 +1528,8 @@ public class SqlEditorView extends BorderPane {
             @SuppressWarnings("unchecked")
             ObservableList<String> row = (ObservableList<String>) tableRow.getItem();
             if (row == null) return getItem();
-            int tableViewColIndex = getTableView().getColumns().indexOf(getTableColumn());
-            int dataColIndex = tableViewColIndex - 1;
-            if (dataColIndex >= 0 && dataColIndex < row.size()) {
-                return row.get(dataColIndex);
+            if (dataColumnIndex >= 0 && dataColumnIndex < row.size()) {
+                return row.get(dataColumnIndex);
             }
             return getItem();
         }
@@ -1781,9 +1789,7 @@ public class SqlEditorView extends BorderPane {
         }
     }
 
-    /**
-     * 查询结果只有在能定位单一源表、结果包含完整主键时才开放修改和删除。
-     */
+    /** 查询结果只有在能安全定位原表记录时才开放修改；删除仍必须包含完整主键。 */
     private void loadQueryResultEditMetadata(QueryResultEditContext context) {
         new Thread(() -> {
             java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(
@@ -1791,43 +1797,35 @@ public class SqlEditorView extends BorderPane {
             connLock.lock();
             try {
                 try {
+                    String effectiveSchemaName = resolveQueryResultSchema(context);
                     List<Map<String, String>> tableColumns = DatabaseService.getTableColumns(context.config,
-                            context.target.databaseName, context.target.schemaName, context.target.tableName);
-                    Set<String> actualColumns = new HashSet<>();
+                            context.target.databaseName, effectiveSchemaName, context.target.tableName);
                     Map<String, String> comments = new java.util.LinkedHashMap<>();
-                    List<String> pks = new ArrayList<>();
                     for (Map<String, String> column : tableColumns) {
                         String name = column.get("字段名");
                         if (name == null) continue;
-                        actualColumns.add(name.toLowerCase(java.util.Locale.ROOT));
                         comments.put(name, Objects.requireNonNullElse(column.get("注释"), ""));
-                        if ("是".equals(column.get("主键"))) pks.add(name);
                     }
-                    Set<Integer> editableIndexes = new LinkedHashSet<>();
-                    boolean hasCompletePrimaryKey = !pks.isEmpty()
-                            && containsAllColumns(context.columnNames, pks);
-                    if (hasCompletePrimaryKey) {
-                        for (int i = 0; i < context.columnNames.size(); i++) {
-                            if (actualColumns.contains(context.columnNames.get(i).toLowerCase(java.util.Locale.ROOT))) {
-                                editableIndexes.add(i);
-                            }
-                        }
-                    }
+                    QueryResultEditPlan editPlan = QueryResultEditPlan.create(
+                            context.config.getType(), context.target.tableName,
+                            context.columnNames, context.sourceColumnNames,
+                            context.sourceTableNames, tableColumns);
 
                     Platform.runLater(() -> {
                         context.columnComments.clear();
                         context.columnComments.putAll(comments);
+                        context.databaseColumnNames.clear();
+                        context.databaseColumnNames.addAll(editPlan.databaseColumnNames());
+                        context.effectiveSchemaName = effectiveSchemaName;
+                        context.editabilityStatus = editPlan.statusText();
                         context.metadataLoaded = true;
-                        if (editableIndexes.isEmpty()) {
-                            updateQueryResultButtons(context);
-                            return;
-                        }
-                        context.primaryKeyColumns = List.copyOf(pks);
+                        context.primaryKeyColumns = editPlan.primaryKeyColumns();
                         context.editableColumnIndexes.clear();
-                        context.editableColumnIndexes.addAll(editableIndexes);
-                        context.tableView.setEditable(true);
+                        context.editableColumnIndexes.addAll(editPlan.editableColumnIndexes());
+                        context.tableView.setEditable(editPlan.isEditable());
                         for (int i = 0; i < context.columnNames.size(); i++) {
-                            context.tableView.getColumns().get(i + 1).setEditable(editableIndexes.contains(i));
+                            context.tableColumns.get(i).setEditable(
+                                    editPlan.editableColumnIndexes().contains(i));
                         }
                         updateQueryResultButtons(context);
                     });
@@ -1835,6 +1833,8 @@ public class SqlEditorView extends BorderPane {
                     // 无法可靠定位源表时保持只读，复制仍然可用。
                     Platform.runLater(() -> {
                         context.metadataLoaded = true;
+                        context.editabilityStatus = "只读结果 · 无法读取源表结构";
+                        context.tableView.setEditable(false);
                         updateQueryResultButtons(context);
                     });
                 }
@@ -1844,9 +1844,27 @@ public class SqlEditorView extends BorderPane {
         }, "DB-LoadPrimaryKeys-Query").start();
     }
 
-    /**
-     * 查询结果右键菜单：复制始终可用；粘贴、保存和删除仅在主键校验通过后启用。
-     */
+    private String resolveQueryResultSchema(QueryResultEditContext context) throws Exception {
+        if (context.target.schemaName != null && !context.target.schemaName.isBlank()) {
+            return context.target.schemaName;
+        }
+        for (int i = 0; i < context.sourceTableNames.size(); i++) {
+            String sourceTable = valueAt(context.sourceTableNames, i);
+            String sourceSchema = valueAt(context.sourceSchemaNames, i);
+            if (sourceTable.equalsIgnoreCase(context.target.tableName) && !sourceSchema.isBlank()) {
+                return sourceSchema;
+            }
+        }
+        return DatabaseService.resolveSchemaName(
+                context.config, context.target.databaseName, context.target.schemaName);
+    }
+
+    private static String valueAt(List<String> values, int index) {
+        if (values == null || index < 0 || index >= values.size()) return "";
+        return Objects.requireNonNullElse(values.get(index), "");
+    }
+
+    /** 查询结果右键菜单：复制始终可用；修改需可安全回写，删除还必须包含完整主键。 */
     private void setupQueryResultContextMenu(TableView<ObservableList<String>> tableView,
                                              QueryResultEditContext context,
                                              String sourceTableName) {
@@ -1925,7 +1943,8 @@ public class SqlEditorView extends BorderPane {
             pasteItem.setDisable(!editable
                     || !javafx.scene.input.Clipboard.getSystemClipboard().hasString());
             int rowCount = (int) tableView.getSelectionModel().getSelectedItems().stream().distinct().count();
-            deleteItem.setDisable(!editable || context.saving || rowCount == 0);
+            deleteItem.setDisable(context == null || !context.canDelete()
+                    || context.saving || rowCount == 0);
             if (activeResultContextMenu != null && activeResultContextMenu != menu) {
                 activeResultContextMenu.hide();
             }
@@ -1941,8 +1960,7 @@ public class SqlEditorView extends BorderPane {
     private void setQueryResultCellsToEmptyString(QueryResultEditContext context) {
         if (context == null || !context.isEditable()) return;
         for (TablePosition<ObservableList<String>, ?> position : context.tableView.getSelectionModel().getSelectedCells()) {
-            int tableColumnIndex = context.tableView.getColumns().indexOf(position.getTableColumn());
-            int dataColumnIndex = tableColumnIndex - 1;
+            int dataColumnIndex = queryResultDataColumnIndex(position.getTableColumn());
             int rowIndex = position.getRow();
             if (position.getTableColumn() == null
                     || rowIndex < 0
@@ -1964,8 +1982,7 @@ public class SqlEditorView extends BorderPane {
     private void setQueryResultCellsToNull(QueryResultEditContext context) {
         if (context == null || !context.isEditable()) return;
         for (TablePosition<ObservableList<String>, ?> position : context.tableView.getSelectionModel().getSelectedCells()) {
-            int tableColumnIndex = context.tableView.getColumns().indexOf(position.getTableColumn());
-            int dataColumnIndex = tableColumnIndex - 1;
+            int dataColumnIndex = queryResultDataColumnIndex(position.getTableColumn());
             int rowIndex = position.getRow();
             if (position.getTableColumn() == null
                     || rowIndex < 0
@@ -1987,8 +2004,7 @@ public class SqlEditorView extends BorderPane {
         int count = 0;
         for (TablePosition<ObservableList<String>, ?> position : context.tableView.getSelectionModel().getSelectedCells()) {
             if (position.getTableColumn() == null) continue;
-            int tableColumnIndex = context.tableView.getColumns().indexOf(position.getTableColumn());
-            int dataColumnIndex = tableColumnIndex - 1;
+            int dataColumnIndex = queryResultDataColumnIndex(position.getTableColumn());
             if (position.getRow() >= 0 && dataColumnIndex >= 0
                     && context.editableColumnIndexes.contains(dataColumnIndex)) {
                 count++;
@@ -2008,7 +2024,7 @@ public class SqlEditorView extends BorderPane {
         List<ObservableList<String>> currentRows = new ArrayList<>();
         List<ObservableList<String>> originalRows = new ArrayList<>();
         List<Set<Integer>> modifiedColumns = new ArrayList<>();
-        for (ObservableList<String> row : context.tableView.getItems()) {
+        for (ObservableList<String> row : context.sourceRows) {
             ObservableList<String> original = context.originalRows.get(row);
             if (original == null) continue;
             Set<Integer> changed = new LinkedHashSet<>();
@@ -2027,6 +2043,7 @@ public class SqlEditorView extends BorderPane {
         if (currentRows.isEmpty()) return;
 
         context.saving = true;
+        context.operationStatus = "正在保存修改...";
         context.tableView.setDisable(true);
         context.saveButton.setAccessibleText("保存中");
         context.saveButton.setTooltip(new Tooltip("保存中..."));
@@ -2037,10 +2054,14 @@ public class SqlEditorView extends BorderPane {
             connLock.lock();
             try {
                 try {
-                    DatabaseService.updateRows(context.config, context.target.databaseName,
-                            context.target.schemaName, context.target.tableName,
-                            context.primaryKeyColumns, context.columnNames,
+                    int updatedRows = DatabaseService.updateRows(context.config, context.target.databaseName,
+                            context.effectiveSchemaName, context.target.tableName,
+                            context.primaryKeyColumns, context.databaseColumnNames, context.columnTypes,
                             currentRows, originalRows, modifiedColumns);
+                    if (updatedRows != currentRows.size()) {
+                        throw new IllegalStateException("仅更新了 " + updatedRows + "/"
+                                + currentRows.size() + " 行，数据可能已被其他操作修改，请重新查询后再试");
+                    }
                     Platform.runLater(() -> {
                         for (int i = 0; i < uiRows.size(); i++) {
                             context.originalRows.put(uiRows.get(i),
@@ -2072,7 +2093,7 @@ public class SqlEditorView extends BorderPane {
 
     /** 处理查询结果表格中的行删除。 */
     private void handleQueryResultDeleteRows(QueryResultEditContext context) {
-        if (!context.isEditable() || context.saving) return;
+        if (!context.canDelete() || context.saving) return;
         TableView<ObservableList<String>> tableView = context.tableView;
 
         List<ObservableList<String>> selectedRows = tableView.getSelectionModel().getSelectedItems()
@@ -2096,23 +2117,38 @@ public class SqlEditorView extends BorderPane {
                         original != null ? original : row));
             }
 
+            context.saving = true;
+            context.operationStatus = "正在删除数据...";
+            tableView.setDisable(true);
+            updateQueryResultButtons(context);
             new Thread(() -> {
                 java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(
                         context.config, context.target.databaseName);
                 connLock.lock();
                 try {
                     try {
-                        DatabaseService.deleteRowsByPrimaryKeys(context.config,
-                                context.target.databaseName, context.target.schemaName, context.target.tableName,
-                                context.primaryKeyColumns, context.columnNames, keysToDelete);
+                        int deletedRows = DatabaseService.deleteRowsByPrimaryKeys(context.config,
+                                context.target.databaseName, context.effectiveSchemaName, context.target.tableName,
+                                context.primaryKeyColumns, context.databaseColumnNames,
+                                context.columnTypes, keysToDelete);
+                        if (deletedRows != selectedRows.size()) {
+                            throw new IllegalStateException("仅删除了 " + deletedRows + "/"
+                                    + selectedRows.size() + " 行，数据可能已被其他操作修改，请重新查询后再试");
+                        }
                         Platform.runLater(() -> {
                             for (ObservableList<String> row : selectedRows) context.originalRows.remove(row);
-                            tableView.getItems().removeAll(selectedRows);
+                            context.sourceRows.removeAll(selectedRows);
+                            context.saving = false;
+                            tableView.setDisable(false);
                             updateQueryResultButtons(context);
                         });
                     } catch (Exception e) {
-                        Platform.runLater(() -> showQueryResultError("删除失败",
-                                "删除行失败: " + e.getMessage()));
+                        Platform.runLater(() -> {
+                            context.saving = false;
+                            tableView.setDisable(false);
+                            updateQueryResultButtons(context);
+                            showQueryResultError("删除失败", "删除行失败: " + e.getMessage());
+                        });
                     }
                 } finally {
                     connLock.unlock();
@@ -2128,17 +2164,22 @@ public class SqlEditorView extends BorderPane {
         if (text == null || text.isEmpty()) return;
 
         int startRow = Integer.MAX_VALUE;
-        int startColumn = Integer.MAX_VALUE;
-        for (TablePosition<ObservableList<String>, ?> position
-                : context.tableView.getSelectionModel().getSelectedCells()) {
-            int tableColumn = context.tableView.getColumns().indexOf(position.getTableColumn());
-            int dataColumn = tableColumn - 1;
-            if (position.getRow() >= 0 && dataColumn >= 0) {
-                startRow = Math.min(startRow, position.getRow());
-                startColumn = Math.min(startColumn, dataColumn);
+        int startVisibleColumn = Integer.MAX_VALUE;
+        List<TableColumn<ObservableList<String>, ?>> visibleDataColumns = new ArrayList<>();
+        for (TableColumn<ObservableList<String>, ?> column : context.tableView.getColumns()) {
+            if (column.isVisible() && queryResultDataColumnIndex(column) >= 0) {
+                visibleDataColumns.add(column);
             }
         }
-        if (startRow == Integer.MAX_VALUE || startColumn == Integer.MAX_VALUE) return;
+        for (TablePosition<ObservableList<String>, ?> position
+                : context.tableView.getSelectionModel().getSelectedCells()) {
+            int visibleColumn = visibleDataColumns.indexOf(position.getTableColumn());
+            if (position.getRow() >= 0 && visibleColumn >= 0) {
+                startRow = Math.min(startRow, position.getRow());
+                startVisibleColumn = Math.min(startVisibleColumn, visibleColumn);
+            }
+        }
+        if (startRow == Integer.MAX_VALUE || startVisibleColumn == Integer.MAX_VALUE) return;
 
         List<String[]> values = parseClipboardRows(text);
         while (values.size() > 1 && values.get(values.size() - 1).length == 1
@@ -2148,12 +2189,14 @@ public class SqlEditorView extends BorderPane {
         context.tableView.getSelectionModel().clearSelection();
         for (int r = 0; r < values.size() && startRow + r < context.tableView.getItems().size(); r++) {
             ObservableList<String> row = context.tableView.getItems().get(startRow + r);
-            for (int c = 0; c < values.get(r).length && startColumn + c < context.columnNames.size(); c++) {
-                int dataColumn = startColumn + c;
+            for (int c = 0; c < values.get(r).length
+                    && startVisibleColumn + c < visibleDataColumns.size(); c++) {
+                TableColumn<ObservableList<String>, ?> targetColumn =
+                        visibleDataColumns.get(startVisibleColumn + c);
+                int dataColumn = queryResultDataColumnIndex(targetColumn);
                 if (!context.editableColumnIndexes.contains(dataColumn)) continue;
                 row.set(dataColumn, values.get(r)[c]);
-                context.tableView.getSelectionModel().select(startRow + r,
-                        context.tableView.getColumns().get(dataColumn + 1));
+                context.tableView.getSelectionModel().select(startRow + r, targetColumn);
             }
         }
         context.tableView.refresh();
@@ -2171,7 +2214,7 @@ public class SqlEditorView extends BorderPane {
     }
 
     private boolean hasQueryResultChanges(QueryResultEditContext context) {
-        for (ObservableList<String> row : context.tableView.getItems()) {
+        for (ObservableList<String> row : context.sourceRows) {
             ObservableList<String> original = context.originalRows.get(row);
             if (original == null) continue;
             if (TableDataChangeDetector.hasChanges(
@@ -2187,7 +2230,7 @@ public class SqlEditorView extends BorderPane {
             context.tableView.edit(-1, null);
         }
         context.activeEditChanged = false;
-        for (ObservableList<String> row : context.tableView.getItems()) {
+        for (ObservableList<String> row : context.sourceRows) {
             ObservableList<String> original = context.originalRows.get(row);
             if (original != null && !row.equals(original)) row.setAll(original);
         }
@@ -2200,16 +2243,16 @@ public class SqlEditorView extends BorderPane {
         boolean changed = context.isEditable()
                 && (context.activeEditChanged || hasQueryResultChanges(context));
         context.saveButton.setDisable(!context.isEditable() || context.saving || !changed);
-        context.deleteButton.setDisable(!context.isEditable() || context.saving
+        context.deleteButton.setDisable(!context.canDelete() || context.saving
                 || context.tableView.getSelectionModel().getSelectedItems().isEmpty());
         context.cancelButton.setDisable(context.saving || !changed);
         if (context.modeStatusLabel != null) {
             String status;
-            if (context.saving) status = "正在保存修改...";
+            if (context.saving) status = context.operationStatus;
             else if (!context.metadataLoaded) status = "正在检查结果是否可编辑...";
-            else if (!context.isEditable()) status = "只读结果";
+            else if (!context.isEditable()) status = context.editabilityStatus;
             else if (changed) status = "有未保存的修改";
-            else status = "可编辑 · 双击单元格编辑，Ctrl+V 粘贴修改";
+            else status = context.editabilityStatus;
             context.modeStatusLabel.setText(status);
         }
         if (context.recordStatusLabel != null) {
@@ -2224,14 +2267,6 @@ public class SqlEditorView extends BorderPane {
         err.setContentText(message);
         DialogPositionUtil.centerOnOwner(err, this);
         err.showAndWait();
-    }
-
-    private boolean containsAllColumns(List<String> available, List<String> required) {
-        for (String requiredColumn : required) {
-            boolean found = available.stream().anyMatch(c -> c.equalsIgnoreCase(requiredColumn));
-            if (!found) return false;
-        }
-        return true;
     }
 
     private QueryTableTarget resolveQueryTableTarget(String sourceTableName,
@@ -2255,18 +2290,71 @@ public class SqlEditorView extends BorderPane {
                 && Objects.equals(initialDatabase, databaseName)) {
             targetSchema = initialSchema;
         }
-        return new QueryTableTarget(targetDatabase, targetSchema, tableName);
+        return new QueryTableTarget(targetDatabase, targetSchema, tableName, parts.length > 1);
+    }
+
+    /**
+     * JDBC 来源信息比 SQL 文本中的当前库假设更准确（例如 MySQL 先执行 USE 再查询）。
+     * 如果结果列来自同名但不同 namespace 的对象，则无法唯一确定写回目标，保持只读。
+     */
+    private QueryTableTarget refineQueryTableTargetFromMetadata(QueryTableTarget parsedTarget,
+                                                                ConnectionConfig config,
+                                                                TableRowData result) {
+        if (parsedTarget == null) return null;
+        List<String> sourceTables = result.getSourceTableNames();
+        if (sourceTables == null || sourceTables.isEmpty()) return parsedTarget;
+
+        Set<String> actualTableNames = new LinkedHashSet<>();
+        Set<String> sourceNamespaces = new LinkedHashSet<>();
+        for (int i = 0; i < sourceTables.size(); i++) {
+            String sourceTable = valueAt(sourceTables, i);
+            if (sourceTable.isBlank()) continue;
+            actualTableNames.add(sourceTable);
+
+            String namespace = switch (config.getType()) {
+                case MYSQL -> valueAt(result.getSourceCatalogNames(), i);
+                case POSTGRESQL, ORACLE -> valueAt(result.getSourceSchemaNames(), i);
+                default -> "";
+            };
+            if (!namespace.isBlank()) sourceNamespaces.add(namespace);
+        }
+        if (actualTableNames.isEmpty()) return parsedTarget;
+        if (actualTableNames.size() != 1 || sourceNamespaces.size() > 1) return null;
+
+        String actualTable = actualTableNames.iterator().next();
+        if (!actualTable.equals(parsedTarget.tableName)
+                && !actualTable.equalsIgnoreCase(parsedTarget.tableName)) {
+            return null;
+        }
+        String namespace = sourceNamespaces.isEmpty() ? "" : sourceNamespaces.iterator().next();
+        // 未限定对象名时，若驱动也没有返回 catalog/schema，就无法排除会话执行过
+        // USE / SET search_path / ALTER SESSION CURRENT_SCHEMA，不能猜测写回当前树节点。
+        if (namespace.isBlank() && !parsedTarget.namespaceExplicit) return null;
+        return switch (config.getType()) {
+            case MYSQL -> new QueryTableTarget(
+                    namespace.isBlank() ? parsedTarget.databaseName : namespace,
+                    parsedTarget.schemaName, actualTable, true);
+            case POSTGRESQL -> new QueryTableTarget(parsedTarget.databaseName,
+                    namespace.isBlank() ? parsedTarget.schemaName : namespace, actualTable, true);
+            case ORACLE -> new QueryTableTarget(
+                    namespace.isBlank() ? parsedTarget.databaseName : namespace,
+                    parsedTarget.schemaName, actualTable, true);
+            default -> parsedTarget;
+        };
     }
 
     private static final class QueryTableTarget {
         final String databaseName;
         final String schemaName;
         final String tableName;
+        final boolean namespaceExplicit;
 
-        QueryTableTarget(String databaseName, String schemaName, String tableName) {
+        QueryTableTarget(String databaseName, String schemaName, String tableName,
+                         boolean namespaceExplicit) {
             this.databaseName = databaseName;
             this.schemaName = schemaName;
             this.tableName = tableName;
+            this.namespaceExplicit = namespaceExplicit;
         }
 
         String displayName() {
@@ -2274,15 +2362,30 @@ public class SqlEditorView extends BorderPane {
         }
     }
 
+    private static int queryResultDataColumnIndex(TableColumn<?, ?> column) {
+        if (column == null) return -1;
+        return column.getUserData() instanceof Integer index && index >= 0 ? index : -1;
+    }
+
     private static final class QueryResultEditContext {
         final TableView<ObservableList<String>> tableView;
+        final ObservableList<ObservableList<String>> sourceRows;
         final ConnectionConfig config;
         final QueryTableTarget target;
         final List<String> columnNames;
+        final List<String> databaseColumnNames;
+        final List<Integer> columnTypes;
+        final List<String> sourceColumnNames;
+        final List<String> sourceTableNames;
+        final List<String> sourceSchemaNames;
+        final List<TableColumn<ObservableList<String>, String>> tableColumns = new ArrayList<>();
         final Map<ObservableList<String>, ObservableList<String>> originalRows = new IdentityHashMap<>();
         final Set<Integer> editableColumnIndexes = new LinkedHashSet<>();
         final Map<String, String> columnComments = new java.util.LinkedHashMap<>();
         List<String> primaryKeyColumns = List.of();
+        String effectiveSchemaName;
+        String editabilityStatus = "正在检查结果是否可编辑...";
+        String operationStatus = "正在保存修改...";
         Button saveButton;
         Button deleteButton;
         Button cancelButton;
@@ -2293,15 +2396,27 @@ public class SqlEditorView extends BorderPane {
         boolean activeEditChanged;
 
         QueryResultEditContext(TableView<ObservableList<String>> tableView, ConnectionConfig config,
-                               QueryTableTarget target, List<String> columnNames) {
+                               QueryTableTarget target, TableRowData result) {
             this.tableView = tableView;
+            this.sourceRows = tableView.getItems();
             this.config = config;
             this.target = target;
-            this.columnNames = List.copyOf(columnNames);
+            this.columnNames = List.copyOf(result.getColumnNames());
+            this.databaseColumnNames = new ArrayList<>(this.columnNames);
+            this.columnTypes = result.getColumnTypes() == null
+                    ? List.of() : List.copyOf(result.getColumnTypes());
+            this.sourceColumnNames = List.copyOf(result.getSourceColumnNames());
+            this.sourceTableNames = List.copyOf(result.getSourceTableNames());
+            this.sourceSchemaNames = List.copyOf(result.getSourceSchemaNames());
+            this.effectiveSchemaName = target.schemaName;
         }
 
         boolean isEditable() {
-            return !primaryKeyColumns.isEmpty() && !editableColumnIndexes.isEmpty();
+            return !editableColumnIndexes.isEmpty();
+        }
+
+        boolean canDelete() {
+            return isEditable() && !primaryKeyColumns.isEmpty();
         }
     }
 
@@ -2766,7 +2881,7 @@ public class SqlEditorView extends BorderPane {
                 if (!selectedSet.contains(r + "," + c)) continue;
                 if (!firstCol) sb.append('\t');
                 firstCol = false;
-                int dataColIndex = c - 1; // 减去行选择器列
+                int dataColIndex = queryResultDataColumnIndex(tableView.getColumns().get(c));
                 if (dataColIndex >= 0 && dataColIndex < rowData.size()) {
                     String value = rowData.get(dataColIndex);
                     sb.append(value != null ? value : "");

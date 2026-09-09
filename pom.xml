@@ -111,6 +111,18 @@
             <groupId>com.squareup.okhttp</groupId>
             <artifactId>okhttp</artifactId>
             <version>2.7.5</version>
+            <!--
+                OkHttp 2 declares Okio 1.6.0. Let the application's OkHttp 4
+                dependency provide Okio 2.8.0 instead: MinIO/OkHttp 4 require
+                ByteString.Companion, which does not exist in Okio 1.x.
+                OkHttp 2 remains binary-compatible with the Java API in Okio 2.
+            -->
+            <exclusions>
+                <exclusion>
+                    <groupId>com.squareup.okio</groupId>
+                    <artifactId>okio</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>com.github.mwiede</groupId>

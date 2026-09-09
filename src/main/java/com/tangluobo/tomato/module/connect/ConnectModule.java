@@ -1817,12 +1817,19 @@ public class ConnectModule implements Module {
      * 适用于已展开（已连接）的数据库/Redis/RocketMQ 主机节点。
      */
     private void closeHostConnection(TreeItem<String> hostItem, ConnectionConfig config) {
+        AbstractDbHandler databaseHandler = createDbHandler(config);
+
+        // 关闭连接是关闭数据库的父级操作：按精确连接归属一次性清理所有数据库对象标签。
+        // 不依赖当前树节点，数据库刷新或删除后留下的对象标签也能被关闭。
+        if (databaseHandler != null) {
+            databaseHandler.closeDatabaseObjectsForConnection(config);
+        }
+
         // 后台关闭底层连接（避免阻塞UI线程）
         new Thread(() -> {
             try {
-                AbstractDbHandler handler = createDbHandler(config);
-                if (handler != null) {
-                    handler.closeConnection(config);
+                if (databaseHandler != null) {
+                    databaseHandler.closeConnection(config);
                 } else if (config.getType() == ConnectType.REDIS) {
                     RedisService.closeJedisCluster(config);
                     RedisService.closeSshTunnel(config.getId());

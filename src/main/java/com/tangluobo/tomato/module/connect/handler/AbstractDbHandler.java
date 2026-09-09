@@ -42,6 +42,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -57,6 +58,7 @@ import java.util.Set;
  * - 实现 ConnectHandler 接口，使 handleConnect 也可通过统一分发机制调用
  */
 public abstract class AbstractDbHandler implements ConnectHandler {
+    private static final Object DATABASE_OBJECT_CONNECTION_ID_KEY = new Object();
 
     /** 关联的连接模块，提供共享 UI 状态与公共回调 */
     protected final ConnectModule module;
@@ -194,6 +196,36 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             DatabaseService.closeConnection(config.getId());
         } catch (Exception ignored) {
         }
+    }
+
+    /** 关闭指定连接下所有数据库的对象、数据、结构及新建表标签；查询标签保持打开。 */
+    public void closeDatabaseObjectsForConnection(ConnectionConfig config) {
+        TabPane tabPane = module.getTerminalTabPane();
+        if (tabPane == null || config == null) return;
+
+        removeDatabaseObjectTabsForConnection(tabPane.getTabs(), config.getId());
+        if (tabPane.getTabs().isEmpty()) {
+            module.showWelcomeView();
+        }
+    }
+
+    /** 给数据库对象类标签记录精确连接归属，避免依赖易冲突的字符串前缀。 */
+    static void tagDatabaseObjectTab(Tab tab, String connectionId) {
+        if (tab == null) return;
+        if (connectionId == null) {
+            tab.getProperties().remove(DATABASE_OBJECT_CONNECTION_ID_KEY);
+        } else {
+            tab.getProperties().put(DATABASE_OBJECT_CONNECTION_ID_KEY, connectionId);
+        }
+    }
+
+    /** 从标签列表移除指定连接的全部数据库对象标签，返回移除数量。 */
+    static int removeDatabaseObjectTabsForConnection(List<Tab> tabs, String connectionId) {
+        if (tabs == null || connectionId == null) return 0;
+        int before = tabs.size();
+        tabs.removeIf(tab -> tab != null && Objects.equals(
+                connectionId, tab.getProperties().get(DATABASE_OBJECT_CONNECTION_ID_KEY)));
+        return before - tabs.size();
     }
 
     /**
@@ -1159,6 +1191,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         } catch (Exception ignored) {}
         tab.setContent(objectsView);
         tab.setUserData(tabId);
+        tagDatabaseObjectTab(tab, config.getId());
         tab.setClosable(false);  // 不可关闭
 
         // 右键菜单：仅刷新
@@ -1288,6 +1321,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         }
         tab.setContent(structView);
         tab.setUserData(tabId);
+        tagDatabaseObjectTab(tab, config.getId());
 
         // 新建表保存成功后：更新 tab 标题/userData（切换为设计表标识）并刷新表树
         final Tab finalTab = tab;
@@ -1376,6 +1410,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         }
         tab.setContent(structView);
         tab.setUserData(tabId);
+        tagDatabaseObjectTab(tab, config.getId());
 
         // 字段脏状态：未保存时Tab标题前加*，保存后去除
         final String[] baseTitle = {tabTitle};
@@ -1460,6 +1495,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         }
         tab.setContent(dataView);
         tab.setUserData(tabId);
+        tagDatabaseObjectTab(tab, config.getId());
 
         ContextMenu tableTabContextMenu = new ContextMenu();
         MenuItem tableConfigItem = new MenuItem("表格配置");
@@ -1609,24 +1645,32 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 contextMenu.getItems().add(refreshItem);
             }
             case QUERY_FOLDER -> {
+                MenuItem openDirItem = new MenuItem("打开目录");
+                openDirItem.setOnAction(e -> handleOpenQueryDir(data));
                 MenuItem newQueryItem = new MenuItem("新建查询");
                 newQueryItem.setOnAction(e -> handleNewQuery(item, data));
                 MenuItem newDirItem = new MenuItem("新建目录");
                 newDirItem.setOnAction(e -> handleNewQueryDir(item, data));
                 MenuItem refreshItem = new MenuItem("刷新");
                 refreshItem.setOnAction(e -> refreshDbNode(item, data));
-                contextMenu.getItems().addAll(newQueryItem, newDirItem, new SeparatorMenuItem(), refreshItem);
+                contextMenu.getItems().addAll(openDirItem, new SeparatorMenuItem(),
+                        newQueryItem, newDirItem, new SeparatorMenuItem(), refreshItem);
             }
             case BACKUP_FOLDER -> {
+                MenuItem openDirItem = new MenuItem("打开目录");
+                openDirItem.setOnAction(e -> handleOpenBackupDir(data));
                 MenuItem newBackupItem = new MenuItem("新建备份");
                 newBackupItem.setOnAction(e -> module.handleNewBackup(item, data));
                 MenuItem newDirItem = new MenuItem("新建目录");
                 newDirItem.setOnAction(e -> handleNewBackupDir(item, data));
                 MenuItem refreshItem = new MenuItem("刷新");
                 refreshItem.setOnAction(e -> refreshDbNode(item, data));
-                contextMenu.getItems().addAll(newBackupItem, newDirItem, new SeparatorMenuItem(), refreshItem);
+                contextMenu.getItems().addAll(openDirItem, new SeparatorMenuItem(),
+                        newBackupItem, newDirItem, new SeparatorMenuItem(), refreshItem);
             }
             case QUERY_DIR -> {
+                MenuItem openDirItem = new MenuItem("打开目录");
+                openDirItem.setOnAction(e -> handleOpenQueryDir(data));
                 MenuItem newQueryItem = new MenuItem("新建查询");
                 newQueryItem.setOnAction(e -> handleNewQuery(item, data));
                 MenuItem newDirItem = new MenuItem("新建目录");
@@ -1637,9 +1681,13 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 deleteItem.setOnAction(e -> handleDeleteQueryDir(item, data));
                 MenuItem refreshItem = new MenuItem("刷新");
                 refreshItem.setOnAction(e -> refreshDbNode(item, data));
-                contextMenu.getItems().addAll(newQueryItem, newDirItem, new SeparatorMenuItem(), renameItem, deleteItem, new SeparatorMenuItem(), refreshItem);
+                contextMenu.getItems().addAll(openDirItem, new SeparatorMenuItem(),
+                        newQueryItem, newDirItem, new SeparatorMenuItem(), renameItem, deleteItem,
+                        new SeparatorMenuItem(), refreshItem);
             }
             case BACKUP_DIR -> {
+                MenuItem openDirItem = new MenuItem("打开目录");
+                openDirItem.setOnAction(e -> handleOpenBackupDir(data));
                 MenuItem newBackupItem = new MenuItem("新建备份");
                 newBackupItem.setOnAction(e -> module.handleNewBackup(item, data));
                 MenuItem newDirItem = new MenuItem("新建目录");
@@ -1650,7 +1698,9 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 deleteItem.setOnAction(e -> handleDeleteBackupDir(item, data));
                 MenuItem refreshItem = new MenuItem("刷新");
                 refreshItem.setOnAction(e -> refreshDbNode(item, data));
-                contextMenu.getItems().addAll(newBackupItem, newDirItem, new SeparatorMenuItem(), renameItem, deleteItem, new SeparatorMenuItem(), refreshItem);
+                contextMenu.getItems().addAll(openDirItem, new SeparatorMenuItem(),
+                        newBackupItem, newDirItem, new SeparatorMenuItem(), renameItem, deleteItem,
+                        new SeparatorMenuItem(), refreshItem);
             }
             case TABLE, VIEW -> {
                 MenuItem openTableItem = new MenuItem("打开表", module.createMenuIcon("table_open.png"));
@@ -2272,7 +2322,14 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         });
     }
 
-    // ==================== 备份节点 ====================
+    // ==================== 查询目录与备份节点 ====================
+
+    /** 打开查询根目录或当前查询子目录。 */
+    public void handleOpenQueryDir(DatabaseNodeData data) {
+        java.nio.file.Path queryDir = SqlEditorView.resolveQueryDir(
+                data.getConnectionConfig().getName(), data.getDatabaseName(), data.getPath());
+        openLocalDirectory(queryDir, null, "查询目录", "OpenQueryDir");
+    }
 
     /** 还原备份：打开还原对话框 */
     public void handleRestoreBackup(TreeItem<String> backupItem, DatabaseNodeData data) {
@@ -2284,43 +2341,100 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         dialog.showAndWait();
     }
 
-    /** 打开备份所在目录 */
+    /** 打开备份节点对应目录；备份文件节点优先在文件管理器中定位该文件。 */
     public void handleOpenBackupDir(DatabaseNodeData data) {
         java.nio.file.Path backupDir = BackupService.resolveBackupDir(
                 data.getConnectionConfig().getName(), data.getDatabaseName(), data.getPath());
-        java.nio.file.Path backupFile = backupDir.resolve(data.getName() + ".nb3");
+        java.nio.file.Path backupFile = data.getType() == DatabaseNodeData.NodeType.BACKUP
+                ? backupDir.resolve(data.getName() + ".nb3")
+                : null;
 
-        new Thread(() -> {
+        openLocalDirectory(backupDir, backupFile, "备份目录", "OpenBackupDir");
+    }
+
+    /** 在系统文件管理器中打开目录；preferredFile 存在时优先定位该文件。 */
+    private void openLocalDirectory(java.nio.file.Path directory,
+                                    java.nio.file.Path preferredFile,
+                                    String directoryLabel,
+                                    String threadName) {
+        Thread openThread = new Thread(() -> {
             try {
+                Files.createDirectories(directory);
+
+                // Windows 上 Desktop.open() 可能因 Shell 集成异常抛出“系统调用失败”。
+                // 优先使用平台文件管理器，失败后再降级到 Java Desktop。
+                Exception platformFailure;
+                try {
+                    openDirectoryWithPlatformCommand(directory, preferredFile);
+                    return;
+                } catch (Exception ex) {
+                    platformFailure = ex;
+                }
+
+                Exception desktopFailure = null;
                 if (java.awt.Desktop.isDesktopSupported()) {
                     java.awt.Desktop desktop = java.awt.Desktop.getDesktop();
-                    if (backupFile.toFile().exists()) {
+                    if (preferredFile != null && Files.exists(preferredFile)) {
                         if (desktop.isSupported(java.awt.Desktop.Action.BROWSE_FILE_DIR)) {
-                            desktop.browseFileDirectory(backupFile.toFile());
-                        } else {
-                            desktop.open(backupDir.toFile());
+                            try {
+                                desktop.browseFileDirectory(preferredFile.toFile());
+                                return;
+                            } catch (Exception ex) {
+                                desktopFailure = ex;
+                            }
                         }
-                    } else {
-                        desktop.open(backupDir.toFile());
+                    }
+                    if (desktop.isSupported(java.awt.Desktop.Action.OPEN)) {
+                        try {
+                            desktop.open(directory.toFile());
+                            return;
+                        } catch (Exception ex) {
+                            if (desktopFailure != null) {
+                                ex.addSuppressed(desktopFailure);
+                            }
+                            desktopFailure = ex;
+                        }
                     }
                 }
-            } catch (Exception e) {
-                try {
-                    String[] cmd = {
-                            "xdg-open", backupDir.toAbsolutePath().toString()
-                    };
-                    Runtime.getRuntime().exec(cmd);
-                } catch (Exception ex) {
-                    Platform.runLater(() -> {
-                        Alert alert = new Alert(Alert.AlertType.ERROR);
-                        alert.setTitle("打开目录失败");
-                        alert.setHeaderText(null);
-                        alert.setContentText("无法打开备份目录: " + ex.getMessage());
-                        alert.showAndWait();
-                    });
+                if (desktopFailure != null) {
+                    desktopFailure.addSuppressed(platformFailure);
+                    throw desktopFailure;
                 }
+                throw platformFailure;
+            } catch (Exception ex) {
+                Platform.runLater(() -> {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("打开目录失败");
+                    alert.setHeaderText(null);
+                    alert.setContentText("无法打开" + directoryLabel + ": " + ex.getMessage());
+                    alert.showAndWait();
+                });
             }
-        }, "OpenBackupDir").start();
+        }, threadName);
+        openThread.setDaemon(true);
+        openThread.start();
+    }
+
+    private void openDirectoryWithPlatformCommand(java.nio.file.Path directory,
+                                                  java.nio.file.Path preferredFile) throws IOException {
+        String osName = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
+        java.nio.file.Path fileToReveal = preferredFile != null && Files.exists(preferredFile)
+                ? preferredFile.toAbsolutePath().normalize()
+                : null;
+        String absoluteDirectory = directory.toAbsolutePath().normalize().toString();
+        List<String> command;
+        if (osName.contains("win")) {
+            command = fileToReveal == null
+                    ? List.of("explorer.exe", absoluteDirectory)
+                    : List.of("explorer.exe", "/select," + fileToReveal);
+        } else if (osName.contains("mac")) {
+            command = fileToReveal == null
+                    ? List.of("open", absoluteDirectory)
+                    : List.of("open", "-R", fileToReveal.toString());
+        } else {
+            command = List.of("xdg-open", absoluteDirectory);
+        }
+        new ProcessBuilder(command).start();
     }
 
     /** 重命名备份：重命名文件并更新节点数据 */

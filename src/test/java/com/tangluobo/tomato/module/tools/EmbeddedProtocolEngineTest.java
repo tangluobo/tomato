@@ -17,6 +17,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.ServiceLoader;
@@ -61,6 +66,41 @@ class EmbeddedProtocolEngineTest {
         assertEquals(boolean.class, PeerConnection.class.getMethod("isQueued").getReturnType());
         assertEquals(int.class, TransferStatus.class.getField("numConnectedPeers").getType());
         assertEquals(int.class, TransferStatus.class.getField("numQueuedPeers").getType());
+    }
+
+    @Test
+    void legacyOkHttpClientRemainsCompatibleWithSharedOkioRuntime() throws Exception {
+        try (ServerSocket server = new ServerSocket(0)) {
+            Thread responder = Thread.ofPlatform().start(() -> {
+                try (Socket socket = server.accept();
+                     BufferedReader reader = new BufferedReader(
+                             new InputStreamReader(socket.getInputStream()));
+                     OutputStream output = socket.getOutputStream()) {
+                    while (!reader.readLine().isEmpty()) {
+                        // Consume the request headers before sending the response.
+                    }
+                    output.write(("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n"
+                            + "Connection: close\r\n\r\nok").getBytes());
+                    output.flush();
+                } catch (Exception error) {
+                    throw new RuntimeException(error);
+                }
+            });
+            com.squareup.okhttp.OkHttpClient client = new com.squareup.okhttp.OkHttpClient();
+            com.squareup.okhttp.Request request = new com.squareup.okhttp.Request.Builder()
+                    .url("http://127.0.0.1:" + server.getLocalPort() + "/compatibility")
+                    .build();
+
+            com.squareup.okhttp.Response response = client.newCall(request).execute();
+            try {
+                assertEquals(200, response.code());
+                assertEquals("ok", response.body().string());
+            } finally {
+                response.body().close();
+            }
+            responder.join(2_000L);
+            assertFalse(responder.isAlive());
+        }
     }
 
     @Test
