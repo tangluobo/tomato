@@ -1,0 +1,9 @@
+Bt 1.10 embedded components
+
+Source: https://github.com/atomashpolskiy/bt
+Tag: bt-parent-1.10
+
+The build obtains and merges the pure-Java bt-core, bt-bencoding, bt-dht and
+bt-http-tracker-client artifacts. The two BtModuleProvider service entries are
+combined by this project. No native executable or external BitTorrent client
+is used.

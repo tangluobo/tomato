@@ -1,0 +1,9 @@
+jed2k core 2.0 (Tomato r4)
+
+Source: https://github.com/a-pavlov/jed2k
+Pinned commit: bc10ef8a7c966ccde1590a1077b32f01ac94122a
+Source module: core
+
+The source under src/main/java/org/dkf/jed2k and src/main/java/org/bitlet/weupnp
+is compiled directly into Tomato. Tomato r4 contains the Session compatibility,
+source refresh, queue/stall recovery and large-file source request fixes.

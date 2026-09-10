@@ -76,14 +76,9 @@
             <artifactId>gson</artifactId>
             <version>2.11.0</version>
         </dependency>
-        <!-- Embedded pure-Java BitTorrent engine (magnet, torrent, DHT and HTTP trackers). -->
-        <dependency>
-            <groupId>com.github.atomashpolskiy</groupId>
-            <artifactId>bt-embedded</artifactId>
-            <version>1.10</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/third_party/bt/bt-embedded-1.10.jar</systemPath>
-        </dependency>
+        <!-- The pure-Java BitTorrent artifacts are unpacked into this module at
+             generate-resources time. This avoids committing a merged binary and
+             also avoids their split packages becoming separate JPMS modules. -->
         <dependency>
             <groupId>com.google.inject</groupId>
             <artifactId>guice</artifactId>
@@ -94,14 +89,7 @@
             <artifactId>httpclient</artifactId>
             <version>4.5.13</version>
         </dependency>
-        <!-- Embedded pure-Java ED2K engine, built from the pinned Apache-licensed jed2k core. -->
-        <dependency>
-            <groupId>org.dkf</groupId>
-            <artifactId>jed2k-core</artifactId>
-            <version>2.0-tomata-r3</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/third_party/jed2k/jed2k-core-2.0-tomata-r4.jar</systemPath>
-        </dependency>
+        <!-- The patched Apache-licensed jed2k core is compiled from src/main/java. -->
         <dependency>
             <groupId>com.google.re2j</groupId>
             <artifactId>re2j</artifactId>
@@ -414,6 +402,50 @@
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.8.1</version>
+                <executions>
+                    <execution>
+                        <id>embed-pure-java-bittorrent-engine</id>
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>unpack</goal>
+                        </goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>com.github.atomashpolskiy</groupId>
+                                    <artifactId>bt-core</artifactId>
+                                    <version>1.10</version>
+                                    <outputDirectory>${project.build.outputDirectory}</outputDirectory>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>com.github.atomashpolskiy</groupId>
+                                    <artifactId>bt-bencoding</artifactId>
+                                    <version>1.10</version>
+                                    <outputDirectory>${project.build.outputDirectory}</outputDirectory>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>com.github.atomashpolskiy</groupId>
+                                    <artifactId>bt-http-tracker-client</artifactId>
+                                    <version>1.10</version>
+                                    <outputDirectory>${project.build.outputDirectory}</outputDirectory>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>com.github.atomashpolskiy</groupId>
+                                    <artifactId>bt-dht</artifactId>
+                                    <version>1.10</version>
+                                    <outputDirectory>${project.build.outputDirectory}</outputDirectory>
+                                </artifactItem>
+                            </artifactItems>
+                            <excludes>META-INF/MANIFEST.MF,META-INF/services/bt.module.BtModuleProvider</excludes>
+                            <overWriteIfNewer>true</overWriteIfNewer>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.13.0</version>
                 <configuration>
@@ -609,33 +641,6 @@
                 <artifactId>maven-antrun-plugin</artifactId>
                 <version>3.1.0</version>
                 <executions>
-                    <execution>
-                        <id>embed-pure-java-download-engines</id>
-                        <phase>process-classes</phase>
-                        <goals>
-                            <goal>run</goal>
-                        </goals>
-                        <configuration>
-                            <target>
-                                <unzip src="${project.basedir}/third_party/bt/bt-embedded-1.10.jar"
-                                       dest="${project.build.outputDirectory}">
-                                    <patternset>
-                                        <exclude name="META-INF/MANIFEST.MF"/>
-                                    </patternset>
-                                </unzip>
-                                <unzip src="${project.basedir}/third_party/jed2k/jed2k-core-2.0-tomata-r4.jar"
-                                       dest="${project.build.outputDirectory}">
-                                    <patternset>
-                                        <exclude name="META-INF/MANIFEST.MF"/>
-                                    </patternset>
-                                </unzip>
-                                <copy file="${project.basedir}/third_party/bt/LICENSE"
-                                      tofile="${project.build.outputDirectory}/META-INF/LICENSE-bt.txt"/>
-                                <copy file="${project.basedir}/third_party/jed2k/LICENSE.txt"
-                                      tofile="${project.build.outputDirectory}/META-INF/LICENSE-jed2k.txt"/>
-                            </target>
-                        </configuration>
-                    </execution>
                     <execution>
                         <id>archive-native-image</id>
                         <phase>package</phase>

@@ -1,0 +1,51 @@
+package org.dkf.jed2k.kad;
+
+import org.apache.commons.io.IOUtils;
+import org.dkf.jed2k.Session;
+import org.dkf.jed2k.protocol.Endpoint;
+import org.dkf.jed2k.protocol.kad.KadNodesDat;
+import org.slf4j.Logger;
+
+import java.lang.ref.WeakReference;
+import java.net.URI;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.LinkedList;
+
+/**
+ * Created by inkpot on 26.12.2016.
+ */
+public class Initiator implements Runnable {
+    private static final String sourceUrl = "http://server-met.emulefuture.de/download.php?file=nodes.dat";
+    private static final Logger log = org.slf4j.LoggerFactory.getLogger(Initiator.class);
+    private WeakReference<Session> session;
+
+    public Initiator(final Session ses) {
+        session = new WeakReference<Session>(ses);
+    }
+
+    @Override
+    public void run() {
+        Session s = session.get();
+        if (s != null) {
+            try {
+                DhtTracker tracker = s.getDhtTracker();
+                if (tracker != null && tracker.needBootstrap()) {
+                    // try to bootstrap on empty external list using internal router nodes
+                    tracker.bootstrap(new LinkedList<Endpoint>());
+                    // download nodes.dat
+                    byte[] data = IOUtils.toByteArray(new URI(sourceUrl));
+                    ByteBuffer buffer = ByteBuffer.wrap(data);
+                    log.debug("[initiator] downloaded nodes.dat size {}", buffer.remaining());
+                    buffer.order(ByteOrder.LITTLE_ENDIAN);
+                    KadNodesDat nodes = new KadNodesDat();
+                    nodes.get(buffer);
+                    tracker.addKadEntries(nodes.getContacts());
+                    tracker.addKadEntries(nodes.getBootstrapEntries().getList());
+                }
+            } catch(Exception e) {
+                log.error("[initiator] unable to initiate DHT due to {}", e);
+            }
+        }
+    }
+}

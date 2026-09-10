@@ -6,7 +6,12 @@ import bt.torrent.maker.TorrentBuilder;
 import org.dkf.jed2k.EMuleLink;
 import org.dkf.jed2k.Session;
 import org.dkf.jed2k.PeerConnection;
+import org.dkf.jed2k.Peer;
+import org.dkf.jed2k.PiecePicker;
 import org.dkf.jed2k.TransferStatus;
+import org.dkf.jed2k.data.PieceBlock;
+import org.dkf.jed2k.protocol.BitField;
+import org.dkf.jed2k.protocol.Endpoint;
 import org.dkf.jed2k.protocol.Hash;
 import org.dkf.jed2k.protocol.kad.KadNodesDat;
 import org.dkf.jed2k.protocol.server.GetFileSources;
@@ -24,6 +29,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.ServiceLoader;
 import java.util.concurrent.TimeUnit;
 
@@ -138,6 +144,35 @@ class EmbeddedProtocolEngineTest {
         assertEquals(50L, monitor.idleNanos(450L));
         assertFalse(monitor.observe(0L, 1_024L, 500L));
         assertEquals(100L, monitor.idleNanos(500L));
+    }
+
+    @Test
+    void ed2kPickerRequestsOnlyPiecesAdvertisedByThePeer() {
+        PiecePicker picker = new PiecePicker(3, 50);
+        Peer peer = new Peer(new Endpoint(0x0100007f, 4662), true, 0);
+        BitField available = new BitField(3);
+        available.setBit(1);
+        var selected = new ArrayList<PieceBlock>();
+
+        picker.pickPieces(selected, 3, peer, PeerConnection.PeerSpeed.SLOW, available);
+
+        assertEquals(3, selected.size());
+        assertTrue(selected.stream().allMatch(block -> block.pieceIndex == 1));
+    }
+
+    @Test
+    void bundledEd2kServerListProvidesImmediateOfflineBootstrap() throws Exception {
+        byte[] data;
+        try (var input = getClass().getResourceAsStream("/server.met")) {
+            assertTrue(input != null);
+            data = input.readAllBytes();
+        }
+
+        var servers = Ed2kDownloadEngine.parseServers(data);
+
+        assertFalse(servers.isEmpty());
+        assertTrue(servers.stream().allMatch(server -> !server.host().isBlank()
+                && server.port() > 0));
     }
 
     @Test

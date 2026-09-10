@@ -19,6 +19,7 @@ import org.dkf.jed2k.protocol.kad.KadNodesDat;
 import org.dkf.jed2k.protocol.server.ServerMet;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.DatagramSocket;
 import java.net.ServerSocket;
 import java.net.URI;
@@ -37,9 +38,12 @@ import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -53,17 +57,23 @@ final class Ed2kDownloadEngine implements DownloadEngine {
     private static final long CONNECT_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(12);
     private static final long NO_SOURCE_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(25);
     private static final long SOURCE_REFRESH_NANOS = TimeUnit.SECONDS.toNanos(12);
+    private static final long ACTIVE_SOURCE_REFRESH_NANOS = TimeUnit.MINUTES.toNanos(1);
+    private static final long KAD_SOURCE_REFRESH_NANOS = TimeUnit.MINUTES.toNanos(1);
     private static final long STALL_RECOVERY_NANOS = TimeUnit.SECONDS.toNanos(45);
     private static final long KAD_BOOTSTRAP_DELAY_NANOS = TimeUnit.SECONDS.toNanos(3);
+    private static final long KAD_BOOTSTRAP_RETRY_NANOS = TimeUnit.SECONDS.toNanos(30);
     private static final int MAX_KAD_BOOTSTRAP_NODES = 32;
     private static final Path IDENTITY_FILE = Path.of(System.getProperty("user.home"),
             ".tomato", "ed2k-user-hash");
+    private static final Path SERVER_CACHE_FILE = IDENTITY_FILE.resolveSibling("server.met");
+    private static final Path NODE_CACHE_FILE = IDENTITY_FILE.resolveSibling("nodes.dat");
     private static final Object IDENTITY_LOCK = new Object();
+    private static final Object CACHE_LOCK = new Object();
 
     private final AtomicBoolean cancelled = new AtomicBoolean();
     private final CountDownLatch stopped = new CountDownLatch(1);
     private final HttpClient http = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(15))
+            .connectTimeout(Duration.ofSeconds(6))
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
     private volatile Session session;
@@ -98,7 +108,8 @@ final class Ed2kDownloadEngine implements DownloadEngine {
             settings.listenPort = peerPort;
             settings.udpPort = peerPort;
             settings.sessionConnectionsLimit = connectionLimit;
-            settings.maxPeerListSize = Math.max(20, connectionLimit * 8);
+            settings.queuedConnectionsLimit = Math.max(8, connectionLimit * 2);
+            settings.maxPeerListSize = Math.max(100, connectionLimit * 8);
             settings.maxConnectionsPerSecond = Math.max(2, Math.min(10, connectionLimit));
             settings.peerConnectionTimeout = 30;
             // Server rotation is managed here so a connected server with no
@@ -115,6 +126,11 @@ final class Ed2kDownloadEngine implements DownloadEngine {
                 // Port forwarding is best-effort; low-ID clients can still use
                 // server and Kad sources that accept outgoing connections.
             }
+            // Metadata refreshes use background requests. A bundled/cache seed
+            // is usable immediately, so an unreachable update site can no
+            // longer delay every download by two sequential HTTP timeouts.
+            CompletableFuture<byte[]> serverRefresh = fetchAsync(SERVER_LIST);
+            CompletableFuture<byte[]> nodeRefresh = fetchAsync(NODE_LIST);
             KadBootstrap kadBootstrap = startKad(currentSession, peerPort, sink);
             ServerCursor serverCursor = new ServerCursor(loadServers(sink));
             ServerCandidate currentServer = connectNextServer(currentSession, serverCursor, sink);
@@ -134,10 +150,12 @@ final class Ed2kDownloadEngine implements DownloadEngine {
             long now = System.nanoTime();
             long connectionDeadline = now + CONNECT_TIMEOUT_NANOS;
             long nextSourceRefresh = now;
+            long nextKadSourceRefresh = now + KAD_BOOTSTRAP_DELAY_NANOS;
             long nextServerRotation = now + NO_SOURCE_TIMEOUT_NANOS;
             long nextStallRecovery = now + STALL_RECOVERY_NANOS;
-            long kadBootstrapAt = now + KAD_BOOTSTRAP_DELAY_NANOS;
-            boolean kadBootstrapAttempted = false;
+            long nextKadBootstrap = now + KAD_BOOTSTRAP_DELAY_NANOS;
+            boolean serverRefreshApplied = false;
+            boolean nodeRefreshApplied = false;
             String connectedServer = "";
             ActivityMonitor activity = new ActivityMonitor(now);
             while (!cancelled.get() && !handle.isFinished()) {
@@ -145,15 +163,50 @@ final class Ed2kDownloadEngine implements DownloadEngine {
                 now = System.nanoTime();
                 boolean madeProgress = activity.observe(status.totalDone, status.downloadPayload, now);
                 boolean transferring = status.downloadPayloadRate > 0 || madeProgress;
+                int activeConnections = Math.max(0,
+                        status.numConnectedPeers - status.numQueuedPeers);
                 sink.onProgress(new Progress(status.totalDone, link.getNumberValue(),
                         status.numConnectedPeers, "ED2K · " + status.numConnectedPeers + "/"
-                        + connectionLimit + "连接 · " + status.numPeers + "来源",
+                        + (connectionLimit + settings.queuedConnectionsLimit) + "连接 · "
+                        + activeConnections + "活跃 · " + status.numQueuedPeers + "排队 · "
+                        + status.numPeers + "来源",
                         status.downloadPayload));
 
-                if (!kadBootstrapAttempted && kadBootstrap != null && now >= kadBootstrapAt) {
+                if (!serverRefreshApplied && serverRefresh.isDone()) {
+                    byte[] data = serverRefresh.getNow(null);
+                    if (data != null) {
+                        List<ServerCandidate> refreshed = safeParseServers(data);
+                        if (!refreshed.isEmpty()) {
+                            int previousSize = serverCursor.size();
+                            serverCursor.addAll(refreshed);
+                            writeCache(SERVER_CACHE_FILE, data);
+                            if (previousSize == 0 && currentSession.getConnectedServerId().isBlank()) {
+                                currentServer = connectNextServer(currentSession, serverCursor, sink);
+                                connectionDeadline = now + CONNECT_TIMEOUT_NANOS;
+                            }
+                        }
+                    }
+                    serverRefreshApplied = true;
+                }
+
+                if (!nodeRefreshApplied && nodeRefresh.isDone()) {
+                    byte[] data = nodeRefresh.getNow(null);
+                    if (data != null && kadBootstrap != null
+                            && addKadNodes(kadBootstrap, data) > 0) {
+                        writeCache(NODE_CACHE_FILE, data);
+                        nextKadBootstrap = now;
+                        nextKadSourceRefresh = now;
+                    }
+                    nodeRefreshApplied = true;
+                }
+
+                if (kadBootstrap != null && now >= nextKadBootstrap) {
                     bootstrapKad(kadBootstrap);
+                    nextKadBootstrap = now + KAD_BOOTSTRAP_RETRY_NANOS;
+                }
+                if (kadBootstrap != null && now >= nextKadSourceRefresh) {
                     currentSession.requestSources(link.getHash(), link.getNumberValue());
-                    kadBootstrapAttempted = true;
+                    nextKadSourceRefresh = now + KAD_SOURCE_REFRESH_NANOS;
                     nextSourceRefresh = now + SOURCE_REFRESH_NANOS;
                 }
 
@@ -165,9 +218,10 @@ final class Ed2kDownloadEngine implements DownloadEngine {
 
                 // A known source may merely be offline, rejected or queued.
                 // Continue server/Kad discovery until payload actually moves.
-                if (!transferring && now >= nextSourceRefresh) {
+                if (now >= nextSourceRefresh) {
                     currentSession.requestServerSources(link.getHash(), link.getNumberValue());
-                    nextSourceRefresh = now + SOURCE_REFRESH_NANOS;
+                    nextSourceRefresh = now + (transferring
+                            ? ACTIVE_SOURCE_REFRESH_NANOS : SOURCE_REFRESH_NANOS);
                 }
                 if (!transferring && now >= nextStallRecovery) {
                     currentSession.recoverTransfer(link.getHash(), link.getNumberValue());
@@ -186,7 +240,9 @@ final class Ed2kDownloadEngine implements DownloadEngine {
                         connectionDeadline = now + CONNECT_TIMEOUT_NANOS;
                         nextServerRotation = now + NO_SOURCE_TIMEOUT_NANOS;
                     } else if (transferring) {
-                        sink.onStatus("ED2K 下载中 · " + status.numConnectedPeers + " 个连接");
+                        sink.onStatus("ED2K 下载中 · " + activeConnections + " 个活跃连接"
+                                + (status.numQueuedPeers > 0
+                                ? " · " + status.numQueuedPeers + " 个排队" : ""));
                     } else if (status.numPeers > 0) {
                         sink.onStatus(waitingSourceStatus(status, serverCursor,
                                 kadBootstrap, nextServerRotation - now));
@@ -241,23 +297,10 @@ final class Ed2kDownloadEngine implements DownloadEngine {
             dht = tracker;
             currentSession.setDhtTracker(tracker);
             tracker.start();
-            List<Endpoint> bootstrapEndpoints = new ArrayList<>();
-            try {
-                byte[] data = fetch(NODE_LIST);
-                ByteBuffer buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
-                KadNodesDat nodes = new KadNodesDat();
-                nodes.get(buffer);
-                List<KadEntry> entries = kadEntries(nodes);
-                tracker.addKadEntries(entries);
-                entries.stream()
-                        .map(entry -> entry.getKadEndpoint().getEndpoint())
-                        .filter(Endpoint::defined)
-                        .limit(MAX_KAD_BOOTSTRAP_NODES)
-                        .forEach(bootstrapEndpoints::add);
-            } catch (Exception ex) {
-                sink.onStatus("Kad 节点列表获取失败，正在使用 ED2K 服务器");
-            }
-            return new KadBootstrap(tracker, List.copyOf(bootstrapEndpoints));
+            KadBootstrap bootstrap = new KadBootstrap(tracker, new ArrayList<>());
+            byte[] cachedNodes = readFile(NODE_CACHE_FILE);
+            if (cachedNodes != null) addKadNodes(bootstrap, cachedNodes);
+            return bootstrap;
         } catch (Exception ex) {
             if (tracker != null) tracker.abort();
             sink.onStatus("Kad 启动失败，正在使用 ED2K 服务器");
@@ -266,21 +309,69 @@ final class Ed2kDownloadEngine implements DownloadEngine {
     }
 
     private List<ServerCandidate> loadServers(Listener sink) {
+        List<ServerCandidate> servers = new ArrayList<>();
+        addServers(servers, readFile(SERVER_CACHE_FILE));
+        addServers(servers, readResource("/server.met"));
+        addServers(servers, readResource("/server2.met"));
+        List<ServerCandidate> result = distinctServers(servers);
+        if (result.isEmpty()) sink.onStatus("本地服务器列表不可用，正在通过 Kad 查找来源");
+        return result;
+    }
+
+    private static void addServers(List<ServerCandidate> target, byte[] data) {
+        if (data == null) return;
+        target.addAll(safeParseServers(data));
+    }
+
+    private static List<ServerCandidate> safeParseServers(byte[] data) {
         try {
-            ByteBuffer buffer = ByteBuffer.wrap(fetch(SERVER_LIST)).order(ByteOrder.LITTLE_ENDIAN);
-            ServerMet serverMet = new ServerMet();
-            serverMet.get(buffer);
-            List<ServerCandidate> servers = serverMet.getServers().getList().stream()
-                    .filter(server -> server.getHost() != null && !server.getHost().isBlank())
-                    .filter(server -> server.getPort() > 0)
-                    .map(server -> new ServerCandidate(server.getName(), server.getHost(), server.getPort()))
-                    .sorted(Comparator.comparingInt(Ed2kDownloadEngine::serverPriority))
-                    .toList();
-            if (!servers.isEmpty()) return servers;
-        } catch (Exception ex) {
-            sink.onStatus("服务器列表获取失败，正在使用 Kad");
+            return parseServers(data);
+        } catch (Exception ignored) {
+            return List.of();
         }
-        return List.of();
+    }
+
+    static List<ServerCandidate> parseServers(byte[] data) throws Exception {
+        if (data == null || data.length == 0) return List.of();
+        ByteBuffer buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        ServerMet serverMet = new ServerMet();
+        serverMet.get(buffer);
+        return serverMet.getServers().getList().stream()
+                .filter(server -> server.getHost() != null && !server.getHost().isBlank())
+                .filter(server -> server.getPort() > 0)
+                .map(server -> new ServerCandidate(server.getName(), server.getHost(), server.getPort()))
+                .toList();
+    }
+
+    private static List<ServerCandidate> distinctServers(List<ServerCandidate> servers) {
+        Map<String, ServerCandidate> distinct = new LinkedHashMap<>();
+        for (ServerCandidate server : servers) {
+            String key = server.host().toLowerCase(Locale.ROOT) + ":" + server.port();
+            distinct.putIfAbsent(key, server);
+        }
+        return distinct.values().stream()
+                .sorted(Comparator.comparingInt(Ed2kDownloadEngine::serverPriority))
+                .toList();
+    }
+
+    private static int addKadNodes(KadBootstrap bootstrap, byte[] data) {
+        try {
+            KadNodesDat nodes = new KadNodesDat();
+            nodes.get(ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN));
+            List<KadEntry> entries = kadEntries(nodes);
+            bootstrap.tracker().addKadEntries(entries);
+            int before = bootstrap.endpoints().size();
+            for (KadEntry entry : entries) {
+                Endpoint endpoint = entry.getKadEndpoint().getEndpoint();
+                if (endpoint.defined() && !bootstrap.endpoints().contains(endpoint)
+                        && bootstrap.endpoints().size() < MAX_KAD_BOOTSTRAP_NODES) {
+                    bootstrap.endpoints().add(endpoint);
+                }
+            }
+            return Math.max(0, bootstrap.endpoints().size() - before);
+        } catch (Exception ignored) {
+            return 0;
+        }
     }
 
     private static ServerCandidate connectNextServer(Session currentSession,
@@ -318,8 +409,18 @@ final class Ed2kDownloadEngine implements DownloadEngine {
         return entries;
     }
 
+    private CompletableFuture<byte[]> fetchAsync(URI uri) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return fetch(uri);
+            } catch (Exception ignored) {
+                return null;
+            }
+        });
+    }
+
     private byte[] fetch(URI uri) throws Exception {
-        HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(20))
+        HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(10))
                 .header("User-Agent", "Tomato/1.0 ED2K")
                 .GET().build();
         HttpResponse<byte[]> response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
@@ -327,6 +428,42 @@ final class Ed2kDownloadEngine implements DownloadEngine {
             throw new IOException("HTTP " + response.statusCode());
         }
         return response.body();
+    }
+
+    private static byte[] readResource(String name) {
+        try (InputStream input = Ed2kDownloadEngine.class.getResourceAsStream(name)) {
+            return input == null ? null : input.readAllBytes();
+        } catch (IOException ignored) {
+            return null;
+        }
+    }
+
+    private static byte[] readFile(Path file) {
+        try {
+            return Files.isRegularFile(file) ? Files.readAllBytes(file) : null;
+        } catch (IOException ignored) {
+            return null;
+        }
+    }
+
+    private static void writeCache(Path file, byte[] data) {
+        if (data == null || data.length == 0) return;
+        synchronized (CACHE_LOCK) {
+            try {
+                Path parent = file.toAbsolutePath().normalize().getParent();
+                if (parent != null) Files.createDirectories(parent);
+                Path temporary = file.resolveSibling(file.getFileName() + ".tmp");
+                Files.write(temporary, data, StandardOpenOption.CREATE,
+                        StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+                try {
+                    Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING,
+                            StandardCopyOption.ATOMIC_MOVE);
+                } catch (AtomicMoveNotSupportedException ignored) {
+                    Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } catch (IOException ignored) {
+            }
+        }
     }
 
     private static String noSourceStatus(String serverId, ServerCursor cursor,
@@ -487,7 +624,7 @@ final class Ed2kDownloadEngine implements DownloadEngine {
         throw new IOException("无法分配 ED2K TCP/UDP 端口");
     }
 
-    private record ServerCandidate(String name, String host, int port) {
+    record ServerCandidate(String name, String host, int port) {
         String displayName() {
             return name == null || name.isBlank() ? host + ":" + port : name;
         }
@@ -498,7 +635,15 @@ final class Ed2kDownloadEngine implements DownloadEngine {
         private int index = -1;
 
         private ServerCursor(List<ServerCandidate> servers) {
-            this.servers = servers;
+            this.servers = new ArrayList<>();
+            addAll(servers);
+        }
+
+        void addAll(List<ServerCandidate> additions) {
+            List<ServerCandidate> merged = new ArrayList<>(servers);
+            merged.addAll(additions);
+            servers.clear();
+            servers.addAll(distinctServers(merged));
         }
 
         ServerCandidate next() {

@@ -4,8 +4,16 @@ module tomato {
     requires javafx.fxml;
     requires javafx.swing;
     requires com.google.gson;
-    requires bt.embedded;
-    requires jed2k.core;
+    requires com.google.guice;
+    requires javax.inject;
+    requires org.apache.httpcomponents.httpclient;
+    requires org.apache.httpcomponents.httpcore;
+    requires org.yaml.snakeyaml;
+    requires re2j;
+    requires okhttp;
+    requires okio;
+    requires java.logging;
+    requires java.xml;
     requires java.desktop;
     requires java.net.http;
     requires java.naming;

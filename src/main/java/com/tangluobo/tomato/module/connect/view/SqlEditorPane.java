@@ -12,10 +12,13 @@ import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.geometry.Bounds;
 import javafx.geometry.Orientation;
+import javafx.geometry.Point2D;
 import javafx.scene.Node;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.Clipboard;
+import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
@@ -48,6 +51,7 @@ import java.util.function.Consumer;
  *   <li>行号显示（固定 500 行，随滚动同步）</li>
  *   <li>按语言应用接近 IntelliJ IDEA 默认浅色主题的语法高亮</li>
  *   <li>Tab 缩进（4 空格）</li>
+ *   <li>Ctrl+D 复制当前行或选区，Ctrl+拖动复制选区到鼠标释放位置</li>
  *   <li>Ctrl+Enter 触发 {@code onRunRequest}、Ctrl+S 触发 {@code onSaveRequest}</li>
  * </ul>
  *
@@ -98,6 +102,12 @@ public class SqlEditorPane extends HBox {
     private final ListView<CompletionItem> completionList = new ListView<>();
     private final List<CompletionItem> completionItems = new ArrayList<>();
     private int completionWordStart = -1;
+    private boolean copyDragArmed;
+    private boolean copyDragStarted;
+    private double copyDragStartSceneX;
+    private double copyDragStartSceneY;
+    private String copyDragText = "";
+    private final SqlEditorDragGhost copyDragGhost = new SqlEditorDragGhost();
 
     public enum ChangeKind {
         ADDED, MODIFIED, DELETED
@@ -229,6 +239,15 @@ public class SqlEditorPane extends HBox {
                 if (onSaveRequest != null) onSaveRequest.run();
             }
         });
+        // Ctrl+D：有选区时复制选区；无选区时复制光标所在行。
+        textArea.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
+            if (e.isControlDown() && !e.isAltDown() && !e.isMetaDown()
+                    && !e.isShiftDown() && e.getCode() == KeyCode.D && textArea.isEditable()) {
+                e.consume();
+                duplicateSelectionOrLine();
+            }
+        });
+        installCopyDragSupport();
 
         // 裁剪子节点超出边界的视觉，避免编辑器内容覆盖上方工具栏/选项。
         javafx.scene.shape.Rectangle clipRect = new javafx.scene.shape.Rectangle();
@@ -239,6 +258,88 @@ public class SqlEditorPane extends HBox {
         // 初始应用一次高亮（空文本时也设置默认样式）
         setMetadataCompletions(List.of(), List.of(), List.of());
         if (syntaxHighlighting) scheduleHighlighting();
+    }
+
+    private void duplicateSelectionOrLine() {
+        SqlEditorDuplicateSupport.DuplicateEdit edit = SqlEditorDuplicateSupport.duplicate(
+                textArea.getText(), textArea.getSelection().getStart(),
+                textArea.getSelection().getEnd(), textArea.getCaretPosition());
+        textArea.insertText(edit.insertionIndex(), edit.text());
+        textArea.selectRange(edit.selectionAnchor(), edit.selectionCaret());
+        textArea.requestFollowCaret();
+    }
+
+    /**
+     * RichTextFX normally turns a mouse drag into a new selection. When Ctrl is
+     * held and the drag starts inside the current selection, preserve that
+     * selection and insert a copy at the position where the mouse is released.
+     */
+    private void installCopyDragSupport() {
+        textArea.addEventFilter(MouseEvent.MOUSE_PRESSED, event -> {
+            copyDragGhost.hide();
+            copyDragArmed = false;
+            copyDragStarted = false;
+            if (!textArea.isEditable() || event.getButton() != MouseButton.PRIMARY
+                    || !event.isControlDown() || textArea.getSelection().getLength() == 0) {
+                return;
+            }
+            int hit = insertionIndexAt(event.getSceneX(), event.getSceneY());
+            int start = textArea.getSelection().getStart();
+            int end = textArea.getSelection().getEnd();
+            if (hit < start || hit > end) return;
+
+            copyDragArmed = true;
+            copyDragStartSceneX = event.getSceneX();
+            copyDragStartSceneY = event.getSceneY();
+            copyDragText = textArea.getSelectedText();
+            event.consume();
+        });
+        textArea.addEventFilter(MouseEvent.MOUSE_DRAGGED, event -> {
+            if (!copyDragArmed) return;
+            if (!event.isControlDown()) {
+                copyDragGhost.hide();
+                copyDragArmed = false;
+                copyDragStarted = false;
+                copyDragText = "";
+                event.consume();
+                return;
+            }
+            boolean wasStarted = copyDragStarted;
+            if (!copyDragStarted && Math.hypot(event.getSceneX() - copyDragStartSceneX,
+                    event.getSceneY() - copyDragStartSceneY) >= 3.0) {
+                copyDragStarted = true;
+            }
+            if (copyDragStarted) {
+                if (wasStarted) {
+                    copyDragGhost.move(event.getScreenX(), event.getScreenY());
+                } else {
+                    copyDragGhost.show(textArea, copyDragText, event.getScreenX(), event.getScreenY());
+                }
+            }
+            event.consume();
+        });
+        textArea.addEventFilter(MouseEvent.MOUSE_RELEASED, event -> {
+            if (!copyDragArmed) return;
+            event.consume();
+            copyDragGhost.hide();
+            if (event.getButton() == MouseButton.PRIMARY && event.isControlDown()
+                    && copyDragStarted && !copyDragText.isEmpty()) {
+                int insertion = insertionIndexAt(event.getSceneX(), event.getSceneY());
+                textArea.insertText(insertion, copyDragText);
+                textArea.selectRange(insertion, insertion + copyDragText.length());
+                textArea.requestFollowCaret();
+            }
+            copyDragArmed = false;
+            copyDragStarted = false;
+            copyDragText = "";
+        });
+    }
+
+    private int insertionIndexAt(double sceneX, double sceneY) {
+        Point2D local = textArea.sceneToLocal(sceneX, sceneY, true);
+        if (local == null) return textArea.getCaretPosition();
+        int insertion = textArea.hit(local.getX(), local.getY()).getInsertionIndex();
+        return Math.max(0, Math.min(insertion, textArea.getLength()));
     }
 
     private void configureCompletionPopup() {

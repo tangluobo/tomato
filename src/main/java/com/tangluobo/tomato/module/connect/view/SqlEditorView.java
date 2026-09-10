@@ -2598,6 +2598,12 @@ public class SqlEditorView extends BorderPane {
     private static class PlainSqlEditor implements SqlEditor {
         private final TextArea textArea;
         private ContextMenu contextMenu;
+        private boolean copyDragArmed;
+        private boolean copyDragStarted;
+        private double copyDragStartSceneX;
+        private double copyDragStartSceneY;
+        private String copyDragText = "";
+        private final SqlEditorDragGhost copyDragGhost = new SqlEditorDragGhost();
 
         PlainSqlEditor(Runnable onModified) {
             textArea = new TextArea();
@@ -2627,6 +2633,89 @@ public class SqlEditorView extends BorderPane {
             textArea.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
                 if (e.isControlDown() && e.getCode() == KeyCode.S) e.consume();
             });
+            textArea.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
+                if (e.isControlDown() && !e.isAltDown() && !e.isMetaDown()
+                        && !e.isShiftDown() && e.getCode() == KeyCode.D) {
+                    e.consume();
+                    duplicateSelectionOrLine();
+                }
+            });
+            installCopyDragSupport();
+        }
+
+        private void duplicateSelectionOrLine() {
+            SqlEditorDuplicateSupport.DuplicateEdit edit = SqlEditorDuplicateSupport.duplicate(
+                    textArea.getText(), textArea.getSelection().getStart(),
+                    textArea.getSelection().getEnd(), textArea.getCaretPosition());
+            textArea.insertText(edit.insertionIndex(), edit.text());
+            textArea.selectRange(edit.selectionAnchor(), edit.selectionCaret());
+        }
+
+        private void installCopyDragSupport() {
+            textArea.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
+                copyDragGhost.hide();
+                copyDragArmed = false;
+                copyDragStarted = false;
+                if (event.getButton() != javafx.scene.input.MouseButton.PRIMARY
+                        || !event.isControlDown() || textArea.getSelection().getLength() == 0) {
+                    return;
+                }
+                int hit = insertionIndexAt(event.getX(), event.getY());
+                int start = textArea.getSelection().getStart();
+                int end = textArea.getSelection().getEnd();
+                if (hit < start || hit > end) return;
+                copyDragArmed = true;
+                copyDragStartSceneX = event.getSceneX();
+                copyDragStartSceneY = event.getSceneY();
+                copyDragText = textArea.getSelectedText();
+                event.consume();
+            });
+            textArea.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_DRAGGED, event -> {
+                if (!copyDragArmed) return;
+                if (!event.isControlDown()) {
+                    copyDragGhost.hide();
+                    copyDragArmed = false;
+                    copyDragStarted = false;
+                    copyDragText = "";
+                    event.consume();
+                    return;
+                }
+                boolean wasStarted = copyDragStarted;
+                if (!copyDragStarted && Math.hypot(event.getSceneX() - copyDragStartSceneX,
+                        event.getSceneY() - copyDragStartSceneY) >= 3.0) {
+                    copyDragStarted = true;
+                }
+                if (copyDragStarted) {
+                    if (wasStarted) {
+                        copyDragGhost.move(event.getScreenX(), event.getScreenY());
+                    } else {
+                        copyDragGhost.show(textArea, copyDragText, event.getScreenX(), event.getScreenY());
+                    }
+                }
+                event.consume();
+            });
+            textArea.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_RELEASED, event -> {
+                if (!copyDragArmed) return;
+                event.consume();
+                copyDragGhost.hide();
+                if (event.getButton() == javafx.scene.input.MouseButton.PRIMARY
+                        && event.isControlDown() && copyDragStarted && !copyDragText.isEmpty()) {
+                    int insertion = insertionIndexAt(event.getX(), event.getY());
+                    textArea.insertText(insertion, copyDragText);
+                    textArea.selectRange(insertion, insertion + copyDragText.length());
+                }
+                copyDragArmed = false;
+                copyDragStarted = false;
+                copyDragText = "";
+            });
+        }
+
+        private int insertionIndexAt(double x, double y) {
+            if (textArea.getSkin() instanceof javafx.scene.control.skin.TextAreaSkin skin) {
+                int insertion = skin.getIndex(x, y).getInsertionIndex();
+                return Math.max(0, Math.min(insertion, textArea.getLength()));
+            }
+            return textArea.getCaretPosition();
         }
 
         @Override
