@@ -45,7 +45,7 @@ public class Session extends Thread {
     private static Logger log = LoggerFactory.getLogger(Session.class);
     Selector selector = null;
     protected ConcurrentLinkedQueue<Runnable> commands = new ConcurrentLinkedQueue<Runnable>();
-    ServerConnection serverConection = null;
+    volatile ServerConnection serverConection = null;
     private ServerSocketChannel ssc = null;
 
     Map<Hash, Transfer> transfers = new HashMap<Hash, Transfer>();
@@ -220,7 +220,7 @@ public class Session extends Thread {
     }
 
     // from last established server connection
-    int clientId    = 0;
+    volatile int clientId = 0;
     int tcpFlags    = 0;
     int auxPort     = 0;
 
@@ -481,7 +481,10 @@ public class Session extends Thread {
     }
 
     void closeConnection(PeerConnection p) {
-        connections.remove(p);
+        // PeerConnection.equals compares endpoints, so ArrayList.remove(p)
+        // can remove another live socket when one source serves two transfers.
+        // Identity removal also cleans duplicate entries created by older code.
+        connections.removeIf(existing -> existing == p);
     }
 
     void openConnection(Endpoint point) throws JED2KException {
@@ -565,19 +568,68 @@ public class Session extends Thread {
     }
 
     synchronized public String getConnectedServerId() {
-        if (serverConection != null && serverConection.isHandshakeCompleted()) return serverConection.getIdentifier();
+        ServerConnection connection = serverConection;
+        if (connection != null && connection.isHandshakeCompleted()
+                && serverConection == connection) {
+            return connection.getIdentifier();
+        }
         return "";
     }
 
+    /**
+     * Returns a snapshot of the active, handshaken server endpoint.  The
+     * identity recheck prevents a replaced connection from leaking into a
+     * peer Hello packet while server rotation is in progress.
+     */
+    public Endpoint getConnectedServerEndpoint() {
+        ServerConnection connection = serverConection;
+        if (connection != null && connection.isHandshakeCompleted()
+                && serverConection == connection) {
+            return new Endpoint(connection.getAddress());
+        }
+        return new Endpoint();
+    }
 
-    protected void onServerConnectionClosed(ServerConnection sc, BaseErrorCode ec) {
+
+    /**
+     * Accepts a server handshake only from the connection currently owned by
+     * this session.  A replaced channel may still have a decoded packet queued
+     * when its close races with the replacement connection.
+     */
+    protected boolean onServerConnectionHandshake(ServerConnection sc,
+                                                   int newClientId,
+                                                   int newTcpFlags,
+                                                   int newAuxPort) {
+        if (serverConection != sc) {
+            log.debug("ignore handshake from stale server connection {}", sc.getIdentifier());
+            return false;
+        }
+
+        clientId = newClientId;
+        tcpFlags = newTcpFlags;
+        auxPort = newAuxPort;
+        return true;
+    }
+
+    protected boolean onServerConnectionClosed(ServerConnection sc, BaseErrorCode ec) {
+        if (serverConection != sc) {
+            log.debug("ignore close from stale server connection {}", sc.getIdentifier());
+            return false;
+        }
+
         if (settings.reconnectoToServer && ec.getCode() != ErrorCode.NO_ERROR.getCode()) {
-            serverConnectionPolicy.setServerConnectionFailed(serverConection.getIdentifier()
-                    , serverConection.getAddress()
+            // The callback connection is the immutable source of failure
+            // metadata.  Do not dereference the replaceable shared field here.
+            serverConnectionPolicy.setServerConnectionFailed(sc.getIdentifier()
+                    , sc.getAddress()
                     , Time.currentTime());
         }
 
         serverConection = null;
+        clientId = 0;
+        tcpFlags = 0;
+        auxPort = 0;
+        return true;
     }
 
     public void search(final SearchRequest value) {
@@ -734,6 +786,26 @@ public class Session extends Thread {
 
     public final synchronized TransferHandle findTransfer(final Hash h) {
         return new TransferHandle(this, transfers.get(h));
+    }
+
+    /**
+     * Finds the sole active transfer which already knows an incoming peer.
+     * High-ID ED2K uploaders can reconnect directly when our queue slot opens,
+     * so there is no server-callback entry to identify that transfer.
+     */
+    Transfer findTransferForPeer(final Endpoint endpoint) {
+        Transfer match = null;
+        for (Transfer candidate : transfers.values()) {
+            if (candidate.isPaused() || candidate.isAborted() || candidate.isFinished()
+                    || candidate.findPeer(endpoint) == null) {
+                continue;
+            }
+            // Hello does not carry a file hash.  Refuse an ambiguous match
+            // instead of attaching the socket to the wrong download.
+            if (match != null) return null;
+            match = candidate;
+        }
+        return match;
     }
 
     public void removeTransfer(final Hash h, final boolean deleteFile) {
@@ -1000,7 +1072,7 @@ public class Session extends Thread {
     }
 
     public Hash getUserAgent() { return settings.userAgent; }
-    public int getClientId() { return clientId; }
+    public synchronized int getClientId() { return clientId; }
     public int getListenPort() { return settings.listenPort; }
     public String getClientName() { return settings.clientName; }
     public String getModName() { return settings.modName; }

@@ -51,6 +51,22 @@ public class StatChannel {
 		return this;
 	}
 
+	/**
+	 * Adds only bytes collected since the source channel's previous tick.
+	 *
+	 * Hierarchical statistics (peer -> transfer -> session) are sampled every
+	 * second. Adding the source's lifetime total on every sample counts the same
+	 * bytes repeatedly and makes an idle transfer look active forever.
+	 */
+	public StatChannel addCurrent(StatChannel s) {
+		assert(secondCounter >= 0);
+		assert(totalCounter >= 0);
+		assert(s.secondCounter >= 0);
+		secondCounter += s.secondCounter;
+		totalCounter += s.secondCounter;
+		return this;
+	}
+
 	void secondTick(long timeIntervalMS) {
 		long sample = (secondCounter * 1000) / timeIntervalMS;
 	    assert(sample >= 0);

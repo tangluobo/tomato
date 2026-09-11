@@ -30,6 +30,14 @@ public class Statistics {
 		return this;
 	}
 
+	/** Adds the source's not-yet-rolled-up counters without duplicating totals. */
+	public Statistics addCurrent(Statistics stat) {
+		for (int i = 0; i < ChannelsNames.CHANNELS_COUNT.value; ++i) {
+			channels[i].addCurrent(stat.channels[i]);
+		}
+		return this;
+	}
+
 	public void secondTick(long timeIntervalMS) {
 		for(final StatChannel sc: channels) {
 			sc.secondTick(timeIntervalMS);

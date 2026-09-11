@@ -49,7 +49,11 @@ public class PieceManager extends BlocksEnumerator {
     public List<ByteBuffer> writeBlock(PieceBlock b, final ByteBuffer buffer) throws JED2KException {
         FileChannel c = handler.getWriteChannel();
         assert c != null;
-        long bytesOffset = b.blocksOffset()* Constants.BLOCK_SIZE;
+        // A standard ED2K piece contains 52 full 180 KiB blocks and one
+        // shorter block. Therefore a global block index cannot be converted
+        // to a byte offset by multiplication.
+        long bytesOffset = (long)b.pieceIndex * Constants.PIECE_SIZE
+                + (long)b.pieceBlock * Constants.BLOCK_SIZE;
         BlockManager mgr = getBlockManager(b.pieceIndex);
         assert(mgr != null);
 
@@ -97,7 +101,7 @@ public class PieceManager extends BlocksEnumerator {
         assert c != null;
         assert(fileSize > 0);
 
-        long bytesOffset = b.blocksOffset()*Constants.BLOCK_SIZE;
+        long bytesOffset = b.range(fileSize).left;
         BlockManager mgr = getBlockManager(b.pieceIndex);
 
         // prepare buffer for reading from file
@@ -107,7 +111,10 @@ public class PieceManager extends BlocksEnumerator {
         try {
             // read data from file to buffer
             handler.getReadChannel().position(bytesOffset);
-            while(buffer.hasRemaining()) handler.getReadChannel().read(buffer);
+            while(buffer.hasRemaining()) {
+                int read = handler.getReadChannel().read(buffer);
+                if (read < 0) throw new JED2KException(ErrorCode.IO_EXCEPTION);
+            }
             buffer.flip();
         }
         catch(IOException e) {

@@ -4,8 +4,6 @@ import org.dkf.jed2k.exception.JED2KException;
 import org.slf4j.Logger;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 
@@ -19,8 +17,6 @@ public abstract class FileHandler {
     private static final Logger log = org.slf4j.LoggerFactory.getLogger(FileHandler.class);
     protected File file;
 
-    private FileOutputStream wStream;
-    private FileInputStream rStream;
     private FileChannel[] channels = {null, null};
 
     public FileHandler(final File file) {
@@ -29,9 +25,7 @@ public abstract class FileHandler {
 
     public FileChannel getWriteChannel() throws JED2KException {
         if (channels[WRITE] == null) {
-            assert wStream == null;
-            wStream = allocateOutputStream();
-            channels[WRITE] = wStream.getChannel();
+            channels[WRITE] = allocateWriteChannel();
         }
 
         return channels[WRITE];
@@ -39,9 +33,7 @@ public abstract class FileHandler {
 
     public FileChannel getReadChannel() throws JED2KException {
         if (channels[READ] == null) {
-            assert rStream == null;
-            rStream = allocateInputStream();
-            channels[READ] = rStream.getChannel();
+            channels[READ] = allocateReadChannel();
         }
 
         return channels[READ];
@@ -60,28 +52,6 @@ public abstract class FileHandler {
                 channels[i] = null;
             }
         }
-
-        if (wStream != null) {
-            try {
-                wStream.close();
-            } catch(IOException e) {
-                log.error("unable to close write stream {}", e.toString());
-            }
-            finally {
-                wStream = null;
-            }
-        }
-
-        if (rStream != null) {
-            try {
-                rStream.close();
-            } catch(IOException e) {
-                log.error("unable to close write stream {}", e.toString());
-            }
-            finally {
-                rStream = null;
-            }
-        }
     }
 
     public void close() {
@@ -93,7 +63,7 @@ public abstract class FileHandler {
     }
 
 
-    protected abstract FileOutputStream allocateOutputStream() throws JED2KException;
-    protected abstract FileInputStream allocateInputStream() throws JED2KException;
+    protected abstract FileChannel allocateWriteChannel() throws JED2KException;
+    protected abstract FileChannel allocateReadChannel() throws JED2KException;
     protected abstract void deleteFile() throws JED2KException;
 }

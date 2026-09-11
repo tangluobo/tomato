@@ -6,6 +6,7 @@ import org.dkf.jed2k.Session;
 import org.dkf.jed2k.Settings;
 import org.dkf.jed2k.TransferHandle;
 import org.dkf.jed2k.TransferStatus;
+import org.dkf.jed2k.Utils;
 import org.dkf.jed2k.alert.Alert;
 import org.dkf.jed2k.alert.TransferDiskIOErrorAlert;
 import org.dkf.jed2k.alert.TransferResumeDataAlert;
@@ -38,10 +39,12 @@ import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -55,20 +58,26 @@ final class Ed2kDownloadEngine implements DownloadEngine {
     private static final URI NODE_LIST = URI.create("https://upd.emule-security.org/nodes.dat");
     private static final long CHECKPOINT_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(2);
     private static final long CONNECT_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(12);
-    private static final long NO_SOURCE_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(25);
-    private static final long SOURCE_REFRESH_NANOS = TimeUnit.SECONDS.toNanos(12);
-    private static final long ACTIVE_SOURCE_REFRESH_NANOS = TimeUnit.MINUTES.toNanos(1);
-    private static final long KAD_SOURCE_REFRESH_NANOS = TimeUnit.MINUTES.toNanos(1);
+    private static final long NO_SOURCE_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(30);
+    private static final long SERVER_CYCLE_BACKOFF_NANOS = TimeUnit.MINUTES.toNanos(5);
+    private static final long SOURCE_REFRESH_NANOS = TimeUnit.MINUTES.toNanos(15);
+    private static final long ACTIVE_SOURCE_REFRESH_NANOS = TimeUnit.MINUTES.toNanos(15);
+    private static final long KAD_SOURCE_REFRESH_NANOS = TimeUnit.MINUTES.toNanos(5);
     private static final long STALL_RECOVERY_NANOS = TimeUnit.SECONDS.toNanos(45);
     private static final long KAD_BOOTSTRAP_DELAY_NANOS = TimeUnit.SECONDS.toNanos(3);
     private static final long KAD_BOOTSTRAP_RETRY_NANOS = TimeUnit.SECONDS.toNanos(30);
     private static final int MAX_KAD_BOOTSTRAP_NODES = 32;
+    private static final int DEFAULT_PEER_PORT = 4662;
+    private static final int PEER_PORT_CANDIDATES = 32;
+    private static final int HEALTHY_DOWNLOAD_RATE = 512 * 1024;
     private static final Path IDENTITY_FILE = Path.of(System.getProperty("user.home"),
             ".tomato", "ed2k-user-hash");
     private static final Path SERVER_CACHE_FILE = IDENTITY_FILE.resolveSibling("server.met");
     private static final Path NODE_CACHE_FILE = IDENTITY_FILE.resolveSibling("nodes.dat");
     private static final Object IDENTITY_LOCK = new Object();
     private static final Object CACHE_LOCK = new Object();
+    private static final Object PEER_PORT_LOCK = new Object();
+    private static final Set<Integer> RESERVED_PEER_PORTS = new HashSet<>();
 
     private final AtomicBoolean cancelled = new AtomicBoolean();
     private final CountDownLatch stopped = new CountDownLatch(1);
@@ -79,6 +88,7 @@ final class Ed2kDownloadEngine implements DownloadEngine {
     private volatile Session session;
     private volatile DhtTracker dht;
     private volatile TransferHandle transfer;
+    private volatile int reservedPeerPort;
 
     @Override
     public Result download(String source, Path destinationDirectory, int parallelism,
@@ -104,7 +114,8 @@ final class Ed2kDownloadEngine implements DownloadEngine {
             settings.userAgent = loadOrCreateUserHash(IDENTITY_FILE);
             settings.clientName = "Tomato";
             settings.modName = "TomatoDownloader";
-            int peerPort = freePeerPort();
+            int peerPort = reservePeerPort();
+            reservedPeerPort = peerPort;
             settings.listenPort = peerPort;
             settings.udpPort = peerPort;
             settings.sessionConnectionsLimit = connectionLimit;
@@ -163,13 +174,13 @@ final class Ed2kDownloadEngine implements DownloadEngine {
                 now = System.nanoTime();
                 boolean madeProgress = activity.observe(status.totalDone, status.downloadPayload, now);
                 boolean transferring = status.downloadPayloadRate > 0 || madeProgress;
-                int activeConnections = Math.max(0,
-                        status.numConnectedPeers - status.numQueuedPeers);
+                boolean needsMoreSources = needsMoreSources(status, connectionLimit);
+                String idMode = idMode(currentSession, peerPort);
                 sink.onProgress(new Progress(status.totalDone, link.getNumberValue(),
                         status.numConnectedPeers, "ED2K · " + status.numConnectedPeers + "/"
                         + (connectionLimit + settings.queuedConnectionsLimit) + "连接 · "
-                        + activeConnections + "活跃 · " + status.numQueuedPeers + "排队 · "
-                        + status.numPeers + "来源",
+                        + status.numDownloadingPeers + "传输 · " + status.numQueuedPeers + "排队 · "
+                        + status.numPeers + "来源" + idMode,
                         status.downloadPayload));
 
                 if (!serverRefreshApplied && serverRefresh.isDone()) {
@@ -212,8 +223,10 @@ final class Ed2kDownloadEngine implements DownloadEngine {
 
                 String serverId = currentSession.getConnectedServerId();
                 if (madeProgress) {
-                    nextServerRotation = now + NO_SOURCE_TIMEOUT_NANOS;
                     nextStallRecovery = now + STALL_RECOVERY_NANOS;
+                }
+                if (!needsMoreSources) {
+                    nextServerRotation = now + NO_SOURCE_TIMEOUT_NANOS;
                 }
 
                 // A known source may merely be offline, rejected or queued.
@@ -232,17 +245,17 @@ final class Ed2kDownloadEngine implements DownloadEngine {
                     if (!serverId.equals(connectedServer)) {
                         connectedServer = serverId;
                         nextSourceRefresh = now;
-                        nextServerRotation = now + NO_SOURCE_TIMEOUT_NANOS;
+                        nextServerRotation = now + serverRotationDelay(serverCursor);
                     }
-                    if (!transferring && now >= nextServerRotation && serverCursor.size() > 1) {
+                    if (needsMoreSources && now >= nextServerRotation && serverCursor.size() > 1) {
                         currentServer = connectNextServer(currentSession, serverCursor, sink);
                         connectedServer = "";
                         connectionDeadline = now + CONNECT_TIMEOUT_NANOS;
-                        nextServerRotation = now + NO_SOURCE_TIMEOUT_NANOS;
+                        nextServerRotation = now + serverRotationDelay(serverCursor);
                     } else if (transferring) {
-                        sink.onStatus("ED2K 下载中 · " + activeConnections + " 个活跃连接"
+                        sink.onStatus("ED2K 下载中 · " + status.numDownloadingPeers + " 个传输来源"
                                 + (status.numQueuedPeers > 0
-                                ? " · " + status.numQueuedPeers + " 个排队" : ""));
+                                ? " · " + status.numQueuedPeers + " 个排队" : "") + idMode);
                     } else if (status.numPeers > 0) {
                         sink.onStatus(waitingSourceStatus(status, serverCursor,
                                 kadBootstrap, nextServerRotation - now));
@@ -286,6 +299,8 @@ final class Ed2kDownloadEngine implements DownloadEngine {
             if (currentDht != null) currentDht.abort();
             joinQuietly(currentSession, 2_000L);
             joinQuietly(currentDht, 2_000L);
+            releasePeerPort(reservedPeerPort);
+            reservedPeerPort = 0;
             stopped.countDown();
         }
     }
@@ -610,18 +625,70 @@ final class Ed2kDownloadEngine implements DownloadEngine {
         }
     }
 
-    private static int freePeerPort() throws IOException {
-        for (int attempt = 0; attempt < 32; attempt++) {
+    private static int reservePeerPort() throws IOException {
+        synchronized (PEER_PORT_LOCK) {
+            int port = selectPeerPort();
+            RESERVED_PEER_PORTS.add(port);
+            return port;
+        }
+    }
+
+    private static int selectPeerPort() throws IOException {
+        // A stable port is essential for High ID, UPnP and manual forwarding.
+        // The previous ephemeral port changed on every task and made inbound
+        // ED2K/Kad connectivity practically impossible.
+        for (int port = DEFAULT_PEER_PORT;
+             port < DEFAULT_PEER_PORT + PEER_PORT_CANDIDATES; port++) {
+            if (!RESERVED_PEER_PORTS.contains(port) && isPeerPortAvailable(port)) return port;
+        }
+
+        for (int attempt = 0; attempt < PEER_PORT_CANDIDATES; attempt++) {
             try (ServerSocket tcp = new ServerSocket(0)) {
                 int port = tcp.getLocalPort();
                 try (DatagramSocket ignored = new DatagramSocket(port)) {
-                    return port;
+                    if (!RESERVED_PEER_PORTS.contains(port)) return port;
                 } catch (IOException ignored) {
                     // Try another TCP-selected port that is also free for UDP.
                 }
             }
         }
         throw new IOException("无法分配 ED2K TCP/UDP 端口");
+    }
+
+    private static void releasePeerPort(int port) {
+        if (port <= 0) return;
+        synchronized (PEER_PORT_LOCK) {
+            RESERVED_PEER_PORTS.remove(port);
+        }
+    }
+
+    private static boolean isPeerPortAvailable(int port) {
+        try (ServerSocket ignoredTcp = new ServerSocket(port);
+             DatagramSocket ignoredUdp = new DatagramSocket(port)) {
+            return true;
+        } catch (IOException ignored) {
+            return false;
+        }
+    }
+
+    static boolean needsMoreSources(TransferStatus status, int connectionLimit) {
+        int targetSources = Math.max(40, connectionLimit * 6);
+        int targetDownloaders = Math.min(3, connectionLimit);
+        return status.numPeers < targetSources
+                || (status.numDownloadingPeers < targetDownloaders
+                && status.downloadPayloadRate < HEALTHY_DOWNLOAD_RATE);
+    }
+
+    private static long serverRotationDelay(ServerCursor cursor) {
+        return cursor.atEnd() ? SERVER_CYCLE_BACKOFF_NANOS : NO_SOURCE_TIMEOUT_NANOS;
+    }
+
+    static String idMode(Session session, int peerPort) {
+        int clientId = session.getClientId();
+        if (clientId == 0) return "";
+        return Utils.isLowId(clientId)
+                ? " · Low ID（检查TCP/UDP " + peerPort + "端口）"
+                : " · High ID";
     }
 
     record ServerCandidate(String name, String host, int port) {
@@ -658,6 +725,10 @@ final class Ed2kDownloadEngine implements DownloadEngine {
 
         int position() {
             return index < 0 ? 0 : index + 1;
+        }
+
+        boolean atEnd() {
+            return !servers.isEmpty() && index == servers.size() - 1;
         }
     }
 

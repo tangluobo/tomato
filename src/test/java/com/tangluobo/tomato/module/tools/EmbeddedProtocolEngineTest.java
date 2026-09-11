@@ -147,6 +147,20 @@ class EmbeddedProtocolEngineTest {
     }
 
     @Test
+    void ed2kKeepsExpandingSourcesWhileOnlyOneSlowPeerTransfers() {
+        TransferStatus status = new TransferStatus();
+        status.numPeers = 80;
+        status.numDownloadingPeers = 1;
+        status.downloadPayloadRate = 32 * 1_024;
+
+        assertTrue(Ed2kDownloadEngine.needsMoreSources(status, 8));
+
+        status.numDownloadingPeers = 3;
+        status.downloadPayloadRate = 1024 * 1_024;
+        assertFalse(Ed2kDownloadEngine.needsMoreSources(status, 8));
+    }
+
+    @Test
     void ed2kPickerRequestsOnlyPiecesAdvertisedByThePeer() {
         PiecePicker picker = new PiecePicker(3, 50);
         Peer peer = new Peer(new Endpoint(0x0100007f, 4662), true, 0);

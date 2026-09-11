@@ -16,6 +16,10 @@ public class Settings {
     public int maxPeerListSize = 100;
     public int minPeerReconnectTime = 10;
     public int peerConnectionTimeout = 5;
+    /** Seconds to wait for an upload-queue response after OP_STARTUPLOADREQ. */
+    public int peerQueueResponseTimeout = 60;
+    /** Standard ED2K interval before asking a disconnected queued source again. */
+    public int peerReaskTime = 29 * 60;
     public int sessionConnectionsLimit = 20;
     /** Queued peers kept in addition to active/connecting peer slots. */
     public int queuedConnectionsLimit = 40;
@@ -46,6 +50,8 @@ public class Settings {
                 ", maxPeerListSize=" + maxPeerListSize +
                 ", minPeerReconnectTime=" + minPeerReconnectTime +
                 ", peerConnectionTimeout=" + peerConnectionTimeout +
+                ", peerQueueResponseTimeout=" + peerQueueResponseTimeout +
+                ", peerReaskTime=" + peerReaskTime +
                 ", sessionConnectionsLimit=" + sessionConnectionsLimit +
                 ", queuedConnectionsLimit=" + queuedConnectionsLimit +
                 ", bufferPoolSize=" + bufferPoolSize +

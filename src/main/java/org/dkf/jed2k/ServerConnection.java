@@ -31,7 +31,7 @@ import static org.dkf.jed2k.protocol.tag.Tag.tag;
 public class ServerConnection extends Connection {
     private static Logger log = LoggerFactory.getLogger(ServerConnection.class);
     private long lastPingTime = Time.currentTime();
-    private boolean handshakeCompleted = false;
+    private volatile boolean handshakeCompleted = false;
 
     /**
      * special identifier for server connection
@@ -117,11 +117,11 @@ public class ServerConnection extends Connection {
     @Override
     public void onServerIdChange(IdChange value) throws JED2KException {
         log.debug("server id changed to {}", value);
-        session.clientId = value.clientId;
-        session.tcpFlags = value.tcpFlags;
-        session.auxPort = value.auxPort;
-        handshakeCompleted = true;
-        session.pushAlert(new ServerIdAlert(identifier, value.clientId));
+        if (session.onServerConnectionHandshake(this, value.clientId,
+                value.tcpFlags, value.auxPort)) {
+            handshakeCompleted = true;
+            session.pushAlert(new ServerIdAlert(identifier, value.clientId));
+        }
     }
 
     @Override
@@ -189,13 +189,10 @@ public class ServerConnection extends Connection {
 
     @Override
     protected void onDisconnect(BaseErrorCode ec) {
-        // remove server connection from session
-        session.clientId = 0;
-        session.tcpFlags = 0;
-        session.auxPort = 0;
         handshakeCompleted = false;
-        session.onServerConnectionClosed(this, ec);
-        session.pushAlert(new ServerConectionClosed(identifier, ec));
+        if (session.onServerConnectionClosed(this, ec)) {
+            session.pushAlert(new ServerConectionClosed(identifier, ec));
+        }
     }
 
     @Override

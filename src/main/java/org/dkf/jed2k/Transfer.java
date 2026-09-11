@@ -134,6 +134,7 @@ public class Transfer {
         numPieces = Utils.divCeil(this.size, Constants.PIECE_SIZE).intValue();
         this.session = null;
         this.picker = picker;
+        this.policy = new Policy(this);
     }
 
     /**
@@ -245,11 +246,18 @@ public class Transfer {
     }
 
     void addStats(Statistics s) {
-        stat.add(s);
+        // A connection is aggregated once per tick. On disconnect only its
+        // pending counter must be folded in; adding its lifetime total again
+        // makes downloadPayload grow while no bytes are moving.
+        stat.addCurrent(s);
     }
 
     final void addPeer(Endpoint endpoint, int sourceFlag) throws JED2KException {
         policy.addPeer(new Peer(endpoint, true, sourceFlag));
+    }
+
+    Peer findPeer(Endpoint endpoint) {
+        return policy.findPeer(endpoint);
     }
 
     final void removePeerConnection(PeerConnection c) {
@@ -277,7 +285,10 @@ public class Transfer {
         if (isFinished()) throw new JED2KException(ErrorCode.TRANSFER_FINISHED);
         policy.newConnection(c);
         connections.add(c);
-        session.connections.add(c);
+        // Session owns the socket registry and registers incoming connections
+        // when they are accepted.  Adding it again here leaves a stale duplicate
+        // after ArrayList.remove() runs on disconnect and eventually exhausts
+        // the global connection limit.
         c.setTransfer(this);
     }
 
@@ -321,12 +332,12 @@ public class Transfer {
         Iterator<PeerConnection> itr = connections.iterator();
         while(itr.hasNext()) {
             PeerConnection c = itr.next();
-            stat.add(c.statistics());
+            stat.addCurrent(c.statistics());
             c.secondTick(tickIntervalMS);
             if (c.isDisconnecting()) itr.remove();
         }
 
-        accumulator.add(stat);
+        accumulator.addCurrent(stat);
         stat.secondTick(tickIntervalMS);
         speedMon.addSample(stat.downloadRate());
     }
@@ -384,6 +395,11 @@ public class Transfer {
             hashSet.addAll(hs);
             needSaveResumeData = true;
         }
+    }
+
+    /** The saved MD4 part hashes are reusable across every peer connection. */
+    boolean hasHashSet() {
+        return hashSet.size() == numPieces;
     }
 
     void piecePassed(int pieceIndex) {
@@ -519,23 +535,18 @@ public class Transfer {
             status.totalDone += corr;
         }
 
-        int blocksInLastPiece = blocksInLastPiece(size);
-        PieceBlock lastBlock = new PieceBlock(numPieces - 1, blocksInLastPiece - 1);
-
         List<DownloadingPiece> dq = picker.getDownloadingQueue();
         for(final DownloadingPiece dp: dq) {
             // skip have pieces since we are already calculated them
             if (picker.havePiece(dp.pieceIndex)) continue;
-            status.totalDone += dp.downloadedCount()*Constants.BLOCK_SIZE;
-
-            int corr = 0;
-            if (dp.pieceIndex == lastBlock.pieceIndex && dp.isDownloaded(lastBlock.pieceBlock)) {
-                corr = lastBlock.size(size) - Constants.BLOCK_SIZE_INT;
+            // Every normal ED2K piece also ends with a short block when using
+            // the protocol-standard 180 KiB request size. Count exact ranges
+            // instead of correcting only the final block of the whole file.
+            for (int block = 0; block < dp.getBlocksCount(); block++) {
+                if (dp.isDownloaded(block)) {
+                    status.totalDone += new PieceBlock(dp.pieceIndex, block).size(size);
+                }
             }
-
-            assert corr <= 0;
-
-            status.totalDone += corr;
         }
     }
 
@@ -567,6 +578,7 @@ public class Transfer {
             status.numConnectedPeers = connections.size();
             for (PeerConnection connection : connections) {
                 if (connection.isQueued()) status.numQueuedPeers++;
+                if (connection.isDownloading()) status.numDownloadingPeers++;
             }
             status.pieces = new BitField(picker.numPieces());
 

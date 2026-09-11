@@ -57,9 +57,10 @@ public class PieceBlock implements Comparable<PieceBlock>, Serializable {
      * @return range which block covers
      */
     public Range range(long size) {
-        long begin = pieceIndex * Constants.PIECE_SIZE + pieceBlock * Constants.BLOCK_SIZE;
-        long normalEnd = pieceIndex * Constants.PIECE_SIZE + (pieceBlock + 1) * Constants.BLOCK_SIZE;
-        long end = Math.min(begin + Constants.BLOCK_SIZE, Math.min(normalEnd, size));
+        long pieceBegin = pieceIndex * Constants.PIECE_SIZE;
+        long begin = pieceBegin + pieceBlock * Constants.BLOCK_SIZE;
+        long pieceEnd = Math.min(pieceBegin + Constants.PIECE_SIZE, size);
+        long end = Math.min(begin + Constants.BLOCK_SIZE, pieceEnd);
         assert(begin < end);
         return Range.make(begin, end);
     }

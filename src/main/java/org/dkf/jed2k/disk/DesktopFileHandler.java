@@ -5,9 +5,9 @@ import org.dkf.jed2k.exception.JED2KException;
 import org.slf4j.Logger;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.channels.FileChannel;
+import java.nio.file.StandardOpenOption;
 
 /**
  * Created by inkpot on 30.01.2017.
@@ -21,18 +21,22 @@ public class DesktopFileHandler extends FileHandler {
     }
 
     @Override
-    protected FileOutputStream allocateOutputStream() throws JED2KException {
+    protected FileChannel allocateWriteChannel() throws JED2KException {
         try {
-            return new FileOutputStream(file);
+            // FileOutputStream(File) truncates an existing partial download as
+            // soon as the first post-resume block is written. Open a random
+            // access channel without TRUNCATE_EXISTING instead.
+            return FileChannel.open(file.toPath(), StandardOpenOption.CREATE,
+                    StandardOpenOption.WRITE);
         } catch(IOException e) {
             throw new JED2KException(ErrorCode.IO_EXCEPTION);
         }
     }
 
     @Override
-    protected FileInputStream allocateInputStream() throws JED2KException {
+    protected FileChannel allocateReadChannel() throws JED2KException {
         try {
-            return new FileInputStream(file);
+            return FileChannel.open(file.toPath(), StandardOpenOption.READ);
         } catch(IOException e) {
             throw new JED2KException(ErrorCode.IO_EXCEPTION);
         }

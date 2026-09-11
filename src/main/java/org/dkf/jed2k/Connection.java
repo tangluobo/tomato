@@ -67,7 +67,7 @@ public abstract class Connection implements Dispatcher {
     private ByteBuffer headerBuffer = ByteBuffer.allocate(PacketHeader.SIZE);
     private Statistics stat = new Statistics();
     long lastReceive = Time.currentTime();
-    private boolean disconnecting = false;
+    private volatile boolean disconnecting = false;
 
     protected Connection(ByteBuffer bufferIncoming,
             ByteBuffer bufferOutgoing,
@@ -288,7 +288,13 @@ public abstract class Connection implements Dispatcher {
         }
     }
 
-    void close(BaseErrorCode ec) {
+    synchronized void close(BaseErrorCode ec) {
+        // Socket errors, timeouts and explicit shutdown can all converge here.
+        // Claim the close before touching the channel so a re-entrant or
+        // concurrent caller cannot invoke the subclass callback twice.
+        if (disconnecting) return;
+        disconnecting = true;
+
         log.debug("{} close connection {}", getEndpoint(), ec);
         try {
             socket.close();
@@ -301,7 +307,6 @@ public abstract class Connection implements Dispatcher {
         }
         finally {
             key.cancel();
-            disconnecting = true;
             onDisconnect(ec);
         }
     }

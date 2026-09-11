@@ -24,6 +24,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.SocketChannel;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.zip.DataFormatException;
@@ -160,6 +161,14 @@ public class PeerConnection extends Connection {
      * that queue is a normal ED2K state, not a connection failure.
      */
     private boolean queued = false;
+
+    /**
+     * OP_STARTUPLOADREQ has been sent and the peer has not answered yet.
+     * eMule enters its queue state at this point; treating it as an ordinary
+     * idle handshake makes us close the socket before a queue can be joined.
+     */
+    private boolean awaitingUploadResponse = false;
+    private long uploadRequestTime = 0;
 
     /**
      * channel transferring data
@@ -335,7 +344,7 @@ public class PeerConnection extends Connection {
         }
 
         public boolean supportLargeFiles() {
-            return ((value >> LARGE_FILE_OFFSET) & 0x01) == 0;
+            return ((value >> LARGE_FILE_OFFSET) & 0x01) == 1;
         }
 
         public void setCaptcha() {
@@ -387,6 +396,7 @@ public class PeerConnection extends Connection {
         //Utils.fingerprint(hello.getHash, (byte)'M', (byte)'L');
         hello.point.setIP(session.getClientId());
         hello.point.setPort(session.getListenPort());
+        hello.serverPoint.assign(session.getConnectedServerEndpoint());
 
         hello.properties.add(Tag.tag(Tag.CT_NAME, null, session.getClientName()));
         hello.properties.add(Tag.tag(Tag.CT_MOD_VERSION, null, session.getModName()));
@@ -401,9 +411,7 @@ public class PeerConnection extends Connection {
         mo.sourceExchange1Ver = 0; //SOURCE_EXCHG_LEVEL - important value
 
         MiscOptions2 mo2 = new MiscOptions2();
-        mo2.setCaptcha();
         mo2.setLargeFiles();
-        mo2.setSourceExt2();
 
         hello.properties.add(Tag.tag(Tag.CT_EMULE_VERSION, null, (int)Utils.makeFullED2KVersion(ClientSoftware.SO_AMULE.value,
                 session.getModMajorVersion(),
@@ -536,6 +544,14 @@ public class PeerConnection extends Connection {
             log.debug("extracted transfer {}", t!=null?t.toString():"null");
         }
 
+        // A queued high-ID uploader can reconnect to our listening socket
+        // without a server callback entry.  Re-associate it with the transfer
+        // which already knows this endpoint so its newly opened slot is usable.
+        if (t == null) {
+            t = session.findTransferForPeer(value.point);
+            log.debug("matched incoming queued peer transfer {}", t!=null?t.toString():"null");
+        }
+
         write(prepareHello(new HelloAnswer()));
 
         // attach incoming peer to transfer
@@ -585,7 +601,11 @@ public class PeerConnection extends Connection {
 
     @Override
     protected void onDisconnect(BaseErrorCode ec) {
-        if (ec != ErrorCode.NO_ERROR && !queued) failed = true;
+        if (isQueued()) {
+            deferPeerReask(Time.currentTime());
+        } else if (ec != ErrorCode.NO_ERROR) {
+            failed = true;
+        }
 
         if (transfer != null) {
             transfer.addStats(statistics());
@@ -604,8 +624,32 @@ public class PeerConnection extends Connection {
         // calculate statistics
         super.secondTick(tickIntervalMS);
 
-        // check timeout on connection
-        if (!queued && Time.currentTime() - lastReceive > session.settings.peerConnectionTimeout*1000) {
+        long now = Time.currentTime();
+
+        // A peer which does not admit us into its queue may deliberately stay
+        // silent (for example when its queue is full).  Leave cleanly and obey
+        // the ED2K reask interval instead of hammering it every few seconds.
+        if (awaitingUploadResponse && now - uploadRequestTime
+                > Time.seconds(Math.max(1, session.settings.peerQueueResponseTimeout))) {
+            log.debug("{} upload queue response timeout; defer reask", endpoint);
+            deferPeerReask(now);
+            close(ErrorCode.NO_ERROR);
+            return;
+        }
+
+        // Queue entries are purged by eMule peers if they are not refreshed.
+        // Repeat the complete file-status handshake on the standard 29-minute
+        // cadence; the source's available parts may have changed while waiting.
+        if (queued && shouldReaskQueue(now)) {
+            log.debug("{} refresh queued file request", endpoint);
+            beginUploadWait(now);
+            write(new FileRequest(transfer.getHash()));
+            return;
+        }
+
+        // check timeout on ordinary handshake/data connections
+        if (!isQueued() && now - lastReceive
+                > Time.seconds(Math.max(1, session.settings.peerConnectionTimeout))) {
             close(ErrorCode.CONNECTION_TIMEOUT);
         }
     }
@@ -644,7 +688,15 @@ public class PeerConnection extends Connection {
         remotePieces = value.bitfield;
         if (transfer != null) {
             if (transfer.size() >= Constants.PIECE_SIZE) {
-                write(new HashSetRequest(transfer.getHash()));
+                // The part hash set belongs to the file, not to a peer. A
+                // restored download already has it, and repeatedly asking
+                // modern clients for the deprecated MD4 hash-set packet can
+                // leave an otherwise healthy connection waiting forever.
+                if (transfer.hasHashSet()) {
+                    requestUpload();
+                } else {
+                    write(new HashSetRequest(transfer.getHash()));
+                }
             } else {
                 // file contains only one getHash, so set getHash set with that one getHash
                 final Hash h = value.hash;
@@ -652,7 +704,7 @@ public class PeerConnection extends Connection {
                     transfer.setHashSet(h, new ArrayList<Hash>() {{
                         add(h);
                     }});
-                    write(new StartUpload(transfer.getHash()));
+                    requestUpload();
                 } else {
                     log.warn("getHash from response {} mismatch transfer's getHash {}"
                         , value.hash
@@ -680,7 +732,7 @@ public class PeerConnection extends Connection {
                     && transfer.getHash().equals(Hash.fromHashSet(value.getParts()))
                     && transfer.getPicker().getPieceCount() == value.getParts().size()) {
                 transfer.setHashSet(value.getHash(), value.getParts());
-                write(new StartUpload(transfer.getHash()));
+                requestUpload();
             } else {
                 log.warn("incorrect getHash set answer {} for transfer getHash {}"
                     , value.getHash()
@@ -702,12 +754,54 @@ public class PeerConnection extends Connection {
     @Override
     public void onClientOutOfParts(OutOfParts value)
             throws JED2KException {
-        close(ErrorCode.OUT_OF_PARTS);
+        if (transfer == null) {
+            close(ErrorCode.NO_TRANSFER);
+            return;
+        }
+
+        // OP_OUTOFPARTREQS ends the current upload slot; it does not remove us
+        // from the remote upload queue.  eMule/aMule transition the downloader
+        // back to DS_ONQUEUE here and wait for the normal source-reask cycle.
+        abortAllRequests();
+        awaitingUploadResponse = false;
+        queued = true;
+        uploadRequestTime = Time.currentTime();
+    }
+
+    private void requestUpload() {
+        beginUploadWait(Time.currentTime());
+        write(new StartUpload(transfer.getHash()));
+    }
+
+    void beginUploadWait(long requestTime) {
+        awaitingUploadResponse = true;
+        queued = false;
+        uploadRequestTime = requestTime;
+    }
+
+    private void deferPeerReask(long now) {
+        if (peerInfo == null) return;
+        long interval = Time.seconds(Math.max(1, session.settings.peerReaskTime));
+        long deadline = Math.max(now,
+                (uploadRequestTime == 0 ? now : uploadRequestTime) + interval);
+        peerInfo.setNextConnection(Math.max(peerInfo.getNextConnection(), deadline));
+    }
+
+    boolean shouldReaskQueue(long now) {
+        return queued && uploadRequestTime != 0
+                && now - uploadRequestTime
+                >= Time.seconds(Math.max(1, session.settings.peerReaskTime));
+    }
+
+    boolean isAwaitingUploadResponse() {
+        return awaitingUploadResponse;
     }
 
     @Override
     public void onAcceptUpload(AcceptUpload value) throws JED2KException {
+        awaitingUploadResponse = false;
         queued = false;
+        uploadRequestTime = 0;
         log.debug("{} << accept upload", endpoint);
         requestBlocks();
     }
@@ -715,11 +809,17 @@ public class PeerConnection extends Connection {
     @Override
     public void onQueueRanking(QueueRanking value) throws JED2KException {
         log.debug("{} << queue ranking {} ", endpoint, value.rank);
+        awaitingUploadResponse = false;
         queued = true;
     }
 
     public boolean isQueued() {
-        return queued;
+        return awaitingUploadResponse || queued;
+    }
+
+    /** True when this peer is currently delivering payload or recently did so. */
+    public boolean isDownloading() {
+        return !isQueued() && (transferringData || statistics().downloadPayloadRate() > 0);
     }
 
     @Override
@@ -1064,7 +1164,11 @@ public class PeerConnection extends Connection {
         LinkedList<PieceBlock> blocks = new LinkedList<PieceBlock>();
         PiecePicker picker = transfer.getPicker();
         picker.pickPieces(blocks, Constants.REQUEST_QUEUE_SIZE, getPeer(), speed(), remotePieces);
-        RequestParts64 reqp = new RequestParts64(transfer.getHash());
+
+        boolean needs64BitOffsets = needs64BitOffsets(blocks, transfer.size());
+        RequestParts<?> reqp = needs64BitOffsets
+                ? new RequestParts64(transfer.getHash())
+                : new RequestParts32(transfer.getHash());
 
         while(!blocks.isEmpty() && downloadQueue.size() < Constants.REQUEST_QUEUE_SIZE) {
             PieceBlock b = blocks.poll();
@@ -1074,13 +1178,26 @@ public class PeerConnection extends Connection {
             // do not flush (write) structure to remote here like in libed2k since order always contain no more than 3 blocks
         }
 
-        log.debug("request blocks completed, download queue dataSize {}", downloadQueue.size());
+        log.debug("request blocks completed, download queue dataSize {}, offsets {} bit",
+                downloadQueue.size(), needs64BitOffsets ? 64 : 32);
         if (!reqp.isEmpty()) {
-            write(reqp);
+            if (needs64BitOffsets && !remotePeerInfo.misc2.supportLargeFiles()) {
+                log.debug("{} does not advertise large-file support", endpoint);
+                close(ErrorCode.PEER_CONN_UNSUPPORTED_PACKET);
+            } else {
+                write(reqp);
+            }
         }
         else {
             close(ErrorCode.NO_ERROR);
         }
+    }
+
+    static boolean needs64BitOffsets(Collection<PieceBlock> blocks, long fileSize) {
+        for (PieceBlock block : blocks) {
+            if (block.range(fileSize).right > 0xFFFFFFFFL) return true;
+        }
+        return false;
     }
 
     void abortAllRequests() {

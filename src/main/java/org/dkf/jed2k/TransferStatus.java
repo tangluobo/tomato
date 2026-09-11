@@ -28,6 +28,7 @@ public class TransferStatus {
     public int numPeers             = 0;
     public int numConnectedPeers    = 0;
     public int numQueuedPeers       = 0;
+    public int numDownloadingPeers  = 0;
     public long totalDone           = 0;
     public long totalWanted         = 0;
     public long eta                 = 0;
@@ -49,6 +50,7 @@ public class TransferStatus {
                 ", numPeers=" + numPeers +
                 ", numConnectedPeers=" + numConnectedPeers +
                 ", numQueuedPeers=" + numQueuedPeers +
+                ", numDownloadingPeers=" + numDownloadingPeers +
                 ", totalDone=" + totalDone +
                 ", totalWanted=" + totalWanted +
                 ", eta=" + eta +

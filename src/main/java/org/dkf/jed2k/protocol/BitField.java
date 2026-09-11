@@ -45,21 +45,21 @@ public class BitField implements Iterable<Boolean>, Serializable {
     public boolean getBit(int index) {
         assert(index >= 0);
         assert(index < m_size);
-        return (m_bytes[index / 8] & (0x80 >> (index & 7))) != 0;
+        return (m_bytes[index / 8] & (1 << (index & 7))) != 0;
     }
 
     public void clearBit(int index) {
         assert(m_bytes != null);
         assert(index >= 0);
         assert(index < m_size);
-        m_bytes[index / 8] &= ~(0x80 >> (index & 7));
+        m_bytes[index / 8] &= ~(1 << (index & 7));
     }
 
     public void setBit(int index) {
         assert(m_bytes != null);
         assert(index >= 0);
         assert(index < m_size);
-        m_bytes[index / 8] |= (0x80 >> (index & 7));
+        m_bytes[index / 8] |= (1 << (index & 7));
     }
 
     public int size() {
@@ -86,12 +86,12 @@ public class BitField implements Iterable<Boolean>, Serializable {
         int ret = 0;
         int num_bytes = m_size / 8;
         for (int i = 0; i < num_bytes; ++i) {
-            ret += num_bits[m_bytes[i] & 0xf] + num_bits[m_bytes[i] >> 4];
+            ret += num_bits[m_bytes[i] & 0xf] + num_bits[(m_bytes[i] >>> 4) & 0xf];
         }
 
         int rest = m_size - num_bytes * 8;
         for (int i = 0; i < rest; ++i) {
-            ret += (m_bytes[num_bytes] >> (7-i)) & 1;
+            ret += (m_bytes[num_bytes] >> i) & 1;
         }
 
         assert(ret <= m_size);
@@ -110,7 +110,7 @@ public class BitField implements Iterable<Boolean>, Serializable {
         int new_size_bytes = bitsToBytes(m_size);
 
         if (val) {
-            if (old_size_bytes != 0 && b != 0) m_bytes[old_size_bytes - 1] |= (0xff >> b);
+            if (old_size_bytes != 0 && b != 0) m_bytes[old_size_bytes - 1] |= (0xff << b);
             if (old_size_bytes < new_size_bytes) Arrays.fill(m_bytes, old_size_bytes, new_size_bytes, (byte)0xff);
             clear_trailing_bits();
         } else {
@@ -145,7 +145,7 @@ public class BitField implements Iterable<Boolean>, Serializable {
 
     private void clear_trailing_bits() {
         // clear the tail bits in the last byte
-        if ((m_size & 7) != 0) m_bytes[bitsToBytes(m_size) - 1] &= 0xff << (8 - (m_size & 7));
+        if ((m_size & 7) != 0) m_bytes[bitsToBytes(m_size) - 1] &= (1 << (m_size & 7)) - 1;
     }
 
     @Override
@@ -188,7 +188,7 @@ public class BitField implements Iterable<Boolean>, Serializable {
 
     @Override
     public ByteBuffer get(ByteBuffer src) throws JED2KException {
-        int size = src.getShort();
+        int size = Short.toUnsignedInt(src.getShort());
         byte[] temp = new byte[bitsToBytes(size)];
         try {
             src.get(temp);
