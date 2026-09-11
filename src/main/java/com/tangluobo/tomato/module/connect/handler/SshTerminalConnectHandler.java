@@ -914,6 +914,16 @@ public class SshTerminalConnectHandler implements ConnectHandler {
         module.getTerminalTabPane().getSelectionModel().select(tab);
         module.showTerminalView();
 
+        // 配置编辑后，当前终端的重连必须读取最新密码/密钥，而不是首次连接时
+        // SSHTerminalPane 缓存的那一份。ConnectionConfig 编辑时会原位更新，
+        // 因此这里持有的引用始终能反映最新保存结果。
+        terminalPane.setReconnectSettingsProvider(() -> new SSHTerminalPane.ReconnectSettings(
+                config.getHost(),
+                config.getPort(),
+                config.getUsername(),
+                config.getPassword(),
+                config.isUseKey() ? config.getPrivateKeyPaths() : null));
+
         // 重连始终刷新本标签实际持有的租约。租约按隧道实例释放，旧会话不会误断
         // 其他会话已经重建的新隧道。
         terminalPane.setTunnelResolver(() -> {

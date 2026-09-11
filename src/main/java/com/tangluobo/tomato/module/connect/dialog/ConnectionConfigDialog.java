@@ -2474,11 +2474,10 @@ public class ConnectionConfigDialog {
     private void handleConfirm() {
         if (!validateInput()) return;
 
-        config = new ConnectionConfig();
-        if (existingConfig != null) {
-            config.setId(existingConfig.getId());
-            config.setParentId(existingConfig.getParentId());
-        }
+        // 编辑时保留原配置对象的身份。连接树子节点、已打开的 SSH 标签页以及
+        // 各类连接处理器都可能仍持有这个对象；替换成新对象会导致它们继续使用
+        // 旧密码/旧密钥，直到应用重启并重新加载配置。
+        config = existingConfig != null ? existingConfig : new ConnectionConfig();
 
         boolean isDatabase = isDatabaseType(selectedType);
         boolean isSSH = selectedType == ConnectType.SSH || selectedType == ConnectType.SFTP;

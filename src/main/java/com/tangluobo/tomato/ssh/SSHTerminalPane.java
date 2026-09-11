@@ -66,6 +66,10 @@ public class SSHTerminalPane extends BorderPane {
     // 返回本地转发端口；未使用隧道返回 -1。由持有ConnectionConfig的连接处理器注入，避免ssh包反向依赖module.connect。
     private TunnelResolver tunnelResolver;
 
+    // 重连参数解析回调：每次重连前读取最新保存的主机、密码和密钥配置，
+    // 避免终端一直使用首次连接时缓存的认证信息。
+    private ReconnectSettingsProvider reconnectSettingsProvider;
+
     // 粘贴回调
     private Runnable onPaste;
 
@@ -891,10 +895,28 @@ public class SSHTerminalPane extends BorderPane {
      * 重新连接
      */
     private void reconnect() {
+        ReconnectSettings latest = reconnectSettingsProvider != null
+                ? reconnectSettingsProvider.resolve()
+                : null;
+        if (latest != null) {
+            host = latest.host();
+            port = latest.port();
+            username = latest.username();
+            password = latest.password();
+            privateKeyPaths = latest.privateKeyPaths();
+        }
+
         // host必须存在，且（密码存在 或 私钥路径存在），否则无法重连
         if (host == null || (password == null && (privateKeyPaths == null || privateKeyPaths.isEmpty()))) {
             return;
         }
+        // 在后台线程启动前生成一致的参数快照，避免编辑配置与重连并发时混用新旧字段。
+        final String reconnectHost = host;
+        final int reconnectPort = port;
+        final String reconnectUsername = username;
+        final String reconnectPassword = password;
+        final List<String> reconnectKeyPaths = privateKeyPaths == null
+                ? null : List.copyOf(privateKeyPaths);
         connectionLost = false;
         updateStatusBar("重新连接中...");
 
@@ -916,15 +938,18 @@ public class SSHTerminalPane extends BorderPane {
                 // 走跳板隧道时，重连必须重新解析隧道：旧隧道可能已随SSH断开而失效，
                 // 直接复用初始连接缓存的 localhost:旧转发端口 会因本地转发端口无监听而 Connection refused。
                 // 回调只刷新当前终端的租约，旧隧道的释放不会影响其他终端重建的新隧道。
+                String sessionHost = reconnectHost;
+                int sessionPort = reconnectPort;
                 if (tunnelResolver != null) {
                     int tunnelPort = tunnelResolver.resolve();
                     if (tunnelPort != -1) {
-                        host = "localhost";
-                        port = tunnelPort;
+                        sessionHost = "localhost";
+                        sessionPort = tunnelPort;
                     }
                 }
 
-                sshSession = new SSHSession(host, port, username, password, privateKeyPaths);
+                sshSession = new SSHSession(sessionHost, sessionPort, reconnectUsername,
+                        reconnectPassword, reconnectKeyPaths);
                 sshSession.connect();
                 running.set(true);
 
@@ -994,6 +1019,27 @@ public class SSHTerminalPane extends BorderPane {
      */
     public void setTunnelResolver(TunnelResolver resolver) {
         this.tunnelResolver = resolver;
+    }
+
+    /**
+     * 注入重连参数解析回调。回车触发重连时会先通过该回调读取最新连接配置，
+     * 当前已经建立的会话不受影响。
+     */
+    public void setReconnectSettingsProvider(ReconnectSettingsProvider provider) {
+        this.reconnectSettingsProvider = provider;
+    }
+
+    /** SSH 重连所需的不可变参数快照。 */
+    public record ReconnectSettings(String host, int port, String username, String password,
+                                    List<String> privateKeyPaths) {
+        public ReconnectSettings {
+            privateKeyPaths = privateKeyPaths == null ? null : List.copyOf(privateKeyPaths);
+        }
+    }
+
+    @FunctionalInterface
+    public interface ReconnectSettingsProvider {
+        ReconnectSettings resolve();
     }
 
     /**
