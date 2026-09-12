@@ -28,6 +28,7 @@ import javafx.stage.Stage;
 import javafx.stage.Window;
 import javafx.util.Callback;
 import javafx.util.Duration;
+import org.fxmisc.richtext.GenericStyledArea;
 
 import javax.swing.filechooser.FileSystemView;
 import java.awt.Desktop;
@@ -2051,7 +2052,7 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
 
     /**
      * 注册键盘快捷键：Ctrl+C 复制（子类可覆盖 handleCopy）、Ctrl+V 粘贴（上传系统剪贴板中的本地文件）。
-     * 在文本输入控件聚焦时由其自行处理，accelerator 不会被触发。
+     * 在文本编辑控件聚焦时由其自行处理，避免文件复制/粘贴抢占文本快捷键。
      */
     protected void setupKeyboardShortcuts() {
         // Do not register these on Scene.getAccelerators(): every open S3/SFTP tab uses the
@@ -2062,7 +2063,7 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
             if (!event.isShortcutDown() || event.isAltDown()) return;
             if (!isActuallyVisible()) return;
             Node focusOwner = getScene() != null ? getScene().getFocusOwner() : null;
-            if (focusOwner instanceof TextInputControl) return;
+            if (isTextEditingTarget(focusOwner)) return;
             if (event.getCode() == KeyCode.C) {
                 handleCopy();
                 event.consume();
@@ -2084,6 +2085,28 @@ public abstract class AbstractFileBrowserPane extends BorderPane {
             shortcutScene = getScene();
             shortcutScene.addEventFilter(KeyEvent.KEY_PRESSED, shortcutKeyFilter);
         }
+    }
+
+    /**
+     * JavaFX 原生输入框继承 TextInputControl，而 Markdown 编辑器使用 RichTextFX 的
+     * GenericStyledArea。文件浏览器在 Scene 捕获阶段处理快捷键，必须同时避让两者，
+     * 否则 Ctrl+C / Ctrl+V 会在到达 Markdown 编辑器前被消费。
+     */
+    static boolean isTextEditingTarget(Node node) {
+        Node current = node;
+        while (current != null) {
+            if (isTextEditingNodeType(current.getClass())) {
+                return true;
+            }
+            current = current.getParent();
+        }
+        return false;
+    }
+
+    static boolean isTextEditingNodeType(Class<?> nodeType) {
+        return nodeType != null
+                && (TextInputControl.class.isAssignableFrom(nodeType)
+                || GenericStyledArea.class.isAssignableFrom(nodeType));
     }
 
     private boolean isActuallyVisible() {
