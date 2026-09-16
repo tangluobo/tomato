@@ -1300,15 +1300,23 @@ public class DatabaseService {
     }
 
     /**
-     * 执行多条SQL语句，每条独立执行，一条失败不中断后续
+     * 执行多条用户 SQL 语句，不限制查询返回的行数。
+     * 每条语句独立执行，一条失败不中断后续。
      */
-    public static MultiStatementResult executeMultiSqlQuery(ConnectionConfig config, String databaseName, String sql, int pageSize) throws Exception {
+    public static MultiStatementResult executeMultiSqlQuery(ConnectionConfig config, String databaseName, String sql) throws Exception {
+        Connection conn = getConnectionForQuery(config, databaseName);
+        return executeMultiSqlQuery(conn, sql);
+    }
+
+    /**
+     * 使用已有连接执行用户 SQL。包可见性便于在不连接真实数据库的情况下验证查询语义。
+     */
+    static MultiStatementResult executeMultiSqlQuery(Connection conn, String sql) {
         List<String> statements = SqlSplitter.split(sql);
         MultiStatementResult multiResult = new MultiStatementResult();
         List<SqlStatementResult> results = new ArrayList<>();
 
         long totalStart = System.currentTimeMillis();
-        Connection conn = getConnectionForQuery(config, databaseName);
 
         for (String stmt : statements) {
             SqlStatementResult sr = new SqlStatementResult();
@@ -1322,7 +1330,6 @@ public class DatabaseService {
 
             long start = System.currentTimeMillis();
             try (Statement jdbcStmt = conn.createStatement()) {
-                jdbcStmt.setMaxRows(pageSize);
                 boolean hasResultSet = jdbcStmt.execute(stmt);
                 long queryTime = System.currentTimeMillis() - start;
 
@@ -1340,7 +1347,7 @@ public class DatabaseService {
 
                         ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
                         long count = 0;
-                        while (rs.next() && count < pageSize) {
+                        while (rs.next()) {
                             ObservableList<String> row = FXCollections.observableArrayList();
                             for (int i = 1; i <= columnCount; i++) {
                                 String val = rs.getString(i);

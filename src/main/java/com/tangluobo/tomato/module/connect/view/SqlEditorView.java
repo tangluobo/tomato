@@ -850,7 +850,7 @@ public class SqlEditorView extends BorderPane {
             connLock.lock();
             try {
                 try {
-                    MultiStatementResult multiResult = DatabaseService.executeMultiSqlQuery(config, dbName, sql, 1000);
+                    MultiStatementResult multiResult = DatabaseService.executeMultiSqlQuery(config, dbName, sql);
 
                     // 收集剖析结果（对SELECT语句执行EXPLAIN）
                     List<TableRowData> explainResults = new java.util.ArrayList<>();

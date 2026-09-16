@@ -34,7 +34,31 @@
       ]
     },
     {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_10_TopicStatsTable",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
       "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_11_GroupRetryPolicy",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_11_MessageQueue",
       "methods": [
         {
           "name": "<init>",
@@ -70,6 +94,18 @@
       ]
     },
     {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_12_TopicOffset",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
       "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_12_TopicRouteData",
       "methods": [
         {
@@ -83,6 +119,18 @@
     },
     {
       "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_13_DataVersion",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_13_TopicConfigAndQueueMapping",
       "methods": [
         {
           "name": "<init>",
@@ -118,7 +166,31 @@
       ]
     },
     {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_14_GroupList",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
       "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_14_QueueData",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_15_ConsumerConnection",
       "methods": [
         {
           "name": "<init>",
@@ -143,6 +215,18 @@
     },
     {
       "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_15_SubscriptionGroupConfig",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_16_Connection",
       "methods": [
         {
           "name": "<init>",
@@ -202,6 +286,30 @@
       ]
     },
     {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_17_SubscriptionData",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_18_ConsumeStats",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
       "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_18_GroupRetryPolicy",
       "methods": [
         {
@@ -250,6 +358,18 @@
       ]
     },
     {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_19_OffsetWrapper",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
       "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_1_RemotingCommand",
       "methods": [
         {
@@ -263,6 +383,30 @@
     },
     {
       "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_20_OffsetWrapper",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_20_Stopwatch",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_21_ConsumeMessageDirectlyResult",
       "methods": [
         {
           "name": "<init>",
@@ -346,7 +490,43 @@
       ]
     },
     {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_2_RemotingCommand",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
       "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_3_BrokerData",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_3_ClusterInfo",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_4_ClusterInfo",
       "methods": [
         {
           "name": "<init>",
@@ -382,6 +562,18 @@
       ]
     },
     {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_5_BrokerData",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
       "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_5_SubscriptionGroupWrapper",
       "methods": [
         {
@@ -395,6 +587,18 @@
     },
     {
       "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_5_TopicRouteData",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_6_BrokerData",
       "methods": [
         {
           "name": "<init>",
@@ -442,6 +646,18 @@
       ]
     },
     {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_7_TopicList",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
       "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_7_TopicStatsTable",
       "methods": [
         {
@@ -467,6 +683,30 @@
     },
     {
       "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_8_SubscriptionGroupConfig",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_8_TopicRouteData",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.alibaba.fastjson.parser.ParserConfig",
+            "com.alibaba.fastjson.util.JavaBeanInfo"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "com.alibaba.fastjson.parser.deserializer.FastjsonASMDeserializer_9_QueueData",
       "methods": [
         {
           "name": "<init>",
@@ -575,6 +815,15 @@
     },
     {
       "type": "com.fasterxml.jackson.databind.ext.Java7SupportImpl",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.google.common.base.Stopwatch",
       "methods": [
         {
           "name": "<init>",
@@ -6252,161 +6501,6 @@
     {
       "type": "com.tangluobo.tomato.module.connect.ConnectionConfig",
       "allDeclaredFields": true,
-      "fields": [
-        {
-          "name": "bucket"
-        },
-        {
-          "name": "certificateEmail"
-        },
-        {
-          "name": "colorDepth"
-        },
-        {
-          "name": "database"
-        },
-        {
-          "name": "defaultFileViewMode"
-        },
-        {
-          "name": "description"
-        },
-        {
-          "name": "directoryType"
-        },
-        {
-          "name": "domain"
-        },
-        {
-          "name": "enableSound"
-        },
-        {
-          "name": "endpoint"
-        },
-        {
-          "name": "fullscreen"
-        },
-        {
-          "name": "host"
-        },
-        {
-          "name": "id"
-        },
-        {
-          "name": "localDirectoryPath"
-        },
-        {
-          "name": "mapClipboard"
-        },
-        {
-          "name": "name"
-        },
-        {
-          "name": "parentId"
-        },
-        {
-          "name": "password"
-        },
-        {
-          "name": "pathStyleAccess"
-        },
-        {
-          "name": "port"
-        },
-        {
-          "name": "privateKeyPaths"
-        },
-        {
-          "name": "publicAccessUrl"
-        },
-        {
-          "name": "rdpFullScreenShortcut"
-        },
-        {
-          "name": "rdpOpenMode"
-        },
-        {
-          "name": "redisCluster"
-        },
-        {
-          "name": "redisClusterNodes"
-        },
-        {
-          "name": "redisDatabase"
-        },
-        {
-          "name": "region"
-        },
-        {
-          "name": "s3Prefix"
-        },
-        {
-          "name": "savePassword"
-        },
-        {
-          "name": "screenHeight"
-        },
-        {
-          "name": "screenWidth"
-        },
-        {
-          "name": "scrollbackLines"
-        },
-        {
-          "name": "serverConfig"
-        },
-        {
-          "name": "sshTunnelHost"
-        },
-        {
-          "name": "sshTunnelHostId"
-        },
-        {
-          "name": "sshTunnelPassword"
-        },
-        {
-          "name": "sshTunnelPort"
-        },
-        {
-          "name": "sshTunnelPrivateKeyPaths"
-        },
-        {
-          "name": "sshTunnelSavePassword"
-        },
-        {
-          "name": "sshTunnelUseKey"
-        },
-        {
-          "name": "sshTunnelUsePassword"
-        },
-        {
-          "name": "sshTunnelUsername"
-        },
-        {
-          "name": "terminalType"
-        },
-        {
-          "name": "toolType"
-        },
-        {
-          "name": "type"
-        },
-        {
-          "name": "useKey"
-        },
-        {
-          "name": "usePassword"
-        },
-        {
-          "name": "useSshTunnel"
-        },
-        {
-          "name": "useSsl"
-        },
-        {
-          "name": "username"
-        }
-      ],
       "methods": [
         {
           "name": "<init>",
@@ -6420,53 +6514,6 @@
     {
       "type": "com.tangluobo.tomato.module.connect.GlobalConfig",
       "allDeclaredFields": true,
-      "fields": [
-        {
-          "name": "aiApiBaseUrl"
-        },
-        {
-          "name": "aiApiKey"
-        },
-        {
-          "name": "aiIncludeSchema"
-        },
-        {
-          "name": "aiModel"
-        },
-        {
-          "name": "aiRequestTimeoutSeconds"
-        },
-        {
-          "name": "rdpFullScreenShortcut"
-        },
-        {
-          "name": "rdpOpenMode"
-        },
-        {
-          "name": "scrollbackLines"
-        },
-        {
-          "name": "sidebarVisible"
-        },
-        {
-          "name": "sshDefaultFileViewMode"
-        },
-        {
-          "name": "sshServiceManagementEnabled"
-        },
-        {
-          "name": "sshTerminalFontName"
-        },
-        {
-          "name": "sshTerminalFontSize"
-        },
-        {
-          "name": "tableFontName"
-        },
-        {
-          "name": "tableFontSize"
-        }
-      ],
       "methods": [
         {
           "name": "<init>",
@@ -6589,29 +6636,6 @@
     {
       "type": "com.tangluobo.tomato.module.connect.service.DdnsService$DdnsEntry",
       "allDeclaredFields": true,
-      "fields": [
-        {
-          "name": "connectionId"
-        },
-        {
-          "name": "domainName"
-        },
-        {
-          "name": "line"
-        },
-        {
-          "name": "recordId"
-        },
-        {
-          "name": "rr"
-        },
-        {
-          "name": "ttl"
-        },
-        {
-          "name": "type"
-        }
-      ],
       "methods": [
         {
           "name": "<init>",
@@ -6749,20 +6773,6 @@
     {
       "type": "com.tangluobo.tomato.module.tools.server.ServerAccount",
       "allDeclaredFields": true,
-      "fields": [
-        {
-          "name": "enabled"
-        },
-        {
-          "name": "homeDirectory"
-        },
-        {
-          "name": "password"
-        },
-        {
-          "name": "username"
-        }
-      ],
       "methods": [
         {
           "name": "<init>",
@@ -6773,29 +6783,6 @@
     {
       "type": "com.tangluobo.tomato.module.tools.server.ServerConfig",
       "allDeclaredFields": true,
-      "fields": [
-        {
-          "name": "accounts"
-        },
-        {
-          "name": "anonymousAccess"
-        },
-        {
-          "name": "bindAddress"
-        },
-        {
-          "name": "port"
-        },
-        {
-          "name": "rootDirectory"
-        },
-        {
-          "name": "sharedDirectories"
-        },
-        {
-          "name": "type"
-        }
-      ],
       "methods": [
         {
           "name": "<init>",
@@ -6858,6 +6845,24 @@
       "type": "int[]"
     },
     {
+      "type": "io.minio.CopyObjectArgs",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "io.minio.CopySource",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
       "type": "io.minio.GetObjectArgs",
       "methods": [
         {
@@ -6885,6 +6890,15 @@
       ]
     },
     {
+      "type": "io.minio.RemoveObjectArgs",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
       "type": "io.minio.messages.Bucket",
       "fields": [
         {
@@ -6903,6 +6917,23 @@
     },
     {
       "type": "io.minio.messages.Contents",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "io.minio.messages.CopyObjectResult",
+      "fields": [
+        {
+          "name": "etag"
+        },
+        {
+          "name": "lastModified"
+        }
+      ],
       "methods": [
         {
           "name": "<init>",
@@ -9184,6 +9215,22 @@
       "type": "org.apache.kafka.common.utils.AppInfoParser$AppInfoMBean"
     },
     {
+      "type": "org.apache.rocketmq.client.impl.MQClientAPIImpl",
+      "fields": [
+        {
+          "name": "remotingClient"
+        }
+      ]
+    },
+    {
+      "type": "org.apache.rocketmq.client.impl.consumer.DefaultMQPullConsumerImpl",
+      "fields": [
+        {
+          "name": "mQClientFactory"
+        }
+      ]
+    },
+    {
       "type": "org.apache.rocketmq.common.TopicConfig"
     },
     {
@@ -9968,7 +10015,22 @@
       "type": "org.apache.rocketmq.remoting.protocol.admin.TopicStatsTable"
     },
     {
+      "type": "org.apache.rocketmq.remoting.protocol.body.CMResult"
+    },
+    {
       "type": "org.apache.rocketmq.remoting.protocol.body.ClusterInfo"
+    },
+    {
+      "type": "org.apache.rocketmq.remoting.protocol.body.Connection"
+    },
+    {
+      "type": "org.apache.rocketmq.remoting.protocol.body.ConsumeMessageDirectlyResult"
+    },
+    {
+      "type": "org.apache.rocketmq.remoting.protocol.body.ConsumerConnection"
+    },
+    {
+      "type": "org.apache.rocketmq.remoting.protocol.body.GroupList"
     },
     {
       "type": "org.apache.rocketmq.remoting.protocol.body.KVTable"
@@ -9986,6 +10048,32 @@
     },
     {
       "type": "org.apache.rocketmq.remoting.protocol.body.TopicList"
+    },
+    {
+      "type": "org.apache.rocketmq.remoting.protocol.header.ConsumeMessageDirectlyResultRequestHeader",
+      "fields": [
+        {
+          "name": "brokerName"
+        },
+        {
+          "name": "clientId"
+        },
+        {
+          "name": "consumerGroup"
+        },
+        {
+          "name": "groupSysFlag"
+        },
+        {
+          "name": "msgId"
+        },
+        {
+          "name": "topic"
+        },
+        {
+          "name": "topicSysFlag"
+        }
+      ]
     },
     {
       "type": "org.apache.rocketmq.remoting.protocol.header.GetConsumeStatsRequestHeader",
@@ -10116,6 +10204,31 @@
       ]
     },
     {
+      "type": "org.apache.rocketmq.remoting.protocol.header.QueryMessageResponseHeader",
+      "fields": [
+        {
+          "name": "indexLastUpdatePhyoffset"
+        },
+        {
+          "name": "indexLastUpdateTimestamp"
+        }
+      ],
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "org.apache.rocketmq.remoting.protocol.header.QueryTopicConsumeByWhoRequestHeader",
+      "fields": [
+        {
+          "name": "topic"
+        }
+      ]
+    },
+    {
       "type": "org.apache.rocketmq.remoting.protocol.header.UnregisterClientRequestHeader",
       "fields": [
         {
@@ -10180,6 +10293,9 @@
     },
     {
       "type": "org.apache.rocketmq.remoting.protocol.heartbeat.ProducerData"
+    },
+    {
+      "type": "org.apache.rocketmq.remoting.protocol.heartbeat.SubscriptionData"
     },
     {
       "type": "org.apache.rocketmq.remoting.protocol.route.BrokerData"
@@ -11900,6 +12016,9 @@
     },
     {
       "glob": "META-INF/services/java.time.zone.ZoneRulesProvider"
+    },
+    {
+      "glob": "META-INF/services/java.util.prefs.PreferencesFactory"
     },
     {
       "glob": "META-INF/services/java.util.spi.ResourceBundleControlProvider"
@@ -16300,10 +16419,16 @@
       "glob": "com/sun/glass/utils/NativeLibLoader.class"
     },
     {
+      "glob": "com/sun/javafx/scene/control/skin/modena/dialog-confirm.png"
+    },
+    {
       "glob": "com/sun/javafx/scene/control/skin/modena/dialog-error.png"
     },
     {
       "glob": "com/sun/javafx/scene/control/skin/modena/dialog-information.png"
+    },
+    {
+      "glob": "com/sun/javafx/scene/control/skin/modena/dialog-warning.png"
     },
     {
       "glob": "com/sun/javafx/scene/control/skin/modena/modena.bss"
@@ -16633,6 +16758,12 @@
       "glob": "images/connect/fileTypes/PEM.png"
     },
     {
+      "glob": "images/connect/fileTypes/PNG.png"
+    },
+    {
+      "glob": "images/connect/fileTypes/PNG111.png"
+    },
+    {
       "glob": "images/connect/fileTypes/RPM.png"
     },
     {
@@ -16872,6 +17003,10 @@
     {
       "module": "java.base",
       "glob": "sun/net/idn/uidna.spp"
+    },
+    {
+      "module": "java.base",
+      "glob": "sun/net/www/content-types.properties"
     },
     {
       "module": "java.base",
