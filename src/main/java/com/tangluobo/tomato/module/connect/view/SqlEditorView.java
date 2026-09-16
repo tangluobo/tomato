@@ -1222,7 +1222,7 @@ public class SqlEditorView extends BorderPane {
             @Override
             protected void updateItem(String item, boolean empty) {
                 if (selectionListener != null) {
-                    tableView.getSelectionModel().getSelectedItems().removeListener(selectionListener);
+                    tableView.getSelectionModel().getSelectedIndices().removeListener(selectionListener);
                     selectionListener = null;
                 }
                 super.updateItem(item, empty);
@@ -1238,7 +1238,7 @@ public class SqlEditorView extends BorderPane {
                         arrow.setVisible(tableView.getSelectionModel().getSelectedIndices().contains(getTableRow().getIndex()));
                     }
                 };
-                tableView.getSelectionModel().getSelectedItems().addListener(selectionListener);
+                tableView.getSelectionModel().getSelectedIndices().addListener(selectionListener);
             }
         });
         FrozenRowSelectorPane<ObservableList<String>> frozenTablePane =
@@ -1356,10 +1356,10 @@ public class SqlEditorView extends BorderPane {
             updateQueryResultButtons(context);
         }
 
-        tableView.getSelectionModel().getSelectedCells().addListener(
+        tableView.getSelectionModel().getSelectedIndices().addListener(
                 (javafx.beans.InvalidationListener) observable -> {
                     updateQueryResultRecordStatus(tableView, recordStatusLabel);
-                    if (context != null) updateQueryResultButtons(context);
+                    if (context != null) updateQueryResultSelectionButtons(context);
                 });
         updateQueryResultRecordStatus(tableView, recordStatusLabel);
         return new VBox(actionBar, statusBar);
@@ -2260,6 +2260,13 @@ public class SqlEditorView extends BorderPane {
         }
     }
 
+    /** 选区变化时只更新与选中行相关的按钮，避免重新扫描整个结果集的修改状态。 */
+    private void updateQueryResultSelectionButtons(QueryResultEditContext context) {
+        if (context.deleteButton == null) return;
+        context.deleteButton.setDisable(!context.canDelete() || context.saving
+                || context.tableView.getSelectionModel().getSelectedItems().isEmpty());
+    }
+
     private void showQueryResultError(String title, String message) {
         Alert err = new Alert(Alert.AlertType.ERROR);
         err.setTitle(title);
@@ -2817,6 +2824,7 @@ public class SqlEditorView extends BorderPane {
      */
     private void setupDragSelection(TableView<ObservableList<String>> tableView) {
         final int[] dragStart = {-1, -1};
+        final int[] dragEnd = {-1, -1};
         final int[] anchorCell = {-1, -1};
 
         tableView.setOnMousePressed(event -> {
@@ -2830,18 +2838,17 @@ public class SqlEditorView extends BorderPane {
                 int minCol = Math.min(anchorCell[1], cellPos[1]);
                 int maxCol = Math.max(anchorCell[1], cellPos[1]);
                 tableView.getSelectionModel().clearSelection();
-                for (int r = minRow; r <= maxRow; r++) {
-                    for (int c = minCol; c <= maxCol; c++) {
-                        TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(c);
-                        tableView.getSelectionModel().select(r, col);
-                    }
-                }
+                tableView.getSelectionModel().selectRange(
+                        minRow, tableView.getColumns().get(minCol),
+                        maxRow, tableView.getColumns().get(maxCol));
                 event.consume();
                 return;
             }
 
             dragStart[0] = cellPos[0];
             dragStart[1] = cellPos[1];
+            dragEnd[0] = cellPos[0];
+            dragEnd[1] = cellPos[1];
             anchorCell[0] = cellPos[0];
             anchorCell[1] = cellPos[1];
             tableView.getSelectionModel().clearSelection();
@@ -2849,28 +2856,32 @@ public class SqlEditorView extends BorderPane {
             tableView.getSelectionModel().select(cellPos[0], col);
         });
 
-        tableView.setOnMouseDragged(event -> {
+        // 捕获阶段拦截已开始的拖拽，表格外的移动只保留当前选区。
+        tableView.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_DRAGGED, event -> {
             if (event.getButton() != MouseButton.PRIMARY) return;
             if (dragStart[0] < 0) return;
+            event.consume();
             int[] cellPos = getCellPositionAt(tableView, event);
             if (cellPos == null) return;
             int endRow = cellPos[0];
             int endCol = cellPos[1];
+            if (dragEnd[0] == endRow && dragEnd[1] == endCol) return;
+            dragEnd[0] = endRow;
+            dragEnd[1] = endCol;
             int minRow = Math.min(dragStart[0], endRow);
             int maxRow = Math.max(dragStart[0], endRow);
             int minCol = Math.min(dragStart[1], endCol);
             int maxCol = Math.max(dragStart[1], endCol);
             tableView.getSelectionModel().clearSelection();
-            for (int r = minRow; r <= maxRow; r++) {
-                for (int c = minCol; c <= maxCol; c++) {
-                    TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(c);
-                    tableView.getSelectionModel().select(r, col);
-                }
-            }
+            tableView.getSelectionModel().selectRange(
+                    minRow, tableView.getColumns().get(minCol),
+                    maxRow, tableView.getColumns().get(maxCol));
         });
 
         tableView.setOnMouseReleased(event -> {
             dragStart[0] = -1;
+            dragEnd[0] = -1;
+            dragEnd[1] = -1;
         });
     }
 

@@ -18,6 +18,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Base64;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
@@ -26,7 +27,9 @@ import java.util.concurrent.Executors;
 public class HttpFileServer implements FileServer {
 
     private HttpServer httpServer;
+    private ExecutorService executor;
     private ServerConfig config;
+    private TemporaryDownloadToken downloadTokens;
     private volatile boolean running = false;
 
     @Override
@@ -36,10 +39,13 @@ public class HttpFileServer implements FileServer {
 
     @Override
     public void start(ServerConfig config) throws Exception {
+        validateAuthConfiguration(config);
         this.config = config;
+        this.downloadTokens = new TemporaryDownloadToken();
         InetSocketAddress addr = new InetSocketAddress(config.getBindAddress(), config.getPort());
         httpServer = HttpServer.create(addr, 0);
-        httpServer.setExecutor(Executors.newCachedThreadPool());
+        executor = Executors.newCachedThreadPool();
+        httpServer.setExecutor(executor);
 
         // 创建根上下文处理所有请求
         if (config.getSharedDirectories() != null && !config.getSharedDirectories().isEmpty()) {
@@ -69,6 +75,11 @@ public class HttpFileServer implements FileServer {
             httpServer.stop(2);
             httpServer = null;
         }
+        if (executor != null) {
+            executor.shutdownNow();
+            executor = null;
+        }
+        downloadTokens = null;
         running = false;
     }
 
@@ -80,15 +91,47 @@ public class HttpFileServer implements FileServer {
     @Override
     public String getListenAddress() {
         if (config == null) return "";
-        return "http://" + config.getBindAddress() + ":" + config.getPort();
+        int port = httpServer != null ? httpServer.getAddress().getPort() : config.getPort();
+        return "http://" + config.getBindAddress() + ":" + port;
+    }
+
+    private boolean hasValidDownloadToken(HttpExchange exchange) {
+        TemporaryDownloadToken tokens = downloadTokens;
+        if (tokens == null) return false;
+        String token = queryParameter(exchange.getRequestURI().getRawQuery(), "token");
+        return tokens.isValid(exchange.getRequestMethod(), exchange.getRequestURI().getRawPath(), token);
+    }
+
+    private String temporaryLink(String rawPath) {
+        TemporaryDownloadToken tokens = downloadTokens;
+        return tokens == null ? rawPath : tokens.signPath(rawPath);
+    }
+
+    private static String queryParameter(String rawQuery, String name) {
+        if (rawQuery == null || rawQuery.isEmpty()) return null;
+        try {
+            for (String part : rawQuery.split("&")) {
+                int separator = part.indexOf('=');
+                String rawName = separator < 0 ? part : part.substring(0, separator);
+                if (!name.equals(URLDecoder.decode(rawName, StandardCharsets.UTF_8))) continue;
+                String rawValue = separator < 0 ? "" : part.substring(separator + 1);
+                return URLDecoder.decode(rawValue, StandardCharsets.UTF_8);
+            }
+        } catch (IllegalArgumentException ignored) {
+            // Treat malformed percent encoding as an invalid token.
+        }
+        return null;
+    }
+
+    private static String encodePathSegment(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
     /**
      * 基础认证检查
      */
     private boolean checkAuth(HttpExchange exchange, SharedDirectory dir, ServerConfig cfg) {
-        if (cfg.isAnonymousAccess()) return true;
-        if (dir != null && dir.getAllowedUsers() != null && dir.getAllowedUsers().isEmpty() && cfg.getAccounts() == null) return true;
+        if (cfg.isAnonymousAccess() && isReadRequest(exchange.getRequestMethod())) return true;
 
         Headers headers = exchange.getRequestHeaders();
         List<String> authHeader = headers.get("Authorization");
@@ -133,12 +176,33 @@ public class HttpFileServer implements FileServer {
         }
     }
 
+    private static boolean isReadRequest(String method) {
+        return "GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method);
+    }
+
+    private static void validateAuthConfiguration(ServerConfig config) {
+        boolean servesFiles = (config.getRootDirectory() != null
+                && !config.getRootDirectory().isBlank())
+                || (config.getSharedDirectories() != null
+                && !config.getSharedDirectories().isEmpty());
+        boolean hasEnabledAccount = config.getAccounts() != null
+                && config.getAccounts().stream()
+                .anyMatch(account -> account != null && account.isEnabled());
+        if (servesFiles && !config.isAnonymousAccess() && !hasEnabledAccount) {
+            throw new IllegalArgumentException(
+                    "匿名访问已关闭，请至少配置一个启用账号后再启动HTTP文件服务");
+        }
+    }
+
     private void sendUnauthorized(HttpExchange exchange) {
         try {
             Headers respHeaders = exchange.getResponseHeaders();
             respHeaders.set("WWW-Authenticate", "Basic realm=\"File Server\"");
             exchange.sendResponseHeaders(401, -1);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        } finally {
+            exchange.close();
+        }
     }
 
     /**
@@ -167,7 +231,7 @@ public class HttpFileServer implements FileServer {
     /**
      * 根路径处理器：显示共享目录列表
      */
-    private static class RootHandler implements HttpHandler {
+    private class RootHandler implements HttpHandler {
         private final ServerConfig config;
 
         RootHandler(ServerConfig config) {
@@ -176,6 +240,8 @@ public class HttpFileServer implements FileServer {
 
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            if (!checkAuth(exchange, null, config)) return;
+
             StringBuilder sb = new StringBuilder();
             sb.append("""
                 <html><head><title>HTTP File Server - 共享目录</title>
@@ -188,7 +254,8 @@ public class HttpFileServer implements FileServer {
                 """);
 
             for (SharedDirectory dir : config.getSharedDirectories()) {
-                String link = "/" + URLEncoder.encode(dir.getAlias(), StandardCharsets.UTF_8) + "/";
+                String rawPath = "/" + encodePathSegment(dir.getAlias()) + "/";
+                String link = temporaryLink(rawPath);
                 sb.append("<div class=\"card\"><a href=\"").append(link).append("\">📂 ").append(dir.getAlias()).append("</a>");
                 sb.append("<div class=\"desc\">路径: ").append(dir.getPath());
                 sb.append(" | ").append(dir.isReadOnly() ? "🔒 只读" : "✏️ 可写").append("</div></div>");
@@ -197,6 +264,8 @@ public class HttpFileServer implements FileServer {
 
             byte[] data = sb.toString().getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
+            exchange.getResponseHeaders().set("Cache-Control", "no-store");
+            exchange.getResponseHeaders().set("Referrer-Policy", "no-referrer");
             exchange.sendResponseHeaders(200, data.length);
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(data);
@@ -218,17 +287,22 @@ public class HttpFileServer implements FileServer {
 
         @Override
         public void handle(HttpExchange exchange) throws IOException {
-            // 认证检查
-            if (!checkAuth(exchange, dir, cfg)) {
+            // 临时Token只授权GET/HEAD；写操作仍必须通过账号认证。
+            if (!hasValidDownloadToken(exchange) && !checkAuth(exchange, dir, cfg)) {
                 return;
             }
 
             String method = exchange.getRequestMethod();
             String ctxPath = exchange.getHttpContext().getPath();
-            String uriPath = exchange.getRequestURI().getPath();
-            String relPath = uriPath.startsWith(ctxPath) ? uriPath.substring(ctxPath.length()) : uriPath;
+            String rawPath = exchange.getRequestURI().getRawPath();
+            String relPath = rawPath.startsWith(ctxPath) ? rawPath.substring(ctxPath.length()) : rawPath;
             if (relPath.startsWith("/")) relPath = relPath.substring(1);
-            relPath = URLDecoder.decode(relPath, StandardCharsets.UTF_8);
+            try {
+                relPath = URLDecoder.decode(relPath, StandardCharsets.UTF_8);
+            } catch (IllegalArgumentException ex) {
+                sendError(exchange, 400, "Bad Request");
+                return;
+            }
 
             // 规范化防止路径穿越
             Path basePath = Paths.get(dir.getPath()).toAbsolutePath().normalize();
@@ -291,13 +365,14 @@ public class HttpFileServer implements FileServer {
 
                 // 返回上级链接
                 String ctxPath = exchange.getHttpContext().getPath();
-                String currentUri = exchange.getRequestURI().getPath();
+                String currentUri = exchange.getRequestURI().getRawPath();
                 if (!currentUri.endsWith("/")) currentUri += "/";
-                if (!currentUri.equals(ctxPath + "/")) {
+                String contextRoot = ctxPath.endsWith("/") ? ctxPath : ctxPath + "/";
+                if (!currentUri.equals(contextRoot)) {
                     String parent = currentUri.substring(0, currentUri.length() - 1);
                     int lastSlash = parent.lastIndexOf('/');
                     parent = parent.substring(0, lastSlash + 1);
-                    sb.append("<a class=\"up\" href=\"").append(parent).append("\">⬆️ 返回上级</a>");
+                    sb.append("<a class=\"up\" href=\"").append(temporaryLink(parent)).append("\">⬆️ 返回上级</a>");
                 }
 
                 sb.append("<table><tr><th>名称</th><th>大小</th><th>修改时间</th></tr>");
@@ -316,8 +391,8 @@ public class HttpFileServer implements FileServer {
                         String icon = isDir ? "📁" : "📄";
                         String size = isDir ? "-" : formatSize(Files.size(p));
                         String mtime = fmt.format(Files.getLastModifiedTime(p).toInstant());
-                        String link = URLEncoder.encode(name, StandardCharsets.UTF_8);
-                        if (isDir) link += "/";
+                        String childPath = currentUri + encodePathSegment(name) + (isDir ? "/" : "");
+                        String link = temporaryLink(childPath);
                         sb.append("<tr><td><a href=\"").append(link).append("\">").append(icon).append(" ").append(name).append("</a></td>")
                                 .append("<td>").append(size).append("</td>")
                                 .append("<td>").append(mtime).append("</td></tr>");
@@ -327,6 +402,8 @@ public class HttpFileServer implements FileServer {
 
                 byte[] data = sb.toString().getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
+                exchange.getResponseHeaders().set("Cache-Control", "no-store");
+                exchange.getResponseHeaders().set("Referrer-Policy", "no-referrer");
                 exchange.sendResponseHeaders(200, data.length);
                 if (!"HEAD".equalsIgnoreCase(exchange.getRequestMethod())) {
                     try (OutputStream os = exchange.getResponseBody()) {
@@ -340,7 +417,8 @@ public class HttpFileServer implements FileServer {
                 long length = Files.size(targetPath);
                 exchange.getResponseHeaders().set("Content-Type", contentType);
                 exchange.getResponseHeaders().set("Content-Disposition",
-                        "inline; filename*=UTF-8''" + URLEncoder.encode(targetPath.getFileName().toString(), StandardCharsets.UTF_8));
+                        "attachment; filename*=UTF-8''" + encodePathSegment(
+                                targetPath.getFileName().toString()).replace("+", "%20"));
                 exchange.getResponseHeaders().set("Last-Modified",
                         DateTimeFormatter.RFC_1123_DATE_TIME.withZone(ZoneId.of("GMT")).format(Files.getLastModifiedTime(targetPath).toInstant()));
                 exchange.sendResponseHeaders(200, length);

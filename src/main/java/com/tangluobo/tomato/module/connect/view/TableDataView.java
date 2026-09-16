@@ -257,7 +257,8 @@ public class TableDataView extends BorderPane {
     private void setupDragSelection() {
         // 记录拖拽起始cell
         final int[] dragStart = {-1, -1}; // [row, colIndex in tableView.getColumns()]
-        final boolean[] dragging = {false};
+        // 鼠标在同一单元格内移动时不要反复重建相同选区
+        final int[] dragEnd = {-1, -1};
 
         tableView.setOnMousePressed(event -> {
             if (event.getButton() != MouseButton.PRIMARY) return;
@@ -284,19 +285,17 @@ public class TableDataView extends BorderPane {
                 int minCol = Math.min(anchorCell[1], cellPos[1]);
                 int maxCol = Math.max(anchorCell[1], cellPos[1]);
                 tableView.getSelectionModel().clearSelection();
-                for (int r = minRow; r <= maxRow; r++) {
-                    for (int c = minCol; c <= maxCol; c++) {
-                        TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(c);
-                        tableView.getSelectionModel().select(r, col);
-                    }
-                }
+                tableView.getSelectionModel().selectRange(
+                        minRow, tableView.getColumns().get(minCol),
+                        maxRow, tableView.getColumns().get(maxCol));
                 event.consume();
                 return;
             }
 
             dragStart[0] = cellPos[0];
             dragStart[1] = cellPos[1];
-            dragging[0] = false;
+            dragEnd[0] = cellPos[0];
+            dragEnd[1] = cellPos[1];
             // 更新锚点
             anchorCell[0] = cellPos[0];
             anchorCell[1] = cellPos[1];
@@ -315,36 +314,40 @@ public class TableDataView extends BorderPane {
             }
         });
 
-        tableView.setOnMouseDragged(event -> {
+        // 捕获阶段拦截已开始的拖拽，防止鼠标离开有效cell后
+        // JavaFX默认拖拽处理清空我们已经建立的选区。
+        tableView.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_DRAGGED, event -> {
             if (event.getButton() != MouseButton.PRIMARY) return;
             if (dragStart[0] < 0) return;
+            event.consume();
             // 矩形框跟随鼠标（即使经过表头等无cell区域也持续更新）
             if (marqueeActive) {
                 Point2D p = centerPane.sceneToLocal(event.getSceneX(), event.getSceneY());
                 updateDragSelectRect(p.getX(), p.getY());
             }
             int[] cellPos = getCellPositionAt(event);
+            // 超出表格的有效单元格区域时保留最后一个选区。
             if (cellPos == null) return;
-            dragging[0] = true;
             int endRow = cellPos[0];
             int endCol = cellPos[1];
+            if (dragEnd[0] == endRow && dragEnd[1] == endCol) return;
+            dragEnd[0] = endRow;
+            dragEnd[1] = endCol;
             // 范围选中
             int minRow = Math.min(dragStart[0], endRow);
             int maxRow = Math.max(dragStart[0], endRow);
             int minCol = Math.min(dragStart[1], endCol);
             int maxCol = Math.max(dragStart[1], endCol);
             tableView.getSelectionModel().clearSelection();
-            for (int r = minRow; r <= maxRow; r++) {
-                for (int c = minCol; c <= maxCol; c++) {
-                    TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(c);
-                    tableView.getSelectionModel().select(r, col);
-                }
-            }
+            tableView.getSelectionModel().selectRange(
+                    minRow, tableView.getColumns().get(minCol),
+                    maxRow, tableView.getColumns().get(maxCol));
         });
 
         tableView.setOnMouseReleased(event -> {
             dragStart[0] = -1;
-            dragging[0] = false;
+            dragEnd[0] = -1;
+            dragEnd[1] = -1;
             marqueeActive = false;
             dragSelectRect.setVisible(false);
         });
@@ -1821,7 +1824,7 @@ public class TableDataView extends BorderPane {
             protected void updateItem(String item, boolean empty) {
                 // 清理旧监听
                 if (selectionListener != null) {
-                    tableView.getSelectionModel().getSelectedCells().removeListener(selectionListener);
+                    tableView.getSelectionModel().getSelectedIndices().removeListener(selectionListener);
                     selectionListener = null;
                 }
 
@@ -1836,13 +1839,13 @@ public class TableDataView extends BorderPane {
                 setStyle("-fx-border-color: transparent #BEBEBC #BEBEBC #BEBEBC; -fx-border-width: 0 1 1 1;");
                 arrow.setVisible(isRowSelected(getTableRow().getIndex()));
 
-                // 监听选中cells变化
+                // 箭头只依赖行是否选中，不必为同一行的每个cell变化都刷新
                 selectionListener = obs -> {
                     if (getTableRow() != null) {
                         arrow.setVisible(isRowSelected(getTableRow().getIndex()));
                     }
                 };
-                tableView.getSelectionModel().getSelectedCells().addListener(selectionListener);
+                tableView.getSelectionModel().getSelectedIndices().addListener(selectionListener);
             }
         });
         frozenTablePane.setRowSelectorColumn(selectorCol);
@@ -1995,10 +1998,7 @@ public class TableDataView extends BorderPane {
      * 判断指定行是否有任何cell被选中
      */
     private boolean isRowSelected(int rowIndex) {
-        for (TablePosition<?, ?> pos : tableView.getSelectionModel().getSelectedCells()) {
-            if (pos.getRow() == rowIndex) return true;
-        }
-        return false;
+        return tableView.getSelectionModel().getSelectedIndices().contains(rowIndex);
     }
 
     /**
@@ -2008,8 +2008,9 @@ public class TableDataView extends BorderPane {
         if (batchEditing) commitBatchEdit();
         tableView.getSelectionModel().clearSelection();
         TableColumn<ObservableList<String>, ?> col = tableView.getColumns().get(tableColIndex);
-        for (int row = 0; row < tableView.getItems().size(); row++) {
-            tableView.getSelectionModel().select(row, col);
+        int lastRow = tableView.getItems().size() - 1;
+        if (lastRow >= 0) {
+            tableView.getSelectionModel().selectRange(0, col, lastRow, col);
         }
         if (!tableView.getItems().isEmpty()) {
             tableView.getFocusModel().focus(0, col);
