@@ -73,7 +73,8 @@ record QueryResultEditPlan(List<String> databaseColumnNames,
 
         boolean hasCompletePrimaryKey = !primaryKeys.isEmpty()
                 && containsAllColumns(selectedSourceColumns, primaryKeys);
-        boolean canMatchOriginalRow = connectionType == ConnectType.MYSQL
+        boolean canMatchOriginalRow = connectionType != null
+                && connectionType.supportsUpdateByOriginalRow()
                 && hasReliableTableOrigins
                 && sourceColumnIndexes.size() == resultColumns.size()
                 && containsAllColumns(selectedSourceColumns, actualColumns);
@@ -91,11 +92,11 @@ record QueryResultEditPlan(List<String> databaseColumnNames,
         } else if (actualColumns.isEmpty()) {
             status = "只读结果 · 未找到源表或源表没有可编辑列";
         } else if (primaryKeys.isEmpty()) {
-            status = connectionType == ConnectType.MYSQL
+            status = connectionType != null && connectionType.supportsUpdateByOriginalRow()
                     ? "只读结果 · 无主键表需查询全部真实列"
                     : "只读结果 · 表没有主键";
         } else {
-            status = connectionType == ConnectType.MYSQL
+            status = connectionType != null && connectionType.supportsUpdateByOriginalRow()
                     ? "只读结果 · 查询结果需包含完整主键或全部真实列"
                     : "只读结果 · 查询结果需包含完整主键";
         }

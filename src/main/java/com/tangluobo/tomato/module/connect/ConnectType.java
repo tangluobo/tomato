@@ -57,6 +57,13 @@ public enum ConnectType {
         return category;
     }
 
+    /**
+     * 是否支持在没有主键时，用修改前的完整行值安全定位并只更新一条记录。
+     */
+    public boolean supportsUpdateByOriginalRow() {
+        return this == MYSQL || this == POSTGRESQL || this == ORACLE;
+    }
+
     public static ConnectType fromCode(String code) {
         for (ConnectType type : values()) {
             if (type.code.equals(code)) {

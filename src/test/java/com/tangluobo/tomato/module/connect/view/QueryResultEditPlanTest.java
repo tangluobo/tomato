@@ -158,7 +158,7 @@ class QueryResultEditPlanTest {
     }
 
     @Test
-    void databasesWithoutOriginalRowFallbackRequireAPrimaryKey() {
+    void postgresAndOracleWithoutPrimaryKeysCanEditACompleteOriginalRow() {
         List<Map<String, String>> tableColumns = List.of(
                 column("code", false),
                 column("name", false));
@@ -179,10 +179,12 @@ class QueryResultEditPlanTest {
                 tableColumns);
 
         assertAll(
-                () -> assertFalse(postgres.isEditable()),
+                () -> assertTrue(postgres.isEditable()),
                 () -> assertFalse(postgres.canDelete()),
-                () -> assertFalse(oracle.isEditable()),
-                () -> assertFalse(oracle.canDelete()));
+                () -> assertTrue(postgres.usesOriginalRowMatch()),
+                () -> assertTrue(oracle.isEditable()),
+                () -> assertFalse(oracle.canDelete()),
+                () -> assertTrue(oracle.usesOriginalRowMatch()));
     }
 
     @Test

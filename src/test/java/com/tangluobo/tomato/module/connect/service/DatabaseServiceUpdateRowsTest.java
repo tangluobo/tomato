@@ -116,6 +116,50 @@ class DatabaseServiceUpdateRowsTest {
                 () -> assertEquals(0, jdbc.rollbackCount));
     }
 
+    @Test
+    void updatesOnePostgresPhysicalRowWithoutAPrimaryKey() throws Exception {
+        ScriptedJdbc jdbc = new ScriptedJdbc(true, 1);
+
+        int updated = DatabaseService.updateRowsInTransaction(
+                jdbc.connection(), ConnectType.POSTGRESQL, "app", "public", "labels",
+                List.of(), List.of("name", "note"),
+                List.of(Types.VARCHAR, Types.VARCHAR),
+                List.of(FXCollections.observableArrayList("alice", "new")),
+                List.of(FXCollections.observableArrayList("alice", "old")),
+                List.of(Set.of(1)), null);
+
+        assertAll(
+                () -> assertEquals(1, updated),
+                () -> assertEquals(1, jdbc.sql.size()),
+                () -> assertTrue(jdbc.sql.getFirst().contains(
+                        "WHERE ctid = (SELECT ctid FROM \"public\".\"labels\" "
+                                + "WHERE \"name\" = ? AND \"note\" = ? LIMIT 1)")),
+                () -> assertEquals(1, jdbc.commitCount),
+                () -> assertEquals(0, jdbc.rollbackCount));
+    }
+
+    @Test
+    void updatesOneOraclePhysicalRowWithoutAPrimaryKey() throws Exception {
+        ScriptedJdbc jdbc = new ScriptedJdbc(true, 1);
+
+        int updated = DatabaseService.updateRowsInTransaction(
+                jdbc.connection(), ConnectType.ORACLE, "APP", null, "LABELS",
+                List.of(), List.of("NAME", "NOTE"),
+                List.of(Types.VARCHAR, Types.VARCHAR),
+                List.of(FXCollections.observableArrayList("alice", "new")),
+                List.of(FXCollections.observableArrayList("alice", "old")),
+                List.of(Set.of(1)), null);
+
+        assertAll(
+                () -> assertEquals(1, updated),
+                () -> assertEquals(1, jdbc.sql.size()),
+                () -> assertTrue(jdbc.sql.getFirst().contains(
+                        "WHERE ROWID = (SELECT ROWID FROM \"APP\".\"LABELS\" "
+                                + "WHERE \"NAME\" = ? AND \"NOTE\" = ? AND ROWNUM = 1)")),
+                () -> assertEquals(1, jdbc.commitCount),
+                () -> assertEquals(0, jdbc.rollbackCount));
+    }
+
     private static int updateTwoRows(Connection connection) throws Exception {
         List<ObservableList<String>> currentRows = List.of(
                 FXCollections.observableArrayList("1", "new-a"),

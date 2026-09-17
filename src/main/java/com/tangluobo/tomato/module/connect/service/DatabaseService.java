@@ -1443,7 +1443,6 @@ public class DatabaseService {
         Connection conn = (config.getType() == ConnectType.POSTGRESQL)
                 ? getConnection(config, databaseName)
                 : getConnection(config);
-        List<String> primaryKeys = new ArrayList<>();
 
         String catalog = databaseName;
         String schema = null;
@@ -1455,13 +1454,86 @@ public class DatabaseService {
             schema = databaseName;
         }
 
-        try (ResultSet rs = conn.getMetaData().getPrimaryKeys(catalog, schema, tableName)) {
-            while (rs.next()) {
-                primaryKeys.add(rs.getString("COLUMN_NAME"));
-            }
+        return readPrimaryKeys(conn, config.getType(), catalog, schema, tableName);
+    }
+
+    /**
+     * 优先读取标准 JDBC 元数据；驱动返回空集或不支持时，再查询各数据库系统目录。
+     * 部分驱动会因 catalog/schema 大小写或实现差异漏报主键，不能把这种情况直接当成无主键。
+     */
+    static List<String> readPrimaryKeys(Connection conn, ConnectType connectionType,
+                                        String catalog, String schema, String tableName) throws SQLException {
+        SQLException metadataFailure = null;
+        try {
+            List<String> metadataKeys = readJdbcPrimaryKeys(conn, catalog, schema, tableName);
+            if (!metadataKeys.isEmpty()) return metadataKeys;
+        } catch (SQLException e) {
+            metadataFailure = e;
         }
 
-        return primaryKeys;
+        String fallbackSql;
+        List<String> parameters;
+        if (connectionType == ConnectType.MYSQL) {
+            fallbackSql = "SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE "
+                    + "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY' "
+                    + "ORDER BY ORDINAL_POSITION";
+            parameters = Arrays.asList(catalog, tableName);
+        } else if (connectionType == ConnectType.POSTGRESQL) {
+            fallbackSql = "SELECT a.attname FROM pg_catalog.pg_constraint c "
+                    + "JOIN pg_catalog.pg_class t ON t.oid = c.conrelid "
+                    + "JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace "
+                    + "JOIN LATERAL unnest(c.conkey) WITH ORDINALITY "
+                    + "AS key_column(attnum, key_position) ON TRUE "
+                    + "JOIN pg_catalog.pg_attribute a "
+                    + "ON a.attrelid = t.oid AND a.attnum = key_column.attnum "
+                    + "WHERE c.contype = 'p' AND n.nspname = ? AND t.relname = ? "
+                    + "ORDER BY key_column.key_position";
+            parameters = Arrays.asList(schema, tableName);
+        } else if (connectionType == ConnectType.ORACLE) {
+            fallbackSql = "SELECT cols.column_name FROM all_constraints cons "
+                    + "JOIN all_cons_columns cols ON cols.owner = cons.owner "
+                    + "AND cols.constraint_name = cons.constraint_name "
+                    + "AND cols.table_name = cons.table_name "
+                    + "WHERE cons.constraint_type = 'P' AND cons.owner = ? AND cons.table_name = ? "
+                    + "ORDER BY cols.position";
+            parameters = Arrays.asList(schema, tableName);
+        } else {
+            if (metadataFailure != null) throw metadataFailure;
+            return List.of();
+        }
+
+        try (PreparedStatement statement = conn.prepareStatement(fallbackSql)) {
+            for (int i = 0; i < parameters.size(); i++) {
+                statement.setString(i + 1, parameters.get(i));
+            }
+            List<String> primaryKeys = new ArrayList<>();
+            try (ResultSet rs = statement.executeQuery()) {
+                while (rs.next()) {
+                    String columnName = rs.getString(1);
+                    if (columnName != null && !columnName.isBlank()) primaryKeys.add(columnName);
+                }
+            }
+            return primaryKeys;
+        } catch (SQLException fallbackFailure) {
+            if (metadataFailure != null) fallbackFailure.addSuppressed(metadataFailure);
+            throw fallbackFailure;
+        }
+    }
+
+    private static List<String> readJdbcPrimaryKeys(Connection conn, String catalog,
+                                                    String schema, String tableName) throws SQLException {
+        List<Map.Entry<Integer, String>> sequencedKeys = new ArrayList<>();
+        try (ResultSet rs = conn.getMetaData().getPrimaryKeys(catalog, schema, tableName)) {
+            while (rs.next()) {
+                String columnName = rs.getString("COLUMN_NAME");
+                if (columnName == null || columnName.isBlank()) continue;
+                int keySequence = rs.getInt("KEY_SEQ");
+                if (rs.wasNull() || keySequence <= 0) keySequence = Integer.MAX_VALUE;
+                sequencedKeys.add(Map.entry(keySequence, columnName));
+            }
+        }
+        sequencedKeys.sort(Map.Entry.comparingByKey());
+        return sequencedKeys.stream().map(Map.Entry::getValue).toList();
     }
 
     /**
@@ -1873,7 +1945,7 @@ public class DatabaseService {
 
     /**
      * 更新多行数据，并通过回调返回每条已执行的可读 SQL。
-     * MySQL 表无主键时，使用修改前整行值作为 WHERE 条件并强制 LIMIT 1。
+     * 表无主键时，使用修改前整行值作为 WHERE 条件，并按数据库方言只定位一条记录。
      */
     public static int updateRows(ConnectionConfig config, String databaseName, String schemaName, String tableName,
                                  List<String> primaryKeyColumns, List<String> columnNames,
@@ -1946,8 +2018,8 @@ public class DatabaseService {
         int totalUpdated = 0;
         List<String> effectivePrimaryKeys = primaryKeyColumns != null ? primaryKeyColumns : List.of();
         boolean matchByOriginalRow = effectivePrimaryKeys.isEmpty();
-        if (matchByOriginalRow && connectionType != ConnectType.MYSQL) {
-            throw new IllegalArgumentException("无主键更新目前仅支持 MySQL");
+        if (matchByOriginalRow && !connectionType.supportsUpdateByOriginalRow()) {
+            throw new IllegalArgumentException("当前数据库类型不支持无主键更新");
         }
 
         String qualifiedTable = switch (connectionType) {
@@ -1999,7 +2071,7 @@ public class DatabaseService {
                     setColIndexes.add(colIdx);
                 }
 
-                // 有主键时按原始主键定位；MySQL 无主键时按修改前整行定位。
+                // 有主键时按原始主键定位；无主键时按修改前整行定位。
                 StringBuilder whereClause = new StringBuilder();
                 StringBuilder displayWhereClause = new StringBuilder();
                 List<Integer> whereIndexes = matchByOriginalRow
@@ -2038,10 +2110,10 @@ public class DatabaseService {
                     }
                 }
 
-                String limitClause = matchByOriginalRow ? " LIMIT 1" : "";
-                String sql = "UPDATE " + qualifiedTable + " SET " + setClause + " WHERE " + whereClause + limitClause;
-                String displaySql = "UPDATE " + qualifiedTable + " SET " + displaySetClause
-                        + " WHERE " + displayWhereClause + limitClause;
+                String sql = buildUpdateSql(connectionType, qualifiedTable, setClause.toString(),
+                        whereClause.toString(), matchByOriginalRow);
+                String displaySql = buildUpdateSql(connectionType, qualifiedTable, displaySetClause.toString(),
+                        displayWhereClause.toString(), matchByOriginalRow);
 
                 try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
                     int paramIdx = 1;
@@ -2081,6 +2153,28 @@ public class DatabaseService {
                 // 事务已提交或回滚；连接恢复失败不能把已成功的数据操作伪装成可重试失败。
             }
         }
+    }
+
+    /**
+     * 无主键更新必须把修改前整行作为条件，同时只选择一个物理行：
+     * MySQL 直接支持 UPDATE ... LIMIT 1；PostgreSQL/Oracle 分别通过 ctid/ROWID 定位。
+     */
+    private static String buildUpdateSql(ConnectType connectionType, String qualifiedTable,
+                                         String setClause, String whereClause,
+                                         boolean matchByOriginalRow) {
+        String updatePrefix = "UPDATE " + qualifiedTable + " SET " + setClause + " WHERE ";
+        if (!matchByOriginalRow) {
+            return updatePrefix + whereClause;
+        }
+        return switch (connectionType) {
+            case MYSQL -> updatePrefix + whereClause + " LIMIT 1";
+            case POSTGRESQL -> updatePrefix + "ctid = (SELECT ctid FROM " + qualifiedTable
+                    + " WHERE " + whereClause + " LIMIT 1)";
+            case ORACLE -> updatePrefix + "ROWID = (SELECT ROWID FROM " + qualifiedTable
+                    + " WHERE " + whereClause + " AND ROWNUM = 1)";
+            default -> throw new IllegalArgumentException(
+                    "当前数据库类型不支持无主键更新: " + connectionType);
+        };
     }
 
     private static Integer columnTypeAt(List<Integer> columnTypes, int index) {
@@ -2145,6 +2239,19 @@ public class DatabaseService {
         return false;
     }
 
+    /** 精确匹配优先；只有忽略大小写后候选唯一时才采用，避免混淆 PostgreSQL 引号标识符。 */
+    static List<String> resolvePrimaryKeyColumnNames(List<String> primaryKeys, List<String> actualColumns) {
+        if (primaryKeys == null || primaryKeys.isEmpty() || actualColumns == null || actualColumns.isEmpty()) {
+            return List.of();
+        }
+        List<String> resolved = new ArrayList<>();
+        for (String primaryKey : primaryKeys) {
+            int columnIndex = findColumnIndex(actualColumns, primaryKey);
+            if (columnIndex >= 0) resolved.add(actualColumns.get(columnIndex));
+        }
+        return resolved;
+    }
+
     /**
      * 获取表的列信息列表
      * @param config 连接配置
@@ -2204,13 +2311,8 @@ public class DatabaseService {
             schema = databaseName;
         }
 
-        // 获取主键列表
-        List<String> primaryKeys = new ArrayList<>();
-        try (ResultSet pkRs = conn.getMetaData().getPrimaryKeys(catalog, schema, tableName)) {
-            while (pkRs.next()) {
-                primaryKeys.add(pkRs.getString("COLUMN_NAME"));
-            }
-        }
+        // 某些 JDBC 驱动会漏报主键，readPrimaryKeys 会在必要时查询数据库系统目录兜底。
+        List<String> primaryKeys = readPrimaryKeys(conn, config.getType(), catalog, schema, tableName);
 
         // 获取列信息
         try (ResultSet rs = conn.getMetaData().getColumns(catalog, schema, tableName, null)) {
@@ -2244,7 +2346,8 @@ public class DatabaseService {
                 String decimalDigits = rs.getString("DECIMAL_DIGITS");
                 col.put("小数点", decimalDigits != null ? decimalDigits : "");
                 col.put("非空", "NO".equalsIgnoreCase(rs.getString("IS_NULLABLE")) ? "是" : "否");
-                col.put("主键", primaryKeys.contains(colName) ? "是" : "否");
+                // 主键在全部字段读取完成后统一匹配，兼容驱动返回的标识符大小写差异。
+                col.put("主键", "否");
                 String autoIncrement = rs.getString("IS_AUTOINCREMENT");
                 col.put("自增", "YES".equalsIgnoreCase(autoIncrement) ? "是" : "否");
                 String defaultValue = rs.getString("COLUMN_DEF");
@@ -2261,6 +2364,15 @@ public class DatabaseService {
                 col.put("二进制", "否");
                 columns.add(col);
             }
+        }
+
+        List<String> actualColumnNames = columns.stream()
+                .map(column -> column.get("字段名"))
+                .toList();
+        Set<String> resolvedPrimaryKeys = new HashSet<>(
+                resolvePrimaryKeyColumnNames(primaryKeys, actualColumnNames));
+        for (Map<String, String> column : columns) {
+            if (resolvedPrimaryKeys.contains(column.get("字段名"))) column.put("主键", "是");
         }
 
         return columns;

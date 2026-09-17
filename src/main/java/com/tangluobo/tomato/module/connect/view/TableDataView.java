@@ -84,6 +84,8 @@ public class TableDataView extends BorderPane {
 
     // 主键列名缓存
     private List<String> primaryKeyColumns;
+    // 区分“确认无主键”和“主键元数据读取失败”，避免把后者误判成无主键。
+    private boolean columnMetadataLoaded;
     // 列注释缓存（字段名 -> 注释），用于“复制为/注释：值”
     private Map<String, String> columnComments = Map.of();
     private boolean isLoading = false;
@@ -146,9 +148,11 @@ public class TableDataView extends BorderPane {
             Platform.runLater(() -> {
                 this.primaryKeyColumns = pks;
                 this.columnComments = Map.copyOf(comments);
+                this.columnMetadataLoaded = true;
                 setupRowContextMenu();
             });
         } catch (Exception e) {
+            Platform.runLater(() -> this.columnMetadataLoaded = false);
             e.printStackTrace();
         }
     }
@@ -1581,10 +1585,20 @@ public class TableDataView extends BorderPane {
             return;
         }
 
-        // 无主键更新仅对 MySQL 开启整行匹配 + LIMIT 1 回退。
+        if (!columnMetadataLoaded) {
+            Alert warn = new Alert(Alert.AlertType.WARNING);
+            warn.setTitle("无法保存");
+            warn.setHeaderText(null);
+            warn.setContentText("未能读取该表的字段和主键信息，无法安全保存。请刷新后重试。");
+            DialogPositionUtil.centerOnOwner(warn, this);
+            warn.showAndWait();
+            return;
+        }
+
+        // 无主键时由各数据库方言使用修改前整行匹配，并把更新限制为一条记录。
         if (!rowsToUpdate.isEmpty()
                 && (primaryKeyColumns == null || primaryKeyColumns.isEmpty())
-                && config.getType() != com.tangluobo.tomato.module.connect.ConnectType.MYSQL) {
+                && !config.getType().supportsUpdateByOriginalRow()) {
             Alert warn = new Alert(Alert.AlertType.WARNING);
             warn.setTitle("无法更新");
             warn.setHeaderText(null);
