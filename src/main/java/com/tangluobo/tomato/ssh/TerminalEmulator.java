@@ -87,6 +87,13 @@ public class TerminalEmulator {
     private boolean shellLineHomeRepositioning = false;
     private int shellLineHomeResponseRow = 0;
 
+    // 普通 Shell 单行编辑的左右光标预测。SSH 必须等远端 readline 回显才会
+    // 改变光标，网络 RTT 抖动时会明显卡顿。这里只预测同一行内的单宽字符，
+    // 并与远端 Backspace / CSI C,D / 字符回显对账；任何异常输出都立即回退。
+    private final java.util.ArrayDeque<ShellCursorPrediction> shellCursorPredictions = new java.util.ArrayDeque<>();
+    private static final long SHELL_CURSOR_PREDICTION_TIMEOUT_MS = 1500;
+    private static final int MAX_SHELL_CURSOR_PREDICTIONS = 64;
+
     // SSH 输出按网络分片到达，UTF-8 字符可能横跨两次 read。保留未完成的
     // 尾字节，避免中文被解码成替换字符后导致显示宽度与远端光标宽度不同。
     private byte[] pendingUtf8Bytes = new byte[4];
@@ -474,6 +481,131 @@ public class TerminalEmulator {
     }
 
     /**
+     * 尝试在远端回显前预测普通 Shell 的水平光标移动。
+     *
+     * @param direction -1=左，1=右
+     * @return 是否已立即移动本地光标
+     */
+    boolean predictShellCursorMove(int direction) {
+        if (direction != -1 && direction != 1) return false;
+        if (usingAltBuffer || applicationCursorKeys || !shellInputAnchorValid
+                || shellLineHomePending || shellLineHomeRepositioning) {
+            return false;
+        }
+        if (!shellCursorPredictions.isEmpty()
+                && System.currentTimeMillis() - shellCursorPredictions.peekFirst().createdAt()
+                > SHELL_CURSOR_PREDICTION_TIMEOUT_MS) {
+            cancelShellCursorPredictions();
+        }
+        if (shellCursorPredictions.size() >= MAX_SHELL_CURSOR_PREDICTIONS
+                || cursorY != shellInputAnchorY || cursorX < shellInputAnchorX) {
+            return false;
+        }
+
+        int startX = cursorX;
+        int targetX;
+        char expectedChar = 0;
+        if (direction < 0) {
+            if (startX <= shellInputAnchorX) return false;
+            char previous = buffer[cursorY][startX - 1];
+            // 宽字符需要跨两列，不做猜测，交给远端精确处理。
+            if (previous == '\0' || isWideChar(previous)) return false;
+            targetX = startX - 1;
+        } else {
+            if (startX >= cols - 1 || !hasVisibleContentAtOrAfter(startX)) return false;
+            expectedChar = buffer[cursorY][startX];
+            if (expectedChar == '\0' || isWideChar(expectedChar)
+                    || Character.isISOControl(expectedChar)) {
+                return false;
+            }
+            targetX = startX + 1;
+        }
+
+        shellCursorPredictions.addLast(new ShellCursorPrediction(
+                direction, startX, cursorY, targetX, cursorY, expectedChar,
+                System.currentTimeMillis()));
+        cursorX = targetX;
+        return true;
+    }
+
+    private boolean hasVisibleContentAtOrAfter(int column) {
+        for (int x = column; x < cols; x++) {
+            char ch = buffer[cursorY][x];
+            if (ch != ' ' && ch != '\0') return true;
+        }
+        return false;
+    }
+
+    private boolean consumePredictedBackspace() {
+        ShellCursorPrediction prediction = currentShellCursorPrediction();
+        if (prediction == null || prediction.direction() != -1) return false;
+        completeShellCursorPrediction(prediction);
+        return true;
+    }
+
+    private boolean consumePredictedPrintable(char ch) {
+        ShellCursorPrediction prediction = currentShellCursorPrediction();
+        if (prediction == null || prediction.direction() != 1
+                || prediction.expectedChar() != ch) {
+            return false;
+        }
+        completeShellCursorPrediction(prediction);
+        return true;
+    }
+
+    private boolean consumePredictedCsiMove(char command, int[] params,
+                                            boolean privateMode, boolean greaterThan,
+                                            boolean lessThan) {
+        if (privateMode || greaterThan || lessThan) return false;
+        int amount = params.length == 0 || params[0] == 0 ? 1 : params[0];
+        if (amount != 1) return false;
+
+        ShellCursorPrediction prediction = currentShellCursorPrediction();
+        if (prediction == null) return false;
+        if ((command == 'D' && prediction.direction() == -1)
+                || (command == 'C' && prediction.direction() == 1)) {
+            completeShellCursorPrediction(prediction);
+            return true;
+        }
+        return false;
+    }
+
+    private ShellCursorPrediction currentShellCursorPrediction() {
+        ShellCursorPrediction prediction = shellCursorPredictions.peekFirst();
+        if (prediction != null && System.currentTimeMillis() - prediction.createdAt()
+                > SHELL_CURSOR_PREDICTION_TIMEOUT_MS) {
+            cancelShellCursorPredictions();
+            return null;
+        }
+        return prediction;
+    }
+
+    private void completeShellCursorPrediction(ShellCursorPrediction prediction) {
+        shellCursorPredictions.removeFirst();
+        ShellCursorPrediction latest = shellCursorPredictions.peekLast();
+        if (latest != null) {
+            cursorX = latest.targetX();
+            cursorY = latest.targetY();
+        } else {
+            cursorX = prediction.targetX();
+            cursorY = prediction.targetY();
+        }
+    }
+
+    private void cancelShellCursorPredictions() {
+        ShellCursorPrediction first = shellCursorPredictions.peekFirst();
+        if (first != null) {
+            cursorX = first.startX();
+            cursorY = first.startY();
+            shellCursorPredictions.clear();
+        }
+    }
+
+    private record ShellCursorPrediction(int direction, int startX, int startY,
+                                         int targetX, int targetY, char expectedChar,
+                                         long createdAt) {}
+
+    /**
      * 检查是否应该抑制屏幕修改
      * suppressScreenModify为true且当前时间未超过suppressUntilTime时返回true
      */
@@ -744,7 +876,21 @@ public class TerminalEmulator {
         if (ch == 0x1b) { // ESC
             parseState = ParseState.ESC;
             escapeSeq.setLength(0);
-        } else if (ch == '\r') {
+            return;
+        }
+
+        boolean printable = ch >= 0x20 || !Character.isISOControl(ch);
+        if (ch == '\b' && consumePredictedBackspace()) {
+            return;
+        }
+        if (printable && consumePredictedPrintable(ch)) {
+            return;
+        }
+        // 预期之外的回显说明远端正在重绘或输出其他内容，
+        // 先回到预测前的权威光标位置，再按标准 VT 规则处理。
+        cancelShellCursorPredictions();
+
+        if (ch == '\r') {
             if (shellLineHomePending) {
                 shellLineHomePending = false;
                 shellLineHomeRepositioning = true;
@@ -788,7 +934,7 @@ public class TerminalEmulator {
             if (cursorX > 0) cursorX--;
         } else if (ch == 7) { // BEL
             // 忽略响铃
-        } else if (ch >= 0x20 || Character.isISOControl(ch) == false) {
+        } else if (printable) {
             restoreLineHomeResponsePosition();
             // 可打印字符（包括CJK等Unicode字符）
             // 注意：不在此处清除suppressScreenModify
@@ -867,11 +1013,13 @@ public class TerminalEmulator {
             escapeSeq.setLength(0);
             oscSeq.setLength(0);
         } else if (ch == '7') {
+            cancelShellCursorPredictions();
             savedCursorX = cursorX;
             savedCursorY = cursorY;
             debugLogCursorState("ESC 7 (DECSC save cursor)");
             parseState = ParseState.NORMAL;
         } else if (ch == '8') {
+            cancelShellCursorPredictions();
             // 抑制交替缓冲区切回后的光标恢复（top退出时可能发送ESC 8）
             if (shouldSuppressScreenModify()) {
                 debugLogCursorState("SUPPRESS ESC 8 (DECRC restore cursor)");
@@ -882,6 +1030,7 @@ public class TerminalEmulator {
             }
             parseState = ParseState.NORMAL;
         } else if (ch == 'D') {
+            cancelShellCursorPredictions();
             // ESC D (IND): 索引下移，与\n同理，也需抑制
             if (shouldSuppressScreenModify()) {
                 debugLogCursorState("SUPPRESS ESC D (IND)");
@@ -894,6 +1043,7 @@ public class TerminalEmulator {
             }
             parseState = ParseState.NORMAL;
         } else if (ch == 'M') {
+            cancelShellCursorPredictions();
             if (cursorY == getScrollTop()) {
                 scrollDown(1);
             } else {
@@ -901,6 +1051,7 @@ public class TerminalEmulator {
             }
             parseState = ParseState.NORMAL;
         } else if (ch == 'c') {
+            shellCursorPredictions.clear();
             reset();
             parseState = ParseState.NORMAL;
         } else if (ch == '(') {
@@ -908,6 +1059,7 @@ public class TerminalEmulator {
         } else if (ch == ')') {
             parseState = ParseState.CHARSET;
         } else {
+            cancelShellCursorPredictions();
             parseState = ParseState.NORMAL;
         }
     }
@@ -996,6 +1148,15 @@ public class TerminalEmulator {
         }
 
         int[] params = parseParams(cleanSeq);
+
+        if (consumePredictedCsiMove(cmd, params, privateMode, greaterThan, lessThan)) {
+            return;
+        }
+        // SGR 只改变后续字符样式，readline 有可能在光标回显前发送；
+        // 其他 CSI 命令则表明屏幕状态已超出本地预测范围。
+        if (cmd != 'm') {
+            cancelShellCursorPredictions();
+        }
 
         if (shellLineHomeRepositioning && isCursorPositioningCommand(cmd)) {
             cursorX = shellInputAnchorX;
@@ -1837,6 +1998,7 @@ public class TerminalEmulator {
         cursorGuardActive = false;
         cursorGuardUntilTime = 0;
         onShellCommandFinished();
+        shellCursorPredictions.clear();
         pendingUtf8Length = 0;
     }
 }

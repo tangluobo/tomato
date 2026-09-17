@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TerminalEmulatorTest {
 
@@ -70,5 +72,81 @@ class TerminalEmulatorTest {
         assertEquals('中', emulator.getChar(0, 0));
         assertEquals('\0', emulator.getChar(1, 0));
         assertEquals(2, emulator.getCursorX());
+    }
+
+    @Test
+    void predictsShellCursorAndConsumesReadlineEchoWithoutDoubleMovement() {
+        TerminalEmulator emulator = shellWithInput("abc");
+        int lineEnd = emulator.getCursorX();
+
+        assertTrue(emulator.predictShellCursorMove(-1));
+        assertEquals(lineEnd - 1, emulator.getCursorX());
+        emulator.processString("\b");
+        assertEquals(lineEnd - 1, emulator.getCursorX());
+
+        assertTrue(emulator.predictShellCursorMove(1));
+        assertEquals(lineEnd, emulator.getCursorX());
+        emulator.processString("c");
+        assertEquals(lineEnd, emulator.getCursorX());
+        assertEquals('c', emulator.getChar(lineEnd - 1, 0));
+    }
+
+    @Test
+    void keepsLatestPredictedPositionWhileRepeatedEchoesArrive() {
+        TerminalEmulator emulator = shellWithInput("abcd");
+        int lineEnd = emulator.getCursorX();
+
+        assertTrue(emulator.predictShellCursorMove(-1));
+        assertTrue(emulator.predictShellCursorMove(-1));
+        assertEquals(lineEnd - 2, emulator.getCursorX());
+
+        emulator.processString("\b");
+        assertEquals(lineEnd - 2, emulator.getCursorX());
+        emulator.processString("\033[D");
+        assertEquals(lineEnd - 2, emulator.getCursorX());
+    }
+
+    @Test
+    void keepsPredictionUntilOrderedEchoAfterFollowingCommandKey() {
+        TerminalEmulator emulator = shellWithInput("abc");
+        int lineEnd = emulator.getCursorX();
+
+        assertTrue(emulator.predictShellCursorMove(-1));
+        emulator.onShellCommandFinished();
+        emulator.processString("\b");
+
+        assertEquals(lineEnd - 1, emulator.getCursorX());
+    }
+
+    @Test
+    void rollsBackPredictionBeforeUnexpectedRemoteOutput() {
+        TerminalEmulator emulator = shellWithInput("abc");
+
+        assertTrue(emulator.predictShellCursorMove(-1));
+        emulator.processString("\r\nX");
+
+        assertEquals(1, emulator.getCursorX());
+        assertEquals(1, emulator.getCursorY());
+        assertEquals('X', emulator.getChar(0, 1));
+    }
+
+    @Test
+    void avoidsPredictionAtPromptBoundaryAndAcrossWideCharacters() {
+        TerminalEmulator emulator = new TerminalEmulator(80, 24);
+        emulator.processString("$ ");
+        emulator.onShellTextInput();
+        assertFalse(emulator.predictShellCursorMove(-1));
+        assertFalse(emulator.predictShellCursorMove(1));
+
+        emulator.processString("中");
+        assertFalse(emulator.predictShellCursorMove(-1));
+    }
+
+    private static TerminalEmulator shellWithInput(String input) {
+        TerminalEmulator emulator = new TerminalEmulator(80, 24);
+        emulator.processString("$ ");
+        emulator.onShellTextInput();
+        emulator.processString(input);
+        return emulator;
     }
 }

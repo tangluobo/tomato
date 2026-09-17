@@ -318,8 +318,18 @@ public class TerminalView extends Canvas {
             }
         } else if (event.getCode() == javafx.scene.input.KeyCode.RIGHT) {
             data = emulator.isApplicationCursorKeys() ? "\033OC".getBytes() : "\033[C".getBytes();
+            int oldX = emulator.getCursorX();
+            int oldY = emulator.getCursorY();
+            if (emulator.predictShellCursorMove(1)) {
+                renderPredictedCursorMove(oldX, oldY);
+            }
         } else if (event.getCode() == javafx.scene.input.KeyCode.LEFT) {
             data = emulator.isApplicationCursorKeys() ? "\033OD".getBytes() : "\033[D".getBytes();
+            int oldX = emulator.getCursorX();
+            int oldY = emulator.getCursorY();
+            if (emulator.predictShellCursorMove(-1)) {
+                renderPredictedCursorMove(oldX, oldY);
+            }
         } else if (event.getCode() == javafx.scene.input.KeyCode.HOME) {
             data = emulator.isApplicationCursorKeys() ? "\033OH".getBytes() : "\033[H".getBytes();
         } else if (event.getCode() == javafx.scene.input.KeyCode.END) {
@@ -592,33 +602,7 @@ public class TerminalView extends Canvas {
         }
 
         // 渲染光标（使用反转色确保在任何背景下都可见）
-        if (emulator.isCursorVisible() && cursorBlinkOn && scrollOffset == 0) {
-            int curX = emulator.getCursorX();
-            int curY = emulator.getCursorY();
-            char cursorChar = emulator.getChar(curX, curY);
-            int cursorCol = curX;
-            if (cursorChar == '\0' && curX > 0) {
-                cursorCol = curX - 1;
-                cursorChar = emulator.getChar(cursorCol, curY);
-            }
-            double cx = x0 + cursorCol * charWidth;
-            double cy = y0 + curY * charHeight;
-            double cursorWidth = (cursorChar != '\0' && emulator.isWideChar(cursorChar)) ? 2 * charWidth : charWidth;
-
-            // 获取光标位置单元格的前景色和背景色，反转后作为光标颜色
-            int cursorAttr = emulator.getAttr(cursorCol, curY);
-            Color cursorBg = getAttrFg(cursorAttr, cursorCol, curY);
-            Color cursorFg = getAttrBg(cursorAttr, cursorCol, curY);
-            // 如果前景和背景相同（极端情况），使用默认的黑白反转
-            if (cursorBg.equals(cursorFg)) {
-                cursorBg = Color.WHITE;
-                cursorFg = Color.BLACK;
-            }
-            gc.setFill(cursorBg);
-            gc.fillRect(cx, cy, cursorWidth, charHeight);
-            gc.setFill(cursorFg);
-            gc.fillText(String.valueOf(cursorChar == '\0' ? ' ' : cursorChar), cx, cy + fontAscent);
-        }
+        drawCursor();
 
         // 渲染选择高亮
         if (hasSelection()) {
@@ -663,6 +647,68 @@ public class TerminalView extends Canvas {
 
         // 通知滚动条更新
         notifyScrollbar();
+    }
+
+    /**
+     * Shell 水平光标预测只重绘旧/新两个单元格，不走整屏渲染。
+     */
+    private void renderPredictedCursorMove(int oldX, int oldY) {
+        if (emulator.getScrollOffset() != 0 || emulator.isUsingAltBuffer()
+                || hasSelection() || oldY < 0 || oldY >= emulator.getRows()) {
+            render();
+            return;
+        }
+        drawBufferCell(oldX, oldY);
+        drawBufferCell(emulator.getCursorX(), emulator.getCursorY());
+        drawCursor();
+    }
+
+    private void drawBufferCell(int col, int row) {
+        if (col < 0 || col >= emulator.getCols() || row < 0 || row >= emulator.getRows()) return;
+
+        char ch = emulator.getChar(col, row);
+        int drawCol = col;
+        if (ch == '\0' && col > 0) {
+            drawCol = col - 1;
+            ch = emulator.getChar(drawCol, row);
+        }
+        int attr = emulator.getAttr(drawCol, row);
+        double width = emulator.isWideChar(ch) ? 2 * charWidth : charWidth;
+        double x = 2 + drawCol * charWidth;
+        double y = 2 + row * charHeight;
+        gc.setFill(getRenderBg(attr, drawCol, row));
+        gc.fillRect(x, y, width, charHeight);
+        gc.setFill(getRenderFg(attr, drawCol, row));
+        gc.fillText(String.valueOf(ch == '\0' ? ' ' : ch), x, y + fontAscent);
+    }
+
+    private void drawCursor() {
+        if (!emulator.isCursorVisible() || !cursorBlinkOn || emulator.getScrollOffset() != 0) return;
+
+        int curX = emulator.getCursorX();
+        int curY = emulator.getCursorY();
+        char cursorChar = emulator.getChar(curX, curY);
+        int cursorCol = curX;
+        if (cursorChar == '\0' && curX > 0) {
+            cursorCol = curX - 1;
+            cursorChar = emulator.getChar(cursorCol, curY);
+        }
+        double cx = 2 + cursorCol * charWidth;
+        double cy = 2 + curY * charHeight;
+        double cursorWidth = (cursorChar != '\0' && emulator.isWideChar(cursorChar))
+                ? 2 * charWidth : charWidth;
+
+        int cursorAttr = emulator.getAttr(cursorCol, curY);
+        Color cursorBg = getAttrFg(cursorAttr, cursorCol, curY);
+        Color cursorFg = getAttrBg(cursorAttr, cursorCol, curY);
+        if (cursorBg.equals(cursorFg)) {
+            cursorBg = Color.WHITE;
+            cursorFg = Color.BLACK;
+        }
+        gc.setFill(cursorBg);
+        gc.fillRect(cx, cy, cursorWidth, charHeight);
+        gc.setFill(cursorFg);
+        gc.fillText(String.valueOf(cursorChar == '\0' ? ' ' : cursorChar), cx, cy + fontAscent);
     }
 
     /**
