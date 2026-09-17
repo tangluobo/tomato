@@ -16,6 +16,7 @@ import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.input.ScrollEvent;
 import javafx.scene.paint.Color;
+import javafx.scene.text.Font;
 import javafx.util.Duration;
 
 /**
@@ -33,6 +34,8 @@ public class TerminalView extends Canvas {
     private double fontAscent = 12;
     private String fontFamily = "monospace";
     private double fontSize = 13;
+    private Font terminalFont;
+    private final StringBuilder renderTextBuffer = new StringBuilder(256);
 
     // 颜色缓存（256色）
     private static final Color[] FX_COLORS = new Color[256];
@@ -247,10 +250,11 @@ public class TerminalView extends Canvas {
     }
 
     private void updateFontMetrics() {
-        gc.setFont(javafx.scene.text.Font.font(fontFamily, fontSize));
+        terminalFont = Font.font(fontFamily, fontSize);
+        gc.setFont(terminalFont);
         gc.save();
         javafx.scene.text.Text text = new javafx.scene.text.Text("M");
-        text.setFont(javafx.scene.text.Font.font(fontFamily, fontSize));
+        text.setFont(terminalFont);
         charWidth = text.getLayoutBounds().getWidth();
         charHeight = Math.max(fontSize + 5, 18);
         fontAscent = fontSize + 1;
@@ -489,10 +493,11 @@ public class TerminalView extends Canvas {
         gc.setFill(defaultBg);
         gc.fillRect(0, 0, getWidth(), getHeight());
 
-        gc.setFont(javafx.scene.text.Font.font(fontFamily, fontSize));
+        gc.setFont(terminalFont);
 
-        // 复用StringBuilder，避免每个run都创建对象
-        StringBuilder segBuf = new StringBuilder(256);
+        // 复用StringBuilder，避免高频渲染时不断产生短命对象触发 GC。
+        StringBuilder segBuf = renderTextBuffer;
+        segBuf.setLength(0);
 
         for (int y = 0; y < rows; y++) {
             double py = y0 + y * charHeight;

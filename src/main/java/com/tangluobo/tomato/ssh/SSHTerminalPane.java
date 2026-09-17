@@ -36,6 +36,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -88,7 +89,7 @@ public class SSHTerminalPane extends BorderPane {
     private static final long INTERACTIVE_RENDER_WINDOW = 250;
     private boolean renderPending = false;
     private long pendingRenderAt = Long.MAX_VALUE;
-    private javafx.animation.PauseTransition renderDelay;
+    private final javafx.animation.PauseTransition renderDelay = new javafx.animation.PauseTransition();
 
     // SSH 输入专用单线程写队列。JSch flush 会加密并写 socket，
     // 不能放在 JavaFX 事件线程，否则网络或 socket 抖动会卡住按键重复事件。
@@ -98,6 +99,12 @@ public class SSHTerminalPane extends BorderPane {
     // 调试日志只在显式指定 -Dtomato.ssh.terminal.debug=true 时开启。
     private static final boolean TERMINAL_DEBUG = Boolean.getBoolean("tomato.ssh.terminal.debug");
     private PrintWriter terminalDebugLog;
+
+    // 读线程到 JavaFX 线程的输出合并队列。网络碎片不再一包创建一个
+    // Platform.runLater 任务；每次最多处理约 4ms，为按键和其他 UI 事件留出时间片。
+    private final ConcurrentLinkedQueue<TerminalOutputChunk> pendingTerminalOutput = new ConcurrentLinkedQueue<>();
+    private final AtomicBoolean terminalOutputDrainScheduled = new AtomicBoolean(false);
+    private static final long TERMINAL_OUTPUT_UI_BUDGET_NANOS = TimeUnit.MILLISECONDS.toNanos(4);
 
     // 状态栏
     private final Label stateLabel;
@@ -162,6 +169,7 @@ public class SSHTerminalPane extends BorderPane {
     public SSHTerminalPane() {
         emulator = new TerminalEmulator();
         terminalView = new TerminalView(emulator);
+        renderDelay.setOnFinished(e -> renderScheduledFrame());
         // 应用全局配置的终端字体
         com.tangluobo.tomato.module.connect.GlobalConfig gcfg = com.tangluobo.tomato.module.connect.GlobalConfig.getInstance();
         terminalView.setTerminalFont(gcfg.getSshTerminalFontName(), gcfg.getSshTerminalFontSize());
@@ -738,6 +746,50 @@ public class SSHTerminalPane extends BorderPane {
         }
     }
 
+    private void enqueueTerminalOutput(SSHSession sourceSession, byte[] data) {
+        if (data == null || data.length == 0) return;
+        pendingTerminalOutput.offer(new TerminalOutputChunk(sourceSession, data));
+        scheduleTerminalOutputDrain();
+    }
+
+    private void scheduleTerminalOutputDrain() {
+        if (terminalOutputDrainScheduled.compareAndSet(false, true)) {
+            Platform.runLater(this::drainTerminalOutput);
+        }
+    }
+
+    private void drainTerminalOutput() {
+        long deadline = System.nanoTime() + TERMINAL_OUTPUT_UI_BUDGET_NANOS;
+        boolean processed = false;
+        TerminalOutputChunk chunk;
+        while ((chunk = pendingTerminalOutput.poll()) != null) {
+            // 重连期间旧读线程可能还留有少量数据，不能污染新会话的终端。
+            if (chunk.sourceSession() == sshSession) {
+                emulator.process(chunk.data());
+                processed = true;
+            }
+            if (System.nanoTime() >= deadline) {
+                break;
+            }
+        }
+
+        if (processed) {
+            scheduleRender();
+        }
+
+        terminalOutputDrainScheduled.set(false);
+        if (!pendingTerminalOutput.isEmpty()) {
+            scheduleTerminalOutputDrain();
+        }
+    }
+
+    private void clearPendingTerminalOutput() {
+        pendingTerminalOutput.clear();
+        terminalOutputDrainScheduled.set(false);
+    }
+
+    private record TerminalOutputChunk(SSHSession sourceSession, byte[] data) {}
+
     /**
      * 连接SSH
      */
@@ -912,7 +964,11 @@ public class SSHTerminalPane extends BorderPane {
         running.set(false);
         connectionLost = false;
         terminalView.stopBlink();
+        renderDelay.stop();
+        renderPending = false;
+        pendingRenderAt = Long.MAX_VALUE;
         stopInputWriter();
+        clearPendingTerminalOutput();
         closeDebugLogging();
         if (zmodem != null) {
             try { zmodem.cancel(); } catch (IOException ignored) {}
@@ -986,6 +1042,7 @@ public class SSHTerminalPane extends BorderPane {
                 }
                 if (sshSession != null) {
                     stopInputWriter();
+                    clearPendingTerminalOutput();
                     sshSession.disconnect();
                     sshSession = null;
                 }
@@ -1116,12 +1173,13 @@ public class SSHTerminalPane extends BorderPane {
     }
 
     private void startReadThread() {
+        SSHSession readSession = sshSession;
         readThread = new Thread(() -> {
             byte[] buffer = new byte[4096];
 
-            while (running.get() && sshSession != null && sshSession.isConnected()) {
+            while (running.get() && readSession == sshSession && readSession != null && readSession.isConnected()) {
                 try {
-                    InputStream is = sshSession.getInputStream();
+                    InputStream is = readSession.getInputStream();
                     if (is == null) break;
 
                     int len = is.read(buffer);
@@ -1134,10 +1192,7 @@ public class SSHTerminalPane extends BorderPane {
                         if (zmodemStart > 0) {
                             final byte[] beforeData = new byte[zmodemStart];
                             System.arraycopy(buffer, 0, beforeData, 0, zmodemStart);
-                            Platform.runLater(() -> {
-                                emulator.process(beforeData);
-                                scheduleRender();
-                            });
+                            enqueueTerminalOutput(readSession, beforeData);
                         }
 
                         // 解析ZModem帧类型: ** ZDLE B frame_type
@@ -1150,9 +1205,9 @@ public class SSHTerminalPane extends BorderPane {
                         ZModemInputStream zmodemIn = new ZModemInputStream(is, frame);
 
                         if (isSz) {
-                            handleSzDownload(zmodemIn, sshSession.getOutputStream());
+                            handleSzDownload(zmodemIn, readSession.getOutputStream());
                         } else {
-                            handleRzUpload(zmodemIn, sshSession.getOutputStream());
+                            handleRzUpload(zmodemIn, readSession.getOutputStream());
                         }
                         continue;
                     }
@@ -1160,10 +1215,7 @@ public class SSHTerminalPane extends BorderPane {
                     // 普通输出，交给终端模拟器处理
                     final byte[] data = new byte[len];
                     System.arraycopy(buffer, 0, data, 0, len);
-                    Platform.runLater(() -> {
-                        emulator.process(data);
-                        scheduleRender();
-                    });
+                    enqueueTerminalOutput(readSession, data);
 
                 } catch (IOException e) {
                     if (running.get()) {
@@ -1171,6 +1223,10 @@ public class SSHTerminalPane extends BorderPane {
                     }
                     break;
                 }
+            }
+            // 主动断开或重连已替换会话时，旧读线程安静退出。
+            if (!running.get() || readSession != sshSession) {
+                return;
             }
             running.set(false);
 
@@ -1196,10 +1252,7 @@ public class SSHTerminalPane extends BorderPane {
         long interval = now < interactiveRenderUntil
                 ? INTERACTIVE_RENDER_INTERVAL : BULK_RENDER_INTERVAL;
         if (now - lastRenderTime >= interval) {
-            if (renderDelay != null) {
-                renderDelay.stop();
-                renderDelay = null;
-            }
+            renderDelay.stop();
             lastRenderTime = now;
             terminalView.render();
             renderPending = false;
@@ -1211,23 +1264,20 @@ public class SSHTerminalPane extends BorderPane {
             if (renderPending && renderAt >= pendingRenderAt) {
                 return;
             }
-            if (renderDelay != null) {
-                renderDelay.stop();
-            }
+            renderDelay.stop();
             renderPending = true;
             pendingRenderAt = renderAt;
-            renderDelay = new javafx.animation.PauseTransition(
-                    javafx.util.Duration.millis(Math.max(1, renderAt - now)));
-            renderDelay.setOnFinished(e -> {
-                lastRenderTime = System.currentTimeMillis();
-                terminalView.render();
-                renderPending = false;
-                pendingRenderAt = Long.MAX_VALUE;
-                renderDelay = null;
-                checkAltBufferState();
-            });
-            renderDelay.play();
+            renderDelay.setDuration(javafx.util.Duration.millis(Math.max(1, renderAt - now)));
+            renderDelay.playFromStart();
         }
+    }
+
+    private void renderScheduledFrame() {
+        lastRenderTime = System.currentTimeMillis();
+        terminalView.render();
+        renderPending = false;
+        pendingRenderAt = Long.MAX_VALUE;
+        checkAltBufferState();
     }
 
     /**
