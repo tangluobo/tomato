@@ -312,11 +312,18 @@ public class TerminalEmulator {
      * 统一日志输出（同时写System.err和文件日志）
      */
     private void log(String msg) {
+        // 终端光标移动会产生大量 CSI 序列。未显式开启调试时不要写 stderr，
+        // 否则长按方向键时日志 I/O 会直接阻塞 JavaFX 线程。
+        if (!isDebugLoggingEnabled()) return;
         System.err.println(msg);
         if (fileLogger != null) {
             fileLogger.println(msg);
             fileLogger.flush();
         }
+    }
+
+    private boolean isDebugLoggingEnabled() {
+        return debugWriter != null || fileLogger != null;
     }
 
     public void setCwdChangeListener(CwdChangeListener listener) {
@@ -333,6 +340,7 @@ public class TerminalEmulator {
      * 调试日志：输出完整的光标/缓冲区状态快照
      */
     private void debugLogCursorState(String event) {
+        if (!isDebugLoggingEnabled()) return;
         log("[Terminal-CURSOR] " + event
             + " | cursor=(" + cursorX + "," + cursorY + ")"
             + " saved=(" + savedCursorX + "," + savedCursorY + ")"
@@ -960,7 +968,7 @@ public class TerminalEmulator {
 
     private void executeCsiCommand(char cmd) {
         String seq = escapeSeq.toString();
-        if (cmd != 'm') {
+        if (cmd != 'm' && isDebugLoggingEnabled()) {
             log("[Terminal-CSI] CSI " + seq + cmd + " | cursor=(" + cursorX + "," + cursorY + ") altBuf=" + usingAltBuffer + " autoAlt=" + autoAltBuffer + " suppress=" + suppressScreenModify + " guard=" + cursorGuardActive);
         }
         boolean privateMode = false;

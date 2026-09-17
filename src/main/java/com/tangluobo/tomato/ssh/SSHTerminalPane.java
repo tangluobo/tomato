@@ -33,8 +33,12 @@ import javafx.stage.Stage;
 
 import java.io.*;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -53,7 +57,7 @@ public class SSHTerminalPane extends BorderPane {
 
     private final TerminalEmulator emulator;
     private final TerminalView terminalView;
-    private SSHSession sshSession;
+    private volatile SSHSession sshSession;
     private Thread readThread;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private volatile ZModem zmodem;
@@ -76,10 +80,24 @@ public class SSHTerminalPane extends BorderPane {
     // 右键菜单
     private final ContextMenu contextMenu;
 
-    // 渲染节流
+    // 渲染节流：按键后的短时间窗口使用 60fps，大量非交互输出仍保持 30fps。
     private long lastRenderTime = 0;
-    private static final long RENDER_INTERVAL = 33; // ~30fps
+    private long interactiveRenderUntil = 0;
+    private static final long BULK_RENDER_INTERVAL = 33; // ~30fps
+    private static final long INTERACTIVE_RENDER_INTERVAL = 16; // ~60fps
+    private static final long INTERACTIVE_RENDER_WINDOW = 250;
     private boolean renderPending = false;
+    private long pendingRenderAt = Long.MAX_VALUE;
+    private javafx.animation.PauseTransition renderDelay;
+
+    // SSH 输入专用单线程写队列。JSch flush 会加密并写 socket，
+    // 不能放在 JavaFX 事件线程，否则网络或 socket 抖动会卡住按键重复事件。
+    private final Object inputWriterLock = new Object();
+    private ExecutorService inputWriter;
+
+    // 调试日志只在显式指定 -Dtomato.ssh.terminal.debug=true 时开启。
+    private static final boolean TERMINAL_DEBUG = Boolean.getBoolean("tomato.ssh.terminal.debug");
+    private PrintWriter terminalDebugLog;
 
     // 状态栏
     private final Label stateLabel;
@@ -295,19 +313,7 @@ public class SSHTerminalPane extends BorderPane {
         setPrefHeight(600);
 
         // 设置终端响应回调（DA查询、DSR查询等需要回传数据）
-        emulator.setResponseHandler(data -> {
-            if (sshSession != null && sshSession.isConnected()) {
-                try {
-                    OutputStream os = sshSession.getOutputStream();
-                    if (os != null) {
-                        os.write(data);
-                        os.flush();
-                    }
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
-        });
+        emulator.setResponseHandler(this::sendTerminalInput);
 
         // 设置OSC7目录变化回调，通知文件浏览器跟随
         emulator.setCwdChangeListener(path -> {
@@ -335,6 +341,7 @@ public class SSHTerminalPane extends BorderPane {
 
         // 设置键盘输入回调
         terminalView.setKeyInputHandler(data -> {
+            interactiveRenderUntil = System.currentTimeMillis() + INTERACTIVE_RENDER_WINDOW;
             // 连接丢失时，按回车重新连接
             if (connectionLost) {
                 if (data.length == 1 && (data[0] == '\r' || data[0] == '\n')) {
@@ -359,15 +366,7 @@ public class SSHTerminalPane extends BorderPane {
                         if (line.equals("rz") || line.startsWith("rz ")) {
                             // 拦截 rz 命令：先发送回车执行 rz，再异步弹出文件选择框
                             rzCommandBuffer.setLength(0);
-                            try {
-                                OutputStream os = sshSession.getOutputStream();
-                                if (os != null) {
-                                    os.write(b);
-                                    os.flush();
-                                }
-                            } catch (IOException e) {
-                                e.printStackTrace();
-                            }
+                            sendTerminalInput(new byte[]{b});
                             // 异步弹出文件选择框（FX线程），结果存入 pendingUploadFuture
                             // supplier 中通过 future.get() 等待结果，避免弹出第二个文件选择框
                             pendingUploadFuture = new CompletableFuture<>();
@@ -399,15 +398,7 @@ public class SSHTerminalPane extends BorderPane {
                 }
             }
 
-            try {
-                OutputStream os = sshSession.getOutputStream();
-                if (os != null) {
-                    os.write(data);
-                    os.flush();
-                }
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+            sendTerminalInput(data);
         });
 
         // 右键菜单（CRT风格）
@@ -651,16 +642,99 @@ public class SSHTerminalPane extends BorderPane {
      * 需在连接成功后调用；写入失败静默忽略（连接可能已断开）。
      */
     public void sendCommand(String command) {
-        try {
-            if (sshSession != null && sshSession.isConnected()) {
-                OutputStream os = sshSession.getOutputStream();
-                if (os != null) {
-                    os.write((command + "\r").getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                    os.flush();
-                }
+        sendTerminalInput((command + "\r").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    /**
+     * 将终端输入排队到独立写线程，保持按键顺序的同时避免 JSch flush
+     * 占用 JavaFX 事件线程。任务捕获当前会话，重连后旧会话的残留任务会被丢弃。
+     */
+    private void sendTerminalInput(byte[] data) {
+        if (data == null || data.length == 0) return;
+
+        SSHSession targetSession = sshSession;
+        if (targetSession == null || !targetSession.isConnected()) return;
+
+        byte[] payload = Arrays.copyOf(data, data.length);
+        ExecutorService writer;
+        synchronized (inputWriterLock) {
+            if (inputWriter == null || inputWriter.isShutdown()) {
+                inputWriter = createInputWriter();
             }
-        } catch (IOException e) {
-            // 连接断开等异常：忽略
+            writer = inputWriter;
+        }
+
+        try {
+            writer.execute(() -> {
+                if (targetSession != sshSession || !targetSession.isConnected()) {
+                    return;
+                }
+                try {
+                    OutputStream os = targetSession.getOutputStream();
+                    if (os != null) {
+                        os.write(payload);
+                        os.flush();
+                    }
+                } catch (IOException e) {
+                    if (TERMINAL_DEBUG) {
+                        e.printStackTrace();
+                    }
+                }
+            });
+        } catch (RejectedExecutionException ignored) {
+            // 断开/重连正在替换写线程，旧会话输入直接丢弃。
+        }
+    }
+
+    private ExecutorService createInputWriter() {
+        return Executors.newSingleThreadExecutor(r -> {
+            Thread thread = new Thread(r, "SSH-Terminal-Input");
+            thread.setDaemon(true);
+            return thread;
+        });
+    }
+
+    private void restartInputWriter() {
+        synchronized (inputWriterLock) {
+            if (inputWriter != null) {
+                inputWriter.shutdownNow();
+            }
+            inputWriter = createInputWriter();
+        }
+    }
+
+    private void stopInputWriter() {
+        synchronized (inputWriterLock) {
+            if (inputWriter != null) {
+                inputWriter.shutdownNow();
+                inputWriter = null;
+            }
+        }
+    }
+
+    private void configureDebugLogging() {
+        closeDebugLogging();
+        if (!TERMINAL_DEBUG) return;
+
+        try {
+            String logPath = System.getProperty("user.home") + java.io.File.separator + "terminal_debug.log";
+            PrintWriter writer = new PrintWriter(new BufferedWriter(new FileWriter(logPath, false)));
+            terminalDebugLog = writer;
+            emulator.setDebugWriter(writer::print);
+            emulator.setFileLogger(writer);
+            writer.println("=== SSH Terminal Debug Log - " + new java.util.Date() + " ===");
+            writer.flush();
+        } catch (IOException ignored) {
+            closeDebugLogging();
+        }
+    }
+
+    private void closeDebugLogging() {
+        emulator.setDebugWriter(null);
+        emulator.setFileLogger(null);
+        if (terminalDebugLog != null) {
+            terminalDebugLog.close();
+            terminalDebugLog = null;
         }
     }
 
@@ -685,22 +759,12 @@ public class SSHTerminalPane extends BorderPane {
 
         sshSession = new SSHSession(host, port, username, password, privateKeyPaths);
         sshSession.connect();
+        restartInputWriter();
         running.set(true);
 
         updateStatusBar("已连接");
 
-        // 启用调试日志（写入用户目录下的terminal_debug.log）
-        try {
-            String logPath = System.getProperty("user.home") + java.io.File.separator + "terminal_debug.log";
-            PrintWriter pw = new PrintWriter(new FileWriter(logPath, false));
-            emulator.setDebugWriter(line -> {
-                pw.print(line);
-                pw.flush();
-            });
-            emulator.setFileLogger(pw);
-            pw.println("=== SSH Terminal Debug Log - " + new java.util.Date() + " ===");
-            pw.flush();
-        } catch (Exception ignored) {}
+        configureDebugLogging();
 
         // 通知SSH服务器终端大小
         sshSession.resize(emulator.getCols(), emulator.getRows(),
@@ -831,15 +895,7 @@ public class SSHTerminalPane extends BorderPane {
                 if (terminalView.getEmulator().isBracketedPasteMode()) {
                     text = "\033[200~" + text + "\033[201~";
                 }
-                try {
-                    OutputStream os = sshSession.getOutputStream();
-                    if (os != null) {
-                        os.write(text.getBytes());
-                        os.flush();
-                    }
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
+                sendTerminalInput(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 terminalView.clearSelection();
                 // 粘贴后自动滚动到底部
                 if (!emulator.isUsingAltBuffer() && emulator.getScrollOffset() != 0) {
@@ -856,6 +912,8 @@ public class SSHTerminalPane extends BorderPane {
         running.set(false);
         connectionLost = false;
         terminalView.stopBlink();
+        stopInputWriter();
+        closeDebugLogging();
         if (zmodem != null) {
             try { zmodem.cancel(); } catch (IOException ignored) {}
         }
@@ -927,6 +985,7 @@ public class SSHTerminalPane extends BorderPane {
                     sftpClient.disconnect();
                 }
                 if (sshSession != null) {
+                    stopInputWriter();
                     sshSession.disconnect();
                     sshSession = null;
                 }
@@ -951,6 +1010,7 @@ public class SSHTerminalPane extends BorderPane {
                 sshSession = new SSHSession(sessionHost, sessionPort, reconnectUsername,
                         reconnectPassword, reconnectKeyPaths);
                 sshSession.connect();
+                restartInputWriter();
                 running.set(true);
 
                 // 通知SSH服务器终端大小
@@ -1133,23 +1193,40 @@ public class SSHTerminalPane extends BorderPane {
      */
     private void scheduleRender() {
         long now = System.currentTimeMillis();
-        if (now - lastRenderTime >= RENDER_INTERVAL) {
+        long interval = now < interactiveRenderUntil
+                ? INTERACTIVE_RENDER_INTERVAL : BULK_RENDER_INTERVAL;
+        if (now - lastRenderTime >= interval) {
+            if (renderDelay != null) {
+                renderDelay.stop();
+                renderDelay = null;
+            }
             lastRenderTime = now;
             terminalView.render();
             renderPending = false;
+            pendingRenderAt = Long.MAX_VALUE;
             checkAltBufferState();
-        } else if (!renderPending) {
+        } else {
+            long renderAt = lastRenderTime + interval;
+            // 交互输入到来时，可抢占之前按 30fps 安排的延迟渲染。
+            if (renderPending && renderAt >= pendingRenderAt) {
+                return;
+            }
+            if (renderDelay != null) {
+                renderDelay.stop();
+            }
             renderPending = true;
-            // 延迟渲染
-            javafx.animation.PauseTransition delay = new javafx.animation.PauseTransition(
-                    javafx.util.Duration.millis(RENDER_INTERVAL - (now - lastRenderTime)));
-            delay.setOnFinished(e -> {
+            pendingRenderAt = renderAt;
+            renderDelay = new javafx.animation.PauseTransition(
+                    javafx.util.Duration.millis(Math.max(1, renderAt - now)));
+            renderDelay.setOnFinished(e -> {
                 lastRenderTime = System.currentTimeMillis();
                 terminalView.render();
                 renderPending = false;
+                pendingRenderAt = Long.MAX_VALUE;
+                renderDelay = null;
                 checkAltBufferState();
             });
-            delay.play();
+            renderDelay.play();
         }
     }
 
