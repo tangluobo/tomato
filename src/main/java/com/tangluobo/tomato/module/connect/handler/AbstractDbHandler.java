@@ -2277,6 +2277,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         dialog.setTitle("重命名查询");
         dialog.setHeaderText(null);
         dialog.setContentText("新名称：");
+        DialogPositionUtil.centerOnOwner(dialog, module.getStage());
         dialog.showAndWait().ifPresent(name -> {
             if (name.trim().isEmpty()) return;
             String newName = name.trim();
@@ -2313,6 +2314,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         confirm.setTitle("删除查询");
         confirm.setHeaderText("确定要删除查询 \"" + data.getName() + "\" 吗？");
+        DialogPositionUtil.centerOnOwner(confirm, module.getStage());
         confirm.showAndWait().ifPresent(response -> {
             if (response == ButtonType.OK) {
                 SqlEditorView.cleanupQueryFile(data.getConnectionConfig().getName(), data.getDatabaseName(), data.getName(), data.getPath());
@@ -2407,6 +2409,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                     alert.setTitle("打开目录失败");
                     alert.setHeaderText(null);
                     alert.setContentText("无法打开" + directoryLabel + ": " + ex.getMessage());
+                    DialogPositionUtil.centerOnOwner(alert, module.getStage());
                     alert.showAndWait();
                 });
             }
@@ -2443,6 +2446,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         dialog.setTitle("重命名备份");
         dialog.setHeaderText(null);
         dialog.setContentText("新名称：");
+        DialogPositionUtil.centerOnOwner(dialog, module.getStage());
         dialog.showAndWait().ifPresent(name -> {
             if (name.trim().isEmpty()) return;
             String newName = name.trim();
@@ -2459,6 +2463,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 err.setTitle("重命名失败");
                 err.setHeaderText(null);
                 err.setContentText(e.getMessage());
+                DialogPositionUtil.centerOnOwner(err, module.getStage());
                 err.showAndWait();
             }
         });
@@ -2469,6 +2474,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         confirm.setTitle("删除备份");
         confirm.setHeaderText("确定要删除备份 \"" + data.getName() + "\" 吗？");
+        DialogPositionUtil.centerOnOwner(confirm, module.getStage());
         confirm.showAndWait().ifPresent(response -> {
             if (response == ButtonType.OK) {
                 BackupService.deleteBackupFile(data.getConnectionConfig().getName(),
@@ -2487,6 +2493,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         dialog.setTitle("新建目录");
         dialog.setHeaderText(null);
         dialog.setContentText("目录名称：");
+        DialogPositionUtil.centerOnOwner(dialog, module.getStage());
         dialog.showAndWait().ifPresent(name -> {
             if (name.trim().isEmpty()) return;
             String dirName = name.trim();
@@ -2501,6 +2508,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 err.setTitle("创建目录失败");
                 err.setHeaderText(null);
                 err.setContentText(e.getMessage());
+                DialogPositionUtil.centerOnOwner(err, module.getStage());
                 err.showAndWait();
                 return;
             }
@@ -2521,6 +2529,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         dialog.setTitle("新建目录");
         dialog.setHeaderText(null);
         dialog.setContentText("目录名称：");
+        DialogPositionUtil.centerOnOwner(dialog, module.getStage());
         dialog.showAndWait().ifPresent(name -> {
             if (name.trim().isEmpty()) return;
             String dirName = name.trim();
@@ -2535,6 +2544,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 err.setTitle("创建目录失败");
                 err.setHeaderText(null);
                 err.setContentText(e.getMessage());
+                DialogPositionUtil.centerOnOwner(err, module.getStage());
                 err.showAndWait();
                 return;
             }
@@ -2555,6 +2565,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         dialog.setTitle("重命名目录");
         dialog.setHeaderText(null);
         dialog.setContentText("新名称：");
+        DialogPositionUtil.centerOnOwner(dialog, module.getStage());
         dialog.showAndWait().ifPresent(name -> {
             if (name.trim().isEmpty()) return;
             String newName = name.trim();
@@ -2574,6 +2585,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 err.setTitle("重命名失败");
                 err.setHeaderText(null);
                 err.setContentText(e.getMessage());
+                DialogPositionUtil.centerOnOwner(err, module.getStage());
                 err.showAndWait();
                 return;
             }
@@ -2593,6 +2605,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         dialog.setTitle("重命名目录");
         dialog.setHeaderText(null);
         dialog.setContentText("新名称：");
+        DialogPositionUtil.centerOnOwner(dialog, module.getStage());
         dialog.showAndWait().ifPresent(name -> {
             if (name.trim().isEmpty()) return;
             String newName = name.trim();
@@ -2612,6 +2625,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 err.setTitle("重命名失败");
                 err.setHeaderText(null);
                 err.setContentText(e.getMessage());
+                DialogPositionUtil.centerOnOwner(err, module.getStage());
                 err.showAndWait();
                 return;
             }
@@ -2630,6 +2644,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         confirm.setTitle("删除目录");
         confirm.setHeaderText("确定要删除目录 \"" + data.getName() + "\" 及其所有内容吗？");
+        DialogPositionUtil.centerOnOwner(confirm, module.getStage());
         confirm.showAndWait().ifPresent(response -> {
             if (response == ButtonType.OK) {
                 SqlEditorView.deleteQueryDir(data.getConnectionConfig().getName(),
@@ -2645,6 +2660,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         confirm.setTitle("删除目录");
         confirm.setHeaderText("确定要删除目录 \"" + data.getName() + "\" 及其所有内容吗？");
+        DialogPositionUtil.centerOnOwner(confirm, module.getStage());
         confirm.showAndWait().ifPresent(response -> {
             if (response == ButtonType.OK) {
                 BackupService.deleteBackupDir(data.getConnectionConfig().getName(),

@@ -1,5 +1,6 @@
 package com.tangluobo.tomato.ssh;
 
+import com.tangluobo.tomato.utils.DialogPositionUtil;
 import com.tangluobo.tomato.utils.RowSelectorDragSelection;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
@@ -503,6 +504,7 @@ public class DockerPanel extends BorderPane {
                 box.setPadding(new Insets(0));
                 stage.setScene(new Scene(box));
                 stage.getIcons().add(new Image(getClass().getResourceAsStream("/images/logo.png")));
+                DialogPositionUtil.centerOnOwner(stage, this);
                 stage.show();
             });
         }, "Docker-Logs").start();
