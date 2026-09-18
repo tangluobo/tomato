@@ -320,14 +320,14 @@ public class TerminalView extends Canvas {
             data = emulator.isApplicationCursorKeys() ? "\033OC".getBytes() : "\033[C".getBytes();
             int oldX = emulator.getCursorX();
             int oldY = emulator.getCursorY();
-            if (emulator.predictShellCursorMove(1)) {
+            if (emulator.predictHorizontalCursorMove(1)) {
                 renderPredictedCursorMove(oldX, oldY);
             }
         } else if (event.getCode() == javafx.scene.input.KeyCode.LEFT) {
             data = emulator.isApplicationCursorKeys() ? "\033OD".getBytes() : "\033[D".getBytes();
             int oldX = emulator.getCursorX();
             int oldY = emulator.getCursorY();
-            if (emulator.predictShellCursorMove(-1)) {
+            if (emulator.predictHorizontalCursorMove(-1)) {
                 renderPredictedCursorMove(oldX, oldY);
             }
         } else if (event.getCode() == javafx.scene.input.KeyCode.HOME) {
@@ -650,11 +650,12 @@ public class TerminalView extends Canvas {
     }
 
     /**
-     * Shell 水平光标预测只重绘旧/新两个单元格，不走整屏渲染。
+     * 水平光标预测只重绘旧/新两个单元格，不走整屏渲染；
+     * 普通 Shell 与 vi/vim 的交替缓冲区共用这条快速路径。
      */
     private void renderPredictedCursorMove(int oldX, int oldY) {
-        if (emulator.getScrollOffset() != 0 || emulator.isUsingAltBuffer()
-                || hasSelection() || oldY < 0 || oldY >= emulator.getRows()) {
+        if (emulator.getScrollOffset() != 0 || hasSelection()
+                || oldY < 0 || oldY >= emulator.getRows()) {
             render();
             return;
         }

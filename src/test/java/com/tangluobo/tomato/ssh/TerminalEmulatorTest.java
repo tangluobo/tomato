@@ -142,11 +142,52 @@ class TerminalEmulatorTest {
         assertFalse(emulator.predictShellCursorMove(-1));
     }
 
+    @Test
+    void predictsApplicationCursorAndConsumesCoalescedRelativeMovement() {
+        TerminalEmulator emulator = applicationCursorLine();
+
+        assertTrue(emulator.predictHorizontalCursorMove(1));
+        assertTrue(emulator.predictHorizontalCursorMove(1));
+        assertEquals(4, emulator.getCursorX());
+
+        emulator.processString("\033[2C");
+        assertEquals(4, emulator.getCursorX());
+    }
+
+    @Test
+    void reconcilesVimStyleCursorVisibilityAndAbsolutePositioning() {
+        TerminalEmulator emulator = applicationCursorLine();
+
+        assertTrue(emulator.predictHorizontalCursorMove(1));
+        assertTrue(emulator.predictHorizontalCursorMove(1));
+        assertEquals(4, emulator.getCursorX());
+
+        emulator.processString("\033[?25l\033[1;5H\033[?25h");
+        assertEquals(4, emulator.getCursorX());
+        assertTrue(emulator.isCursorVisible());
+    }
+
+    @Test
+    void doesNotPredictPastApplicationLineContent() {
+        TerminalEmulator emulator = applicationCursorLine();
+        emulator.processString("\033[1;6H");
+
+        assertFalse(emulator.predictHorizontalCursorMove(1));
+        assertTrue(emulator.predictHorizontalCursorMove(-1));
+    }
+
     private static TerminalEmulator shellWithInput(String input) {
         TerminalEmulator emulator = new TerminalEmulator(80, 24);
         emulator.processString("$ ");
         emulator.onShellTextInput();
         emulator.processString(input);
+        return emulator;
+    }
+
+    private static TerminalEmulator applicationCursorLine() {
+        TerminalEmulator emulator = new TerminalEmulator(80, 24);
+        emulator.processString("abcdef");
+        emulator.processString("\033[?1h\033[1;3H");
         return emulator;
     }
 }

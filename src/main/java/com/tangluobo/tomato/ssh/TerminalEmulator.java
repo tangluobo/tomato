@@ -528,6 +528,53 @@ public class TerminalEmulator {
         return true;
     }
 
+    /**
+     * 为终端视图选择普通 Shell 或 vi/vim 等全屏 TUI 的预测策略。
+     */
+    boolean predictHorizontalCursorMove(int direction) {
+        if (usingAltBuffer || applicationCursorKeys) {
+            return predictApplicationCursorMove(direction);
+        }
+        return predictShellCursorMove(direction);
+    }
+
+    private boolean predictApplicationCursorMove(int direction) {
+        if (direction != -1 && direction != 1) return false;
+        if (!shellCursorPredictions.isEmpty()
+                && System.currentTimeMillis() - shellCursorPredictions.peekFirst().createdAt()
+                > SHELL_CURSOR_PREDICTION_TIMEOUT_MS) {
+            cancelShellCursorPredictions();
+        }
+        if (shellCursorPredictions.size() >= MAX_SHELL_CURSOR_PREDICTIONS) return false;
+
+        int startX = cursorX;
+        int startY = cursorY;
+        int targetX;
+        char expectedChar = 0;
+        if (direction < 0) {
+            if (startX <= 0) return false;
+            targetX = startX - 1;
+            // 宽字符的后续单元格不是可停留光标位，回到主单元格。
+            if (buffer[startY][targetX] == '\0' && targetX > 0) {
+                targetX--;
+            }
+        } else {
+            if (startX >= cols - 1) return false;
+            char current = buffer[startY][startX];
+            if (current == '\0') return false;
+            int width = isWideChar(current) ? 2 : 1;
+            targetX = startX + width;
+            if (targetX >= cols || !hasVisibleContentAtOrAfter(targetX)) return false;
+            expectedChar = current;
+        }
+
+        shellCursorPredictions.addLast(new ShellCursorPrediction(
+                direction, startX, startY, targetX, startY, expectedChar,
+                System.currentTimeMillis()));
+        cursorX = targetX;
+        return true;
+    }
+
     private boolean hasVisibleContentAtOrAfter(int column) {
         for (int x = column; x < cols; x++) {
             char ch = buffer[cursorY][x];
@@ -558,14 +605,33 @@ public class TerminalEmulator {
                                             boolean lessThan) {
         if (privateMode || greaterThan || lessThan) return false;
         int amount = params.length == 0 || params[0] == 0 ? 1 : params[0];
-        if (amount != 1) return false;
+        int direction = command == 'D' ? -1 : (command == 'C' || command == 'a' ? 1 : 0);
+        if (direction == 0 || currentShellCursorPrediction() == null) return false;
 
-        ShellCursorPrediction prediction = currentShellCursorPrediction();
-        if (prediction == null) return false;
-        if ((command == 'D' && prediction.direction() == -1)
-                || (command == 'C' && prediction.direction() == 1)) {
-            completeShellCursorPrediction(prediction);
-            return true;
+        int count = 0;
+        int columns = 0;
+        ShellCursorPrediction acknowledged = null;
+        for (ShellCursorPrediction prediction : shellCursorPredictions) {
+            if (prediction.direction() != direction) break;
+            columns += Math.abs(prediction.targetX() - prediction.startX());
+            count++;
+            acknowledged = prediction;
+            if (columns >= amount) break;
+        }
+        if (columns != amount || acknowledged == null) return false;
+        completeShellCursorPredictions(count, acknowledged);
+        return true;
+    }
+
+    private boolean consumePredictedAbsolutePosition(int targetX, int targetY) {
+        if (currentShellCursorPrediction() == null) return false;
+        int count = 0;
+        for (ShellCursorPrediction prediction : shellCursorPredictions) {
+            count++;
+            if (prediction.targetX() == targetX && prediction.targetY() == targetY) {
+                completeShellCursorPredictions(count, prediction);
+                return true;
+            }
         }
         return false;
     }
@@ -581,14 +647,20 @@ public class TerminalEmulator {
     }
 
     private void completeShellCursorPrediction(ShellCursorPrediction prediction) {
-        shellCursorPredictions.removeFirst();
+        completeShellCursorPredictions(1, prediction);
+    }
+
+    private void completeShellCursorPredictions(int count, ShellCursorPrediction acknowledged) {
+        for (int i = 0; i < count; i++) {
+            shellCursorPredictions.removeFirst();
+        }
         ShellCursorPrediction latest = shellCursorPredictions.peekLast();
         if (latest != null) {
             cursorX = latest.targetX();
             cursorY = latest.targetY();
         } else {
-            cursorX = prediction.targetX();
-            cursorY = prediction.targetY();
+            cursorX = acknowledged.targetX();
+            cursorY = acknowledged.targetY();
         }
     }
 
@@ -1149,12 +1221,32 @@ public class TerminalEmulator {
 
         int[] params = parseParams(cleanSeq);
 
+        if (!privateMode && !greaterThan && !lessThan) {
+            int absoluteX = -1;
+            int absoluteY = -1;
+            if (cmd == 'H' || cmd == 'f') {
+                absoluteY = (params.length > 0 && params[0] > 0 ? params[0] : 1) - 1;
+                absoluteX = (params.length > 1 && params[1] > 0 ? params[1] : 1) - 1;
+                if (originMode) absoluteY += getScrollTop();
+            } else if (cmd == 'G' || cmd == '`') {
+                absoluteX = (params.length > 0 && params[0] > 0 ? params[0] : 1) - 1;
+                absoluteY = cursorY;
+            }
+            if (absoluteX >= 0 && absoluteY >= 0
+                    && consumePredictedAbsolutePosition(absoluteX, absoluteY)) {
+                return;
+            }
+        }
+
         if (consumePredictedCsiMove(cmd, params, privateMode, greaterThan, lessThan)) {
             return;
         }
         // SGR 只改变后续字符样式，readline 有可能在光标回显前发送；
         // 其他 CSI 命令则表明屏幕状态已超出本地预测范围。
-        if (cmd != 'm') {
+        boolean cursorVisibilityOnly = privateMode && (cmd == 'h' || cmd == 'l')
+                && params.length > 0
+                && java.util.Arrays.stream(params).allMatch(param -> param == 25);
+        if (cmd != 'm' && !cursorVisibilityOnly) {
             cancelShellCursorPredictions();
         }
 
