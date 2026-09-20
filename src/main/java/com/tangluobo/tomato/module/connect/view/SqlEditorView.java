@@ -32,6 +32,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -562,7 +563,7 @@ public class SqlEditorView extends BorderPane {
 
         Thread loader = new Thread(() -> {
             Set<String> tables = new LinkedHashSet<>();
-            Set<String> columns = new LinkedHashSet<>();
+            Map<String, List<String>> columnsByTable = new LinkedHashMap<>();
             List<AiSchemaTable> schemaTables = new ArrayList<>();
             java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, dbName);
             connLock.lock();
@@ -572,13 +573,14 @@ public class SqlEditorView extends BorderPane {
                 for (String table : tables) {
                     List<Map<String, String>> tableColumns = DatabaseService.getTableColumns(
                             config, dbName, initialSchema, table);
+                    List<String> columnNames = new ArrayList<>();
                     StringBuilder schemaText = new StringBuilder("TABLE ").append(table).append('\n');
                     List<String> searchTerms = new ArrayList<>();
                     searchTerms.add(table);
                     for (Map<String, String> column : tableColumns) {
                         String name = column.get("字段名");
                         if (name == null || name.isBlank()) continue;
-                        columns.add(name);
+                        columnNames.add(name);
                         searchTerms.add(name);
                         String type = Objects.requireNonNullElse(column.get("类型"), "");
                         String comment = Objects.requireNonNullElse(column.get("注释"), "");
@@ -589,6 +591,7 @@ public class SqlEditorView extends BorderPane {
                         if (!comment.isBlank()) schemaText.append(" -- ").append(comment.replace('\n', ' '));
                         schemaText.append('\n');
                     }
+                    columnsByTable.put(table, List.copyOf(columnNames));
                     schemaTables.add(new AiSchemaTable(schemaText.toString().trim(),
                             List.copyOf(searchTerms), tableOrder++));
                 }
@@ -601,7 +604,13 @@ public class SqlEditorView extends BorderPane {
                 if (version == completionLoadVersion
                         && config == connectionCombo.getValue()
                         && dbName.equals(databaseCombo.getValue())) {
-                    if (rte != null) rte.getPane().setMetadataCompletions(databases, tables, columns);
+                    if (rte != null) {
+                        Set<String> namespaces = new LinkedHashSet<>();
+                        namespaces.add(dbName);
+                        if (initialSchema != null && !initialSchema.isBlank()) namespaces.add(initialSchema);
+                        rte.getPane().setMetadataCompletions(
+                                databases, dbName, namespaces, columnsByTable);
+                    }
                     aiSchemaTables = List.copyOf(schemaTables);
                 }
             });

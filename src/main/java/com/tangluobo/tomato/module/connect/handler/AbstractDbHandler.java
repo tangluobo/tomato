@@ -94,6 +94,11 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         return false;
     }
 
+    /** Whether opening this connection should ask for a missing password. */
+    protected boolean shouldPromptForPassword(ConnectionConfig config) {
+        return config.getPassword() == null;
+    }
+
     /**
      * 双击模式节点处理。仅 PostgreSQL 实现；其他数据库默认空操作。
      */
@@ -131,7 +136,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             return;
         }
 
-        if (config.getPassword() == null) {
+        if (shouldPromptForPassword(config)) {
             PasswordPromptDialog.Result pwdResult = PasswordPromptDialog.show(
                     "输入密码",
                     config.getName() + " (" + config.getUsername() + "@" + config.getHost() + ")",
@@ -1812,25 +1817,15 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         }
     }
 
-    /**
-     * MySQL 专用主机图标更新：
-     * 已连接时使用 mysql_open.png（彩色图标），无论展开还是折叠；
-     * 未连接时使用 mysql.png（灰色图标）。
-     */
+    /** MySQL 方言族保留各产品 Logo，并用绿色阴影表示已连接。 */
     protected void updateMysqlHostIcon(TreeItem<String> hostItem, ConnectionConfig config) {
-        ImageView imageView = new ImageView();
+        ImageView imageView = module.getIconForConfig(config);
         imageView.setFitWidth(16);
         imageView.setFitHeight(16);
         try {
             boolean connected = module.isHostConnected(hostItem);
-            // 根据连接状态选择图标：已连接用彩色图标，未连接用灰色图标
-            String iconPath = connected ? "/images/connect/mysql_open.png" : "/images/connect/mysql.png";
-            Image icon = new Image(getClass().getResourceAsStream(iconPath));
-            if (icon != null) {
-                imageView.setImage(icon);
-                if (connected) {
-                    imageView.setStyle("-fx-effect: dropshadow(gaussian, #4CAF50, 2, 0.5, 0, 0);");
-                }
+            if (connected) {
+                imageView.setStyle("-fx-effect: dropshadow(gaussian, #4CAF50, 2, 0.5, 0, 0);");
             }
         } catch (Exception e) {
             // fallback

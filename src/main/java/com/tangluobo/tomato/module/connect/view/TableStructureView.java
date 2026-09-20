@@ -1,7 +1,9 @@
 package com.tangluobo.tomato.module.connect.view;
 
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.DataTypeProvider;
+import com.tangluobo.tomato.module.connect.FieldTypeInference;
 import com.tangluobo.tomato.module.connect.GlobalConfig;
 import com.tangluobo.tomato.module.connect.service.DatabaseService;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
@@ -1578,12 +1580,34 @@ public class TableStructureView extends BorderPane {
             }
         }
 
+        // Hive 用 CHANGE COLUMN 原地重命名。设计表没有独立的行 ID，因此将同一位置上
+        // “旧名称已消失且新名称原先不存在”的变化识别为重命名，避免误生成删除+新增。
+        java.util.Map<String, String> hiveRenameSources = new java.util.LinkedHashMap<>();
+        if (config.getType() == ConnectType.HIVE) {
+            int comparableRows = Math.min(originalRows.size(), currentRows.size());
+            for (int i = 0; i < comparableRows; i++) {
+                ObservableList<String> original = originalRows.get(i);
+                ObservableList<String> current = currentRows.get(i);
+                String oldName = nameIdx < original.size() ? original.get(nameIdx) : "";
+                String newName = nameIdx < current.size() ? current.get(nameIdx) : "";
+                if (oldName != null && newName != null && !oldName.isEmpty() && !newName.isEmpty()
+                        && !oldName.equals(newName)
+                        && !currentByName.containsKey(oldName)
+                        && !originalByName.containsKey(newName)) {
+                    hiveRenameSources.put(newName, oldName);
+                }
+            }
+        }
+
         // 1) 删除：原快照中存在但当前不存在
         for (java.util.Map.Entry<String, ObservableList<String>> e : originalByName.entrySet()) {
-            if (!currentByName.containsKey(e.getKey())) {
+            if (!currentByName.containsKey(e.getKey()) && !hiveRenameSources.containsValue(e.getKey())) {
                 try {
                     sqlList.add(DatabaseService.generateDropColumnSql(config, databaseName, schemaName, tableName, e.getKey()));
                 } catch (Exception ex) {
+                    if (config.getType() == ConnectType.HIVE) {
+                        throw new IllegalStateException(ex.getMessage(), ex);
+                    }
                     sqlList.add("-- 生成删除列SQL失败(" + e.getKey() + "): " + ex.getMessage());
                 }
             }
@@ -1610,7 +1634,17 @@ public class TableStructureView extends BorderPane {
             ObservableList<String> cur = currentRows.get(i);
             String colName = nameIdx < cur.size() ? cur.get(nameIdx) : "";
             if (colName == null || colName.isEmpty()) continue;
-            if (!originalByName.containsKey(colName)) {
+            String renamedFrom = hiveRenameSources.get(colName);
+            if (renamedFrom != null) {
+                ObservableList<String> orig = originalByName.get(renamedFrom);
+                try {
+                    sqlList.addAll(DatabaseService.generateModifyColumnSql(
+                            config, databaseName, schemaName, tableName, titles, orig, cur));
+                } catch (Exception ex) {
+                    throw new IllegalStateException("生成 Hive 字段重命名SQL失败(" + renamedFrom
+                            + " -> " + colName + "): " + ex.getMessage(), ex);
+                }
+            } else if (!originalByName.containsKey(colName)) {
                 // 新增列：取 UI 中当前行的前一个有效字段名作为 AFTER 锚点（仅 MySQL 生效），
                 // 确保用户在已有字段中间插入新列时，新列按 UI 顺序插入而非被追加到表末尾。
                 // 事务内按 currentRows 顺序执行：若前一个也是新增列，则先于本列被 ADD，AFTER 引用安全。
@@ -1660,7 +1694,7 @@ public class TableStructureView extends BorderPane {
         }
 
         // 3) 主键变更：对比原始主键集合与当前主键集合
-        if (pkIdx >= 0) {
+        if (pkIdx >= 0 && config.getType() != ConnectType.HIVE) {
             java.util.List<String> origPk = new java.util.ArrayList<>();
             for (ObservableList<String> row : originalRows) {
                 String n = nameIdx < row.size() ? row.get(nameIdx) : "";
@@ -1706,6 +1740,8 @@ public class TableStructureView extends BorderPane {
             case MYSQL -> "`" + databaseName + "`.`" + tableName + "`";
             case POSTGRESQL -> "\"" + schema + "\".\"" + tableName + "\"";
             case ORACLE -> "\"" + databaseName + "\".\"" + tableName + "\"";
+            case HIVE -> "`" + databaseName.replace("`", "``") + "`.`"
+                    + tableName.replace("`", "``") + "`";
             default -> tableName;
         };
     }
@@ -1924,7 +1960,9 @@ public class TableStructureView extends BorderPane {
             return;
         }
 
-        statusLabel.setText("正在保存变更（" + (alterStatements.size() + (tableCommentSql != null ? 1 : 0)) + " 条SQL，事务模式）...");
+        boolean hiveDdl = config.getType() == ConnectType.HIVE;
+        statusLabel.setText("正在保存变更（" + (alterStatements.size() + (tableCommentSql != null ? 1 : 0))
+                + (hiveDdl ? " 条 Hive DDL）..." : " 条SQL，事务模式）..."));
         String finalTableCommentSql = tableCommentSql;
         new Thread(() -> {
             java.util.concurrent.locks.ReentrantLock connLock = DatabaseService.acquireUsageLock(config, databaseName);
@@ -1961,13 +1999,15 @@ public class TableStructureView extends BorderPane {
                         }
                     });
                 } catch (Exception e) {
-                    // 事务已回滚，DB状态与保存前完全一致，无需刷新表结构。
-                    // 不调用 clearDirty()/loadStructure()，保留用户编辑内容以便修改后重试。
                     Platform.runLater(() -> {
-                        statusLabel.setText("保存失败（已回滚，可在原编辑基础上修改后重试）");
+                        statusLabel.setText(hiveDdl
+                                ? "保存失败；Hive DDL 可能已部分生效，请刷新确认"
+                                : "保存失败（已回滚，可在原编辑基础上修改后重试）");
                         Alert alert = new Alert(Alert.AlertType.ERROR);
                         alert.setTitle("保存表结构");
-                        alert.setHeaderText("保存失败，所有变更已回滚（DB未发生变更）");
+                        alert.setHeaderText(hiveDdl
+                                ? "保存失败；Hive DDL 不支持事务，先前语句可能已经生效"
+                                : "保存失败，所有变更已回滚（DB未发生变更）");
                         alert.setContentText(e.getMessage());
                         DialogPositionUtil.centerOnOwner(alert, this);
                         alert.showAndWait();
@@ -2604,6 +2644,10 @@ public class TableStructureView extends BorderPane {
                     String val = title != null ? rowMap.getOrDefault(title, "") : "";
                     newRow.add(val != null ? val : "");
                 }
+                int fieldNameIndex = columnTitles.indexOf("字段名");
+                if (fieldNameIndex >= 0 && fieldNameIndex < newRow.size()) {
+                    applyInferredTypeIfUnset(newRow, newRow.get(fieldNameIndex));
+                }
                 items.add(insertIndex + pastedCount, newRow);
                 pastedCount++;
             }
@@ -2633,6 +2677,37 @@ public class TableStructureView extends BorderPane {
             }
         }
         return -1;
+    }
+
+    /**
+     * 根据字段名为尚未设置类型的行补充数据库方言对应的默认类型。
+     * 已有类型以及用户预先填写的长度/小数位不会被覆盖。
+     */
+    private boolean applyInferredTypeIfUnset(ObservableList<String> row, String fieldName) {
+        if (row == null || columnTitles == null) return false;
+        int typeIndex = columnTitles.indexOf("类型");
+        if (typeIndex < 0 || typeIndex >= row.size()) return false;
+        String currentType = row.get(typeIndex);
+        if (currentType != null && !currentType.isBlank()) return false;
+
+        FieldTypeInference.Suggestion suggestion = FieldTypeInference.infer(
+                config.getType(), fieldName, cachedDataTypes);
+        if (suggestion == null) return false;
+
+        row.set(typeIndex, suggestion.type());
+        setInferredValueIfEmpty(row, "长度", suggestion.length());
+        setInferredValueIfEmpty(row, "小数点", suggestion.decimalPlaces());
+        return true;
+    }
+
+    private void setInferredValueIfEmpty(ObservableList<String> row, String title, String value) {
+        if (value == null || value.isBlank()) return;
+        int index = columnTitles.indexOf(title);
+        if (index < 0 || index >= row.size()) return;
+        String currentValue = row.get(index);
+        if (currentValue == null || currentValue.isBlank()) {
+            row.set(index, value);
+        }
     }
 
     public void loadStructure() {
@@ -3646,11 +3721,14 @@ public class TableStructureView extends BorderPane {
         @Override
         public void cancelEdit() {
             // 非Escape触发的cancel（如点击其他cell导致失焦），保留编辑值到数据模型
+            boolean changed = false;
+            boolean inferredType = false;
             if (!escapePressed && textField != null) {
                 String newValue = textField.getText();
                 String currentValue = getItem() != null ? getItem() : "";
                 if (!newValue.equals(currentValue)) {
-                    updateCellData(newValue);
+                    changed = true;
+                    inferredType = updateCellData(newValue);
                 }
             }
             escapePressed = false;
@@ -3659,6 +3737,15 @@ public class TableStructureView extends BorderPane {
             setText(displayValue != null ? displayValue : "");
             setGraphic(null);
             applyRowStateStyle();
+            if (changed || inferredType) {
+                markDirty();
+            }
+            if (inferredType) {
+                Platform.runLater(() -> {
+                    tableView.refresh();
+                    updateFieldPropertiesPane();
+                });
+            }
             clearEditCommitCallback();
         }
 
@@ -3666,11 +3753,17 @@ public class TableStructureView extends BorderPane {
         public void commitEdit(String newValue) {
             // 提交编辑时同步更新数据模型，避免refresh()后丢失输入值
             String oldValue = getCellData();
-            updateCellData(newValue);
+            boolean inferredType = updateCellData(newValue);
             super.commitEdit(newValue);
             // 值真正变化时标记脏状态（updateCellData已改row，setOnEditCommit里读到的新值==旧值，无法判断，故在此判断）
-            if (oldValue == null ? newValue != null : !oldValue.equals(newValue)) {
+            if ((oldValue == null ? newValue != null : !oldValue.equals(newValue)) || inferredType) {
                 markDirty();
+            }
+            if (inferredType) {
+                Platform.runLater(() -> {
+                    tableView.refresh();
+                    updateFieldPropertiesPane();
+                });
             }
             clearEditCommitCallback();
         }
@@ -3725,16 +3818,20 @@ public class TableStructureView extends BorderPane {
             });
         }
 
-        private void updateCellData(String newValue) {
+        private boolean updateCellData(String newValue) {
             TableRow<?> tableRow = getTableRow();
-            if (tableRow == null) return;
+            if (tableRow == null) return false;
             @SuppressWarnings("unchecked")
             ObservableList<String> row = (ObservableList<String>) tableRow.getItem();
-            if (row == null) return;
+            if (row == null) return false;
             Integer dataColIndex = (Integer) getTableColumn().getUserData();
             if (dataColIndex != null && dataColIndex >= 0 && dataColIndex < row.size()) {
                 row.set(dataColIndex, newValue);
+                if ("字段名".equals(getTableColumn().getText())) {
+                    return applyInferredTypeIfUnset(row, newValue);
+                }
             }
+            return false;
         }
 
         private String getCellData() {

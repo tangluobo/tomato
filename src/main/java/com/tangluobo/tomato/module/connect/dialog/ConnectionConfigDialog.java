@@ -3,6 +3,9 @@ package com.tangluobo.tomato.module.connect.dialog;
 import com.tangluobo.tomato.module.connect.ConfigManager;
 import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.DatabaseProfile;
+import com.tangluobo.tomato.module.connect.DatabaseProfileRegistry;
+import com.tangluobo.tomato.module.connect.DatabaseLogoLoader;
 import com.tangluobo.tomato.module.connect.ToolType;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.geometry.Insets;
@@ -15,6 +18,7 @@ import javafx.scene.image.ImageView;
 import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
@@ -36,10 +40,13 @@ public class ConnectionConfigDialog {
     private ConnectionConfig config;
     private ConnectionConfig existingConfig;
     private VBox root;
+    private ScrollPane pageScrollPane;
 
     // 类型选择页
     private VBox typeSelectionPage;
     private ConnectType selectedType;
+    /** 当前选择的具体数据库产品；selectedType 保留其兼容 SQL 方言族。 */
+    private DatabaseProfile selectedDatabaseProfile;
     private ToolType selectedToolType;
 
     // 配置页
@@ -58,6 +65,9 @@ public class ConnectionConfigDialog {
     private TextField hostField;
     private TextField portField;
     private TextField usernameField;
+    /** MongoDB 的默认库/认证库；关系型连接时隐藏。 */
+    private Label databaseLabel;
+    private TextField databaseField;
     private PasswordField passwordField;
     private CheckBox savePasswordCheckBox;
     private TextField descriptionField;
@@ -271,7 +281,6 @@ public class ConnectionConfigDialog {
         root = new VBox(15);
         root.setPadding(new Insets(20));
         root.setMinWidth(520);
-        root.setMinHeight(620);
 
         // ===== 类型选择页（多标签：数据库 / 其他 / 工具）=====
         typeSelectionPage = new VBox(15);
@@ -332,6 +341,7 @@ public class ConnectionConfigDialog {
         typeButtons.getChildren().add(cancelBtn);
 
         typeSelectionPage.getChildren().addAll(title, categoryTabPane, typeButtons);
+        VBox.setVgrow(categoryTabPane, Priority.ALWAYS);
 
         // ===== 配置页 =====
         configPage = new VBox(15);
@@ -370,6 +380,7 @@ public class ConnectionConfigDialog {
         // 编辑已有连接时直接显示配置页
         if (existingConfig != null) {
             selectedType = existingConfig.getType();
+            selectedDatabaseProfile = DatabaseProfileRegistry.resolve(existingConfig);
             root.getChildren().add(configPage);
             showConfigPage();
             fillExistingConfig();
@@ -377,8 +388,25 @@ public class ConnectionConfigDialog {
             root.getChildren().addAll(typeSelectionPage, configPage);
         }
 
-        Scene scene = new Scene(root);
+        pageScrollPane = new ScrollPane(root);
+        pageScrollPane.setFitToWidth(true);
+        pageScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        pageScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        pageScrollPane.setPannable(true);
+        pageScrollPane.setStyle("-fx-background-color: transparent; -fx-background: transparent;");
+
+        javafx.geometry.Rectangle2D visualBounds = DialogPositionUtil
+                .getScreenForWindow(parent).getVisualBounds();
+        double maxDialogWidth = Math.max(360, visualBounds.getWidth() - 48);
+        double maxDialogHeight = Math.max(360, visualBounds.getHeight() - 48);
+        double initialWidth = Math.min(780, maxDialogWidth);
+        double initialHeight = Math.min(800, maxDialogHeight);
+        Scene scene = new Scene(pageScrollPane, initialWidth, initialHeight);
         dialogStage.setScene(scene);
+        dialogStage.setMinWidth(Math.min(560, maxDialogWidth));
+        dialogStage.setMinHeight(Math.min(520, maxDialogHeight));
+        dialogStage.setMaxWidth(maxDialogWidth);
+        dialogStage.setMaxHeight(maxDialogHeight);
         DialogPositionUtil.centerOnOwner(dialogStage, parent);
     }
 
@@ -392,16 +420,58 @@ public class ConnectionConfigDialog {
         tilePane.setHgap(10);
         tilePane.setVgap(10);
         tilePane.setPadding(new Insets(10, 5, 5, 5));
-        tilePane.setAlignment(Pos.CENTER);
+        tilePane.setAlignment(Pos.TOP_CENTER);
+
+        if (category == ConnectType.Category.DATABASE) {
+            for (DatabaseProfile profile : DatabaseProfileRegistry.profiles()) {
+                tilePane.getChildren().add(createDatabaseProfileTile(profile));
+            }
+        }
 
         for (ConnectType type : ConnectType.values()) {
             if (type.getCategory() != category) continue;
+            // 三个关系型方言入口由具体数据库产品配置档替代，避免出现重复方块。
+            if (category == ConnectType.Category.DATABASE && isRelationalDatabaseType(type)) continue;
             if (type == ConnectType.TOOL && !includeTool) continue;
             // HTTP/FTP/SMB 服务器类型只在"服务器"Tab中显示，不在"客户端"Tab中显示
             if (type == ConnectType.HTTP_SERVER || type == ConnectType.FTP_SERVER || type == ConnectType.SMB_SERVER) continue;
             tilePane.getChildren().add(createConnectTypeTile(type));
         }
         return tilePane;
+    }
+
+    /** 创建一个具体数据库产品方块，保存时仍使用其兼容方言类型。 */
+    private VBox createDatabaseProfileTile(DatabaseProfile profile) {
+        VBox tile = new VBox(8);
+        tile.setAlignment(Pos.CENTER);
+        tile.setPadding(new Insets(14, 18, 14, 18));
+        tile.setPrefWidth(145);
+        tile.setPrefHeight(90);
+        tile.setStyle("-fx-background-color: #f5f5f5; -fx-background-radius: 8; "
+                + "-fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-cursor: hand;");
+
+        ImageView icon = new ImageView(loadIcon(profile.iconPath()));
+        icon.setFitWidth(32);
+        icon.setFitHeight(32);
+
+        Label nameLabel = new Label(profile.displayName());
+        nameLabel.setWrapText(true);
+        nameLabel.setMaxWidth(135);
+        nameLabel.setStyle("-fx-font-size: 12px; -fx-text-fill: #333; "
+                + "-fx-font-weight: bold; -fx-alignment: center;");
+        tile.getChildren().addAll(icon, nameLabel);
+
+        attachTileHoverStyle(tile);
+        tile.setOnMouseClicked(e -> {
+            selectedDatabaseProfile = profile;
+            selectedType = profile.dialectType();
+            selectedToolType = null;
+            showConfigPage();
+            if (existingConfig == null && portField != null) {
+                portField.setText(String.valueOf(profile.defaultPort()));
+            }
+        });
+        return tile;
     }
 
     /**
@@ -412,7 +482,7 @@ public class ConnectionConfigDialog {
         tilePane.setHgap(10);
         tilePane.setVgap(10);
         tilePane.setPadding(new Insets(10, 5, 5, 5));
-        tilePane.setAlignment(Pos.CENTER);
+        tilePane.setAlignment(Pos.TOP_CENTER);
 
         for (ToolType toolType : ToolType.values()) {
             if (toolType == ToolType.COLOR_TRANSPOSE_GAME) continue;
@@ -430,7 +500,7 @@ public class ConnectionConfigDialog {
         tilePane.setHgap(10);
         tilePane.setVgap(10);
         tilePane.setPadding(new Insets(10, 5, 5, 5));
-        tilePane.setAlignment(Pos.CENTER);
+        tilePane.setAlignment(Pos.TOP_CENTER);
 
         for (ConnectType type : ConnectType.values()) {
             if (type == ConnectType.HTTP_SERVER
@@ -451,7 +521,7 @@ public class ConnectionConfigDialog {
         tilePane.setHgap(10);
         tilePane.setVgap(10);
         tilePane.setPadding(new Insets(10, 5, 5, 5));
-        tilePane.setAlignment(Pos.CENTER);
+        tilePane.setAlignment(Pos.TOP_CENTER);
         tilePane.getChildren().add(createToolTile(ToolType.COLOR_TRANSPOSE_GAME));
         return tilePane;
     }
@@ -518,6 +588,9 @@ public class ConnectionConfigDialog {
         attachTileHoverStyle(tile);
         tile.setOnMouseClicked(e -> {
             selectedType = type;
+            selectedDatabaseProfile = isRelationalDatabaseType(type)
+                    ? DatabaseProfileRegistry.find(DatabaseProfileRegistry.defaultProfileId(type))
+                    : null;
             selectedToolType = null;
             showConfigPage();
         });
@@ -582,13 +655,7 @@ public class ConnectionConfigDialog {
             if (ICON_CACHE.containsKey(path)) {
                 return ICON_CACHE.get(path);
             }
-            Image image = null;
-            try (var stream = ConnectionConfigDialog.class.getResourceAsStream(path)) {
-                if (stream != null) {
-                    image = new Image(stream, 32, 32, true, true);
-                }
-            } catch (Exception ignored) {
-            }
+            Image image = DatabaseLogoLoader.load(path, 32, 32);
             ICON_CACHE.put(path, image);
             return image;
         }
@@ -641,6 +708,13 @@ public class ConnectionConfigDialog {
         usernameField.setPromptText("数据库用户名");
         usernameField.setPrefWidth(280);
         grid.add(usernameField, 1, row++);
+
+        databaseLabel = new Label("默认/认证数据库：");
+        databaseField = new TextField();
+        databaseField.setPromptText("admin（可选）");
+        databaseField.setPrefWidth(280);
+        grid.add(databaseLabel, 0, row);
+        grid.add(databaseField, 1, row++);
 
         // 密码
         grid.add(new Label("密码："), 0, row);
@@ -2137,6 +2211,7 @@ public class ConnectionConfigDialog {
         configPage.setVisible(false);
         configPage.setManaged(false);
         dialogStage.setTitle("新建连接");
+        if (pageScrollPane != null) pageScrollPane.setVvalue(0);
     }
 
     private void showConfigPage() {
@@ -2145,10 +2220,15 @@ public class ConnectionConfigDialog {
         typeSelectionPage.setManaged(false);
         configPage.setVisible(true);
         configPage.setManaged(true);
-        dialogStage.setTitle("新建" + selectedType.getDisplayName() + "连接");
-        configTitle.setText(selectedType.getDisplayName() + "连接配置");
+        if (pageScrollPane != null) pageScrollPane.setVvalue(0);
+        String selectedDisplayName = selectedDatabaseProfile != null
+                ? selectedDatabaseProfile.displayName() : selectedType.getDisplayName();
+        String selectedIconPath = selectedDatabaseProfile != null
+                ? selectedDatabaseProfile.iconPath() : selectedType.getIconPath();
+        dialogStage.setTitle("新建" + selectedDisplayName + "连接");
+        configTitle.setText(selectedDisplayName + "连接配置");
         // 根据类型设置标题图标
-        configTitleGraphic.setImage(loadIcon(selectedType.getIconPath()));
+        configTitleGraphic.setImage(loadIcon(selectedIconPath));
 
         // 根据类型切换布局
         boolean isDatabase = isDatabaseType(selectedType);
@@ -2161,6 +2241,23 @@ public class ConnectionConfigDialog {
         boolean isAliyun = selectedType == ConnectType.ALIYUN || selectedType == ConnectType.TENCENT_CLOUD;
         boolean isLocalDirectory = selectedType == ConnectType.LOCAL_DIRECTORY;
         boolean isSimple = !isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis && !isRocketmq && !isKafka && !isAliyun && !isLocalDirectory;
+        if (isDatabase && dbGeneralTab != null) {
+            dbGeneralTab.setText(selectedDisplayName);
+        }
+        boolean isMongo = selectedType == ConnectType.MONGODB;
+        boolean isHive = selectedType == ConnectType.HIVE;
+        boolean usesDatabaseField = isMongo || isHive || selectedType == ConnectType.ORACLE;
+        if (databaseLabel != null) {
+            databaseLabel.setText(isMongo ? "默认/认证数据库："
+                    : isHive ? "默认数据库：" : "SID/服务名：");
+            databaseField.setPromptText(isMongo ? "admin（可选）"
+                    : isHive ? "default；可追加 HiveServer2 会话参数"
+                    : "ORCL；服务名格式可写 /ORCLPDB1");
+            databaseLabel.setVisible(usesDatabaseField);
+            databaseLabel.setManaged(usesDatabaseField);
+            databaseField.setVisible(usesDatabaseField);
+            databaseField.setManaged(usesDatabaseField);
+        }
 
         // 数据库/S3/Redis/SSH/RocketMQ/Kafka 类型 TabPane 已有标签标题，隐藏顶部标题避免重复
         boolean useTabPane = isDatabase || isS3orOSS || isRedis || isSSH || isRocketmq || isKafka;
@@ -2232,7 +2329,12 @@ public class ConnectionConfigDialog {
     }
 
     private boolean isDatabaseType(ConnectType type) {
-        return type == ConnectType.MYSQL || type == ConnectType.POSTGRESQL || type == ConnectType.ORACLE;
+        return isRelationalDatabaseType(type) || type == ConnectType.MONGODB;
+    }
+
+    private boolean isRelationalDatabaseType(ConnectType type) {
+        return type == ConnectType.MYSQL || type == ConnectType.POSTGRESQL
+                || type == ConnectType.ORACLE || type == ConnectType.HIVE;
     }
 
     // ==================== 填充已有配置 ====================
@@ -2260,10 +2362,12 @@ public class ConnectionConfigDialog {
             }
             localTerminalDescriptionField.setText(existingConfig.getDescription() != null ? existingConfig.getDescription() : "");
         } else if (isDatabase) {
+            selectedDatabaseProfile = DatabaseProfileRegistry.resolve(existingConfig);
             nameField.setText(existingConfig.getName());
             hostField.setText(existingConfig.getHost());
             portField.setText(String.valueOf(existingConfig.getPort()));
             usernameField.setText(existingConfig.getUsername());
+            databaseField.setText(existingConfig.getDatabase() != null ? existingConfig.getDatabase() : "");
 
             if (existingConfig.getPassword() != null) {
                 passwordField.setText(existingConfig.getPassword());
@@ -2484,6 +2588,8 @@ public class ConnectionConfigDialog {
         boolean isLocalTerminal = selectedType == ConnectType.LOCAL_TERMINAL;
 
         config.setType(selectedType);
+        config.setDatabaseProfileId(isDatabase && selectedDatabaseProfile != null
+                ? selectedDatabaseProfile.id() : null);
 
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
         boolean isRedis = selectedType == ConnectType.REDIS;
@@ -2506,7 +2612,9 @@ public class ConnectionConfigDialog {
             config.setHost(hostField.getText().trim());
             config.setPort(Integer.parseInt(portField.getText().trim()));
             config.setUsername(usernameField.getText().trim());
-            config.setUsePassword(true);
+            config.setDatabase(databaseField.getText().trim().isEmpty()
+                    ? null : databaseField.getText().trim());
+            config.setUsePassword(selectedType != ConnectType.HIVE || !passwordField.getText().isEmpty());
             config.setUseKey(false);
             config.setSavePassword(savePasswordCheckBox.isSelected());
             if (savePasswordCheckBox.isSelected()) {
@@ -2807,12 +2915,25 @@ public class ConnectionConfigDialog {
             showAlert("端口号必须是数字");
             return false;
         }
-        if (usernameField.getText().trim().isEmpty()) {
-            showAlert("请输入用户名");
-            return false;
+        boolean usernameEmpty = usernameField.getText().trim().isEmpty();
+        boolean passwordEmpty = passwordField.getText().isEmpty();
+        if (selectedType == ConnectType.MONGODB) {
+            if (usernameEmpty != passwordEmpty) {
+                showAlert("MongoDB 用户名和密码需同时填写，或同时留空使用无认证连接");
+                return false;
+            }
+        } else if (selectedType != ConnectType.HIVE) {
+            if (usernameEmpty) {
+                showAlert("请输入用户名");
+                return false;
+            }
+            if (passwordEmpty) {
+                showAlert("请输入密码");
+                return false;
+            }
         }
-        if (passwordField.getText().trim().isEmpty()) {
-            showAlert("请输入密码");
+        if (selectedType == ConnectType.ORACLE && databaseField.getText().trim().isEmpty()) {
+            showAlert("请输入 Oracle SID；若使用服务名，请以 / 开头，例如 /ORCLPDB1");
             return false;
         }
 
@@ -3016,6 +3137,9 @@ public class ConnectionConfigDialog {
     }
 
     private int getDefaultPort(ConnectType type) {
+        if (selectedDatabaseProfile != null && selectedDatabaseProfile.dialectType() == type) {
+            return selectedDatabaseProfile.defaultPort();
+        }
         return switch (type) {
             case SSH, SFTP -> 22;
             case RDP -> 3389;
@@ -3028,6 +3152,8 @@ public class ConnectionConfigDialog {
             case TENCENT_CLOUD -> 0;
             case ALIYUN_OSS -> 443;
             case REDIS -> 6379;
+            case MONGODB -> 27017;
+            case HIVE -> 10000;
             case ROCKETMQ -> 8080;
             case KAFKA -> 9092;
             case LOCAL_TERMINAL -> 0;

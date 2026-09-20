@@ -21,6 +21,12 @@ public class ConnectionConfig {
     private boolean useKey = false;
     private List<String> privateKeyPaths = new ArrayList<>();
     private String database;
+    /**
+     * Concrete database product id (for example mysql, mariadb, kingbase).
+     * The legacy {@link #type} remains the SQL compatibility family so old
+     * configurations and the existing relational workbench stay compatible.
+     */
+    private String databaseProfileId;
     private String description;
     private Integer scrollbackLines;
     // 会话级覆盖：默认文件视图模式（null=使用全局配置，"ICON"/"LIST"/"COLUMN"）
@@ -133,6 +139,9 @@ public class ConnectionConfig {
 
     public String getDatabase() { return database; }
     public void setDatabase(String database) { this.database = database; }
+
+    public String getDatabaseProfileId() { return databaseProfileId; }
+    public void setDatabaseProfileId(String databaseProfileId) { this.databaseProfileId = databaseProfileId; }
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }

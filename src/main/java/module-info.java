@@ -21,7 +21,12 @@ module tomato {
     requires com.jcraft.jsch;
     requires java.sql;
     requires mysql.connector.j;
+    requires org.mariadb.jdbc;
     requires org.postgresql.jdbc;
+    requires com.oracle.database.jdbc;
+    requires org.mongodb.driver.sync.client;
+    requires org.mongodb.driver.core;
+    requires org.mongodb.bson;
     requires org.fxmisc.richtext;
     requires org.fxmisc.flowless;
     requires org.fxmisc.undo;

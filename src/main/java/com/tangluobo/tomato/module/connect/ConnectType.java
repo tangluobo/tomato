@@ -13,6 +13,8 @@ public enum ConnectType {
     TENCENT_CLOUD("TencentCloud", "腾讯云", "/images/connect/monitor.png", Category.OTHERS),
     ALIYUN_OSS("AliyunOSS", "阿里云OSS", "/images/connect/aliyun_oss.png", Category.OTHERS),
     REDIS("Redis", "Redis", "/images/connect/redis.png", Category.DATABASE),
+    MONGODB("MongoDB", "MongoDB", "/images/connect/database-logos/mongodb.svg", Category.DATABASE),
+    HIVE("Hive", "Apache Hive", "/images/connect/database-logos/hive.svg", Category.DATABASE),
     ROCKETMQ("RocketMQ", "RocketMQ", "/images/connect/rocketmq.png", Category.MESSAGE_QUEUE),
     KAFKA("Kafka", "Kafka", "/images/connect/kafka.png", Category.MESSAGE_QUEUE),
     LOCAL_TERMINAL("LocalTerminal", "本地终端", "/images/connect/shell.png", Category.OTHERS),

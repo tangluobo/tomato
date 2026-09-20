@@ -10,6 +10,8 @@ public class DatabaseNodeData {
     public enum NodeType {
         DATABASE,       // 数据库节点
         REDIS_DB,       // Redis数据库节点
+        MONGO_DATABASE, // MongoDB数据库节点
+        MONGO_COLLECTION, // MongoDB集合节点
         SCHEMA,         // 模式节点（PostgreSQL schema）
         TABLES_FOLDER,  // "表"文件夹节点
         VIEWS_FOLDER,   // "视图"文件夹节点

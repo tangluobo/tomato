@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -99,8 +100,11 @@ public class SqlEditorPane extends HBox {
     private Runnable onSaveRequest;
     private ContextMenu editorContextMenu;
     private final Popup completionPopup = new Popup();
-    private final ListView<CompletionItem> completionList = new ListView<>();
-    private final List<CompletionItem> completionItems = new ArrayList<>();
+    private final ListView<SqlCompletionEngine.Candidate> completionList = new ListView<>();
+    private final List<SqlCompletionEngine.Candidate> completionItems = new ArrayList<>();
+    private String completionDatabase;
+    private Set<String> completionNamespaces = Set.of();
+    private Map<String, List<String>> completionColumnsByTable = Map.of();
     private int completionWordStart = -1;
     private boolean copyDragArmed;
     private boolean copyDragStarted;
@@ -114,20 +118,6 @@ public class SqlEditorPane extends HBox {
     }
 
     public record ChangeHighlight(int line, ChangeKind kind) {}
-
-    /** 自动补全候选项。kind 用于标识关键字、数据库、表或字段。 */
-    public static final class CompletionItem {
-        private final String text;
-        private final String kind;
-
-        public CompletionItem(String text, String kind) {
-            this.text = text;
-            this.kind = kind;
-        }
-
-        public String getText() { return text; }
-        public String getKind() { return kind; }
-    }
 
     /** 默认可编辑 */
     public SqlEditorPane() {
@@ -350,9 +340,9 @@ public class SqlEditorPane extends HBox {
         completionList.setFocusTraversable(false);
         completionList.setStyle("-fx-font-family: 'Consolas', 'Courier New', monospace; -fx-font-size: 12px;");
         completionList.setCellFactory(view -> new ListCell<>() {
-            @Override protected void updateItem(CompletionItem item, boolean empty) {
+            @Override protected void updateItem(SqlCompletionEngine.Candidate item, boolean empty) {
                 super.updateItem(item, empty);
-                setText(empty || item == null ? null : item.getText() + "    " + item.getKind());
+                setText(empty || item == null ? null : item.text() + "    " + item.kind());
             }
         });
         completionList.setOnMouseClicked(e -> acceptSelectedCompletion());
@@ -419,23 +409,13 @@ public class SqlEditorPane extends HBox {
             return;
         }
         int caret = textArea.getCaretPosition();
-        String text = textArea.getText();
-        if (caret <= 0 || caret > text.length()) { completionPopup.hide(); return; }
-        int start = caret;
-        while (start > 0 && isIdentifierPart(text.charAt(start - 1))) start--;
-        String prefix = text.substring(start, caret);
-        if (prefix.isEmpty()) { completionPopup.hide(); return; }
-
-        String lowerPrefix = prefix.toLowerCase(Locale.ROOT);
-        List<CompletionItem> matches = completionItems.stream()
-                .filter(item -> item.getText().toLowerCase(Locale.ROOT).startsWith(lowerPrefix))
-                .filter(item -> !item.getText().equalsIgnoreCase(prefix))
-                .sorted(Comparator.comparingInt((CompletionItem item) -> kindOrder(item.getKind()))
-                        .thenComparing(CompletionItem::getText, String.CASE_INSENSITIVE_ORDER))
-                .limit(100).toList();
+        SqlCompletionEngine.Completion completion = SqlCompletionEngine.complete(
+                textArea.getText(), caret, completionItems, completionDatabase,
+                completionNamespaces, completionColumnsByTable);
+        List<SqlCompletionEngine.Candidate> matches = completion.candidates();
         if (matches.isEmpty()) { completionPopup.hide(); return; }
 
-        completionWordStart = start;
+        completionWordStart = completion.replacementStart();
         completionList.getItems().setAll(matches);
         completionList.getSelectionModel().selectFirst();
         textArea.getCaretBounds().ifPresent(bounds -> positionCompletionPopup(bounds, matches.size()));
@@ -452,26 +432,12 @@ public class SqlEditorPane extends HBox {
     }
 
     private void acceptSelectedCompletion() {
-        CompletionItem selected = completionList.getSelectionModel().getSelectedItem();
+        SqlCompletionEngine.Candidate selected = completionList.getSelectionModel().getSelectedItem();
         if (selected == null || completionWordStart < 0) return;
         int caret = textArea.getCaretPosition();
         completionPopup.hide();
-        textArea.replaceText(completionWordStart, caret, selected.getText());
+        textArea.replaceText(completionWordStart, caret, selected.text());
         textArea.requestFocus();
-    }
-
-    private static boolean isIdentifierPart(char c) {
-        return Character.isLetterOrDigit(c) || c == '_' || c == '$';
-    }
-
-    private static int kindOrder(String kind) {
-        return switch (kind) {
-            case "关键字" -> 0;
-            case "数据库" -> 1;
-            case "表" -> 2;
-            case "字段" -> 3;
-            default -> 4;
-        };
     }
 
     private void scheduleHighlighting() {
@@ -746,18 +712,61 @@ public class SqlEditorPane extends HBox {
     public void setMetadataCompletions(Collection<String> databases,
                                        Collection<String> tables,
                                        Collection<String> columns) {
-        Map<String, CompletionItem> unique = new LinkedHashMap<>();
+        Map<String, SqlCompletionEngine.Candidate> unique = new LinkedHashMap<>();
         for (String keyword : KEYWORDS) addCompletion(unique, keyword, "关键字");
         if (databases != null) for (String name : databases) addCompletion(unique, name, "数据库");
         if (tables != null) for (String name : tables) addCompletion(unique, name, "表");
         if (columns != null) for (String name : columns) addCompletion(unique, name, "字段");
         completionItems.clear();
         completionItems.addAll(unique.values());
+        completionDatabase = null;
+        completionNamespaces = Set.of();
+        completionColumnsByTable = Map.of();
     }
 
-    private static void addCompletion(Map<String, CompletionItem> target, String text, String kind) {
+    /** 设置带表字段归属关系的元数据，用于 table.column 和 db.table.column 补全。 */
+    public void setMetadataCompletions(Collection<String> databases,
+                                       String currentDatabase,
+                                       Collection<String> activeNamespaces,
+                                       Map<String, ? extends Collection<String>> columnsByTable) {
+        Map<String, SqlCompletionEngine.Candidate> unique = new LinkedHashMap<>();
+        for (String keyword : KEYWORDS) addCompletion(unique, keyword, "关键字");
+        if (databases != null) for (String name : databases) addCompletion(unique, name, "数据库");
+
+        Map<String, List<String>> hierarchy = new LinkedHashMap<>();
+        if (columnsByTable != null) {
+            for (Map.Entry<String, ? extends Collection<String>> entry : columnsByTable.entrySet()) {
+                String table = entry.getKey();
+                if (table == null || table.isBlank()) continue;
+                addCompletion(unique, table, "表");
+                List<String> tableColumns = entry.getValue() == null
+                        ? List.of()
+                        : entry.getValue().stream()
+                                .filter(name -> name != null && !name.isBlank())
+                                .toList();
+                hierarchy.put(table, tableColumns);
+                for (String column : tableColumns) addCompletion(unique, column, "字段");
+            }
+        }
+
+        completionItems.clear();
+        completionItems.addAll(unique.values());
+        completionDatabase = currentDatabase;
+        completionNamespaces = activeNamespaces == null
+                ? Set.of()
+                : activeNamespaces.stream()
+                        .filter(name -> name != null && !name.isBlank())
+                        .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        completionColumnsByTable = Map.copyOf(hierarchy);
+        if (textArea.isFocused() && textArea.isEditable()) {
+            Platform.runLater(this::refreshCompletionPopup);
+        }
+    }
+
+    private static void addCompletion(Map<String, SqlCompletionEngine.Candidate> target,
+                                      String text, String kind) {
         if (text == null || text.isBlank()) return;
-        target.putIfAbsent(text.toLowerCase(Locale.ROOT), new CompletionItem(text, kind));
+        target.putIfAbsent(text.toLowerCase(Locale.ROOT), new SqlCompletionEngine.Candidate(text, kind));
     }
 
     /** 全选 */

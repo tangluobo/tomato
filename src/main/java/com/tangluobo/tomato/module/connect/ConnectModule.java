@@ -14,6 +14,7 @@ import com.tangluobo.tomato.module.connect.service.DatabaseService;
 import com.tangluobo.tomato.module.connect.service.RedisService;
 import com.tangluobo.tomato.module.connect.service.RocketmqService;
 import com.tangluobo.tomato.module.connect.service.KafkaService;
+import com.tangluobo.tomato.module.connect.service.MongoService;
 import com.tangluobo.tomato.module.connect.view.RocketmqDataView;
 import com.tangluobo.tomato.module.connect.view.SqlEditorView;
 import com.tangluobo.tomato.module.connect.view.ToolPane;
@@ -336,6 +337,7 @@ public class ConnectModule implements Module {
             case MYSQL -> new MysqlDbHandler(this);
             case POSTGRESQL -> new PostgresDbHandler(this);
             case ORACLE -> new OracleDbHandler(this);
+            case HIVE -> new HiveDbHandler(this);
             default -> null;
         };
     }
@@ -348,6 +350,8 @@ public class ConnectModule implements Module {
         Image icon = switch (data.getType()) {
             case DATABASE -> data.isOpened() ? dbIcon : dbIconGray;
             case REDIS_DB -> data.isOpened() ? dbIcon : dbIconGray;
+            case MONGO_DATABASE -> data.isOpened() ? dbIcon : dbIconGray;
+            case MONGO_COLLECTION -> tableIcon;
             case SCHEMA -> data.isOpened() ? schemaOpenIcon : schemaIcon;
             case TABLES_FOLDER -> tableIcon;
             case VIEWS_FOLDER -> viewIcon;
@@ -608,7 +612,8 @@ public class ConnectModule implements Module {
                 iconPath = toolType != null
                         ? toolType.getIconPath() : ConnectType.TOOL.getIconPath();
             } else {
-                iconPath = config.getType().getIconPath();
+                DatabaseProfile profile = DatabaseProfileRegistry.resolve(config);
+                iconPath = profile != null ? profile.iconPath() : config.getType().getIconPath();
             }
             Image icon = loadCachedConnectionIcon(iconPath);
             if (icon != null) {
@@ -626,16 +631,9 @@ public class ConnectModule implements Module {
         if (cached != null) {
             return cached;
         }
-        try (var iconStream = getClass().getResourceAsStream(iconPath)) {
-            if (iconStream == null) {
-                return null;
-            }
-            Image loaded = new Image(iconStream, 20, 20, true, true);
-            connectionIconCache.put(iconPath, loaded);
-            return loaded;
-        } catch (Exception ignored) {
-            return null;
-        }
+        Image loaded = DatabaseLogoLoader.load(iconPath, 20, 20);
+        if (loaded != null) connectionIconCache.put(iconPath, loaded);
+        return loaded;
     }
 
     /** 供 handler 调用：获取树根节点 */
@@ -731,8 +729,10 @@ public class ConnectModule implements Module {
                     if (targetConfig != null && targetConfig.getType() != null) {
                         boolean isDatabase = targetConfig.getType() == ConnectType.MYSQL
                                 || targetConfig.getType() == ConnectType.POSTGRESQL
-                                || targetConfig.getType() == ConnectType.ORACLE;
+                                || targetConfig.getType() == ConnectType.ORACLE
+                                || targetConfig.getType() == ConnectType.HIVE;
                         boolean isRedis = targetConfig.getType() == ConnectType.REDIS;
+                        boolean isMongo = targetConfig.getType() == ConnectType.MONGODB;
                         boolean isRocketmq = targetConfig.getType() == ConnectType.ROCKETMQ;
                         boolean isKafka = targetConfig.getType() == ConnectType.KAFKA;
                         boolean isLocalDirectory = targetConfig.getType() == ConnectType.LOCAL_DIRECTORY;
@@ -753,6 +753,22 @@ public class ConnectModule implements Module {
                         }
                         if (isRedis) {
                             if (!targetItem.getChildren().isEmpty()) {
+                                MenuItem closeConnItem = new MenuItem("关闭连接");
+                                closeConnItem.setOnAction(e -> closeHostConnection(targetItem, targetConfig));
+                                contextMenu.getItems().addAll(closeConnItem, new SeparatorMenuItem());
+                            }
+                        }
+                        if (isMongo) {
+                            MenuItem createDbItem = new MenuItem("新建数据库");
+                            createDbItem.setDisable(!isHostConnected(targetItem));
+                            createDbItem.setOnAction(e -> {
+                                ConnectHandler handler = createConnectHandler(targetConfig);
+                                if (handler instanceof MongoConnectHandler mongo) {
+                                    mongo.promptCreateDatabase(this, targetItem, targetConfig);
+                                }
+                            });
+                            contextMenu.getItems().add(createDbItem);
+                            if (isHostConnected(targetItem)) {
                                 MenuItem closeConnItem = new MenuItem("关闭连接");
                                 closeConnItem.setOnAction(e -> closeHostConnection(targetItem, targetConfig));
                                 contextMenu.getItems().addAll(closeConnItem, new SeparatorMenuItem());
@@ -1529,6 +1545,18 @@ public class ConnectModule implements Module {
                     r.handleRedisDbDoubleClick(this, item, data);
                 }
             }
+            case MONGO_DATABASE -> {
+                ConnectHandler handler = createConnectHandler(data.getConnectionConfig());
+                if (handler instanceof MongoConnectHandler mongo) {
+                    mongo.handleDatabaseDoubleClick(this, item, data);
+                }
+            }
+            case MONGO_COLLECTION -> {
+                ConnectHandler handler = createConnectHandler(data.getConnectionConfig());
+                if (handler instanceof MongoConnectHandler mongo) {
+                    mongo.handleCollectionDoubleClick(this, data);
+                }
+            }
             case SCHEMA -> {
                 AbstractDbHandler h = createDbHandler(data.getConnectionConfig());
                 if (h != null) h.handleSchemaDoubleClick(item, data);
@@ -1798,8 +1826,9 @@ public class ConnectModule implements Module {
         imageView.setFitWidth(16);
         imageView.setFitHeight(16);
         try {
-            String iconPath = config.getType().getIconPath();
-            Image icon = new Image(getClass().getResourceAsStream(iconPath));
+            DatabaseProfile profile = DatabaseProfileRegistry.resolve(config);
+            String iconPath = profile != null ? profile.iconPath() : config.getType().getIconPath();
+            Image icon = DatabaseLogoLoader.load(iconPath, 16, 16);
             if (icon != null) {
                 imageView.setImage(icon);
                 if (connected) {
@@ -1823,6 +1852,10 @@ public class ConnectModule implements Module {
         // 不依赖当前树节点，数据库刷新或删除后留下的对象标签也能被关闭。
         if (databaseHandler != null) {
             databaseHandler.closeDatabaseObjectsForConnection(config);
+        } else if (config.getType() == ConnectType.MONGODB && terminalTabPane != null) {
+            String tabPrefix = "mongo_" + config.getId() + "_";
+            terminalTabPane.getTabs().removeIf(tab -> tab.getUserData() instanceof String id
+                    && id.startsWith(tabPrefix));
         }
 
         // 后台关闭底层连接（避免阻塞UI线程）
@@ -1833,6 +1866,8 @@ public class ConnectModule implements Module {
                 } else if (config.getType() == ConnectType.REDIS) {
                     RedisService.closeJedisCluster(config);
                     RedisService.closeSshTunnel(config.getId());
+                } else if (config.getType() == ConnectType.MONGODB) {
+                    MongoService.close(config);
                 } else if (config.getType() == ConnectType.ROCKETMQ) {
                     RocketmqService.closeAdmin(config);
                 } else if (config.getType() == ConnectType.KAFKA) {
@@ -1896,6 +1931,7 @@ public class ConnectModule implements Module {
         }
         // 其他类型
         if (type == ConnectType.REDIS) return new RedisConnectHandler();
+        if (type == ConnectType.MONGODB) return new MongoConnectHandler();
         if (type == ConnectType.ROCKETMQ) return new RocketmqConnectHandler();
         if (type == ConnectType.KAFKA) return new KafkaConnectHandler();
         if (type == ConnectType.ALIYUN) return new AliyunConnectHandler();
@@ -2436,7 +2472,8 @@ public class ConnectModule implements Module {
         ConnectType type = config.getType();
         boolean isDatabase = type == ConnectType.MYSQL
                 || type == ConnectType.POSTGRESQL
-                || type == ConnectType.ORACLE;
+                || type == ConnectType.ORACLE
+                || type == ConnectType.HIVE;
         if (isDatabase) {
             AbstractDbHandler handler = createDbHandler(config);
             if (handler != null) {

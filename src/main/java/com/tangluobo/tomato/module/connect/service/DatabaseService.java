@@ -31,7 +31,8 @@ public class DatabaseService {
      * 锁key与连接缓存key一致：PostgreSQL为 configId_databaseName，其他为 configId。
      */
     public static ReentrantLock acquireUsageLock(ConnectionConfig config, String databaseName) {
-        String key = (config.getType() == ConnectType.POSTGRESQL && databaseName != null)
+        String key = ((config.getType() == ConnectType.POSTGRESQL || config.getType() == ConnectType.HIVE)
+                && databaseName != null)
                 ? config.getId() + "_" + databaseName
                 : config.getId();
         return connectionUsageLocks.computeIfAbsent(key, k -> new ReentrantLock());
@@ -67,9 +68,14 @@ public class DatabaseService {
                 host = "127.0.0.1";
             }
 
-            String url = buildJdbcUrl(config, host, port, null);
+            String initialDatabase = (config.getType() == ConnectType.ORACLE || config.getType() == ConnectType.HIVE)
+                    ? config.getDatabase() : null;
+            String url = buildJdbcUrl(config, host, port, initialDatabase);
+            ensureJdbcDriverAvailable(config);
             long time=System.currentTimeMillis();
-            Connection conn = DriverManager.getConnection(url, config.getUsername(), config.getPassword());
+            Connection conn = DriverManager.getConnection(url,
+                    Objects.requireNonNullElse(config.getUsername(), ""),
+                    Objects.requireNonNullElse(config.getPassword(), ""));
             System.out.println(System.currentTimeMillis()-time);
             connectionCache.put(key, conn);
             return conn;
@@ -109,6 +115,11 @@ public class DatabaseService {
                 while (rs.next()) {
                     databases.add(rs.getString(1));
                 }
+            }
+        } else if (config.getType() == ConnectType.HIVE) {
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery("SHOW DATABASES")) {
+                while (rs.next()) databases.add(rs.getString(1));
             }
         }
 
@@ -191,6 +202,13 @@ public class DatabaseService {
                     }
                 }
             }
+        } else if (config.getType() == ConnectType.HIVE) {
+            Connection hiveConnection = getConnection(config, databaseName);
+            try (Statement stmt = hiveConnection.createStatement();
+                 ResultSet rs = stmt.executeQuery("SHOW TABLES IN " + hiveIdentifier(databaseName))) {
+                while (rs.next()) tables.add(rs.getString(1));
+            }
+            tables.removeAll(getViews(config, databaseName));
         }
 
         return tables;
@@ -248,6 +266,22 @@ public class DatabaseService {
                     }
                 }
             }
+        } else if (config.getType() == ConnectType.HIVE) {
+            Connection hiveConnection = getConnection(config, databaseName);
+            try (Statement stmt = hiveConnection.createStatement();
+                 ResultSet rs = stmt.executeQuery("SHOW VIEWS IN " + hiveIdentifier(databaseName))) {
+                while (rs.next()) views.add(rs.getString(1));
+            } catch (SQLException unsupportedByOlderHive) {
+                // SHOW VIEWS is unavailable on some older HiveServer2 versions.
+                // DatabaseMetaData is a safe fallback and lets the table folder
+                // continue loading even when the server cannot distinguish views.
+                try (ResultSet rs = hiveConnection.getMetaData().getTables(
+                        null, databaseName, "%", new String[]{"VIEW"})) {
+                    while (rs.next()) views.add(rs.getString("TABLE_NAME"));
+                } catch (SQLException ignored) {
+                    // Keep the views folder empty; tables and SQL queries remain usable.
+                }
+            }
         }
 
         return views;
@@ -259,6 +293,9 @@ public class DatabaseService {
      *         updateTime(修改日期), dataLength(数据长度), rows(行数), comment(注释)
      */
     public static List<Map<String, String>> getTablesInfo(ConnectionConfig config, String databaseName, String schemaName) throws Exception {
+        if (config.getType() == ConnectType.HIVE) {
+            return getHiveTablesInfo(config, databaseName);
+        }
         List<Map<String, String>> result = new ArrayList<>();
         Connection conn = (config.getType() == ConnectType.POSTGRESQL) ? getConnection(config, databaseName) : getConnection(config);
         String pgSchema = schemaName != null ? schemaName : databaseName;
@@ -417,6 +454,27 @@ public class DatabaseService {
         return String.format("%.2f TB", gb / 1024.0);
     }
 
+    private static List<Map<String, String>> getHiveTablesInfo(ConnectionConfig config,
+                                                               String databaseName) throws Exception {
+        Set<String> views = new LinkedHashSet<>(getViews(config, databaseName));
+        Set<String> names = new LinkedHashSet<>(getTables(config, databaseName));
+        names.addAll(views);
+        List<Map<String, String>> result = new ArrayList<>();
+        for (String name : names) {
+            Map<String, String> item = new LinkedHashMap<>();
+            item.put("name", name);
+            item.put("type", views.contains(name) ? "VIEW" : "TABLE");
+            item.put("engine", "Hive");
+            item.put("autoIncrement", "");
+            item.put("updateTime", "");
+            item.put("dataLength", "");
+            item.put("rows", "");
+            item.put("comment", "");
+            result.add(item);
+        }
+        return result;
+    }
+
     public static List<String> getFunctions(ConnectionConfig config, String databaseName) throws Exception {
         Connection conn = getConnection(config);
         List<String> functions = new ArrayList<>();
@@ -430,6 +488,11 @@ public class DatabaseService {
                         functions.add(rs.getString(1));
                     }
                 }
+            }
+        } else if (config.getType() == ConnectType.HIVE) {
+            try (Statement stmt = getConnection(config, databaseName).createStatement();
+                 ResultSet rs = stmt.executeQuery("SHOW FUNCTIONS")) {
+                while (rs.next()) functions.add(rs.getString(1));
             }
         }
 
@@ -567,7 +630,7 @@ public class DatabaseService {
      */
     public static TableRowData queryTableData(ConnectionConfig config, String databaseName, String schemaName, String tableName, int page, int pageSize, String sortColumn, boolean sortDescending) throws Exception {
         // PostgreSQL 必须绑定到具体数据库才能查询该库的表；MySQL/Oracle 复用主连接（SQL 使用全限定名）
-        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL || config.getType() == ConnectType.HIVE)
                 ? getConnection(config, databaseName)
                 : getConnection(config);
         TableRowData result = new TableRowData();
@@ -577,6 +640,10 @@ public class DatabaseService {
         if (config.getType() == ConnectType.POSTGRESQL) {
             // PostgreSQL: 使用 pg_class.reltuples 估算行数，避免 COUNT(*) 全表扫描导致大表卡顿
             totalCount = getEstimatedRowCount(conn, schemaName, databaseName, tableName);
+        } else if (config.getType() == ConnectType.HIVE) {
+            // Hive 的 COUNT(*) 可能启动一次代价很高的全表作业。表浏览先读取当前页，
+            // 再根据实际行数推断是否还有下一页，避免打开表就扫描全部数据。
+            totalCount = 0;
         } else {
             String countSql = buildCountSql(config, databaseName, schemaName, tableName);
             try (Statement stmt = conn.createStatement();
@@ -615,7 +682,7 @@ public class DatabaseService {
         }
 
         // PostgreSQL: 根据实际返回行数修正分页信息（估算值可能不准确或过时）
-        if (config.getType() == ConnectType.POSTGRESQL) {
+        if (config.getType() == ConnectType.POSTGRESQL || config.getType() == ConnectType.HIVE) {
             int actualRows = result.getRows().size();
             if (actualRows == pageSize && result.getTotalPages() <= page) {
                 // 返回了满页但估算总页数不足，说明还有更多数据
@@ -692,8 +759,14 @@ public class DatabaseService {
                 host = "127.0.0.1";
             }
 
-            String url = buildJdbcUrl(config, host, port, databaseName);
-            Connection conn = DriverManager.getConnection(url, config.getUsername(), config.getPassword());
+            String targetDatabase = config.getType() == ConnectType.HIVE
+                    ? hiveDatabaseWithConfiguredParameters(config.getDatabase(), databaseName)
+                    : databaseName;
+            String url = buildJdbcUrl(config, host, port, targetDatabase);
+            ensureJdbcDriverAvailable(config);
+            Connection conn = DriverManager.getConnection(url,
+                    Objects.requireNonNullElse(config.getUsername(), ""),
+                    Objects.requireNonNullElse(config.getPassword(), ""));
             databaseConnectionCache.put(key, conn);
             return conn;
         }
@@ -716,6 +789,7 @@ public class DatabaseService {
             case MYSQL -> "SELECT COUNT(*) FROM `" + databaseName + "`.`" + tableName + "`";
             case POSTGRESQL -> "SELECT COUNT(*) FROM \"" + pgSchema + "\".\"" + tableName + "\"";
             case ORACLE -> "SELECT COUNT(*) FROM \"" + databaseName + "\".\"" + tableName + "\"";
+            case HIVE -> "SELECT COUNT(*) FROM " + hiveQualifiedTable(databaseName, tableName);
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
     }
@@ -807,6 +881,7 @@ public class DatabaseService {
             String quotedCol = switch (config.getType()) {
                 case MYSQL -> "`" + sortColumn + "`";
                 case POSTGRESQL, ORACLE -> "\"" + sortColumn + "\"";
+                case HIVE -> hiveIdentifier(sortColumn);
                 default -> sortColumn;
             };
             orderBy = " ORDER BY " + quotedCol + (sortDescending ? " DESC" : " ASC");
@@ -817,6 +892,8 @@ public class DatabaseService {
             case MYSQL -> "SELECT * FROM `" + databaseName + "`.`" + tableName + "`" + order + " LIMIT " + pageSize + " OFFSET " + offset;
             case POSTGRESQL -> "SELECT * FROM \"" + pgSchema + "\".\"" + tableName + "\"" + order + " LIMIT " + pageSize + " OFFSET " + offset;
             case ORACLE -> "SELECT * FROM (SELECT a.*, ROWNUM rn FROM \"" + databaseName + "\".\"" + tableName + "\" a WHERE ROWNUM <= " + (offset + pageSize) + order + ") WHERE rn > " + offset;
+            case HIVE -> "SELECT * FROM " + hiveQualifiedTable(databaseName, tableName)
+                    + order + " LIMIT " + offset + "," + pageSize;
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
     }
@@ -836,7 +913,7 @@ public class DatabaseService {
      */
     public static List<String> dropTables(ConnectionConfig config, String databaseName, String schemaName, List<String> tableNames) throws Exception {
         // PostgreSQL 绑定到具体数据库；MySQL/Oracle 复用主连接（SQL 使用全限定名）
-        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL || config.getType() == ConnectType.HIVE)
                 ? getConnection(config, databaseName)
                 : getConnection(config);
         List<String> dropped = new ArrayList<>();
@@ -870,7 +947,7 @@ public class DatabaseService {
      * @return 成功清空的表名列表
      */
     public static List<String> clearTables(ConnectionConfig config, String databaseName, String schemaName, List<String> tableNames) throws Exception {
-        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL || config.getType() == ConnectType.HIVE)
                 ? getConnection(config, databaseName)
                 : getConnection(config);
         List<String> cleared = new ArrayList<>();
@@ -971,6 +1048,7 @@ public class DatabaseService {
             case MYSQL -> "DROP TABLE `" + databaseName + "`.`" + tableName + "`";
             case POSTGRESQL -> "DROP TABLE \"" + pgSchema + "\".\"" + tableName + "\"";
             case ORACLE -> "DROP TABLE \"" + databaseName + "\".\"" + tableName + "\"";
+            case HIVE -> "DROP TABLE " + hiveQualifiedTable(databaseName, tableName);
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
     }
@@ -984,6 +1062,7 @@ public class DatabaseService {
             case MYSQL -> "DELETE FROM `" + databaseName + "`.`" + tableName + "`";
             case POSTGRESQL -> "DELETE FROM \"" + pgSchema + "\".\"" + tableName + "\"";
             case ORACLE -> "DELETE FROM \"" + databaseName + "\".\"" + tableName + "\"";
+            case HIVE -> "DELETE FROM " + hiveQualifiedTable(databaseName, tableName);
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
     }
@@ -997,6 +1076,7 @@ public class DatabaseService {
             case MYSQL -> "TRUNCATE TABLE `" + databaseName + "`.`" + tableName + "`";
             case POSTGRESQL -> "TRUNCATE TABLE \"" + pgSchema + "\".\"" + tableName + "\"";
             case ORACLE -> "TRUNCATE TABLE \"" + databaseName + "\".\"" + tableName + "\"";
+            case HIVE -> "TRUNCATE TABLE " + hiveQualifiedTable(databaseName, tableName);
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
     }
@@ -1021,6 +1101,8 @@ public class DatabaseService {
             case MYSQL -> "RENAME TABLE `" + databaseName + "`.`" + oldTableName + "` TO `" + databaseName + "`.`" + newTableName + "`";
             case POSTGRESQL -> "ALTER TABLE \"" + pgSchema + "\".\"" + oldTableName + "\" RENAME TO \"" + newTableName + "\"";
             case ORACLE -> "ALTER TABLE \"" + databaseName + "\".\"" + oldTableName + "\" RENAME TO \"" + newTableName + "\"";
+            case HIVE -> "ALTER TABLE " + hiveQualifiedTable(databaseName, oldTableName)
+                    + " RENAME TO " + hiveQualifiedTable(databaseName, newTableName);
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
         try (Statement stmt = conn.createStatement()) {
@@ -1048,6 +1130,8 @@ public class DatabaseService {
             case MYSQL -> "RENAME TABLE `" + databaseName + "`.`" + oldViewName + "` TO `" + databaseName + "`.`" + newViewName + "`";
             case POSTGRESQL -> "ALTER VIEW \"" + pgSchema + "\".\"" + oldViewName + "\" RENAME TO \"" + newViewName + "\"";
             case ORACLE -> "RENAME \"" + oldViewName + "\" TO \"" + newViewName + "\"";
+            case HIVE -> "ALTER VIEW " + hiveQualifiedTable(databaseName, oldViewName)
+                    + " RENAME TO " + hiveQualifiedTable(databaseName, newViewName);
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
         try (Statement stmt = conn.createStatement()) {
@@ -1068,6 +1152,7 @@ public class DatabaseService {
             case MYSQL -> "DROP VIEW `" + databaseName + "`.`" + viewName + "`";
             case POSTGRESQL -> "DROP VIEW \"" + pgSchema + "\".\"" + viewName + "\"";
             case ORACLE -> "DROP VIEW \"" + databaseName + "\".\"" + viewName + "\"";
+            case HIVE -> "DROP VIEW " + hiveQualifiedTable(databaseName, viewName);
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
     }
@@ -1213,6 +1298,8 @@ public class DatabaseService {
             }
         } else if (config.getType() == ConnectType.ORACLE) {
             sql.append("CREATE USER \"").append(databaseName).append("\" IDENTIFIED BY \"").append(databaseName).append("\"");
+        } else if (config.getType() == ConnectType.HIVE) {
+            sql.append("CREATE DATABASE ").append(hiveIdentifier(databaseName));
         }
         return sql.toString();
     }
@@ -1225,6 +1312,7 @@ public class DatabaseService {
             case MYSQL -> "DROP DATABASE `" + databaseName + "`";
             case POSTGRESQL -> "DROP DATABASE \"" + databaseName + "\"";
             case ORACLE -> "DROP USER \"" + databaseName + "\" CASCADE";
+            case HIVE -> "DROP DATABASE " + hiveIdentifier(databaseName) + " CASCADE";
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
     }
@@ -1439,6 +1527,7 @@ public class DatabaseService {
      * @param schemaName 模式名（PostgreSQL 使用；为 null 时读取连接当前 schema）
      */
     public static List<String> getPrimaryKeys(ConnectionConfig config, String databaseName, String schemaName, String tableName) throws Exception {
+        if (config.getType() == ConnectType.HIVE) return Collections.emptyList();
         // PostgreSQL 绑定到具体数据库，并传入 schema 给 JDBC 元数据；MySQL/Oracle 复用主连接
         Connection conn = (config.getType() == ConnectType.POSTGRESQL)
                 ? getConnection(config, databaseName)
@@ -2294,6 +2383,9 @@ public class DatabaseService {
      * @param schemaName 模式名（PostgreSQL 使用；为 null 时读取连接当前 schema）
      */
     public static List<Map<String, String>> getTableColumns(ConnectionConfig config, String databaseName, String schemaName, String tableName) throws Exception {
+        if (config.getType() == ConnectType.HIVE) {
+            return getHiveTableColumns(config, databaseName, tableName);
+        }
         // PostgreSQL 绑定到具体数据库，并传入 schema 给 JDBC 元数据；MySQL/Oracle 复用主连接
         Connection conn = (config.getType() == ConnectType.POSTGRESQL)
                 ? getConnection(config, databaseName)
@@ -2376,6 +2468,60 @@ public class DatabaseService {
         }
 
         return columns;
+    }
+
+    private static List<Map<String, String>> getHiveTableColumns(ConnectionConfig config,
+                                                                 String databaseName,
+                                                                 String tableName) throws Exception {
+        List<Map<String, String>> columns = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        String sql = "DESCRIBE " + hiveQualifiedTable(databaseName, tableName);
+        try (Statement stmt = getConnection(config, databaseName).createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            int columnCount = rs.getMetaData().getColumnCount();
+            while (rs.next()) {
+                String name = Objects.requireNonNullElse(rs.getString(1), "").trim();
+                String rawType = columnCount >= 2
+                        ? Objects.requireNonNullElse(rs.getString(2), "").trim() : "";
+                if (name.isEmpty() || name.startsWith("#") || rawType.isEmpty()
+                        || !seen.add(name.toLowerCase(Locale.ROOT))) {
+                    continue;
+                }
+                String comment = columnCount >= 3
+                        ? Objects.requireNonNullElse(rs.getString(3), "").trim() : "";
+                HiveTypeParts type = parseHiveType(rawType);
+                Map<String, String> column = new LinkedHashMap<>();
+                column.put("字段名", name);
+                column.put("类型", type.name());
+                column.put("长度", type.length());
+                column.put("小数点", type.decimals());
+                column.put("非空", "否");
+                column.put("主键", "否");
+                column.put("自增", "否");
+                column.put("默认值", "");
+                column.put("注释", comment);
+                column.put("无符号", "否");
+                column.put("填充零", "否");
+                column.put("字符集", "");
+                column.put("排序规则", "");
+                column.put("键长度", "");
+                column.put("二进制", "否");
+                columns.add(column);
+            }
+        }
+        return columns;
+    }
+
+    private static HiveTypeParts parseHiveType(String rawType) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+                "^([a-zA-Z_ ]+)\\((\\d+)(?:\\s*,\\s*(\\d+))?\\)$")
+                .matcher(rawType.trim());
+        if (!matcher.matches()) return new HiveTypeParts(rawType.toUpperCase(Locale.ROOT), "", "");
+        return new HiveTypeParts(matcher.group(1).trim().toUpperCase(Locale.ROOT),
+                matcher.group(2), Objects.requireNonNullElse(matcher.group(3), ""));
+    }
+
+    private record HiveTypeParts(String name, String length, String decimals) {
     }
 
     /**
@@ -2832,6 +2978,9 @@ public class DatabaseService {
      * @param schemaName 模式名（PostgreSQL 使用；为 null 时回退用 databaseName 当 schema 名）
      */
     public static Map<String, String> getTableOptions(ConnectionConfig config, String databaseName, String schemaName, String tableName) throws Exception {
+        if (config.getType() == ConnectType.HIVE) {
+            return getHiveTableOptions(config, databaseName, tableName);
+        }
         Connection conn = (config.getType() == ConnectType.POSTGRESQL) ? getConnection(config, databaseName) : getConnection(config);
         String pgSchema = schemaName != null ? schemaName : databaseName;
         Map<String, String> options = new LinkedHashMap<>();
@@ -2900,6 +3049,31 @@ public class DatabaseService {
         return options;
     }
 
+    private static Map<String, String> getHiveTableOptions(ConnectionConfig config,
+                                                           String databaseName,
+                                                           String tableName) throws Exception {
+        Map<String, String> options = new LinkedHashMap<>();
+        options.put("引擎", "Hive");
+        options.put("字符集", "");
+        options.put("排序规则", "");
+        options.put("自增值", "");
+        options.put("注释", "");
+        options.put("行格式", "");
+        String sql = "DESCRIBE FORMATTED " + hiveQualifiedTable(databaseName, tableName);
+        try (Statement stmt = getConnection(config, databaseName).createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            while (rs.next()) {
+                String key = Objects.requireNonNullElse(rs.getString(1), "").trim();
+                String value = rs.getMetaData().getColumnCount() >= 2
+                        ? Objects.requireNonNullElse(rs.getString(2), "").trim() : "";
+                if ("Comment:".equalsIgnoreCase(key)) options.put("注释", value);
+                else if ("InputFormat:".equalsIgnoreCase(key)) options.put("行格式", value);
+                else if ("Table Type:".equalsIgnoreCase(key)) options.put("引擎", value);
+            }
+        }
+        return options;
+    }
+
     /**
      * 获取MySQL可用的存储引擎列表
      */
@@ -2932,7 +3106,7 @@ public class DatabaseService {
      */
     public static String getTableDdl(ConnectionConfig config, String databaseName, String schemaName, String tableName) throws Exception {
         // PostgreSQL 绑定到具体数据库；MySQL/Oracle 复用主连接
-        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL || config.getType() == ConnectType.HIVE)
                 ? getConnection(config, databaseName)
                 : getConnection(config);
 
@@ -2967,6 +3141,17 @@ public class DatabaseService {
                         }
                     }
                 }
+            }
+        } else if (config.getType() == ConnectType.HIVE) {
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery(
+                         "SHOW CREATE TABLE " + hiveQualifiedTable(databaseName, tableName))) {
+                StringBuilder ddl = new StringBuilder();
+                while (rs.next()) {
+                    if (!ddl.isEmpty()) ddl.append('\n');
+                    ddl.append(rs.getString(1));
+                }
+                if (!ddl.isEmpty()) return ddl.toString();
             }
         }
         return "-- 当前数据库类型不支持获取DDL";
@@ -3043,6 +3228,8 @@ public class DatabaseService {
             case MYSQL -> "ALTER TABLE `" + databaseName + "`.`" + tableName + "` COMMENT = '" + escapedComment + "'";
             case POSTGRESQL -> "COMMENT ON TABLE \"" + pgSchema + "\".\"" + tableName + "\" IS '" + escapedComment + "'";
             case ORACLE -> "COMMENT ON TABLE \"" + databaseName + "\".\"" + tableName + "\" IS '" + escapedComment + "'";
+            case HIVE -> "ALTER TABLE " + hiveQualifiedTable(databaseName, tableName)
+                    + " SET TBLPROPERTIES ('comment'='" + escapedComment + "')";
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
     }
@@ -3061,7 +3248,7 @@ public class DatabaseService {
     public static void updateTableComment(ConnectionConfig config, String databaseName, String schemaName, String tableName, String comment) throws Exception {
         String sql = generateUpdateTableCommentSql(config, databaseName, schemaName, tableName, comment);
         // PostgreSQL 绑定到具体数据库；MySQL/Oracle 复用主连接
-        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL || config.getType() == ConnectType.HIVE)
                 ? getConnection(config, databaseName)
                 : getConnection(config);
         try (Statement stmt = conn.createStatement()) {
@@ -3082,7 +3269,7 @@ public class DatabaseService {
      * 执行DDL语句（按数据库类型选连接：PostgreSQL绑定到具体数据库，其他用主连接）
      */
     public static void executeDdl(ConnectionConfig config, String databaseName, String sql) throws Exception {
-        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL || config.getType() == ConnectType.HIVE)
                 ? getConnection(config, databaseName)
                 : getConnection(config);
         try (Statement stmt = conn.createStatement()) {
@@ -3100,15 +3287,24 @@ public class DatabaseService {
     }
 
     /**
-     * 在同一事务中执行多条DDL语句（按数据库类型选连接：PostgreSQL绑定到具体数据库，其他用主连接）。
-     * 全部成功才commit；任意一条失败则rollback，保证原子性。
+     * 执行多条DDL语句（按数据库类型选连接：PostgreSQL/Hive绑定到具体数据库，其他用主连接）。
+     * 支持事务的数据库全部成功才commit；任意一条失败则rollback。HiveServer2 DDL 不支持 JDBC
+     * 事务，因而按顺序直接执行，失败前已成功的语句可能已经生效。
      * 注意：调用方需自行管理使用锁（acquireUsageLock），避免与查询线程并发使用同一连接。
      */
     public static void executeDdlsInTransaction(ConnectionConfig config, String databaseName, List<String> sqls) throws Exception {
         if (sqls == null || sqls.isEmpty()) return;
-        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL || config.getType() == ConnectType.HIVE)
                 ? getConnection(config, databaseName)
                 : getConnection(config);
+        if (config.getType() == ConnectType.HIVE) {
+            try (Statement stmt = conn.createStatement()) {
+                for (String sql : sqls) {
+                    if (sql != null && !sql.isBlank()) stmt.execute(sql);
+                }
+            }
+            return;
+        }
         boolean originalAutoCommit = conn.getAutoCommit();
         try (Statement stmt = conn.createStatement()) {
             conn.setAutoCommit(false);
@@ -3147,7 +3343,7 @@ public class DatabaseService {
                                     String comment) throws Exception {
         String sql = generateCreateTableSql(config, databaseName, schemaName, tableName, columns, options, comment);
         // PostgreSQL 绑定到具体数据库；MySQL/Oracle 复用主连接
-        Connection conn = (config.getType() == ConnectType.POSTGRESQL)
+        Connection conn = (config.getType() == ConnectType.POSTGRESQL || config.getType() == ConnectType.HIVE)
                 ? getConnection(config, databaseName)
                 : getConnection(config);
         try (Statement stmt = conn.createStatement()) {
@@ -3221,11 +3417,18 @@ public class DatabaseService {
                     colDef.append("    ").append(quote).append(colName).append(quote).append(" ").append(type).append(typeSize);
                     if ("是".equals(nullable)) colDef.append(" NOT NULL");
                 }
+                case HIVE -> {
+                    colDef.append("    ").append(hiveIdentifier(colName)).append(" ")
+                            .append(type).append(typeSize);
+                    if (colComment != null && !colComment.isEmpty()) {
+                        colDef.append(" COMMENT '").append(colComment.replace("'", "''")).append("'");
+                    }
+                }
                 default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
             }
 
             colDefs.add(colDef.toString());
-            if ("是".equals(isPk)) {
+            if ("是".equals(isPk) && config.getType() != ConnectType.HIVE) {
                 primaryKeys.add(colName);
             }
         }
@@ -3235,6 +3438,7 @@ public class DatabaseService {
             case MYSQL -> sb.append("CREATE TABLE `").append(databaseName).append("`.`").append(tableName).append("` (\n");
             case POSTGRESQL -> sb.append("CREATE TABLE \"").append(pgSchema).append("\".\"").append(tableName).append("\" (\n");
             case ORACLE -> sb.append("CREATE TABLE \"").append(databaseName).append("\".\"").append(tableName).append("\" (\n");
+            case HIVE -> sb.append("CREATE TABLE ").append(hiveQualifiedTable(databaseName, tableName)).append(" (\n");
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         }
 
@@ -3271,12 +3475,15 @@ public class DatabaseService {
             switch (config.getType()) {
                 case MYSQL -> sb.append(" COMMENT='").append(escaped).append("'");
                 case POSTGRESQL, ORACLE -> {} // 使用单独的 COMMENT ON 语句
+                case HIVE -> sb.append(" COMMENT '").append(escaped).append("'");
+                default -> { }
             }
         }
         sb.append(";");
 
         // PostgreSQL/Oracle 表注释使用单独语句
-        if (comment != null && !comment.isEmpty() && config.getType() != ConnectType.MYSQL) {
+        if (comment != null && !comment.isEmpty()
+                && (config.getType() == ConnectType.POSTGRESQL || config.getType() == ConnectType.ORACLE)) {
             String commentSchema = config.getType() == ConnectType.POSTGRESQL ? pgSchema : databaseName;
             sb.append("\nCOMMENT ON TABLE \"").append(commentSchema).append("\".\"").append(tableName)
               .append("\" IS '").append(comment.replace("'", "''")).append("';");
@@ -3417,10 +3624,20 @@ public class DatabaseService {
                 appendDefaultClause(sql, defaultValue);
                 sql.append(")");
             }
+            case HIVE -> {
+                sql.append("ALTER TABLE ").append(hiveQualifiedTable(databaseName, tableName))
+                        .append(" ADD COLUMNS (").append(hiveIdentifier(columnName)).append(" ")
+                        .append(type).append(typeSize);
+                if (colComment != null && !colComment.isEmpty()) {
+                    sql.append(" COMMENT '").append(colComment.replace("'", "''")).append("'");
+                }
+                sql.append(")");
+            }
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         }
         // PostgreSQL/Oracle 列注释使用单独语句
-        if (colComment != null && !colComment.isEmpty() && config.getType() != ConnectType.MYSQL) {
+        if (colComment != null && !colComment.isEmpty()
+                && (config.getType() == ConnectType.POSTGRESQL || config.getType() == ConnectType.ORACLE)) {
             String commentSchema = config.getType() == ConnectType.POSTGRESQL ? pgSchema : databaseName;
             sql.append(";\nCOMMENT ON COLUMN \"").append(commentSchema).append("\".\"").append(tableName)
                .append("\".\"").append(columnName).append("\" IS '").append(colComment.replace("'", "''")).append("'");
@@ -3444,6 +3661,8 @@ public class DatabaseService {
             case ORACLE -> {
                 return "ALTER TABLE \"" + databaseName + "\".\"" + tableName + "\" DROP COLUMN \"" + columnName + "\"";
             }
+            case HIVE -> throw new UnsupportedOperationException(
+                    "Hive 删除字段需要根据完整字段列表执行 REPLACE COLUMNS，请使用 SQL 编辑器确认后执行");
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         }
     }
@@ -3476,6 +3695,7 @@ public class DatabaseService {
                                                        String mysqlSrcColType) {
         String pgSchema = schemaName != null ? schemaName : databaseName;
         String columnName = getValue(currentRow, columnTitles, "字段名");
+        String oldColumnName = getValue(originalRow, columnTitles, "字段名");
         List<String> sqlList = new ArrayList<>();
 
         String type = getValue(currentRow, columnTitles, "类型");
@@ -3496,6 +3716,7 @@ public class DatabaseService {
         String oldComment = getValue(originalRow, columnTitles, "注释");
 
         boolean typeChanged = !type.equals(oldType) || !typeSize.equals(oldTypeSize);
+        boolean nameChanged = !columnName.equals(oldColumnName);
         boolean nullableChanged = !nullable.equals(oldNullable);
         boolean defaultChanged = !defaultValue.equals(oldDefault);
         boolean commentChanged = !comment.equals(oldComment);
@@ -3577,6 +3798,19 @@ public class DatabaseService {
                 if (commentChanged) {
                     String escaped = comment != null ? comment.replace("'", "''") : "";
                     sqlList.add("COMMENT ON COLUMN \"" + databaseName + "\".\"" + tableName + "\".\"" + columnName + "\" IS '" + escaped + "'");
+                }
+            }
+            case HIVE -> {
+                if (nameChanged || typeChanged || commentChanged) {
+                    StringBuilder sql = new StringBuilder("ALTER TABLE ")
+                            .append(hiveQualifiedTable(databaseName, tableName))
+                            .append(" CHANGE COLUMN ").append(hiveIdentifier(oldColumnName)).append(' ')
+                            .append(hiveIdentifier(columnName)).append(' ')
+                            .append(type).append(typeSize);
+                    if (comment != null && !comment.isEmpty()) {
+                        sql.append(" COMMENT '").append(comment.replace("'", "''")).append("'");
+                    }
+                    sqlList.add(sql.toString());
                 }
             }
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
@@ -4176,10 +4410,39 @@ public class DatabaseService {
 
     // ==================== 工具方法 ====================
 
+    static String hiveIdentifier(String value) {
+        String identifier = Objects.requireNonNullElse(value, "");
+        return "`" + identifier.replace("`", "``") + "`";
+    }
+
+    static String hiveQualifiedTable(String databaseName, String tableName) {
+        return hiveIdentifier(databaseName) + "." + hiveIdentifier(tableName);
+    }
+
+    static String hiveDatabaseWithConfiguredParameters(String configuredDatabase, String databaseName) {
+        String configured = Objects.requireNonNullElse(configuredDatabase, "").trim();
+        int suffixIndex = configured.length();
+        for (char separator : new char[]{';', '?', '#'}) {
+            int index = configured.indexOf(separator);
+            if (index >= 0 && index < suffixIndex) suffixIndex = index;
+        }
+        String suffix = suffixIndex < configured.length() ? configured.substring(suffixIndex) : "";
+        String target = Objects.requireNonNullElse(databaseName, "").trim();
+        if (target.isEmpty()) {
+            target = configured.substring(0, suffixIndex).trim();
+        }
+        if (target.isEmpty()) target = "default";
+        return target + suffix;
+    }
+
     /**
      * 构建JDBC URL
      */
     private static String buildJdbcUrl(ConnectionConfig config, String host, int port, String database) {
+        DatabaseProfile profile = DatabaseProfileRegistry.resolve(config);
+        if (profile != null) {
+            return profile.buildJdbcUrl(host, port, database);
+        }
         String db = (database != null && !database.isEmpty()) ? database : "";
         return switch (config.getType()) {
             // MySQL 性能优化参数：
@@ -4207,5 +4470,12 @@ public class DatabaseService {
             case ORACLE -> "jdbc:oracle:thin:@" + host + ":" + port + ":" + db;
             default -> throw new IllegalArgumentException("Unsupported database type: " + config.getType());
         };
+    }
+
+    private static void ensureJdbcDriverAvailable(ConnectionConfig config) throws ClassNotFoundException {
+        DatabaseProfile profile = DatabaseProfileRegistry.resolve(config);
+        if (profile != null) {
+            Class.forName(profile.driverClass());
+        }
     }
 }

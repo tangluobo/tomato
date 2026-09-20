@@ -1,6 +1,7 @@
 package com.tangluobo.tomato.module.connect.view;
 
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.GlobalConfig;
 import com.tangluobo.tomato.module.connect.RowState;
 import com.tangluobo.tomato.module.connect.TableRowData;
@@ -46,6 +47,7 @@ public class TableDataView extends BorderPane {
     private final String databaseName;
     private final String schemaName;
     private final String tableName;
+    private final boolean readOnly;
 
     private TableView<ObservableList<String>> tableView;
     private FrozenRowSelectorPane<ObservableList<String>> frozenTablePane;
@@ -123,6 +125,7 @@ public class TableDataView extends BorderPane {
         this.databaseName = databaseName;
         this.schemaName = schemaName;
         this.tableName = tableName;
+        this.readOnly = config.getType() == ConnectType.HIVE;
 
         initializeUI();
         loadData(1);
@@ -173,7 +176,7 @@ public class TableDataView extends BorderPane {
         deleteItem.setStyle("-fx-font-weight: bold;");
         deleteItem.setOnAction(e -> handleDeleteSelectedRows());
         boolean hasPrimaryKey = primaryKeyColumns != null && !primaryKeyColumns.isEmpty();
-        deleteItem.setDisable(!hasPrimaryKey);
+        deleteItem.setDisable(readOnly || !hasPrimaryKey);
 
         MenuItem copyItem = new MenuItem("复制");
         copyItem.setOnAction(e -> handleCopySelectedCells());
@@ -226,11 +229,11 @@ public class TableDataView extends BorderPane {
                 target = target.getParent();
             }
             int dataCellCount = getSelectedDataCells().size();
-            setEmptyItem.setDisable(dataCellCount == 0);
-            setNullItem.setDisable(dataCellCount == 0);
+            setEmptyItem.setDisable(readOnly || dataCellCount == 0);
+            setNullItem.setDisable(readOnly || dataCellCount == 0);
             copyItem.setDisable(dataCellCount == 0);
             copyAsMenu.setDisable(dataCellCount == 0);
-            pasteItem.setDisable(!javafx.scene.input.Clipboard.getSystemClipboard().hasString());
+            pasteItem.setDisable(readOnly || !javafx.scene.input.Clipboard.getSystemClipboard().hasString());
             contextMenu.show(tableView, event.getScreenX(), event.getScreenY());
             event.consume();
         });
@@ -1063,7 +1066,7 @@ public class TableDataView extends BorderPane {
         observeTableRows(null, tableView.getItems());
         tableView.itemsProperty().addListener((obs, oldRows, newRows) ->
                 observeTableRows(oldRows, newRows));
-        tableView.setEditable(true);
+        tableView.setEditable(!readOnly);
         // 禁用默认排序，排序由右键菜单控制
         tableView.setSortPolicy(param -> false);
         GlobalConfig globalConfig = GlobalConfig.getInstance();
@@ -1224,12 +1227,14 @@ public class TableDataView extends BorderPane {
         addBtn.setOnAction(e -> handleAddNewRow());
         addBtn.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
         addBtn.setTooltip(new Tooltip("添加"));
+        addBtn.setDisable(readOnly);
 
         // 删除按钮：红色减号/叉号
         Button deleteBtn = createToolBarButton("删除", createSimpleToolIcon("M2 7H12"));
         deleteBtn.setOnAction(e -> handleDeleteSelectedRows());
         deleteBtn.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
         deleteBtn.setTooltip(new Tooltip("删除"));
+        deleteBtn.setDisable(readOnly);
 
         // 保存按钮：蓝色上箭头（提交所有更改）
         saveChangesButton = createToolBarButton("保存", createSimpleToolIcon("M2 7L6 11L13 4"));
@@ -1262,7 +1267,7 @@ public class TableDataView extends BorderPane {
 
     private void updateModificationButtons() {
         if (saveChangesButton == null || discardChangesButton == null) return;
-        boolean disable = isLoading || savingChanges
+        boolean disable = readOnly || isLoading || savingChanges
                 || !(activeCellEditChanged || hasUnsavedChanges());
         saveChangesButton.setDisable(disable);
         discardChangesButton.setDisable(disable);
@@ -1312,6 +1317,7 @@ public class TableDataView extends BorderPane {
         rollbackItem.setOnAction(e -> runTransactionCommand("ROLLBACK", false,
                 () -> DatabaseService.rollbackTransaction(config, databaseName)));
         transactionButton.getItems().setAll(beginItem, commitItem, rollbackItem);
+        transactionButton.setDisable(readOnly);
         transactionButton.setOnShowing(e -> {
             beginItem.setDisable(transactionActive);
             commitItem.setDisable(!transactionActive);
@@ -1339,6 +1345,7 @@ public class TableDataView extends BorderPane {
         Button importButton = new Button("导入",
                 createActionBarIcon("M1 2h11v4h3v9H1z M8 0v8l3-3v2L7 11 3 7V5l3 3V0z", "#2E9A72"));
         importButton.setOnAction(e -> importTableData());
+        importButton.setDisable(readOnly);
         styleActionBarControl(importButton);
 
         Button exportButton = new Button("导出",

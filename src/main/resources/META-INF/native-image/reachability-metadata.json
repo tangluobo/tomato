@@ -16686,6 +16686,9 @@
       "glob": "images/connect/create_query_tool.png"
     },
     {
+      "glob": "images/connect/database-logos/**"
+    },
+    {
       "glob": "images/connect/database.png"
     },
     {

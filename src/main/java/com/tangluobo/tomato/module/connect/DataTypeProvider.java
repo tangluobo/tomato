@@ -20,6 +20,7 @@ public class DataTypeProvider {
             case MYSQL -> getMySqlTypes(version);
             case POSTGRESQL -> getPostgreSqlTypes(version);
             case ORACLE -> getOracleTypes(version);
+            case HIVE -> getHiveTypes();
             default -> Collections.emptyList();
         };
         // 按字母排序
@@ -124,6 +125,17 @@ public class DataTypeProvider {
         }
 
         return types;
+    }
+
+    private static List<String> getHiveTypes() {
+        return new ArrayList<>(List.of(
+                "TINYINT", "SMALLINT", "INT", "BIGINT",
+                "FLOAT", "DOUBLE", "DECIMAL",
+                "BOOLEAN", "STRING", "CHAR", "VARCHAR", "BINARY",
+                "DATE", "TIMESTAMP", "TIMESTAMP WITH LOCAL TIME ZONE",
+                "INTERVAL_YEAR_MONTH", "INTERVAL_DAY_TIME",
+                "ARRAY", "MAP", "STRUCT", "UNIONTYPE"
+        ));
     }
 
     /**
