@@ -47,6 +47,10 @@ public class ConnectionConfig {
     private String rdpFullScreenShortcut; // RDP全屏切换快捷键（会话级覆盖，null=使用全局配置）
     private String rdpOpenMode; // RDP打开方式：null=使用全局配置，WINDOW=独立窗口，TAB=标签页
 
+    // VNC/SPICE 外部客户端配置
+    private String remoteDesktopClientPath; // remote-viewer/vncviewer 可执行文件；空值时自动发现
+    private int remoteDesktopTlsPort; // SPICE TLS 端口；0 表示不使用
+
     // 本地终端配置
     private String terminalType; // Windows: "cmd" 或 "powershell"; Linux/macOS: "system"
 
@@ -181,6 +185,12 @@ public class ConnectionConfig {
 
     public String getRdpOpenMode() { return rdpOpenMode; }
     public void setRdpOpenMode(String rdpOpenMode) { this.rdpOpenMode = rdpOpenMode; }
+
+    public String getRemoteDesktopClientPath() { return remoteDesktopClientPath; }
+    public void setRemoteDesktopClientPath(String remoteDesktopClientPath) { this.remoteDesktopClientPath = remoteDesktopClientPath; }
+
+    public int getRemoteDesktopTlsPort() { return remoteDesktopTlsPort; }
+    public void setRemoteDesktopTlsPort(int remoteDesktopTlsPort) { this.remoteDesktopTlsPort = remoteDesktopTlsPort; }
 
     public String getTerminalType() { return terminalType; }
     public void setTerminalType(String terminalType) { this.terminalType = terminalType; }

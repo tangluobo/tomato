@@ -1,6 +1,7 @@
 package com.tangluobo.tomato.module.connect.dialog;
 
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.DatabaseLogoLoader;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -12,7 +13,6 @@ import javafx.scene.control.Label;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
 import javafx.scene.control.cell.CheckBoxTreeCell;
-import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -143,10 +143,7 @@ public class ImportConnectionDialog {
         icon.setFitHeight(16);
         String path = config.getType() == null
                 ? "/images/connect/folder.png" : config.getType().getIconPath();
-        try {
-            icon.setImage(new Image(getClass().getResourceAsStream(path)));
-        } catch (Exception ignored) {
-        }
+        icon.setImage(DatabaseLogoLoader.load(path, 16, 16));
         return icon;
     }
 

@@ -1,13 +1,13 @@
 package com.tangluobo.tomato.module.connect.dialog;
 
 import com.tangluobo.tomato.module.connect.ConnectType;
+import com.tangluobo.tomato.module.connect.DatabaseLogoLoader;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
-import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
@@ -53,10 +53,7 @@ public class ConnectTypeDialog {
             ImageView icon = new ImageView();
             icon.setFitWidth(32);
             icon.setFitHeight(32);
-            try {
-                Image img = new Image(getClass().getResourceAsStream(type.getIconPath()));
-                icon.setImage(img);
-            } catch (Exception ignored) {}
+            icon.setImage(DatabaseLogoLoader.load(type.getIconPath(), 32, 32));
 
             // 名称
             Label nameLabel = new Label(type.getDisplayName());

@@ -1,13 +1,13 @@
 package com.tangluobo.tomato.module.connect.dialog;
 
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.DatabaseLogoLoader;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.CheckBoxTreeCell;
-import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.*;
 import javafx.stage.Modality;
@@ -152,17 +152,9 @@ public class ExportConnectionDialog {
         ImageView iv = new ImageView();
         iv.setFitWidth(16);
         iv.setFitHeight(16);
-        if (config.getType() == null) {
-            try {
-                iv.setImage(new Image(getClass().getResourceAsStream("/images/connect/folder.png")));
-            } catch (Exception e) {
-            }
-        } else {
-            try {
-                iv.setImage(new Image(getClass().getResourceAsStream(config.getType().getIconPath())));
-            } catch (Exception e) {
-            }
-        }
+        String path = config.getType() == null
+                ? "/images/connect/folder.png" : config.getType().getIconPath();
+        iv.setImage(DatabaseLogoLoader.load(path, 16, 16));
         return iv;
     }
 

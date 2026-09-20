@@ -1102,8 +1102,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 + (data.getSchemaName() != null ? "_" + data.getSchemaName() : "");
         for (Tab tab : module.getTerminalTabPane().getTabs()) {
             if (tabId.equals(tab.getUserData())) {
-                module.getTerminalTabPane().getSelectionModel().select(tab);
-                module.showDataView();
+                module.activateContentTab(tab);
                 return;
             }
         }
@@ -1207,9 +1206,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
         appendCloseMenuItems(tab, ctxMenu);
         tab.setContextMenu(ctxMenu);
 
-        module.getTerminalTabPane().getTabs().add(tab);
-        module.getTerminalTabPane().getSelectionModel().select(tab);
-        module.showDataView();
+        module.activateContentTab(tab);
     }
 
     /** 从“对象”页新建查询：查询文件仍保存到同级“查询”目录。 */
@@ -1306,8 +1303,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 + (data.getSchemaName() != null ? "_" + data.getSchemaName() : "");
         for (Tab tab : module.getTerminalTabPane().getTabs()) {
             if (tabId.equals(tab.getUserData())) {
-                module.getTerminalTabPane().getSelectionModel().select(tab);
-                module.showDataView();
+                module.activateContentTab(tab);
                 return;
             }
         }
@@ -1363,9 +1359,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             }
         });
 
-        module.getTerminalTabPane().getTabs().add(tab);
-        module.getTerminalTabPane().getSelectionModel().select(tab);
-        module.showDataView();
+        module.activateContentTab(tab);
     }
 
     /**
@@ -1394,8 +1388,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 + (data.getSchemaName() != null ? "_" + data.getSchemaName() : "") + "_" + data.getName();
         for (Tab tab : module.getTerminalTabPane().getTabs()) {
             if (tabId.equals(tab.getUserData())) {
-                module.getTerminalTabPane().getSelectionModel().select(tab);
-                module.showDataView();
+                module.activateContentTab(tab);
                 return;
             }
         }
@@ -1441,9 +1434,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             }
         });
 
-        module.getTerminalTabPane().getTabs().add(tab);
-        module.getTerminalTabPane().getSelectionModel().select(tab);
-        module.showDataView();
+        module.activateContentTab(tab);
     }
 
     /**
@@ -1479,8 +1470,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                 + (data.getSchemaName() != null ? "_" + data.getSchemaName() : "") + "_" + data.getName();
         for (Tab tab : module.getTerminalTabPane().getTabs()) {
             if (tabId.equals(tab.getUserData())) {
-                module.getTerminalTabPane().getSelectionModel().select(tab);
-                module.showDataView();
+                module.activateContentTab(tab);
                 return;
             }
         }
@@ -1522,9 +1512,7 @@ public abstract class AbstractDbHandler implements ConnectHandler {
             }
         });
 
-        module.getTerminalTabPane().getTabs().add(tab);
-        module.getTerminalTabPane().getSelectionModel().select(tab);
-        module.showDataView();
+        module.activateContentTab(tab);
     }
 
     // ==================== Tab 批量关闭 ====================

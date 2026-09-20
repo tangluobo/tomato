@@ -62,6 +62,8 @@ public class TableDataView extends BorderPane {
     private Button jumpBtn;
     private StackPane centerPane;
     private ProgressIndicator loadingIndicator;
+    private VBox loadErrorPane;
+    private Label loadErrorLabel;
     private Button saveChangesButton;
     private Button discardChangesButton;
     private boolean savingChanges = false;
@@ -128,7 +130,9 @@ public class TableDataView extends BorderPane {
         this.readOnly = config.getType() == ConnectType.HIVE;
 
         initializeUI();
-        loadData(1);
+        // 等调用方把视图挂到已选中的 Tab 后再启动首次查询，避免构造阶段的异步刷新
+        // 与 TabPane 的皮肤/布局初始化互相覆盖，表现为新标签未置前或内容区空白。
+        Platform.runLater(() -> loadData(1));
     }
 
     /**
@@ -1081,6 +1085,9 @@ public class TableDataView extends BorderPane {
         tableView.getStyleClass().add("data-table-view");
         tableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         tableView.getSelectionModel().setCellSelectionEnabled(true);
+        Label emptyLabel = new Label("当前表没有数据");
+        emptyLabel.setStyle("-fx-text-fill: #777; -fx-font-size: 13px;");
+        tableView.setPlaceholder(emptyLabel);
 
         // 鼠标拖拽选中多个cell
         setupDragSelection();
@@ -1112,6 +1119,21 @@ public class TableDataView extends BorderPane {
         loadingIndicator.setMaxSize(40, 40);
         loadingIndicator.setVisible(false);
 
+        loadErrorLabel = new Label();
+        loadErrorLabel.setWrapText(true);
+        loadErrorLabel.setMaxWidth(560);
+        loadErrorLabel.setStyle("-fx-text-fill: #b42318; -fx-font-size: 13px;");
+        Button retryLoadButton = new Button("重新加载");
+        retryLoadButton.setOnAction(e -> loadData(Math.max(1, currentPage)));
+        loadErrorPane = new VBox(10, loadErrorLabel, retryLoadButton);
+        loadErrorPane.setAlignment(Pos.CENTER);
+        loadErrorPane.setMaxWidth(620);
+        loadErrorPane.setPadding(new Insets(20));
+        loadErrorPane.setStyle("-fx-background-color: rgba(255,255,255,0.96);"
+                + " -fx-border-color: #f0b8b2; -fx-border-radius: 4; -fx-background-radius: 4;");
+        loadErrorPane.setManaged(false);
+        loadErrorPane.setVisible(false);
+
         // 行选择器单独固定在左侧，数据区域使用 TableView 内部滚动条。
         // 这样横向滚动时，左侧行选择器和右侧垂直滚动条都会始终可见。
         frozenTablePane = new FrozenRowSelectorPane<>(tableView, 15);
@@ -1124,7 +1146,7 @@ public class TableDataView extends BorderPane {
         dragSelectRect.setManaged(false);
         dragSelectRect.setVisible(false);
 
-        centerPane = new StackPane(frozenTablePane, loadingIndicator, dragSelectRect);
+        centerPane = new StackPane(frozenTablePane, loadingIndicator, loadErrorPane, dragSelectRect);
         centerPane.setPadding(Insets.EMPTY);
         centerPane.setStyle("-fx-padding: 0; -fx-background-insets: 0; -fx-border-insets: 0;");
 
@@ -1729,6 +1751,7 @@ public class TableDataView extends BorderPane {
         }
 
         loadingIndicator.setVisible(true);
+        hideLoadError();
         tableView.setDisable(true);
 
         new Thread(() -> {
@@ -1749,6 +1772,7 @@ public class TableDataView extends BorderPane {
                     showSqlStatus(statusSql);
                     updateStatusBar();
                     loadingIndicator.setVisible(false);
+                    hideLoadError();
                     tableView.setDisable(false);
                     isLoading = false;
                     updateModificationButtons();
@@ -1757,7 +1781,9 @@ public class TableDataView extends BorderPane {
                 Platform.runLater(() -> {
                     loadingIndicator.setVisible(false);
                     tableView.setDisable(false);
-                    pageInfoLabel.setText("加载失败: " + e.getMessage());
+                    String message = readableErrorMessage(e);
+                    showLoadError(message);
+                    pageInfoLabel.setText("加载失败");
                     isLoading = false;
                     updateModificationButtons();
                     e.printStackTrace();
@@ -1766,6 +1792,31 @@ public class TableDataView extends BorderPane {
                 connLock.unlock();
             }
         }, "DB-LoadTableData").start();
+    }
+
+    private void hideLoadError() {
+        if (loadErrorPane == null) return;
+        loadErrorPane.setManaged(false);
+        loadErrorPane.setVisible(false);
+    }
+
+    private void showLoadError(String message) {
+        loadErrorLabel.setText("表数据加载失败\n" + message);
+        loadErrorPane.setManaged(true);
+        loadErrorPane.setVisible(true);
+        loadErrorPane.toFront();
+    }
+
+    private static String readableErrorMessage(Throwable error) {
+        Throwable current = error;
+        String message = null;
+        while (current != null) {
+            if (current.getMessage() != null && !current.getMessage().isBlank()) {
+                message = current.getMessage().trim();
+            }
+            current = current.getCause();
+        }
+        return message != null ? message : error.getClass().getSimpleName();
     }
 
     /** 行选择器列的标识名，用于在获取数据列名时跳过 */

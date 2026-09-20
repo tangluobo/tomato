@@ -115,7 +115,7 @@ public class ConnectionConfigDialog {
     private VBox sshSshTunnelContent;
     private ComboBox<ConnectionConfig> sshSshHostCombo;
 
-    // ===== 其他类型(RDP/FTP/Oracle)专用 =====
+    // ===== RDP/FTP 等简单连接配置 =====
     private VBox simpleConfigContent;
     private TextField simpleNameField;
     private TextField simpleHostField;
@@ -132,6 +132,21 @@ public class ConnectionConfigDialog {
     private CheckBox rdpUseSslCheck;
     private CheckBox rdpMapClipboardCheck;
     private CheckBox rdpEnableSoundCheck;
+
+    // ===== VNC/SPICE 专属字段 =====
+    private VBox remoteDesktopConfigContent;
+    private TextField remoteDesktopNameField;
+    private TextField remoteDesktopHostField;
+    private TextField remoteDesktopPortField;
+    private Label remoteDesktopTlsPortLabel;
+    private TextField remoteDesktopTlsPortField;
+    private TextField remoteDesktopUsernameField;
+    private PasswordField remoteDesktopPasswordField;
+    private CheckBox remoteDesktopSavePasswordCheckBox;
+    private TextField remoteDesktopClientPathField;
+    private CheckBox remoteDesktopFullscreenCheckBox;
+    private TextField remoteDesktopDescriptionField;
+    private Label remoteDesktopClientHint;
 
     // ===== 本地终端专属字段 =====
     private VBox localTerminalConfigContent;
@@ -1185,7 +1200,7 @@ public class ConnectionConfigDialog {
     }
 
     /**
-     * 构建其他类型(RDP/FTP/Oracle)的简单配置内容
+     * 构建 RDP/FTP 等类型的简单配置内容
      */
     private void buildSimpleConfigContent() {
         simpleConfigContent = new VBox(15);
@@ -1284,6 +1299,92 @@ public class ConnectionConfigDialog {
         grid.add(simpleDescriptionField, 1, row);
 
         simpleConfigContent.getChildren().add(grid);
+    }
+
+    /** 构建 VNC/SPICE 远程桌面配置。连接由 remote-viewer 或本机 VNC Viewer 打开。 */
+    private void buildRemoteDesktopConfigContent() {
+        remoteDesktopConfigContent = new VBox(12);
+        remoteDesktopConfigContent.setVisible(false);
+        remoteDesktopConfigContent.setManaged(false);
+
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(10);
+        grid.setPadding(new Insets(10, 0, 0, 0));
+        int row = 0;
+
+        grid.add(new Label("名称："), 0, row);
+        remoteDesktopNameField = new TextField();
+        remoteDesktopNameField.setPromptText("连接名称");
+        remoteDesktopNameField.setPrefWidth(320);
+        grid.add(remoteDesktopNameField, 1, row++);
+
+        grid.add(new Label("主机："), 0, row);
+        remoteDesktopHostField = new TextField();
+        remoteDesktopHostField.setPromptText("VNC/SPICE 服务地址");
+        remoteDesktopHostField.setPrefWidth(320);
+        grid.add(remoteDesktopHostField, 1, row++);
+
+        grid.add(new Label("端口："), 0, row);
+        remoteDesktopPortField = new TextField();
+        remoteDesktopPortField.setPrefWidth(120);
+        grid.add(remoteDesktopPortField, 1, row++);
+
+        remoteDesktopTlsPortLabel = new Label("TLS端口：");
+        grid.add(remoteDesktopTlsPortLabel, 0, row);
+        remoteDesktopTlsPortField = new TextField();
+        remoteDesktopTlsPortField.setPromptText("可选，仅SPICE");
+        remoteDesktopTlsPortField.setPrefWidth(120);
+        grid.add(remoteDesktopTlsPortField, 1, row++);
+
+        grid.add(new Label("用户名："), 0, row);
+        remoteDesktopUsernameField = new TextField();
+        remoteDesktopUsernameField.setPromptText("可选");
+        remoteDesktopUsernameField.setPrefWidth(320);
+        grid.add(remoteDesktopUsernameField, 1, row++);
+
+        grid.add(new Label("密码："), 0, row);
+        VBox passwordBox = new VBox(4);
+        remoteDesktopPasswordField = new PasswordField();
+        remoteDesktopPasswordField.setPromptText("可选；留空时由客户端询问");
+        remoteDesktopPasswordField.setPrefWidth(300);
+        remoteDesktopSavePasswordCheckBox = new CheckBox("保存密码");
+        remoteDesktopSavePasswordCheckBox.setSelected(true);
+        remoteDesktopSavePasswordCheckBox.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
+        passwordBox.getChildren().addAll(remoteDesktopPasswordField, remoteDesktopSavePasswordCheckBox);
+        grid.add(passwordBox, 1, row++);
+
+        grid.add(new Label("客户端程序："), 0, row);
+        HBox clientPathBox = new HBox(6);
+        clientPathBox.setAlignment(Pos.CENTER_LEFT);
+        remoteDesktopClientPathField = new TextField();
+        remoteDesktopClientPathField.setPromptText("留空自动查找 remote-viewer / VNC Viewer");
+        remoteDesktopClientPathField.setPrefWidth(275);
+        HBox.setHgrow(remoteDesktopClientPathField, Priority.ALWAYS);
+        Button browseClientButton = new Button("浏览...");
+        browseClientButton.setOnAction(e -> {
+            FileChooser chooser = new FileChooser();
+            chooser.setTitle("选择远程桌面客户端程序");
+            chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("可执行文件", "*.exe", "*"));
+            File selected = chooser.showOpenDialog(dialogStage);
+            if (selected != null) remoteDesktopClientPathField.setText(selected.getAbsolutePath());
+        });
+        clientPathBox.getChildren().addAll(remoteDesktopClientPathField, browseClientButton);
+        grid.add(clientPathBox, 1, row++);
+
+        remoteDesktopFullscreenCheckBox = new CheckBox("全屏打开");
+        grid.add(remoteDesktopFullscreenCheckBox, 1, row++);
+
+        grid.add(new Label("备注："), 0, row);
+        remoteDesktopDescriptionField = new TextField();
+        remoteDesktopDescriptionField.setPromptText("备注信息");
+        remoteDesktopDescriptionField.setPrefWidth(320);
+        grid.add(remoteDesktopDescriptionField, 1, row);
+
+        remoteDesktopClientHint = new Label();
+        remoteDesktopClientHint.setStyle("-fx-font-size: 11px; -fx-text-fill: #777;");
+        remoteDesktopClientHint.setWrapText(true);
+        remoteDesktopConfigContent.getChildren().addAll(grid, remoteDesktopClientHint);
     }
 
     /**
@@ -2166,6 +2267,9 @@ public class ConnectionConfigDialog {
         } else if (selectedType == ConnectType.SSH || selectedType == ConnectType.SFTP) {
             if (sshTabPane == null) buildSshConfigContent();
             content = sshTabPane;
+        } else if (isRemoteDesktopType(selectedType)) {
+            if (remoteDesktopConfigContent == null) buildRemoteDesktopConfigContent();
+            content = remoteDesktopConfigContent;
         } else if (selectedType == ConnectType.LOCAL_TERMINAL) {
             if (localTerminalConfigContent == null) buildLocalTerminalConfigContent();
             content = localTerminalConfigContent;
@@ -2233,6 +2337,7 @@ public class ConnectionConfigDialog {
         // 根据类型切换布局
         boolean isDatabase = isDatabaseType(selectedType);
         boolean isSSH = selectedType == ConnectType.SSH || selectedType == ConnectType.SFTP;
+        boolean isRemoteDesktop = isRemoteDesktopType(selectedType);
         boolean isLocalTerminal = selectedType == ConnectType.LOCAL_TERMINAL;
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
         boolean isRedis = selectedType == ConnectType.REDIS;
@@ -2240,7 +2345,8 @@ public class ConnectionConfigDialog {
         boolean isKafka = selectedType == ConnectType.KAFKA;
         boolean isAliyun = selectedType == ConnectType.ALIYUN || selectedType == ConnectType.TENCENT_CLOUD;
         boolean isLocalDirectory = selectedType == ConnectType.LOCAL_DIRECTORY;
-        boolean isSimple = !isDatabase && !isSSH && !isLocalTerminal && !isS3orOSS && !isRedis && !isRocketmq && !isKafka && !isAliyun && !isLocalDirectory;
+        boolean isSimple = !isDatabase && !isSSH && !isRemoteDesktop && !isLocalTerminal
+                && !isS3orOSS && !isRedis && !isRocketmq && !isKafka && !isAliyun && !isLocalDirectory;
         if (isDatabase && dbGeneralTab != null) {
             dbGeneralTab.setText(selectedDisplayName);
         }
@@ -2272,6 +2378,7 @@ public class ConnectionConfigDialog {
 
         setContentVisible(dbTabPane, isDatabase);
         setContentVisible(sshTabPane, isSSH);
+        setContentVisible(remoteDesktopConfigContent, isRemoteDesktop);
         setContentVisible(simpleConfigContent, isSimple);
         setContentVisible(localTerminalConfigContent, isLocalTerminal);
         setContentVisible(s3TabPane, isS3orOSS);
@@ -2298,6 +2405,18 @@ public class ConnectionConfigDialog {
             if (sshPortField.getText().isEmpty()) {
                 sshPortField.setText("22");
             }
+        } else if (isRemoteDesktop) {
+            if (remoteDesktopPortField.getText().isEmpty()) {
+                remoteDesktopPortField.setText(String.valueOf(getDefaultPort(selectedType)));
+            }
+            boolean spice = selectedType == ConnectType.SPICE;
+            remoteDesktopTlsPortLabel.setVisible(spice);
+            remoteDesktopTlsPortLabel.setManaged(spice);
+            remoteDesktopTlsPortField.setVisible(spice);
+            remoteDesktopTlsPortField.setManaged(spice);
+            remoteDesktopClientHint.setText(spice
+                    ? "SPICE 需要安装 virt-viewer（remote-viewer）；可手动指定 remote-viewer 程序路径。"
+                    : "优先使用 virt-viewer（remote-viewer），也会自动查找 TigerVNC、TightVNC、RealVNC 等客户端。");
         } else if (isS3orOSS) {
             if (s3RegionField.getText().isEmpty()) {
                 s3RegionField.setText(selectedType == ConnectType.ALIYUN_OSS ? "cn-hangzhou" : "us-east-1");
@@ -2332,6 +2451,10 @@ public class ConnectionConfigDialog {
         return isRelationalDatabaseType(type) || type == ConnectType.MONGODB;
     }
 
+    private boolean isRemoteDesktopType(ConnectType type) {
+        return type == ConnectType.VNC || type == ConnectType.SPICE;
+    }
+
     private boolean isRelationalDatabaseType(ConnectType type) {
         return type == ConnectType.MYSQL || type == ConnectType.POSTGRESQL
                 || type == ConnectType.ORACLE || type == ConnectType.HIVE;
@@ -2344,6 +2467,7 @@ public class ConnectionConfigDialog {
 
         boolean isDatabase = isDatabaseType(selectedType);
         boolean isSSH = selectedType == ConnectType.SSH || selectedType == ConnectType.SFTP;
+        boolean isRemoteDesktop = isRemoteDesktopType(selectedType);
         boolean isLocalTerminal = selectedType == ConnectType.LOCAL_TERMINAL;
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
         boolean isRedis = selectedType == ConnectType.REDIS;
@@ -2417,6 +2541,24 @@ public class ConnectionConfigDialog {
                 }
             }
 
+        } else if (isRemoteDesktop) {
+            remoteDesktopNameField.setText(existingConfig.getName());
+            remoteDesktopHostField.setText(existingConfig.getHost());
+            remoteDesktopPortField.setText(String.valueOf(existingConfig.getPort()));
+            if (existingConfig.getRemoteDesktopTlsPort() > 0) {
+                remoteDesktopTlsPortField.setText(String.valueOf(existingConfig.getRemoteDesktopTlsPort()));
+            }
+            if (existingConfig.getPassword() != null) {
+                remoteDesktopPasswordField.setText(existingConfig.getPassword());
+            }
+            remoteDesktopUsernameField.setText(existingConfig.getUsername() != null
+                    ? existingConfig.getUsername() : "");
+            remoteDesktopSavePasswordCheckBox.setSelected(existingConfig.isSavePassword());
+            remoteDesktopClientPathField.setText(existingConfig.getRemoteDesktopClientPath() != null
+                    ? existingConfig.getRemoteDesktopClientPath() : "");
+            remoteDesktopFullscreenCheckBox.setSelected(existingConfig.isFullscreen());
+            remoteDesktopDescriptionField.setText(existingConfig.getDescription() != null
+                    ? existingConfig.getDescription() : "");
         } else if (isS3orOSS) {
             s3NameField.setText(existingConfig.getName());
             if (existingConfig.getEndpoint() != null) {
@@ -2585,6 +2727,7 @@ public class ConnectionConfigDialog {
 
         boolean isDatabase = isDatabaseType(selectedType);
         boolean isSSH = selectedType == ConnectType.SSH || selectedType == ConnectType.SFTP;
+        boolean isRemoteDesktop = isRemoteDesktopType(selectedType);
         boolean isLocalTerminal = selectedType == ConnectType.LOCAL_TERMINAL;
 
         config.setType(selectedType);
@@ -2668,6 +2811,23 @@ public class ConnectionConfigDialog {
             ConnectionConfig selectedSshJumpHost = sshSshHostCombo.getValue();
             config.setSshTunnelHostId(selectedSshJumpHost != null ? selectedSshJumpHost.getId() : null);
 
+        } else if (isRemoteDesktop) {
+            config.setName(remoteDesktopNameField.getText().trim());
+            config.setHost(remoteDesktopHostField.getText().trim());
+            config.setPort(Integer.parseInt(remoteDesktopPortField.getText().trim()));
+            String tlsPort = remoteDesktopTlsPortField.getText().trim();
+            config.setRemoteDesktopTlsPort(tlsPort.isEmpty() ? 0 : Integer.parseInt(tlsPort));
+            String username = remoteDesktopUsernameField.getText().trim();
+            config.setUsername(username.isEmpty() ? null : username);
+            config.setUsePassword(true);
+            config.setUseKey(false);
+            config.setSavePassword(remoteDesktopSavePasswordCheckBox.isSelected());
+            config.setPassword(remoteDesktopSavePasswordCheckBox.isSelected()
+                    ? remoteDesktopPasswordField.getText() : null);
+            String clientPath = remoteDesktopClientPathField.getText().trim();
+            config.setRemoteDesktopClientPath(clientPath.isEmpty() ? null : clientPath);
+            config.setFullscreen(remoteDesktopFullscreenCheckBox.isSelected());
+            config.setDescription(remoteDesktopDescriptionField.getText().trim());
         } else if (isS3orOSS) {
             config.setName(s3NameField.getText().trim());
             config.setEndpoint(s3EndpointField.getText().trim());
@@ -2833,6 +2993,7 @@ public class ConnectionConfigDialog {
     private boolean validateInput() {
         boolean isDatabase = isDatabaseType(selectedType);
         boolean isSSH = selectedType == ConnectType.SSH || selectedType == ConnectType.SFTP;
+        boolean isRemoteDesktop = isRemoteDesktopType(selectedType);
         boolean isLocalTerminal = selectedType == ConnectType.LOCAL_TERMINAL;
         boolean isS3orOSS = selectedType == ConnectType.S3 || selectedType == ConnectType.ALIYUN_OSS;
         boolean isRedis = selectedType == ConnectType.REDIS;
@@ -2847,6 +3008,8 @@ public class ConnectionConfigDialog {
             return validateDatabaseInput();
         } else if (isSSH) {
             return validateSshInput();
+        } else if (isRemoteDesktop) {
+            return validateRemoteDesktopInput();
         } else if (isS3orOSS) {
             return validateS3Input();
         } else if (isRedis) {
@@ -3136,6 +3299,41 @@ public class ConnectionConfigDialog {
         return true;
     }
 
+    private boolean validateRemoteDesktopInput() {
+        if (remoteDesktopNameField.getText().trim().isEmpty()) {
+            showAlert("请输入连接名称");
+            return false;
+        }
+        if (remoteDesktopHostField.getText().trim().isEmpty()) {
+            showAlert("请输入主机地址");
+            return false;
+        }
+        if (!isValidPort(remoteDesktopPortField.getText())) {
+            showAlert("端口号必须是 1 到 65535 之间的数字");
+            return false;
+        }
+        String tlsPort = remoteDesktopTlsPortField.getText().trim();
+        if (selectedType == ConnectType.SPICE && !tlsPort.isEmpty() && !isValidPort(tlsPort)) {
+            showAlert("TLS端口必须是 1 到 65535 之间的数字");
+            return false;
+        }
+        String clientPath = remoteDesktopClientPathField.getText().trim();
+        if (!clientPath.isEmpty() && !new File(clientPath).isFile()) {
+            showAlert("指定的客户端程序不存在");
+            return false;
+        }
+        return true;
+    }
+
+    private boolean isValidPort(String value) {
+        try {
+            int port = Integer.parseInt(value.trim());
+            return port >= 1 && port <= 65535;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
     private int getDefaultPort(ConnectType type) {
         if (selectedDatabaseProfile != null && selectedDatabaseProfile.dialectType() == type) {
             return selectedDatabaseProfile.defaultPort();
@@ -3143,6 +3341,7 @@ public class ConnectionConfigDialog {
         return switch (type) {
             case SSH, SFTP -> 22;
             case RDP -> 3389;
+            case VNC, SPICE -> 5900;
             case MYSQL -> 3306;
             case POSTGRESQL -> 5432;
             case FTP -> 21;

@@ -34,6 +34,7 @@ import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.collections.ObservableList;
 import javafx.scene.Node;
+import javafx.scene.Parent;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
@@ -1940,6 +1941,7 @@ public class ConnectModule implements Module {
         if (type == ConnectType.LOCAL_DIRECTORY) return new LocalDirectoryConnectHandler();
         if (type == ConnectType.S3 || type == ConnectType.ALIYUN_OSS) return new S3ConnectHandler();
         if (type == ConnectType.RDP) return new RdpConnectHandler();
+        if (type == ConnectType.VNC || type == ConnectType.SPICE) return new RemoteDesktopConnectHandler();
         if (type == ConnectType.SSH) return new SshTerminalConnectHandler();
         if (type == ConnectType.SFTP) return new SFTPConnectHandler();
         if (type == ConnectType.FTP) return new FTPConnectHandler();
@@ -2573,6 +2575,36 @@ public class ConnectModule implements Module {
     /** 供 handler 调用：显示数据视图（实际为终端视图） */
     public void showDataView() {
         showTerminalView();
+    }
+
+    /**
+     * 将内容标签加入主 TabPane 并可靠地切到前台。
+     *
+     * <p>部分表视图会在构造阶段异步刷新 JavaFX 控件，只在当前事件中调用一次
+     * {@code select}，选择状态可能被随后发生的布局/皮肤更新覆盖。这里立即选择一次，
+     * 并在下一个 JavaFX pulse 再确认一次，保证双击表后新标签真正显示在最前面。</p>
+     */
+    public void activateContentTab(Tab tab) {
+        if (terminalTabPane == null || tab == null) return;
+
+        showTerminalView();
+        if (!terminalTabPane.getTabs().contains(tab)) {
+            terminalTabPane.getTabs().add(tab);
+        }
+        terminalTabPane.getSelectionModel().select(tab);
+
+        Platform.runLater(() -> {
+            if (terminalTabPane == null || !terminalTabPane.getTabs().contains(tab)) return;
+            terminalTabPane.getSelectionModel().select(tab);
+            Node content = tab.getContent();
+            if (content != null) {
+                content.setVisible(true);
+                if (content instanceof Parent parent) {
+                    parent.requestLayout();
+                }
+            }
+            terminalTabPane.requestLayout();
+        });
     }
 
     private void handleAddFolder(TreeItem<String> parent) {

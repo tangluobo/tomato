@@ -3,6 +3,8 @@ package com.tangluobo.tomato.module.connect;
 public enum ConnectType {
     SSH("SSH", "SSH连接", "/images/connect/linux.png", Category.OTHERS),
     RDP("RDP", "远程桌面", "/images/connect/windows.png", Category.OTHERS),
+    VNC("VNC", "VNC远程桌面", "/images/connect/vnc.svg", Category.OTHERS),
+    SPICE("SPICE", "SPICE虚拟机", "/images/connect/spice.svg", Category.OTHERS),
     MYSQL("MySQL", "MySQL数据库", "/images/connect/mysql.png", Category.DATABASE),
     POSTGRESQL("PostgreSQL", "PostgreSQL数据库", "/images/connect/postgresql.png", Category.DATABASE),
     FTP("FTP", "FTP客户端", "/images/connect/ftp.png", Category.OTHERS),
