@@ -3,6 +3,7 @@ package com.tangluobo.tomato.module.connect.service;
 import java.sql.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.LongConsumer;
 import java.util.concurrent.locks.ReentrantLock;
 
 import com.tangluobo.tomato.module.connect.*;
@@ -13,6 +14,10 @@ import javafx.collections.ObservableList;
  * 数据库服务：管理JDBC连接，查询数据库/表/视图列表
  */
 public class DatabaseService {
+
+    private static final int COPY_FETCH_SIZE = 500;
+    private static final int COPY_BATCH_SIZE = 200;
+    private static final int COPY_BATCH_TIMEOUT_SECONDS = 120;
 
     // 缓存：ConnectionConfig.id -> JDBC Connection（主连接，不绑定具体数据库）
     private static final Map<String, Connection> connectionCache = new ConcurrentHashMap<>();
@@ -4170,13 +4175,26 @@ public class DatabaseService {
     public static void copyTable(ConnectionConfig srcConfig, String srcDb, String srcSchema, String srcTable,
                                  ConnectionConfig dstConfig, String dstDb, String dstSchema, String dstTable,
                                  boolean copyStructure, boolean copyData, boolean dropIfExists) throws Exception {
+        copyTable(srcConfig, srcDb, srcSchema, srcTable,
+                dstConfig, dstDb, dstSchema, dstTable,
+                copyStructure, copyData, dropIfExists, null);
+    }
+
+    /**
+     * 复制表，并在每个已提交批次后报告累计写入行数。
+     * 数据传输使用独立 JDBC 连接，避免长时间占用界面查询所复用的缓存连接。
+     */
+    public static void copyTable(ConnectionConfig srcConfig, String srcDb, String srcSchema, String srcTable,
+                                 ConnectionConfig dstConfig, String dstDb, String dstSchema, String dstTable,
+                                 boolean copyStructure, boolean copyData, boolean dropIfExists,
+                                 LongConsumer rowProgress) throws Exception {
         boolean sameConn = srcConfig.getId() != null && srcConfig.getId().equals(dstConfig.getId());
         if (sameConn) {
             copyTableSameConnection(srcConfig, srcDb, srcSchema, srcTable, dstDb, dstSchema, dstTable,
                     copyStructure, copyData, dropIfExists);
         } else {
             copyTableCrossConnection(srcConfig, srcDb, srcSchema, srcTable, dstConfig, dstDb, dstSchema, dstTable,
-                    copyStructure, copyData, dropIfExists);
+                    copyStructure, copyData, dropIfExists, rowProgress);
         }
     }
 
@@ -4281,12 +4299,27 @@ public class DatabaseService {
     public static void copyTableCrossConnection(ConnectionConfig srcConfig, String srcDb, String srcSchema, String srcTable,
                                                  ConnectionConfig dstConfig, String dstDb, String dstSchema, String dstTable,
                                                  boolean copyStructure, boolean copyData, boolean dropIfExists) throws Exception {
+        copyTableCrossConnection(srcConfig, srcDb, srcSchema, srcTable,
+                dstConfig, dstDb, dstSchema, dstTable,
+                copyStructure, copyData, dropIfExists, null);
+    }
+
+    private static void copyTableCrossConnection(ConnectionConfig srcConfig, String srcDb, String srcSchema, String srcTable,
+                                                 ConnectionConfig dstConfig, String dstDb, String dstSchema, String dstTable,
+                                                 boolean copyStructure, boolean copyData, boolean dropIfExists,
+                                                 LongConsumer rowProgress) throws Exception {
         java.util.concurrent.locks.ReentrantLock srcLock = acquireUsageLock(srcConfig, srcDb);
         java.util.concurrent.locks.ReentrantLock dstLock = acquireUsageLock(dstConfig, dstDb);
-        boolean srcLocked = false, dstLocked = false;
+        String srcLockKey = usageLockKey(srcConfig, srcDb);
+        String dstLockKey = usageLockKey(dstConfig, dstDb);
+        java.util.concurrent.locks.ReentrantLock firstLock = srcLockKey.compareTo(dstLockKey) <= 0 ? srcLock : dstLock;
+        java.util.concurrent.locks.ReentrantLock secondLock = firstLock == srcLock ? dstLock : srcLock;
+        boolean firstLocked = false, secondLocked = false;
         try {
-            srcLock.lock(); srcLocked = true;
-            dstLock.lock(); dstLocked = true;
+            firstLock.lock(); firstLocked = true;
+            if (secondLock != firstLock) {
+                secondLock.lock(); secondLocked = true;
+            }
 
             // 1. 可选：删除目标表
             if (dropIfExists) {
@@ -4295,42 +4328,236 @@ public class DatabaseService {
                 } catch (Exception ignore) {}
             }
 
-            List<Map<String, String>> columns = getTableColumns(srcConfig, srcDb, srcSchema, srcTable);
-            List<String> columnNames = new ArrayList<>();
-            for (Map<String, String> col : columns) {
-                columnNames.add(col.get("字段名"));
-            }
-
             // 2. 复制结构
             if (copyStructure) {
                 String ddl = getTableDdl(srcConfig, srcDb, srcSchema, srcTable);
                 ddl = adaptDdlForTarget(srcConfig, dstConfig, ddl, srcDb, srcSchema, srcTable, dstDb, dstSchema, dstTable);
                 executeDdlOnTarget(dstConfig, dstDb, ddl);
             }
+        } finally {
+            if (secondLocked) secondLock.unlock();
+            if (firstLocked) firstLock.unlock();
+        }
 
-            // 3. 复制数据
-            if (copyData) {
-                int pageSize = 500;
-                int page = 1;
-                int totalInserted = 0;
-                while (true) {
-                    TableRowData pageData = queryTableData(srcConfig, srcDb, srcSchema, srcTable, page, pageSize, null, false);
-                    if (pageData == null || pageData.getRows() == null || pageData.getRows().isEmpty()) {
-                        break;
+        // 3. 复制数据。使用独立连接和流式结果集，不重复 COUNT(*)，也不占用 UI 的缓存连接锁。
+        if (copyData) {
+            String srcQualified = buildQualifiedTable(srcConfig, srcDb, srcSchema, srcTable);
+            String dstQualified = buildQualifiedTable(dstConfig, dstDb, dstSchema, dstTable);
+            try (Connection srcConn = openTransferConnection(srcConfig, srcDb);
+                 Connection dstConn = openTransferConnection(dstConfig, dstDb)) {
+                transferRows(srcConn, srcConfig.getType(), srcQualified,
+                        dstConn, dstConfig.getType(), dstQualified, rowProgress);
+            }
+        }
+    }
+
+    private static String usageLockKey(ConnectionConfig config, String databaseName) {
+        return ((config.getType() == ConnectType.POSTGRESQL || config.getType() == ConnectType.HIVE)
+                && databaseName != null)
+                ? config.getId() + "_" + databaseName
+                : config.getId();
+    }
+
+    /** 为长时间数据传输新建专用连接；关闭传输不会影响界面正在使用的缓存连接。 */
+    private static Connection openTransferConnection(ConnectionConfig config, String databaseName) throws Exception {
+        String host = config.getHost();
+        int port = config.getPort();
+        if (config.isUseSshTunnel()) {
+            port = ensureSshTunnel(config);
+            host = "127.0.0.1";
+        }
+
+        String jdbcDatabase = switch (config.getType()) {
+            case MYSQL, POSTGRESQL -> databaseName;
+            case HIVE -> hiveDatabaseWithConfiguredParameters(config.getDatabase(), databaseName);
+            case ORACLE -> config.getDatabase();
+            default -> databaseName;
+        };
+        ensureJdbcDriverAvailable(config);
+        return DriverManager.getConnection(buildJdbcUrl(config, host, port, jdbcDatabase),
+                Objects.requireNonNullElse(config.getUsername(), ""),
+                Objects.requireNonNullElse(config.getPassword(), ""));
+    }
+
+    /**
+     * 使用 JDBC 原始值流式复制数据。源值不再先转成 String，避免 BLOB/BINARY、日期、JSON、
+     * 高精度数值等类型在跨库时损坏或触发类型转换错误。目标端复用一条 PreparedStatement，
+     * 每批提交一次，避免逐行服务端预编译造成的长时间假死。
+     */
+    static long transferRows(Connection srcConn, ConnectType srcType, String srcQualifiedTable,
+                             Connection dstConn, ConnectType dstType, String dstQualifiedTable,
+                             LongConsumer rowProgress) throws Exception {
+        Objects.requireNonNull(srcConn, "srcConn");
+        Objects.requireNonNull(dstConn, "dstConn");
+        String selectSql = "SELECT * FROM " + srcQualifiedTable;
+        long committedRows = 0;
+        boolean originalAutoCommit = dstConn.getAutoCommit();
+
+        try (PreparedStatement select = srcConn.prepareStatement(
+                selectSql, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
+            select.setFetchSize(COPY_FETCH_SIZE);
+            try (ResultSet rs = select.executeQuery()) {
+                ResultSetMetaData srcMeta = rs.getMetaData();
+                int columnCount = srcMeta.getColumnCount();
+                if (columnCount == 0) return 0;
+
+                List<String> columnNames = new ArrayList<>(columnCount);
+                List<Integer> sourceTypes = new ArrayList<>(columnCount);
+                List<String> sourceTypeNames = new ArrayList<>(columnCount);
+                for (int i = 1; i <= columnCount; i++) {
+                    columnNames.add(srcMeta.getColumnLabel(i));
+                    sourceTypes.add(srcMeta.getColumnType(i));
+                    sourceTypeNames.add(Objects.requireNonNullElse(srcMeta.getColumnTypeName(i), "UNKNOWN"));
+                }
+
+                List<Integer> targetTypes = readTargetColumnTypes(
+                        dstConn, dstType, dstQualifiedTable, columnNames, sourceTypes);
+                String insertSql = buildTransferInsertSql(dstType, dstQualifiedTable, columnNames);
+                dstConn.setAutoCommit(false);
+                try (PreparedStatement insert = dstConn.prepareStatement(insertSql)) {
+                    insert.setQueryTimeout(COPY_BATCH_TIMEOUT_SECONDS);
+                    int pendingRows = 0;
+                    long sourceRow = 0;
+                    while (rs.next()) {
+                        sourceRow++;
+                        for (int column = 1; column <= columnCount; column++) {
+                            try {
+                                Object value = readTransferValue(rs, column, sourceTypes.get(column - 1));
+                                bindTransferValue(insert, column, value, targetTypes.get(column - 1));
+                            } catch (Exception ex) {
+                                throw new SQLException("读取或绑定源第 " + sourceRow + " 行、列 "
+                                        + columnNames.get(column - 1) + " ("
+                                        + sourceTypeNames.get(column - 1) + ") 失败: "
+                                        + diagnosticMessage(ex), ex);
+                            }
+                        }
+                        insert.addBatch();
+                        pendingRows++;
+                        if (pendingRows >= COPY_BATCH_SIZE) {
+                            executeTransferBatch(insert, dstConn, committedRows + 1,
+                                    committedRows + pendingRows);
+                            committedRows += pendingRows;
+                            pendingRows = 0;
+                            if (rowProgress != null) rowProgress.accept(committedRows);
+                        }
                     }
-                    List<String> pks = getPrimaryKeys(srcConfig, srcDb, srcSchema, srcTable);
-                    int inserted = insertRows(dstConfig, dstDb, dstSchema, dstTable, columnNames, pageData.getRows(), pks);
-                    totalInserted += inserted;
-                    if (pageData.getRows().size() < pageSize) {
-                        break;
+                    if (pendingRows > 0) {
+                        executeTransferBatch(insert, dstConn, committedRows + 1,
+                                committedRows + pendingRows);
+                        committedRows += pendingRows;
+                        if (rowProgress != null) rowProgress.accept(committedRows);
                     }
-                    page++;
+                } catch (Exception ex) {
+                    try { dstConn.rollback(); } catch (SQLException rollbackError) { ex.addSuppressed(rollbackError); }
+                    throw new SQLException("数据传输失败，已提交 " + committedRows
+                            + " 行，当前批次已回滚: " + diagnosticMessage(ex), ex);
                 }
             }
         } finally {
-            if (dstLocked) dstLock.unlock();
-            if (srcLocked) srcLock.unlock();
+            try {
+                if (dstConn.getAutoCommit() != originalAutoCommit) dstConn.setAutoCommit(originalAutoCommit);
+            } catch (SQLException ignored) {
+                // 专用连接随后会被关闭；不覆盖原始传输异常。
+            }
         }
+        return committedRows;
+    }
+
+    private static List<Integer> readTargetColumnTypes(Connection dstConn, ConnectType dstType,
+                                                       String dstQualifiedTable, List<String> columnNames,
+                                                       List<Integer> fallbackTypes) {
+        String columnSql = columnNames.stream()
+                .map(name -> quoteIdentifier(dstType, name))
+                .reduce((left, right) -> left + ", " + right)
+                .orElse("*");
+        String sql = "SELECT " + columnSql + " FROM " + dstQualifiedTable + " WHERE 1=0";
+        try (Statement statement = dstConn.createStatement();
+             ResultSet rs = statement.executeQuery(sql)) {
+            ResultSetMetaData metadata = rs.getMetaData();
+            List<Integer> targetTypes = new ArrayList<>(columnNames.size());
+            for (int i = 1; i <= columnNames.size(); i++) {
+                targetTypes.add(metadata.getColumnType(i));
+            }
+            return targetTypes;
+        } catch (SQLException ignored) {
+            return new ArrayList<>(fallbackTypes);
+        }
+    }
+
+    private static String buildTransferInsertSql(ConnectType dstType, String dstQualifiedTable,
+                                                 List<String> columnNames) {
+        String columns = columnNames.stream()
+                .map(name -> quoteIdentifier(dstType, name))
+                .reduce((left, right) -> left + ", " + right)
+                .orElseThrow();
+        String placeholders = String.join(", ", Collections.nCopies(columnNames.size(), "?"));
+        return "INSERT INTO " + dstQualifiedTable + " (" + columns + ") VALUES (" + placeholders + ")";
+    }
+
+    private static String quoteIdentifier(ConnectType type, String identifier) {
+        return switch (type) {
+            case MYSQL -> "`" + identifier.replace("`", "``") + "`";
+            case POSTGRESQL, ORACLE -> "\"" + identifier.replace("\"", "\"\"") + "\"";
+            default -> identifier;
+        };
+    }
+
+    private static Object readTransferValue(ResultSet rs, int column, int sourceType) throws SQLException {
+        return switch (sourceType) {
+            case Types.BINARY, Types.VARBINARY, Types.LONGVARBINARY, Types.BLOB -> rs.getBytes(column);
+            case Types.CLOB, Types.NCLOB, Types.LONGVARCHAR, Types.LONGNVARCHAR -> rs.getString(column);
+            case Types.SQLXML -> {
+                SQLXML xml = rs.getSQLXML(column);
+                try {
+                    yield xml == null ? null : xml.getString();
+                } finally {
+                    if (xml != null) xml.free();
+                }
+            }
+            default -> rs.getObject(column);
+        };
+    }
+
+    private static void bindTransferValue(PreparedStatement statement, int parameterIndex,
+                                          Object value, int targetType) throws SQLException {
+        if (value == null) {
+            statement.setNull(parameterIndex, targetType);
+        } else if (value instanceof byte[] bytes) {
+            statement.setBytes(parameterIndex, bytes);
+        } else if (value instanceof String text && isTextColumnType(targetType)) {
+            // MySQL JSON 通过 JDBC 暴露为 LONGVARCHAR。用带 LONGVARCHAR 类型的 setObject
+            // 会被 Connector/J 作为 binary long-data 发送，目标端随后报：
+            // "Cannot create a JSON value from a string with CHARACTER SET 'binary'"。
+            // 仅对真实的字符值使用 setString，可保留连接字符集；数值/日期仍保持原生对象绑定。
+            statement.setString(parameterIndex, text);
+        } else {
+            try {
+                statement.setObject(parameterIndex, value, targetType);
+            } catch (SQLFeatureNotSupportedException | AbstractMethodError unsupported) {
+                statement.setObject(parameterIndex, value);
+            }
+        }
+    }
+
+    private static void executeTransferBatch(PreparedStatement statement, Connection connection,
+                                             long firstRow, long lastRow) throws SQLException {
+        try {
+            statement.executeBatch();
+            connection.commit();
+            statement.clearBatch();
+        } catch (SQLException ex) {
+            throw new SQLException("写入第 " + firstRow + "-" + lastRow + " 行批次失败: "
+                    + diagnosticMessage(ex), ex);
+        }
+    }
+
+    private static String diagnosticMessage(Throwable error) {
+        String directMessage = error.getMessage();
+        if (directMessage != null && !directMessage.isBlank()) return directMessage;
+        Throwable current = error;
+        while (current.getCause() != null && current.getCause() != current) current = current.getCause();
+        String message = current.getMessage();
+        return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
     }
 
     /** 构造全限定表名 */
@@ -4460,7 +4687,7 @@ public class DatabaseService {
                     + "?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true"
                     + "&useLocalSessionState=true&cacheDefaultDatabase=true&cacheServerConfiguration=true"
                     + "&maintainTimeStats=false&prepStmtCacheEnabled=true&prepStmtCacheSize=250"
-                    + "&useServerPrepStmts=true&rewriteBatchedStatements=true"
+                    + "&useServerPrepStmts=true&useCursorFetch=true&rewriteBatchedStatements=true"
                     // tinyInt1isBit=false：禁用驱动把 tinyint(1) 当作 BIT 类型的默认行为，
                     // 否则表结构中 tinyint(1) 字段的 TYPE_NAME 会被返回为 "BIT"，
                     // 导致设计表中 tinyint(1) 回显成 bit 类型（与 Navicat 不一致）

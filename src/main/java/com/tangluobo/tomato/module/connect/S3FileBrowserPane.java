@@ -290,8 +290,10 @@ public class S3FileBrowserPane extends AbstractFileBrowserPane {
 
     // ==================== 图标 ====================
     private void loadBucketIcons() {
-        try { bucketIcon = new Image(getClass().getResourceAsStream(isAliyunOSS ? "/images/connect/aliyun_oss.png" : "/images/connect/s3.png")); } catch (Exception e) { bucketIcon = null; }
-        try { bucketLargeIcon = new Image(getClass().getResourceAsStream(isAliyunOSS ? "/images/connect/aliyun_oss.png" : "/images/connect/s3.png"), 48, 48, true, true); } catch (Exception e) { bucketLargeIcon = null; }
+        String iconPath = isAliyunOSS
+                ? ConnectType.ALIYUN_OSS.getIconPath() : ConnectType.S3.getIconPath();
+        bucketIcon = DatabaseLogoLoader.load(iconPath, 20, 20);
+        bucketLargeIcon = DatabaseLogoLoader.load(iconPath, 48, 48);
     }
 
     @Override

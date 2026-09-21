@@ -2055,9 +2055,25 @@ public abstract class AbstractDbHandler implements ConnectHandler {
                     boolean dstExists = dstSet.contains(table);
                     if (dropIfExists || !dstExists) {
                         if (logAppender != null) logAppender.append("INFO", "  → 目标表不存在或要求删除重建，执行 copyTable\n");
+                        final int tableIndex = i;
+                        final long[] lastLoggedRows = {0};
                         DatabaseService.copyTable(srcConfig, srcDb, srcSchema, table,
                                 dstConfig, dstDb, dstSchema, table,
-                                true, copyData, dropIfExists);
+                                true, copyData, dropIfExists, rowsCopied -> {
+                                    if (progressUpdater != null) {
+                                        double tableProgress = total > 0
+                                                ? Math.min(0.99, (tableIndex + 0.5) / (double) total)
+                                                : 0.0;
+                                        progressUpdater.update(tableProgress,
+                                                "执行 " + (tableIndex + 1) + "/" + total + ": "
+                                                        + table + "，已传 " + rowsCopied + " 行");
+                                    }
+                                    if (logAppender != null
+                                            && (lastLoggedRows[0] == 0 || rowsCopied - lastLoggedRows[0] >= 5000)) {
+                                        logAppender.append("INFO", "  → 已提交 " + rowsCopied + " 行\n");
+                                        lastLoggedRows[0] = rowsCopied;
+                                    }
+                                });
                     } else {
                         List<String> sqlList = DatabaseService.generateStructureSyncSql(
                                 srcConfig, srcDb, srcSchema, table,

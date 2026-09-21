@@ -105,7 +105,7 @@ public class ConnectModule implements Module {
     private Image rocketmqConsumerItemIcon;
     private Image rocketmqBrokerItemIcon;
     private Image rocketmqMessageItemIcon;
-    // ===== Kafka 图标（复用现有图片资源，与 RocketMQ 风格一致）=====
+    // ===== 消息队列语义图标（Topic/Consumer/Cluster/Broker 各自可辨）=====
     private Image kafkaTopicIcon;
     private Image kafkaConsumerIcon;
     private Image kafkaClusterIcon;
@@ -236,31 +236,31 @@ public class ConnectModule implements Module {
         try { queryIcon = new Image(getClass().getResourceAsStream("/images/connect/query.png")); } catch (Exception e) { queryIcon = null; }
         try { functionIcon = new Image(getClass().getResourceAsStream("/images/connect/function.png")); } catch (Exception e) { functionIcon = null; }
         try { backupIcon = new Image(getClass().getResourceAsStream("/images/connect/backup.png")); } catch (Exception e) { backupIcon = null; }
-        try { rocketmqTopicIcon = new Image(getClass().getResourceAsStream("/images/connect/table.png")); } catch (Exception e) { rocketmqTopicIcon = null; }
-        try { rocketmqConsumerIcon = new Image(getClass().getResourceAsStream("/images/connect/user.png")); } catch (Exception e) { rocketmqConsumerIcon = null; }
-        try { rocketmqClusterIcon = new Image(getClass().getResourceAsStream("/images/connect/monitor.png")); } catch (Exception e) { rocketmqClusterIcon = null; }
-        try { rocketmqMessageIcon = new Image(getClass().getResourceAsStream("/images/connect/code.png")); } catch (Exception e) { rocketmqMessageIcon = null; }
-        try { rocketmqTopicItemIcon = new Image(getClass().getResourceAsStream("/images/connect/table.png")); } catch (Exception e) { rocketmqTopicItemIcon = null; }
-        try { rocketmqConsumerItemIcon = new Image(getClass().getResourceAsStream("/images/connect/user.png")); } catch (Exception e) { rocketmqConsumerItemIcon = null; }
-        try { rocketmqBrokerItemIcon = new Image(getClass().getResourceAsStream("/images/connect/monitor.png")); } catch (Exception e) { rocketmqBrokerItemIcon = null; }
-        try { rocketmqMessageItemIcon = new Image(getClass().getResourceAsStream("/images/connect/code.png")); } catch (Exception e) { rocketmqMessageItemIcon = null; }
-        try { kafkaTopicIcon = new Image(getClass().getResourceAsStream("/images/connect/table.png")); } catch (Exception e) { kafkaTopicIcon = null; }
-        try { kafkaConsumerIcon = new Image(getClass().getResourceAsStream("/images/connect/user.png")); } catch (Exception e) { kafkaConsumerIcon = null; }
-        try { kafkaClusterIcon = new Image(getClass().getResourceAsStream("/images/connect/monitor.png")); } catch (Exception e) { kafkaClusterIcon = null; }
-        try { kafkaTopicItemIcon = new Image(getClass().getResourceAsStream("/images/connect/table.png")); } catch (Exception e) { kafkaTopicItemIcon = null; }
-        try { kafkaConsumerItemIcon = new Image(getClass().getResourceAsStream("/images/connect/user.png")); } catch (Exception e) { kafkaConsumerItemIcon = null; }
-        try { kafkaBrokerItemIcon = new Image(getClass().getResourceAsStream("/images/connect/monitor.png")); } catch (Exception e) { kafkaBrokerItemIcon = null; }
-        try { aliyunProductIcon = new Image(getClass().getResourceAsStream("/images/connect/monitor.png")); } catch (Exception e) { aliyunProductIcon = null; }
-        try { aliyunEcsIcon = new Image(getClass().getResourceAsStream("/images/connect/server.png")); } catch (Exception e) { aliyunEcsIcon = null; }
-        try { aliyunDomainIcon = new Image(getClass().getResourceAsStream("/images/connect/s3.png")); } catch (Exception e) { aliyunDomainIcon = null; }
+        rocketmqTopicIcon = DatabaseLogoLoader.load("/images/connect/tree-icons/topic.svg", 20, 20);
+        rocketmqConsumerIcon = DatabaseLogoLoader.load("/images/connect/tree-icons/consumer.svg", 20, 20);
+        rocketmqClusterIcon = DatabaseLogoLoader.load("/images/connect/tree-icons/cluster.svg", 20, 20);
+        rocketmqMessageIcon = DatabaseLogoLoader.load("/images/connect/tree-icons/message.svg", 20, 20);
+        rocketmqTopicItemIcon = rocketmqTopicIcon;
+        rocketmqConsumerItemIcon = rocketmqConsumerIcon;
+        rocketmqBrokerItemIcon = DatabaseLogoLoader.load("/images/connect/tree-icons/broker.svg", 20, 20);
+        rocketmqMessageItemIcon = rocketmqMessageIcon;
+        kafkaTopicIcon = rocketmqTopicIcon;
+        kafkaConsumerIcon = rocketmqConsumerIcon;
+        kafkaClusterIcon = rocketmqClusterIcon;
+        kafkaTopicItemIcon = rocketmqTopicItemIcon;
+        kafkaConsumerItemIcon = rocketmqConsumerItemIcon;
+        kafkaBrokerItemIcon = rocketmqBrokerItemIcon;
+        aliyunProductIcon = DatabaseLogoLoader.load("/images/connect/tree-icons/cloud-product.svg", 20, 20);
+        aliyunEcsIcon = DatabaseLogoLoader.load("/images/connect/tree-icons/compute.svg", 20, 20);
+        aliyunDomainIcon = DatabaseLogoLoader.load("/images/connect/tree-icons/domain.svg", 20, 20);
         try { localFileIcon = new Image(getClass().getResourceAsStream("/images/connect/code.png")); } catch (Exception e) { localFileIcon = null; }
         try { mdFileIcon = new Image(getClass().getResourceAsStream("/images/connect/md.png")); } catch (Exception e) { mdFileIcon = null; }
         // SSH 服务管理子节点图标：复用现有资源
         try { sshServiceTerminalIcon = new Image(getClass().getResourceAsStream("/images/connect/shell.png")); } catch (Exception e) { sshServiceTerminalIcon = null; }
         try { sshServiceContainerIcon = new Image(getClass().getResourceAsStream("/images/connect/docker.png")); } catch (Exception e) { sshServiceContainerIcon = null; }
-        try { sshServiceServiceIcon = new Image(getClass().getResourceAsStream("/images/connect/monitor.png")); } catch (Exception e) { sshServiceServiceIcon = null; }
+        sshServiceServiceIcon = DatabaseLogoLoader.load("/images/connect/tree-icons/service.svg", 20, 20);
         try { sshServicePortIcon = createPortIconImage(); } catch (Exception e) { sshServicePortIcon = null; }
-        try { sshServiceStorageIcon = new Image(getClass().getResourceAsStream("/images/connect/database.png")); } catch (Exception e) { sshServiceStorageIcon = null; }
+        sshServiceStorageIcon = DatabaseLogoLoader.load("/images/connect/tree-icons/storage.svg", 20, 20);
         try { sshServiceFileIcon = new Image(getClass().getResourceAsStream("/images/connect/folder.png")); } catch (Exception e) { sshServiceFileIcon = null; }
         // Docker 容器节点图标：运行中彩色；已停止灰色（由彩色版程序化去色生成，保留透明度）
         try {
@@ -602,24 +602,10 @@ public class ConnectModule implements Module {
         imageView.setFitWidth(20);
         imageView.setFitHeight(20);
 
-        if (config.getType() == null) {
-            if (folderIcon != null) {
-                imageView.setImage(folderIcon);
-            }
-        } else {
-            String iconPath;
-            if (config.getType() == ConnectType.TOOL) {
-                ToolType toolType = ToolType.fromCode(config.getToolType());
-                iconPath = toolType != null
-                        ? toolType.getIconPath() : ConnectType.TOOL.getIconPath();
-            } else {
-                DatabaseProfile profile = DatabaseProfileRegistry.resolve(config);
-                iconPath = profile != null ? profile.iconPath() : config.getType().getIconPath();
-            }
-            Image icon = loadCachedConnectionIcon(iconPath);
-            if (icon != null) {
-                imageView.setImage(icon);
-            }
+        String iconPath = ConnectionIconResolver.resolve(config);
+        Image icon = loadCachedConnectionIcon(iconPath);
+        if (icon != null) {
+            imageView.setImage(icon);
         }
         return imageView;
     }
@@ -1827,8 +1813,7 @@ public class ConnectModule implements Module {
         imageView.setFitWidth(16);
         imageView.setFitHeight(16);
         try {
-            DatabaseProfile profile = DatabaseProfileRegistry.resolve(config);
-            String iconPath = profile != null ? profile.iconPath() : config.getType().getIconPath();
+            String iconPath = ConnectionIconResolver.resolve(config);
             Image icon = DatabaseLogoLoader.load(iconPath, 16, 16);
             if (icon != null) {
                 imageView.setImage(icon);
@@ -2071,7 +2056,8 @@ public class ConnectModule implements Module {
         // 图标
         if (config.getType() != null) {
             try {
-                ImageView icon = new ImageView(new Image(getClass().getResourceAsStream(config.getType().getIconPath())));
+                ImageView icon = new ImageView(DatabaseLogoLoader.load(
+                        ConnectionIconResolver.resolve(config), 16, 16));
                 icon.setFitWidth(16);
                 icon.setFitHeight(16);
                 serverTab.setGraphic(createFixedSizeGraphic(icon));

@@ -206,7 +206,8 @@ public class AliyunConnectHandler implements ConnectHandler {
         javafx.scene.control.Tab tab = new javafx.scene.control.Tab(tabTitle);
 
         try {
-            javafx.scene.image.Image aliyunIcon = new javafx.scene.image.Image(getClass().getResourceAsStream("/images/connect/aliyun.png"));
+            javafx.scene.image.Image aliyunIcon = DatabaseLogoLoader.load(
+                    ConnectType.ALIYUN.getIconPath(), 18, 18);
             javafx.scene.image.ImageView tabIconView = new javafx.scene.image.ImageView(aliyunIcon);
             tabIconView.setFitWidth(18);
             tabIconView.setFitHeight(18);

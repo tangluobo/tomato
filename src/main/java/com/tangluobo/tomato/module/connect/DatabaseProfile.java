@@ -35,7 +35,7 @@ public record DatabaseProfile(
                     + "?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true"
                     + "&useLocalSessionState=true&cacheDefaultDatabase=true&cacheServerConfiguration=true"
                     + "&maintainTimeStats=false&prepStmtCacheEnabled=true&prepStmtCacheSize=250"
-                    + "&useServerPrepStmts=true&rewriteBatchedStatements=true"
+                    + "&useServerPrepStmts=true&useCursorFetch=true&rewriteBatchedStatements=true"
                     + "&tinyInt1isBit=false&connectTimeout=5000&socketTimeout=30000";
             case MARIADB -> "jdbc:mariadb://" + host + ":" + port + "/" + db
                     + "?useSsl=false&connectTimeout=5000&socketTimeout=30000"

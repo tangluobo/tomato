@@ -2,6 +2,8 @@ package com.tangluobo.tomato.module.connect.dialog;
 
 import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.ConnectionIconResolver;
+import com.tangluobo.tomato.module.connect.DatabaseLogoLoader;
 import com.tangluobo.tomato.module.connect.service.DatabaseService;
 import com.tangluobo.tomato.module.connect.view.SqlEditorPane;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
@@ -559,16 +561,8 @@ public class CopyTableDialog {
     }
 
     private void updateDbIcon(ConnectionConfig cfg, ImageView iv) {
-        String iconPath = "/images/connect/db.png";
-        if (cfg != null && cfg.getType() != null) {
-            if (cfg.getType() == ConnectType.MYSQL) iconPath = "/images/connect/mysql.png";
-            else if (cfg.getType() == ConnectType.POSTGRESQL) iconPath = "/images/connect/postgresql.png";
-            else if (cfg.getType() == ConnectType.ORACLE) iconPath = "/images/connect/oracle.png";
-        }
-        try {
-            Image img = new Image(getClass().getResourceAsStream(iconPath));
-            if (img != null) iv.setImage(img);
-        } catch (Exception ignore) {}
+        Image image = DatabaseLogoLoader.load(ConnectionIconResolver.resolve(cfg), 16, 16);
+        if (image != null) iv.setImage(image);
     }
 
     /** 显示选项弹窗：复制结构、复制数据、目标已存在时删除 */

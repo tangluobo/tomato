@@ -1,6 +1,7 @@
 package com.tangluobo.tomato.module.tools;
 
 import com.tangluobo.tomato.module.tools.server.*;
+import com.tangluobo.tomato.module.connect.DatabaseLogoLoader;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -13,7 +14,6 @@ import javafx.scene.Cursor;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.CheckBoxTableCell;
-import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.*;
@@ -162,7 +162,7 @@ public class ServerManagerPane extends VBox {
         typeIcon.setFitWidth(24);
         typeIcon.setFitHeight(24);
         try {
-            typeIcon.setImage(new Image(getClass().getResourceAsStream(currentType.getIconPath())));
+            typeIcon.setImage(DatabaseLogoLoader.load(currentType.getIconPath(), 24, 24));
         } catch (Exception ignored) {}
 
         Label titleText = new Label(currentType.getDisplayName() + " 服务器");

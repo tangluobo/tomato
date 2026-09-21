@@ -4,9 +4,9 @@ package com.tangluobo.tomato.module.tools.server;
  * 服务器类型枚举
  */
 public enum ServerType {
-    HTTP("HTTP", "HTTP文件服务器", 8080, "/images/connect/code.png"),
-    FTP("FTP", "FTP文件服务器", 2121, "/images/connect/ftp.png"),
-    SMB("SMB", "SMB文件共享服务器", 445, "/images/connect/server.png");
+    HTTP("HTTP", "HTTP文件服务器", 8080, "/images/connect/connection-icons/http-server.svg"),
+    FTP("FTP", "FTP文件服务器", 2121, "/images/connect/connection-icons/ftp-server.svg"),
+    SMB("SMB", "SMB文件共享服务器", 445, "/images/connect/connection-icons/smb-server.svg");
 
     private final String code;
     private final String displayName;

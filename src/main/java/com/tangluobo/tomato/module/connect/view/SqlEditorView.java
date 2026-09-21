@@ -137,27 +137,9 @@ public class SqlEditorView extends BorderPane {
             }
         });
 
-        Image connectionIcon = new Image(getClass().getResourceAsStream("/images/connect/mysql_open.png"));
-        if (connectionIcon != null) {
-            connectionCombo.setCellFactory(lv -> new ListCell<>() {
-                @Override
-                protected void updateItem(ConnectionConfig item, boolean empty) {
-                    super.updateItem(item, empty);
-                    if (empty || item == null) {
-                        setText("");
-                        setGraphic(null);
-                    } else {
-                        setText(item.getName());
-                        ImageView cellIcon = new ImageView(connectionIcon);
-                        cellIcon.setFitWidth(16);
-                        cellIcon.setFitHeight(16);
-                        setGraphic(cellIcon);
-                        setContentDisplay(ContentDisplay.LEFT);
-                        setGraphicTextGap(4);
-                    }
-                }
-            });
-        }
+        // 每个连接按实际产品显示 Logo，不能把兼容 PostgreSQL/MySQL 的产品都画成同一个图标。
+        connectionCombo.setCellFactory(lv -> createConnectionListCell());
+        connectionCombo.setButtonCell(createConnectionListCell());
 
         if (connections != null) connectionCombo.getItems().addAll(connections);
         if (initialConfig != null) connectionCombo.setValue(initialConfig);
@@ -295,6 +277,33 @@ public class SqlEditorView extends BorderPane {
         }
 
         return button;
+    }
+
+    private ListCell<ConnectionConfig> createConnectionListCell() {
+        return new ListCell<>() {
+            @Override
+            protected void updateItem(ConnectionConfig item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText("");
+                    setGraphic(null);
+                    return;
+                }
+
+                setText(item.getName());
+                Image icon = DatabaseLogoLoader.load(ConnectionIconResolver.resolve(item), 16, 16);
+                if (icon != null) {
+                    ImageView cellIcon = new ImageView(icon);
+                    cellIcon.setFitWidth(16);
+                    cellIcon.setFitHeight(16);
+                    setGraphic(cellIcon);
+                } else {
+                    setGraphic(null);
+                }
+                setContentDisplay(ContentDisplay.LEFT);
+                setGraphicTextGap(4);
+            }
+        };
     }
 
     private SplitMenuButton createAiSqlButton() {

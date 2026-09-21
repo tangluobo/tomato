@@ -1,6 +1,7 @@
 package com.tangluobo.tomato.module.connect.dialog;
 
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.ConnectionIconResolver;
 import com.tangluobo.tomato.module.connect.DatabaseLogoLoader;
 import com.tangluobo.tomato.utils.DialogPositionUtil;
 import javafx.geometry.Insets;
@@ -141,8 +142,7 @@ public class ImportConnectionDialog {
         ImageView icon = new ImageView();
         icon.setFitWidth(16);
         icon.setFitHeight(16);
-        String path = config.getType() == null
-                ? "/images/connect/folder.png" : config.getType().getIconPath();
+        String path = ConnectionIconResolver.resolve(config);
         icon.setImage(DatabaseLogoLoader.load(path, 16, 16));
         return icon;
     }

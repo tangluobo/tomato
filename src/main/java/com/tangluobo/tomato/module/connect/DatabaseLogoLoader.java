@@ -11,7 +11,7 @@ import java.io.InputStream;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Loads PNG/JPEG resources and renders bundled SVG database logos for JavaFX. */
+/** Loads raster resources and renders bundled SVG connection/tool logos for JavaFX. */
 public final class DatabaseLogoLoader {
     private static final Map<String, Image> CACHE = new ConcurrentHashMap<>();
 

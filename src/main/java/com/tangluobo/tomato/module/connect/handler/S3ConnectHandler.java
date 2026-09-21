@@ -3,6 +3,8 @@ package com.tangluobo.tomato.module.connect.handler;
 import com.tangluobo.tomato.module.connect.ConnectModule;
 import com.tangluobo.tomato.module.connect.ConnectType;
 import com.tangluobo.tomato.module.connect.ConnectionConfig;
+import com.tangluobo.tomato.module.connect.ConnectionIconResolver;
+import com.tangluobo.tomato.module.connect.DatabaseLogoLoader;
 import com.tangluobo.tomato.module.connect.S3FileBrowserPane;
 import com.tangluobo.tomato.module.connect.dialog.PasswordPromptDialog;
 import com.tangluobo.tomato.module.connect.dialog.SessionConfigDialog;
@@ -52,7 +54,7 @@ public class S3ConnectHandler implements ConnectHandler {
         tab.setUserData(config.getId());
 
         try {
-            Image tabIcon = new Image(getClass().getResourceAsStream(config.getType().getIconPath()));
+            Image tabIcon = DatabaseLogoLoader.load(ConnectionIconResolver.resolve(config), 16, 16);
             if (tabIcon != null) {
                 ImageView tabIconView = new ImageView(tabIcon);
                 tabIconView.setFitWidth(16);
