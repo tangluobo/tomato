@@ -15,6 +15,8 @@ public class TerminalEmulator {
     private char[][] buffer;
     // 字符属性（前景色、背景色等）
     private int[][] attrs;
+    // 每个屏幕行是否通过终端自动折行继续到下一行；false 表示真实换行/独立行。
+    private boolean[] lineWrapped;
     // 缓冲区大小
     private int cols;
     private int rows;
@@ -46,6 +48,7 @@ public class TerminalEmulator {
     // 交替屏幕缓冲区
     private char[][] altBuffer;
     private int[][] altAttrs;
+    private boolean[] altLineWrapped;
     private int altCursorX = 0;
     private int altCursorY = 0;
     private int altSavedCursorX = 0;
@@ -104,11 +107,15 @@ public class TerminalEmulator {
     private java.util.LinkedList<int[]> scrollbackAttrs = new java.util.LinkedList<>();
     private java.util.LinkedList<int[]> scrollbackFgTc = new java.util.LinkedList<>();
     private java.util.LinkedList<int[]> scrollbackBgTc = new java.util.LinkedList<>();
+    private java.util.LinkedList<Boolean> scrollbackWrapped = new java.util.LinkedList<>();
     private int maxScrollback = DEFAULT_SCROLLBACK;
     // 用户滚动偏移（0=底部，>0=向上回看）
     private int scrollOffset = 0;
+    // 用户点击/回看输出后暂停跟随；新输出到达时通过增加 scrollOffset 固定当前视口。
+    private boolean outputScrollingPaused = false;
     // 切换到交替缓冲区时保存主缓冲区的滚动偏移
     private int mainBufferScrollOffset = 0;
+    private boolean mainBufferOutputScrollingPaused = false;
 
     // ANSI解析状态
     private ParseState parseState = ParseState.NORMAL;
@@ -205,6 +212,7 @@ public class TerminalEmulator {
         this.rows = rows;
         this.buffer = new char[rows][cols];
         this.attrs = new int[rows][cols];
+        this.lineWrapped = new boolean[rows];
         this.fgTrueColor = new int[rows * cols];
         this.bgTrueColor = new int[rows * cols];
         this.altFgTrueColor = new int[rows * cols];
@@ -220,6 +228,7 @@ public class TerminalEmulator {
     private void initAltBuffer() {
         altBuffer = new char[rows][cols];
         altAttrs = new int[rows][cols];
+        altLineWrapped = new boolean[rows];
         clearBuffer(altBuffer, altAttrs);
     }
 
@@ -414,6 +423,9 @@ public class TerminalEmulator {
         while (scrollbackLines.size() > maxScrollback) {
             scrollbackLines.removeFirst();
             scrollbackAttrs.removeFirst();
+            scrollbackFgTc.removeFirst();
+            scrollbackBgTc.removeFirst();
+            scrollbackWrapped.removeFirst();
         }
         if (scrollOffset > scrollbackLines.size()) {
             scrollOffset = scrollbackLines.size();
@@ -422,6 +434,19 @@ public class TerminalEmulator {
 
     public int getScrollOffset() {
         return scrollOffset;
+    }
+
+    /**
+     * 暂停跟随最新输出。暂停瞬间不移动视口，后续输出滚屏时才增加偏移量。
+     */
+    public void pauseOutputScrolling() {
+        if (!usingAltBuffer) {
+            outputScrollingPaused = true;
+        }
+    }
+
+    public boolean isOutputScrollingPaused() {
+        return outputScrollingPaused;
     }
 
     /**
@@ -751,6 +776,8 @@ public class TerminalEmulator {
      */
     public void setScrollOffset(int offset) {
         this.scrollOffset = Math.max(0, Math.min(offset, scrollbackLines.size()));
+        // 明确滚动到底部即恢复跟随；回看历史则保持暂停。
+        this.outputScrollingPaused = this.scrollOffset > 0;
     }
 
     /**
@@ -779,6 +806,68 @@ public class TerminalEmulator {
     }
 
     /**
+     * 指定绝对行是否因终端自动折行而继续到下一行。
+     * 复制时软折行不应产生换行符，远端实际发送的 LF 才应保留。
+     */
+    public boolean isLineWrapped(int absoluteRow) {
+        int scrollbackSize = usingAltBuffer ? 0 : scrollbackLines.size();
+        if (absoluteRow < 0) return false;
+        if (absoluteRow < scrollbackSize) {
+            return absoluteRow < scrollbackWrapped.size() && scrollbackWrapped.get(absoluteRow);
+        }
+        int bufferRow = absoluteRow - scrollbackSize;
+        return bufferRow >= 0 && bufferRow < lineWrapped.length && lineWrapped[bufferRow];
+    }
+
+    /** 提取终端文本范围，软折行直接拼接，真实换行保留为 \n。 */
+    String getTextRange(int startRow, int startCol, int endRow, int endCol) {
+        StringBuilder text = new StringBuilder();
+        for (int row = startRow; row <= endRow; row++) {
+            int lineStart = row == startRow ? startCol : 0;
+            int lineEnd = row == endRow ? endCol : cols - 1;
+            if (lineStart > 0 && getCharAtAbsolute(lineStart, row) == '\0') {
+                lineStart--;
+            }
+            char endChar = getCharAtAbsolute(lineEnd, row);
+            if (endChar != '\0' && isWideChar(endChar) && lineEnd + 1 < cols) {
+                lineEnd++;
+            }
+
+            int lineTextStart = text.length();
+            for (int col = lineStart; col <= lineEnd; col++) {
+                char ch = getCharAtAbsolute(col, row);
+                if (ch != '\0') {
+                    text.append(ch);
+                }
+            }
+
+            boolean softWrapped = row < endRow && isLineWrapped(row);
+            if (!softWrapped) {
+                int trimmedEnd = text.length();
+                while (trimmedEnd > lineTextStart && text.charAt(trimmedEnd - 1) == ' ') {
+                    trimmedEnd--;
+                }
+                text.delete(trimmedEnd, text.length());
+            }
+            if (row < endRow && !softWrapped) {
+                text.append('\n');
+            }
+        }
+        return text.toString();
+    }
+
+    private char getCharAtAbsolute(int col, int absoluteRow) {
+        if (col < 0 || col >= cols || absoluteRow < 0) return ' ';
+        int scrollbackSize = usingAltBuffer ? 0 : scrollbackLines.size();
+        if (absoluteRow < scrollbackSize) {
+            char[] line = scrollbackLines.get(absoluteRow);
+            return col < line.length ? line[col] : ' ';
+        }
+        int bufferRow = absoluteRow - scrollbackSize;
+        return bufferRow >= 0 && bufferRow < rows ? buffer[bufferRow][col] : ' ';
+    }
+
+    /**
      * 获取滚动区域（0-based）
      */
     private int getScrollTop() {
@@ -795,12 +884,16 @@ public class TerminalEmulator {
     public void resize(int newCols, int newRows) {
         char[][] newBuffer = new char[newRows][newCols];
         int[][] newAttrs = new int[newRows][newCols];
+        boolean[] newLineWrapped = new boolean[newRows];
         int[] newFgTc = new int[newRows * newCols];
         int[] newBgTc = new int[newRows * newCols];
         java.util.Arrays.fill(newFgTc, -1);
         java.util.Arrays.fill(newBgTc, -1);
 
         for (int y = 0; y < newRows; y++) {
+            if (y < rows) {
+                newLineWrapped[y] = lineWrapped[y];
+            }
             for (int x = 0; x < newCols; x++) {
                 int newIdx = y * newCols + x;
                 if (y < rows && x < cols) {
@@ -819,6 +912,7 @@ public class TerminalEmulator {
         // 交替缓冲区也需要调整
         int[] newAltFgTc = new int[newRows * newCols];
         int[] newAltBgTc = new int[newRows * newCols];
+        boolean[] newAltLineWrapped = new boolean[newRows];
         java.util.Arrays.fill(newAltFgTc, -1);
         java.util.Arrays.fill(newAltBgTc, -1);
 
@@ -826,6 +920,9 @@ public class TerminalEmulator {
             char[][] newAltBuffer = new char[newRows][newCols];
             int[][] newAltAttrs = new int[newRows][newCols];
             for (int y = 0; y < newRows; y++) {
+                if (y < rows) {
+                    newAltLineWrapped[y] = altLineWrapped[y];
+                }
                 for (int x = 0; x < newCols; x++) {
                     int newIdx = y * newCols + x;
                     if (y < rows && x < cols) {
@@ -858,10 +955,12 @@ public class TerminalEmulator {
 
         this.buffer = newBuffer;
         this.attrs = newAttrs;
+        this.lineWrapped = newLineWrapped;
         this.fgTrueColor = newFgTc;
         this.bgTrueColor = newBgTc;
         this.altFgTrueColor = newAltFgTc;
         this.altBgTrueColor = newAltBgTc;
+        this.altLineWrapped = newAltLineWrapped;
         this.cols = newCols;
         this.rows = newRows;
         if (cursorX >= newCols) cursorX = newCols - 1;
@@ -991,6 +1090,8 @@ public class TerminalEmulator {
             if (shouldSuppressScreenModify()) {
                 debugLogCursorState("SUPPRESS \\n (LF)");
             } else {
+                // 远端明确发送 LF，这是硬换行，不是终端宽度导致的软折行。
+                lineWrapped[cursorY] = false;
                 cursorY++;
                 if (cursorY > getScrollBottom()) {
                     cursorY = getScrollBottom();
@@ -1018,6 +1119,7 @@ public class TerminalEmulator {
 
             if (cursorX + charWidth > cols) {
                 if (autoWrap) {
+                    lineWrapped[cursorY] = true;
                     cursorX = 0;
                     cursorY++;
                     if (cursorY > getScrollBottom()) {
@@ -1107,6 +1209,7 @@ public class TerminalEmulator {
             if (shouldSuppressScreenModify()) {
                 debugLogCursorState("SUPPRESS ESC D (IND)");
             } else {
+                lineWrapped[cursorY] = false;
                 cursorY++;
                 if (cursorY > getScrollBottom()) {
                     cursorY = getScrollBottom();
@@ -1554,15 +1657,18 @@ public class TerminalEmulator {
         // 保存当前缓冲区（主缓冲区内容）
         char[][] tmpBuf = buffer;
         int[][] tmpAttrs = attrs;
+        boolean[] tmpLineWrapped = lineWrapped;
         int[] tmpFgTc = fgTrueColor;
         int[] tmpBgTc = bgTrueColor;
         // 切换到交替缓冲区
         buffer = altBuffer;
         attrs = altAttrs;
+        lineWrapped = altLineWrapped;
         fgTrueColor = altFgTrueColor;
         bgTrueColor = altBgTrueColor;
         altBuffer = tmpBuf;
         altAttrs = tmpAttrs;
+        altLineWrapped = tmpLineWrapped;
         altFgTrueColor = tmpFgTc;
         altBgTrueColor = tmpBgTc;
         // 保存DECSC光标位置（ESC 7/8使用的savedCursorX/Y）
@@ -1575,9 +1681,12 @@ public class TerminalEmulator {
         }
         // 保存主缓冲区的滚动偏移，重置为0
         mainBufferScrollOffset = scrollOffset;
+        mainBufferOutputScrollingPaused = outputScrollingPaused;
         scrollOffset = 0;
+        outputScrollingPaused = false;
         // 清除交替缓冲区
         clearBuffer(buffer, attrs);
+        java.util.Arrays.fill(lineWrapped, false);
         cursorX = 0;
         cursorY = 0;
         usingAltBuffer = true;
@@ -1594,15 +1703,18 @@ public class TerminalEmulator {
         // 保存交替缓冲区内容
         char[][] tmpBuf = buffer;
         int[][] tmpAttrs = attrs;
+        boolean[] tmpLineWrapped = lineWrapped;
         int[] tmpFgTc = fgTrueColor;
         int[] tmpBgTc = bgTrueColor;
         // 切回主缓冲区
         buffer = altBuffer;
         attrs = altAttrs;
+        lineWrapped = altLineWrapped;
         fgTrueColor = altFgTrueColor;
         bgTrueColor = altBgTrueColor;
         altBuffer = tmpBuf;
         altAttrs = tmpAttrs;
+        altLineWrapped = tmpLineWrapped;
         altFgTrueColor = tmpFgTc;
         altBgTrueColor = tmpBgTc;
 
@@ -1636,7 +1748,9 @@ public class TerminalEmulator {
 
         // 恢复主缓冲区的滚动偏移
         scrollOffset = mainBufferScrollOffset;
+        outputScrollingPaused = mainBufferOutputScrollingPaused;
         mainBufferScrollOffset = 0;
+        mainBufferOutputScrollingPaused = false;
         usingAltBuffer = false;
         autoAltBuffer = false;
         scrollTop = 0;
@@ -1715,7 +1829,9 @@ public class TerminalEmulator {
                         fgTrueColor[idx] = -1;
                         bgTrueColor[idx] = -1;
                     }
+                    lineWrapped[y] = false;
                 }
+                lineWrapped[cursorY] = false;
                 break;
             case 1: // 从屏幕开头到光标
                 for (int y = 0; y < cursorY; y++) {
@@ -1726,6 +1842,7 @@ public class TerminalEmulator {
                         fgTrueColor[idx] = -1;
                         bgTrueColor[idx] = -1;
                     }
+                    lineWrapped[y] = false;
                 }
                 for (int x = 0; x <= cursorX; x++) {
                     buffer[cursorY][x] = ' ';
@@ -1737,6 +1854,7 @@ public class TerminalEmulator {
                 break;
             case 2: // 整个屏幕
                 clearBuffer(buffer, attrs);
+                java.util.Arrays.fill(lineWrapped, false);
                 break;
             case 3: // 清除回滚缓冲（我们没有回滚缓冲，忽略）
                 break;
@@ -1753,6 +1871,7 @@ public class TerminalEmulator {
                     fgTrueColor[idx] = -1;
                     bgTrueColor[idx] = -1;
                 }
+                lineWrapped[cursorY] = false;
                 break;
             case 1: // 从行首到光标
                 for (int x = 0; x <= cursorX; x++) {
@@ -1771,6 +1890,7 @@ public class TerminalEmulator {
                     fgTrueColor[idx] = -1;
                     bgTrueColor[idx] = -1;
                 }
+                lineWrapped[cursorY] = false;
                 break;
         }
     }
@@ -1892,6 +2012,7 @@ public class TerminalEmulator {
     private void scrollUp(int n) {
         int top = getScrollTop();
         int bottom = getScrollBottom();
+        int scrollbackLinesAdded = 0;
         for (int i = 0; i < n; i++) {
             if (shellInputAnchorValid && shellInputAnchorY >= top
                     && shellInputAnchorY <= bottom) {
@@ -1912,11 +2033,14 @@ public class TerminalEmulator {
                 scrollbackAttrs.addLast(savedAttr);
                 scrollbackFgTc.addLast(savedFgTc);
                 scrollbackBgTc.addLast(savedBgTc);
+                scrollbackWrapped.addLast(lineWrapped[0]);
+                scrollbackLinesAdded++;
                 while (scrollbackLines.size() > maxScrollback) {
                     scrollbackLines.removeFirst();
                     scrollbackAttrs.removeFirst();
                     scrollbackFgTc.removeFirst();
                     scrollbackBgTc.removeFirst();
+                    scrollbackWrapped.removeFirst();
                 }
             }
             for (int y = top; y < bottom; y++) {
@@ -1926,6 +2050,7 @@ public class TerminalEmulator {
                 int dstIdx = y * cols;
                 System.arraycopy(fgTrueColor, srcIdx, fgTrueColor, dstIdx, cols);
                 System.arraycopy(bgTrueColor, srcIdx, bgTrueColor, dstIdx, cols);
+                lineWrapped[y] = lineWrapped[y + 1];
             }
             for (int x = 0; x < cols; x++) {
                 buffer[bottom][x] = ' ';
@@ -1934,9 +2059,10 @@ public class TerminalEmulator {
                 fgTrueColor[idx] = -1;
                 bgTrueColor[idx] = -1;
             }
+            lineWrapped[bottom] = false;
         }
-        if (scrollOffset > 0) {
-            scrollOffset = Math.min(scrollOffset + n, scrollbackLines.size());
+        if (scrollbackLinesAdded > 0 && (outputScrollingPaused || scrollOffset > 0)) {
+            scrollOffset = Math.min(scrollOffset + scrollbackLinesAdded, scrollbackLines.size());
         }
     }
 
@@ -1958,6 +2084,7 @@ public class TerminalEmulator {
                 int dstIdx = y * cols;
                 System.arraycopy(fgTrueColor, srcIdx, fgTrueColor, dstIdx, cols);
                 System.arraycopy(bgTrueColor, srcIdx, bgTrueColor, dstIdx, cols);
+                lineWrapped[y] = lineWrapped[y - 1];
             }
             for (int x = 0; x < cols; x++) {
                 buffer[top][x] = ' ';
@@ -1966,6 +2093,7 @@ public class TerminalEmulator {
                 fgTrueColor[idx] = -1;
                 bgTrueColor[idx] = -1;
             }
+            lineWrapped[top] = false;
         }
     }
 
@@ -1980,6 +2108,7 @@ public class TerminalEmulator {
                     int dstIdx = y * cols;
                     System.arraycopy(fgTrueColor, srcIdx, fgTrueColor, dstIdx, cols);
                     System.arraycopy(bgTrueColor, srcIdx, bgTrueColor, dstIdx, cols);
+                    lineWrapped[y] = lineWrapped[y - 1];
                 }
                 for (int x = 0; x < cols; x++) {
                     buffer[cursorY][x] = ' ';
@@ -1988,6 +2117,7 @@ public class TerminalEmulator {
                     fgTrueColor[idx] = -1;
                     bgTrueColor[idx] = -1;
                 }
+                lineWrapped[cursorY] = false;
             }
         }
     }
@@ -2002,6 +2132,7 @@ public class TerminalEmulator {
                 int dstIdx = y * cols;
                 System.arraycopy(fgTrueColor, srcIdx, fgTrueColor, dstIdx, cols);
                 System.arraycopy(bgTrueColor, srcIdx, bgTrueColor, dstIdx, cols);
+                lineWrapped[y] = lineWrapped[y + 1];
             }
             for (int x = 0; x < cols; x++) {
                 buffer[bottom][x] = ' ';
@@ -2010,6 +2141,7 @@ public class TerminalEmulator {
                 fgTrueColor[idx] = -1;
                 bgTrueColor[idx] = -1;
             }
+            lineWrapped[bottom] = false;
         }
     }
 
@@ -2065,6 +2197,7 @@ public class TerminalEmulator {
             switchToMainBuffer();
         }
         clearBuffer(buffer, attrs);
+        java.util.Arrays.fill(lineWrapped, false);
         cursorX = 0;
         cursorY = 0;
         currentFg = 7;

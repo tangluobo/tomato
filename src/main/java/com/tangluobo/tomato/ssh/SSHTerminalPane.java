@@ -950,7 +950,7 @@ public class SSHTerminalPane extends BorderPane {
                 sendTerminalInput(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 terminalView.clearSelection();
                 // 粘贴后自动滚动到底部
-                if (!emulator.isUsingAltBuffer() && emulator.getScrollOffset() != 0) {
+                if (!emulator.isUsingAltBuffer()) {
                     terminalView.setScrollOffset(0);
                 }
             }

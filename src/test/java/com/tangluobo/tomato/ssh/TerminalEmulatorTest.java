@@ -11,6 +11,51 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class TerminalEmulatorTest {
 
     @Test
+    void copiedTextJoinsSoftWrappedRowsButPreservesRealNewlines() {
+        TerminalEmulator softWrapped = new TerminalEmulator(5, 3);
+        softWrapped.processString("abcdefgh");
+
+        assertTrue(softWrapped.isLineWrapped(0));
+        assertEquals("abcdefgh", softWrapped.getTextRange(0, 0, 1, 2));
+
+        TerminalEmulator hardWrapped = new TerminalEmulator(5, 3);
+        hardWrapped.processString("abc\r\ndef");
+
+        assertFalse(hardWrapped.isLineWrapped(0));
+        assertEquals("abc\ndef", hardWrapped.getTextRange(0, 0, 1, 2));
+    }
+
+    @Test
+    void softWrapMetadataFollowsLinesIntoScrollback() {
+        TerminalEmulator emulator = new TerminalEmulator(5, 2);
+        emulator.processString("abcdef\r\n");
+
+        assertEquals(1, emulator.getScrollbackSize());
+        assertTrue(emulator.isLineWrapped(0));
+        assertFalse(emulator.isLineWrapped(1));
+        assertEquals("abcdef", emulator.getTextRange(0, 0, 1, 0));
+    }
+
+    @Test
+    void pausedOutputKeepsViewportAnchoredUntilExplicitlyScrolledToBottom() {
+        TerminalEmulator emulator = new TerminalEmulator(20, 3);
+        emulator.processString("one\r\ntwo\r\nthree\r\n");
+        assertEquals(0, emulator.getScrollOffset());
+
+        emulator.pauseOutputScrolling();
+        assertTrue(emulator.isOutputScrollingPaused());
+        assertEquals(0, emulator.getScrollOffset(), "clicking must not move the current viewport");
+
+        emulator.processString("four\r\nfive\r\n");
+        assertEquals(2, emulator.getScrollOffset(), "new tail output must be absorbed below the frozen viewport");
+
+        emulator.setScrollOffset(0);
+        assertFalse(emulator.isOutputScrollingPaused());
+        emulator.processString("six\r\n");
+        assertEquals(0, emulator.getScrollOffset(), "scrolling to the bottom resumes following output");
+    }
+
+    @Test
     void ctrlAAfterHistoryUsesTheDisplayedCommandStartAcrossOutputChunks() {
         TerminalEmulator emulator = new TerminalEmulator(120, 24);
         emulator.processString("[user@host ~]$ ");

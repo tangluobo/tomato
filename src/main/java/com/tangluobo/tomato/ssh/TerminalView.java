@@ -68,6 +68,12 @@ public class TerminalView extends Canvas {
     private int selectionEndCol = -1;
     private int selectionEndRow = -1;
     private boolean isSelecting = false;
+    // 鼠标按下的原始单元格，以及该单元格所属字符的完整列范围。
+    // 中文等宽字符占两列，选择端点必须覆盖主单元格和 \0 占位单元格。
+    private int selectionPressCol = -1;
+    private int selectionPressRow = -1;
+    private int selectionAnchorStartCol = -1;
+    private int selectionAnchorEndCol = -1;
     // 记录鼠标按下前是否已有选择，用于避免单击时不必要重绘
     private boolean hadSelectionBeforePress = false;
 
@@ -236,6 +242,10 @@ public class TerminalView extends Canvas {
      * 触发自动滚动到底部（当用户有实际输入时调用）
      */
     private void fireAutoScroll() {
+        if (!emulator.isUsingAltBuffer()
+                && (emulator.getScrollOffset() != 0 || emulator.isOutputScrollingPaused())) {
+            setScrollOffset(0);
+        }
         if (autoScrollHandler != null) {
             autoScrollHandler.onAutoScroll();
         }
@@ -627,12 +637,17 @@ public class TerminalView extends Canvas {
                 if (screenRow < 0) continue; // 不在可见范围，跳过
                 int lineStart = (absRow == startRow) ? startCol : 0;
                 int lineEnd = (absRow == endRow) ? endCol : cols - 1;
+                // 选择语义以“字符”为单位，而不是以底层终端单元格为单位。
+                // 即使其他选择入口给出了宽字符的任意半格，这里也强制扩展为完整字形。
+                lineStart = characterStartCol(lineStart, absRow);
+                lineEnd = characterEndCol(lineEnd, absRow);
                 // 限制高亮范围不超过行的实际内容末尾，不延伸到行尾填充空格
                 int contentEnd = -1;
                 for (int c = cols - 1; c >= 0; c--) {
                     char ch = getCharAtAbsolute(c, absRow);
                     if (ch != ' ' && ch != '\0') {
-                        contentEnd = c;
+                        // 宽字符的 \0 占位格也是字形的一部分；否则行尾中文只会高亮左半边。
+                        contentEnd = emulator.isWideChar(ch) && c + 1 < cols ? c + 1 : c;
                         break;
                     }
                 }
@@ -856,16 +871,62 @@ public class TerminalView extends Canvas {
         return emulator.isWideChar(c);
     }
 
+    /** 返回鼠标所在字符的第一列；宽字符右半格会归一化到左半格。 */
+    private int characterStartCol(int col, int absoluteRow) {
+        if (col > 0 && getCharAtAbsolute(col, absoluteRow) == '\0') {
+            return col - 1;
+        }
+        return col;
+    }
+
+    /** 返回鼠标所在字符的最后一列；宽字符始终覆盖完整的两个单元格。 */
+    private int characterEndCol(int col, int absoluteRow) {
+        int startCol = characterStartCol(col, absoluteRow);
+        if (isWideCharAtAbsolute(startCol, absoluteRow)
+                && startCol + 1 < emulator.getCols()) {
+            return startCol + 1;
+        }
+        return startCol;
+    }
+
+    /**
+     * 更新拖选端点。根据拖动方向使用字符的左/右边界，确保中文不会只高亮半个字。
+     */
+    private void updateSelectionEnd(int rawCol, int absoluteRow) {
+        int targetStartCol = characterStartCol(rawCol, absoluteRow);
+        int targetEndCol = characterEndCol(rawCol, absoluteRow);
+        boolean forward = absoluteRow > selectionPressRow
+                || (absoluteRow == selectionPressRow && rawCol >= selectionPressCol);
+        if (forward) {
+            selectionStartRow = selectionPressRow;
+            selectionStartCol = selectionAnchorStartCol;
+            selectionEndRow = absoluteRow;
+            selectionEndCol = targetEndCol;
+        } else {
+            selectionStartRow = selectionPressRow;
+            selectionStartCol = selectionAnchorEndCol;
+            selectionEndRow = absoluteRow;
+            selectionEndCol = targetStartCol;
+        }
+    }
+
     private void handleMousePressed(MouseEvent e) {
         requestFocus();
         if (e.getButton() == MouseButton.PRIMARY) {
+            // SecureCRT 风格：按下鼠标立即暂停跟随，但不让当前画面跳动。
+            // 后续 tail -f 输出会增加 scrollOffset，从而固定选择时看到的文本。
+            emulator.pauseOutputScrolling();
             // 双击/三击时不在此处重置选择，由handleMouseClicked处理
             if (e.getClickCount() > 1) return;
             isSelecting = true;
             // 记录按下前是否有选择，用于决定是否需要重绘清除旧高亮
             hadSelectionBeforePress = hasSelection();
-            selectionStartCol = mouseToCol(e.getX());
-            selectionStartRow = screenRowToAbsolute(mouseToRow(e.getY()));
+            selectionPressCol = mouseToCol(e.getX());
+            selectionPressRow = screenRowToAbsolute(mouseToRow(e.getY()));
+            selectionAnchorStartCol = characterStartCol(selectionPressCol, selectionPressRow);
+            selectionAnchorEndCol = characterEndCol(selectionPressCol, selectionPressRow);
+            selectionStartCol = selectionAnchorStartCol;
+            selectionStartRow = selectionPressRow;
             selectionEndCol = selectionStartCol;
             selectionEndRow = selectionStartRow;
             // 仅当之前有选择高亮时才需要重绘清除；无选择时单击不触发渲染
@@ -874,9 +935,10 @@ public class TerminalView extends Canvas {
     }
 
     private void handleMouseDragged(MouseEvent e) {
-        if (isSelecting && e.getButton() == MouseButton.PRIMARY) {
-            selectionEndCol = mouseToCol(e.getX());
-            selectionEndRow = screenRowToAbsolute(mouseToRow(e.getY()));
+        if (isSelecting && e.isPrimaryButtonDown()) {
+            int rawCol = mouseToCol(e.getX());
+            int absoluteRow = screenRowToAbsolute(mouseToRow(e.getY()));
+            updateSelectionEnd(rawCol, absoluteRow);
             // 节流渲染：限制重绘频率为~60fps，避免鼠标高频移动导致卡顿
             scheduleDragRender();
         }
@@ -906,11 +968,12 @@ public class TerminalView extends Canvas {
 
     private void handleMouseReleased(MouseEvent e) {
         if (isSelecting && e.getButton() == MouseButton.PRIMARY) {
-            selectionEndCol = mouseToCol(e.getX());
-            selectionEndRow = screenRowToAbsolute(mouseToRow(e.getY()));
+            int rawCol = mouseToCol(e.getX());
+            int absoluteRow = screenRowToAbsolute(mouseToRow(e.getY()));
+            updateSelectionEnd(rawCol, absoluteRow);
             isSelecting = false;
             // 如果起点和终点相同，视为单击，清除选择
-            if (selectionStartCol == selectionEndCol && selectionStartRow == selectionEndRow) {
+            if (selectionPressCol == rawCol && selectionPressRow == absoluteRow) {
                 // 单击：若之前无选择则mousePressed未渲染，此处也无需渲染；
                 // 若之前有选择则mousePressed已渲染清除旧高亮，此处只需重置坐标
                 selectionStartCol = -1;
@@ -1007,9 +1070,7 @@ public class TerminalView extends Canvas {
         }
 
         if (newOffset != oldOffset) {
-            emulator.setScrollOffset(newOffset);
-            render();
-            notifyScrollbar();
+            setScrollOffset(newOffset);
         }
     }
 
@@ -1046,7 +1107,6 @@ public class TerminalView extends Canvas {
     public String getSelectedText() {
         if (!hasSelection()) return "";
 
-        int cols = emulator.getCols();
         int startRow, endRow, startCol, endCol;
 
         if (selectionStartRow < selectionEndRow ||
@@ -1062,27 +1122,7 @@ public class TerminalView extends Canvas {
             endCol = selectionStartCol;
         }
 
-        StringBuilder sb = new StringBuilder();
-        for (int row = startRow; row <= endRow; row++) {
-            int lineStart = (row == startRow) ? startCol : 0;
-            int lineEnd = (row == endRow) ? endCol : cols - 1;
-            int lineLenBefore = sb.length();
-            for (int col = lineStart; col <= lineEnd; col++) {
-                char c = getCharAtAbsolute(col, row);
-                if (c == '\0') continue; // 跳过宽字符占位符
-                sb.append(c);
-            }
-            // 去除行末填充空格（终端buffer用空格填充到列宽，复制时不应包含）
-            int end = sb.length();
-            while (end > lineLenBefore && sb.charAt(end - 1) == ' ') {
-                end--;
-            }
-            sb.delete(end, sb.length());
-            if (row < endRow) {
-                sb.append('\n');
-            }
-        }
-        return sb.toString();
+        return emulator.getTextRange(startRow, startCol, endRow, endCol);
     }
 
     /**

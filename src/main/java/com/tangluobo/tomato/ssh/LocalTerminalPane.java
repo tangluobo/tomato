@@ -434,6 +434,9 @@ public class LocalTerminalPane extends BorderPane {
                 if (emulator.isBracketedPasteMode()) {
                     text = "\033[200~" + text + "\033[201~";
                 }
+                if (!emulator.isUsingAltBuffer()) {
+                    terminalView.setScrollOffset(0);
+                }
                 if (pty != null && running) {
                     try {
                         pty.write(text.getBytes(StandardCharsets.UTF_8));
