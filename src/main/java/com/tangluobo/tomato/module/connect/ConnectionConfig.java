@@ -47,8 +47,8 @@ public class ConnectionConfig {
     private String rdpFullScreenShortcut; // RDP全屏切换快捷键（会话级覆盖，null=使用全局配置）
     private String rdpOpenMode; // RDP打开方式：null=使用全局配置，WINDOW=独立窗口，TAB=标签页
 
-    // VNC/SPICE 外部客户端配置
-    private String remoteDesktopClientPath; // remote-viewer/vncviewer 可执行文件；空值时自动发现
+    // 远程桌面配置。clientPath 只为兼容旧配置保留，内置客户端不会执行该程序。
+    private String remoteDesktopClientPath;
     private int remoteDesktopTlsPort; // SPICE TLS 端口；0 表示不使用
 
     // 本地终端配置

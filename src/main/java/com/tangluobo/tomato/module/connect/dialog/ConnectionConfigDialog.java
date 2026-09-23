@@ -1301,7 +1301,7 @@ public class ConnectionConfigDialog {
         simpleConfigContent.getChildren().add(grid);
     }
 
-    /** 构建 VNC/SPICE 远程桌面配置。连接由 remote-viewer 或本机 VNC Viewer 打开。 */
+    /** 构建 VNC/SPICE 远程桌面配置。VNC 直接由 Tomato 内置 RFB 客户端打开。 */
     private void buildRemoteDesktopConfigContent() {
         remoteDesktopConfigContent = new VBox(12);
         remoteDesktopConfigContent.setVisible(false);
@@ -1354,23 +1354,8 @@ public class ConnectionConfigDialog {
         passwordBox.getChildren().addAll(remoteDesktopPasswordField, remoteDesktopSavePasswordCheckBox);
         grid.add(passwordBox, 1, row++);
 
-        grid.add(new Label("客户端程序："), 0, row);
-        HBox clientPathBox = new HBox(6);
-        clientPathBox.setAlignment(Pos.CENTER_LEFT);
+        // 保留字段仅用于读取旧配置；内置 VNC 客户端不再需要可执行程序路径。
         remoteDesktopClientPathField = new TextField();
-        remoteDesktopClientPathField.setPromptText("留空自动查找 remote-viewer / VNC Viewer");
-        remoteDesktopClientPathField.setPrefWidth(275);
-        HBox.setHgrow(remoteDesktopClientPathField, Priority.ALWAYS);
-        Button browseClientButton = new Button("浏览...");
-        browseClientButton.setOnAction(e -> {
-            FileChooser chooser = new FileChooser();
-            chooser.setTitle("选择远程桌面客户端程序");
-            chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("可执行文件", "*.exe", "*"));
-            File selected = chooser.showOpenDialog(dialogStage);
-            if (selected != null) remoteDesktopClientPathField.setText(selected.getAbsolutePath());
-        });
-        clientPathBox.getChildren().addAll(remoteDesktopClientPathField, browseClientButton);
-        grid.add(clientPathBox, 1, row++);
 
         remoteDesktopFullscreenCheckBox = new CheckBox("全屏打开");
         grid.add(remoteDesktopFullscreenCheckBox, 1, row++);
@@ -2415,8 +2400,8 @@ public class ConnectionConfigDialog {
             remoteDesktopTlsPortField.setVisible(spice);
             remoteDesktopTlsPortField.setManaged(spice);
             remoteDesktopClientHint.setText(spice
-                    ? "SPICE 需要安装 virt-viewer（remote-viewer）；可手动指定 remote-viewer 程序路径。"
-                    : "优先使用 virt-viewer（remote-viewer），也会自动查找 TigerVNC、TightVNC、RealVNC 等客户端。");
+                    ? "SPICE 不会启动外部程序；内置 SPICE 协议仍在开发中。"
+                    : "使用 Tomato 内置 VNC 客户端，无需安装 virt-viewer 或 VNC Viewer。");
         } else if (isS3orOSS) {
             if (s3RegionField.getText().isEmpty()) {
                 s3RegionField.setText(selectedType == ConnectType.ALIYUN_OSS ? "cn-hangzhou" : "us-east-1");
@@ -2824,8 +2809,7 @@ public class ConnectionConfigDialog {
             config.setSavePassword(remoteDesktopSavePasswordCheckBox.isSelected());
             config.setPassword(remoteDesktopSavePasswordCheckBox.isSelected()
                     ? remoteDesktopPasswordField.getText() : null);
-            String clientPath = remoteDesktopClientPathField.getText().trim();
-            config.setRemoteDesktopClientPath(clientPath.isEmpty() ? null : clientPath);
+            config.setRemoteDesktopClientPath(null);
             config.setFullscreen(remoteDesktopFullscreenCheckBox.isSelected());
             config.setDescription(remoteDesktopDescriptionField.getText().trim());
         } else if (isS3orOSS) {
@@ -3315,11 +3299,6 @@ public class ConnectionConfigDialog {
         String tlsPort = remoteDesktopTlsPortField.getText().trim();
         if (selectedType == ConnectType.SPICE && !tlsPort.isEmpty() && !isValidPort(tlsPort)) {
             showAlert("TLS端口必须是 1 到 65535 之间的数字");
-            return false;
-        }
-        String clientPath = remoteDesktopClientPathField.getText().trim();
-        if (!clientPath.isEmpty() && !new File(clientPath).isFile()) {
-            showAlert("指定的客户端程序不存在");
             return false;
         }
         return true;
