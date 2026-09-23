@@ -17,6 +17,7 @@ import java.io.*;
 import java.nio.file.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 /**
  * 图片格式转换工具面板
@@ -186,8 +187,8 @@ public class ImageFormatConverterPane extends VBox {
             isDirMode = true;
             sourcePathField.setText(dir.getAbsolutePath());
             svgFiles.clear();
-            try {
-                Files.walk(dir.toPath())
+            try (Stream<Path> paths = Files.walk(dir.toPath())) {
+                paths
                         .filter(p -> p.toString().toLowerCase().endsWith(".svg"))
                         .forEach(p -> svgFiles.add(p.toFile()));
             } catch (IOException e) {
@@ -223,8 +224,8 @@ public class ImageFormatConverterPane extends VBox {
         // 如果是目录模式，扫描文件
         if (isDirMode && svgFiles.isEmpty()) {
             File sourceDir = new File(sourcePath);
-            try {
-                Files.walk(sourceDir.toPath())
+            try (Stream<Path> paths = Files.walk(sourceDir.toPath())) {
+                paths
                         .filter(p -> p.toString().toLowerCase().endsWith(".svg"))
                         .forEach(p -> svgFiles.add(p.toFile()));
             } catch (IOException e) {

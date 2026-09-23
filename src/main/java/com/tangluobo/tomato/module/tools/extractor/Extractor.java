@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * MultiExtractor 命令行逻辑封装.
@@ -253,8 +254,8 @@ public class Extractor {
                               boolean overwrite, boolean verbose) {
         List<Path> peFiles = new ArrayList<>();
         if (Files.isDirectory(source)) {
-            try {
-                Files.walk(source, recursive ? Integer.MAX_VALUE : 1)
+            try (Stream<Path> paths = Files.walk(source, recursive ? Integer.MAX_VALUE : 1)) {
+                paths
                         .filter(Files::isRegularFile)
                         .forEach(peFiles::add);
             } catch (IOException e) {

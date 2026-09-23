@@ -30,7 +30,7 @@ public class ZModemSend {
     private FileAdapter file;
     private int fOffset = 0;
     private int index = 0;
-    private int filesize = 0;
+    private long filesize = 0;
     private boolean atEof = false;
     private InputStream fileIs;
 
@@ -52,7 +52,10 @@ public class ZModemSend {
 
         file = iter.next();
         fileIs = file.getInputStream();
-        filesize = fileIs.available();
+        filesize = file.length();
+        if (filesize < 0L || filesize > Integer.MAX_VALUE) {
+            throw new IOException("Invalid file size: " + filesize);
+        }
         fOffset = 0;
         atEof = false;
         index++;
@@ -60,20 +63,33 @@ public class ZModemSend {
     }
 
     private void position(int offset) throws IOException {
+        if (offset < 0 || offset > filesize) {
+            throw new IOException("Invalid ZMODEM resume offset: " + offset);
+        }
         if (offset != fOffset) {
-            fileIs.skipNBytes(offset);
+            if (offset < fOffset) {
+                fileIs.close();
+                fileIs = file.getInputStream();
+                fileIs.skipNBytes(offset);
+            } else {
+                fileIs.skipNBytes(offset - fOffset);
+            }
             fOffset = offset;
+            atEof = fOffset >= filesize;
         }
     }
 
     private byte[] getNextBlock() throws IOException {
-        final int len = fileIs.read(data);
-        if (len < data.length)
+        long remaining = filesize - fOffset;
+        if (remaining <= 0L) {
             atEof = true;
-        else if (fileIs.available() == 0)
-            atEof = true;
+            return null;
+        }
+        final int requested = (int) Math.min(data.length, remaining);
+        final int len = fileIs.read(data, 0, requested);
         if (len == -1) return null;
         fOffset += len;
+        atEof = fOffset >= filesize;
         if (len != data.length) {
             byte[] result = new byte[len];
             System.arraycopy(data, 0, result, 0, len);

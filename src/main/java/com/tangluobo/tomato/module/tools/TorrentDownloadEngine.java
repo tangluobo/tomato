@@ -2,9 +2,11 @@ package com.tangluobo.tomato.module.tools;
 
 import bt.Bt;
 import bt.StandaloneClientBuilder;
+import bt.data.StorageUnit;
 import bt.data.file.FileSystemStorage;
 import bt.dht.DHTConfig;
 import bt.dht.DHTModule;
+import bt.metainfo.MetadataService;
 import bt.metainfo.Torrent;
 import bt.metainfo.TorrentFile;
 import bt.runtime.BtClient;
@@ -14,9 +16,13 @@ import bt.torrent.TorrentSessionState;
 import java.net.DatagramSocket;
 import java.net.ServerSocket;
 import java.net.URI;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletionException;
@@ -57,9 +63,23 @@ final class TorrentDownloadEngine implements DownloadEngine {
             if (cancelled.get()) throw new CancellationException("下载已取消");
 
             int peerLimit = MultiThreadDownloader.clampThreads(parallelism);
-            AtomicReference<Torrent> torrentRef = new AtomicReference<>();
-            AtomicReference<Path> targetRef = new AtomicReference<>(resumeTarget);
             String normalized = source.trim();
+            Torrent localTorrent = loadMetadata(normalized);
+            AtomicReference<Torrent> torrentRef = new AtomicReference<>(localTorrent);
+            AtomicReference<Path> targetRef = new AtomicReference<>(resumeTarget);
+            if (localTorrent != null) {
+                Path target = torrentTarget(destinationDirectory, localTorrent);
+                targetRef.set(target);
+                sink.onPrepared(new Metadata(localTorrent.getName(), localTorrent.getSize(), target,
+                        "BT · " + peerLimit + "连接"));
+                sink.onStatus("正在校验本地分片");
+                if (hasCompletePayload(destinationDirectory, localTorrent)) {
+                    sink.onProgress(new Progress(localTorrent.getSize(), localTorrent.getSize(), 0,
+                            "BT · 已校验"));
+                    return new Result(target, localTorrent.getSize(),
+                            "BT · 本地文件已完整");
+                }
+            }
             long transferredBeforeSession = 0L;
             int sessionRestarts = 0;
             while (true) {
@@ -200,6 +220,77 @@ final class TorrentDownloadEngine implements DownloadEngine {
             builder.magnet(source);
         } else {
             builder.torrent(URI.create(source).toURL());
+        }
+    }
+
+    /**
+     * Loads ordinary torrent metadata before starting network services. Magnet links deliberately
+     * return {@code null}, because their metadata is only available from peers.
+     */
+    private static Torrent loadMetadata(String source) throws Exception {
+        if (source.regionMatches(true, 0, "magnet:", 0, 7)) return null;
+        return new MetadataService().fromUrl(URI.create(source).toURL());
+    }
+
+    /**
+     * Fast path for an already downloaded payload. Besides avoiding unnecessary sockets and DHT
+     * bootstrap work, this makes opening a completed torrent deterministic while offline.
+     */
+    static boolean hasCompletePayload(Path directory, Torrent torrent) throws Exception {
+        List<TorrentFile> files = torrent.getFiles();
+        if (files.isEmpty()) return torrent.getSize() == 0L;
+
+        FileSystemStorage storage = new FileSystemStorage(directory);
+        List<StorageUnit> units = new ArrayList<>(files.size());
+        try {
+            for (TorrentFile file : files) {
+                StorageUnit unit = storage.getUnit(torrent, file);
+                units.add(unit);
+                if (unit.size() != file.getSize()) return false;
+            }
+
+            Iterator<byte[]> expectedHashes = torrent.getChunkHashes().iterator();
+            MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
+            byte[] buffer = new byte[64 * 1024];
+            long bytesRemaining = torrent.getSize();
+            int unitIndex = 0;
+            long unitOffset = 0L;
+
+            while (bytesRemaining > 0L) {
+                if (!expectedHashes.hasNext()) return false;
+                long chunkRemaining = Math.min(torrent.getChunkSize(), bytesRemaining);
+                long chunkLength = chunkRemaining;
+                sha1.reset();
+
+                while (chunkRemaining > 0L) {
+                    while (unitIndex < files.size()
+                            && unitOffset >= files.get(unitIndex).getSize()) {
+                        unitIndex++;
+                        unitOffset = 0L;
+                    }
+                    if (unitIndex >= units.size()) return false;
+
+                    long available = files.get(unitIndex).getSize() - unitOffset;
+                    int readLength = (int) Math.min(Math.min(chunkRemaining, available), buffer.length);
+                    ByteBuffer target = ByteBuffer.wrap(buffer, 0, readLength);
+                    units.get(unitIndex).readBlockFully(target, unitOffset);
+                    sha1.update(buffer, 0, readLength);
+                    unitOffset += readLength;
+                    chunkRemaining -= readLength;
+                }
+
+                if (!MessageDigest.isEqual(sha1.digest(), expectedHashes.next())) return false;
+                bytesRemaining -= chunkLength;
+            }
+            return !expectedHashes.hasNext();
+        } finally {
+            for (StorageUnit unit : units) {
+                try {
+                    unit.close();
+                } catch (Exception ignored) {
+                    // Closing one cached file must not prevent the remaining files from closing.
+                }
+            }
         }
     }
 

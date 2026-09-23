@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 /**
  * 图标制作工具面板
@@ -494,8 +495,8 @@ public class ImageBackgroundRemoverPane extends VBox {
             isDirMode = true;
             sourcePathField.setText(dir.getAbsolutePath());
             sourceFiles.clear();
-            try {
-                Files.walk(dir.toPath())
+            try (Stream<java.nio.file.Path> paths = Files.walk(dir.toPath())) {
+                paths
                         .filter(p -> isSupported(p.toString()))
                         .forEach(p -> sourceFiles.add(p.toFile()));
             } catch (IOException e) {
@@ -828,8 +829,8 @@ public class ImageBackgroundRemoverPane extends VBox {
         // 目录模式：重新扫描
         if (isDirMode && sourceFiles.isEmpty()) {
             File sourceDir = new File(sourcePath);
-            try {
-                Files.walk(sourceDir.toPath())
+            try (Stream<java.nio.file.Path> paths = Files.walk(sourceDir.toPath())) {
+                paths
                         .filter(p -> isSupported(p.toString()))
                         .forEach(p -> sourceFiles.add(p.toFile()));
             } catch (IOException e) {

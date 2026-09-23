@@ -18,6 +18,7 @@ import java.io.*;
 import java.nio.file.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 /**
  * SVG转PNG转换面板
@@ -240,8 +241,8 @@ public class SvgToPngPane extends VBox {
     }
 
     private void collectSvgFiles(File dir) {
-        try {
-            Files.walk(dir.toPath())
+        try (Stream<Path> paths = Files.walk(dir.toPath())) {
+            paths
                 .filter(p -> p.toString().toLowerCase().endsWith(".svg"))
                 .forEach(p -> svgFiles.add(p.toFile()));
         } catch (IOException e) {

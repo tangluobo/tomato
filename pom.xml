@@ -10,8 +10,8 @@
     <name>tomato</name>
 
     <properties>
-        <maven.compiler.source>24</maven.compiler.source>
-        <maven.compiler.target>24</maven.compiler.target>
+        <!-- JavaFX 27 is class-file version 69, so the project must compile and run on JDK 25+. -->
+        <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <native.maven.plugin.version>0.11.3</native.maven.plugin.version>
         <mainClass>com.tangluobo.tomato.Launcher</mainClass>
@@ -480,8 +480,7 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.13.0</version>
                 <configuration>
-                    <source>24</source>
-                    <target>24</target>
+                    <release>${maven.compiler.release}</release>
                     <compilerArgs>
                         <arg>--add-reads</arg>
                         <arg>tomato=ALL-UNNAMED</arg>

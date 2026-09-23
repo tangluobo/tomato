@@ -2,6 +2,8 @@ package com.tangluobo.tomato.ssh.zmodem.xfer.zm.util;
 
 import com.tangluobo.tomato.ssh.zmodem.xfer.zm.packet.DataPacket;
 
+import java.nio.charset.StandardCharsets;
+
 public class ZMPacketFactory {
     public ZMPacketFactory() {}
 
@@ -25,6 +27,7 @@ public class ZMPacketFactory {
         builder.append(' ');
         builder.append(remainingBytes);
         builder.append('0');
-        return new DataPacket(ZModemCharacter.ZCRCW, builder.toString().getBytes());
+        return new DataPacket(ZModemCharacter.ZCRCW,
+                builder.toString().getBytes(StandardCharsets.US_ASCII));
     }
 }

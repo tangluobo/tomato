@@ -21,9 +21,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.*;
-import java.text.DateFormat;
-import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Stream;
@@ -39,8 +38,9 @@ public class BackupService {
     private static final String CHARSET = "UTF-8";
     private static final String RECORD_SEPARATOR = "\u001E\n";
 
-    private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    private static final DateFormat SDF = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter
+            .ofPattern("yyyy-MM-dd HH:mm:ss")
+            .withZone(ZoneId.systemDefault());
 
     private static final Gson GSON_META = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
     private static final Gson GSON_DATA = new GsonBuilder().disableHtmlEscaping().create();
@@ -55,7 +55,7 @@ public class BackupService {
 
         Path dir = resolveBackupDir(config.getName(), databaseName, path);
         Files.createDirectories(dir);
-        Path file = dir.resolve(filename);
+        Path file = resolveBackupFile(dir, filename);
 
         try (OutputStream fos = new BufferedOutputStream(Files.newOutputStream(file));
              TarArchiveOutputStream backupTar = new TarArchiveOutputStream(fos)) {
@@ -335,7 +335,8 @@ public class BackupService {
 
     public static void restoreBackup(ConnectionConfig config, String databaseName,
                                       String backupName, String path, RestoreTask task) throws Exception {
-        Path file = resolveBackupDir(config.getName(), databaseName, path).resolve(backupName + ".nb3");
+        Path file = resolveBackupFile(resolveBackupDir(config.getName(), databaseName, path),
+                backupName + ".nb3");
         if (!Files.exists(file)) {
             throw new IOException("备份文件不存在: " + file);
         }
@@ -507,7 +508,8 @@ public class BackupService {
     }
 
     public static void deleteBackupFile(String connectionName, String dbName, String backupName, String path) {
-        Path file = resolveBackupDir(connectionName, dbName, path).resolve(backupName + ".nb3");
+        Path file = resolveBackupFile(resolveBackupDir(connectionName, dbName, path),
+                backupName + ".nb3");
         try {
             Files.deleteIfExists(file);
         } catch (IOException e) {
@@ -534,8 +536,8 @@ public class BackupService {
         String sanitizedNew = sanitizeFileName(newName);
 
         Path dir = resolveBackupDir(connectionName, dbName, path);
-        Path oldFile = dir.resolve(oldName + ".nb3");
-        Path newFile = dir.resolve(sanitizedNew + ".nb3");
+        Path oldFile = resolveBackupFile(dir, oldName + ".nb3");
+        Path newFile = resolveBackupFile(dir, sanitizedNew + ".nb3");
 
         if (Files.exists(oldFile)) {
             Files.move(oldFile, newFile);
@@ -546,11 +548,18 @@ public class BackupService {
     public static Path resolveBackupDir(String connectionName, String dbName, String path) {
         String sanitizedConn = sanitizeFileName(connectionName);
         String sanitizedDb = sanitizeFileName(dbName);
-        Path dir = Paths.get(APP_DIR, sanitizedConn, sanitizedDb, BACKUP_DIR);
+        Path root = Paths.get(APP_DIR, sanitizedConn, sanitizedDb, BACKUP_DIR)
+                .toAbsolutePath().normalize();
+        Path dir = root;
         if (path != null && !path.isEmpty()) {
             for (String part : path.split("/")) {
+                if (part.isBlank()) continue;
                 dir = dir.resolve(sanitizeFileName(part));
             }
+        }
+        dir = dir.normalize();
+        if (!dir.startsWith(root)) {
+            throw new IllegalArgumentException("备份目录超出允许范围");
         }
         return dir;
     }
@@ -580,7 +589,7 @@ public class BackupService {
                     json = "'" + json.substring(1, json.length() - 1).replace("'", "\\'") + "'";
                     sb.append(json);
                 } else if (value instanceof java.util.Date d) {
-                    sb.append("'").append(SDF.format(d)).append("'");
+                    sb.append("'").append(DATE_TIME_FORMATTER.format(d.toInstant())).append("'");
                 } else if (value instanceof LocalDateTime ldt) {
                     sb.append("'").append(ldt.format(DATE_TIME_FORMATTER)).append("'");
                 } else {
@@ -714,10 +723,26 @@ public class BackupService {
 
     private static String sanitizeFileName(String name) {
         if (name == null || name.isEmpty()) return "unnamed";
-        return name.replaceAll("[\\\\/:*?\"<>|]", "_")
+        String sanitized = name.replaceAll("[\\\\/:*?\"<>|]", "_")
                    .replaceAll("\\s+", "_")
                    .replaceAll("_{2,}", "_")
                    .replaceAll("^_|_$", "");
+        return sanitized.isBlank() || sanitized.equals(".") || sanitized.equals("..")
+                ? "unnamed" : sanitized;
+    }
+
+    private static Path resolveBackupFile(Path directory, String filename) {
+        String safeName = filename == null ? "unnamed.nb3"
+                : filename.replaceAll("[\\\\/:*?\"<>|]", "_");
+        if (safeName.isBlank() || safeName.equals(".") || safeName.equals("..")) {
+            safeName = "unnamed.nb3";
+        }
+        Path normalizedDirectory = directory.toAbsolutePath().normalize();
+        Path file = normalizedDirectory.resolve(safeName).normalize();
+        if (!file.startsWith(normalizedDirectory)) {
+            throw new IllegalArgumentException("备份文件超出允许范围");
+        }
+        return file;
     }
 
     // ==================== nb3 元数据模型 ====================

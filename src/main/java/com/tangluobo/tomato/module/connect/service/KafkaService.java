@@ -395,7 +395,8 @@ public class KafkaService {
             try {
                 ConsumerGroupDescription desc =
                         admin.describeConsumerGroups(Collections.singleton(group)).all().get().get(group);
-                result.put("state", desc.state() != null ? desc.state().name() : "UNKNOWN");
+                var groupState = desc.groupState();
+                result.put("state", groupState != null ? groupState.name() : "UNKNOWN");
                 result.put("members", desc.members() != null ? desc.members().size() : 0);
             } catch (Exception ignored) {}
 

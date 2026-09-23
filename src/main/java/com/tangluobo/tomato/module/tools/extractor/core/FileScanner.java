@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -389,8 +390,8 @@ public class FileScanner {
     }
 
     private void collectFiles(Path dir, boolean recursive, List<Path> out) throws IOException {
-        Files.walk(dir, recursive ? Integer.MAX_VALUE : 1)
-                .filter(Files::isRegularFile)
-                .forEach(out::add);
+        try (Stream<Path> paths = Files.walk(dir, recursive ? Integer.MAX_VALUE : 1)) {
+            paths.filter(Files::isRegularFile).forEach(out::add);
+        }
     }
 }
