@@ -25,6 +25,7 @@ import org.apache.rocketmq.remoting.protocol.admin.TopicOffset;
 import org.apache.rocketmq.remoting.protocol.admin.TopicStatsTable;
 import org.apache.rocketmq.common.message.Message;
 import org.apache.rocketmq.common.message.MessageExt;
+import org.apache.rocketmq.common.TopicConfig;
 import org.apache.rocketmq.remoting.protocol.body.ClusterInfo;
 import org.apache.rocketmq.remoting.protocol.body.ConsumerConnection;
 import org.apache.rocketmq.remoting.protocol.body.Connection;
@@ -443,20 +444,45 @@ public class RocketmqService {
      */
     public static void createTopic(ConnectionConfig config, String topic, int queueNum) throws Exception {
         DefaultMQAdminExt admin = getAdmin(config);
+        createTopic(admin, topic, queueNum);
+    }
+
+    static void createTopic(DefaultMQAdminExt admin, String topic, int queueNum) throws Exception {
         ClusterInfo clusterInfo = admin.examineBrokerClusterInfo();
+        boolean created = false;
         if (clusterInfo != null && clusterInfo.getBrokerAddrTable() != null) {
             for (Map.Entry<String, BrokerData> entry : clusterInfo.getBrokerAddrTable().entrySet()) {
                 String brokerName = entry.getKey();
                 BrokerData brokerData = entry.getValue();
                 if (brokerData.getBrokerAddrs() != null) {
-                    for (Map.Entry<Long, String> addrEntry : brokerData.getBrokerAddrs().entrySet()) {
-                        if (addrEntry.getKey() == 0L) {
-                            admin.createTopic(addrEntry.getValue(), topic, queueNum, new HashMap<>());
+                    String masterAddr = brokerData.getBrokerAddrs().get(0L);
+                    if (masterAddr != null) {
+                        TopicConfig topicConfig = new TopicConfig(topic);
+                        topicConfig.setReadQueueNums(queueNum);
+                        topicConfig.setWriteQueueNums(queueNum);
+                        try {
+                            admin.createAndUpdateTopicConfig(masterAddr, topicConfig);
+                            created = true;
+                        } catch (Exception e) {
+                            throw new Exception("Broker " + brokerName + " (" + masterAddr
+                                    + ") 创建主题失败: " + rootCauseMessage(e), e);
                         }
                     }
                 }
             }
         }
+        if (!created) {
+            throw new IllegalStateException("未发现可写入的 RocketMQ Master Broker");
+        }
+    }
+
+    private static String rootCauseMessage(Throwable error) {
+        Throwable current = error;
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        String message = current.getMessage();
+        return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
     }
 
     /**

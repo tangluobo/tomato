@@ -681,18 +681,6 @@ public class PortMappingPane extends VBox {
                 if (lh.isEmpty()) lh = "127.0.0.1";
                 if (rh.isEmpty()) rh = "127.0.0.1";
 
-                // 冲突检测：同一 SSH 主机 + 方向 + 端口组合不可重复（null 安全），修改时排除自身
-                for (PortMapping ex : mappings) {
-                    if (isEdit && ex.getId() != null && ex.getId().equals(existing.getId())) continue;
-                    if (ex.getSshHostId() != null && ex.getSshHostId().equals(sshHost.getId())
-                            && dir.equals(ex.getDirection())
-                            && (("L".equals(dir) && ex.getLocalPort() == localPort)
-                                || ("R".equals(dir) && ex.getRemotePort() == remotePort))) {
-                        setStatusDirect("已存在相同 SSH 主机+方向+端口的映射");
-                        return;
-                    }
-                }
-
                 // 运行中的映射不允许修改（避免与活跃 SSH 会话不一致）
                 boolean running = isEdit && activeSessions.containsKey(existing.getId());
                 if (running) {
@@ -732,11 +720,13 @@ public class PortMappingPane extends VBox {
         if (isLocal) {
             hintLabel.setText("L：本机监听 本地主机:本地端口 → 经 SSH → 连接远程主机:远程端口\n"
                     + "场景：本地连远程数据库/网站。如本地 4444 → 服务器 80，本机浏览器访问 localhost:4444 即可连到服务器 80\n"
-                    + "远程主机填服务在服务器上监听的地址（如 127.0.0.1 或 ::1）");
+                    + "远程主机填服务在服务器上监听的地址（如 127.0.0.1 或 ::1）\n"
+                    + "可保存多条使用同一本地端口的方案，但同一时刻只能启动其中一条");
         } else {
             hintLabel.setText("R：SSH 服务器监听 远程主机:远程端口 → 经隧道 → 连接本机 本地主机:本地端口\n"
                     + "场景：把本地服务暴露给远程。如本地 8080 → 服务器 9090，服务器上访问 9090 即连到本地 8080\n"
-                    + "远程主机填 SSH 服务器上的绑定地址（如 127.0.0.1）；服务器端口需未被占用");
+                    + "远程主机填 SSH 服务器上的绑定地址（如 127.0.0.1）；服务器端口需未被占用\n"
+                    + "可保存多条重复方案；同一 SSH 服务器的同一远程端口不能同时启动");
         }
     }
 
@@ -788,6 +778,11 @@ public class PortMappingPane extends VBox {
 
     private void startMapping(MappingRow row) {
         if (row == null || row.running.get()) return;
+        PortMapping activeConflict = findActiveConflict(row.mapping);
+        if (activeConflict != null) {
+            reportActiveConflict(row, activeConflict);
+            return;
+        }
         ConnectionConfig sshHost = findSshHost(row.mapping.getSshHostId());
         if (sshHost == null) {
             setStatus("找不到引用的 SSH 主机: " + row.mapping.getSshHostId());
@@ -831,6 +826,12 @@ public class PortMappingPane extends VBox {
                     // 防重复启动
                     if (activeSessions.containsKey(row.mapping.getId())) {
                         setStatus("映射 " + row.name.get() + " 已在运行");
+                        return;
+                    }
+                    // 两条映射可能同时进入启动线程，必须在同一把锁内再次检查监听端口。
+                    PortMapping conflict = findActiveConflictLocked(row.mapping);
+                    if (conflict != null) {
+                        reportActiveConflict(row, conflict);
                         return;
                     }
                     applyPortForwarding(session, row.mapping);
@@ -901,7 +902,8 @@ public class PortMappingPane extends VBox {
         new Thread(() -> {
             Session session;
             synchronized (activeSessions) {
-                session = activeSessions.remove(row.mapping.getId());
+                // 停止完成前保留占用记录，避免切换时新映射抢先绑定尚未释放的端口。
+                session = activeSessions.get(row.mapping.getId());
             }
             if (session == null) {
                 Platform.runLater(() -> {
@@ -919,12 +921,65 @@ public class PortMappingPane extends VBox {
                 session.disconnect();
             } catch (Exception ignored) {
             }
+            synchronized (activeSessions) {
+                activeSessions.remove(row.mapping.getId(), session);
+            }
             Platform.runLater(() -> {
                 row.running.set(false);
                 updateButtonStates();
                 setStatus("映射 " + row.name.get() + " 已停止");
             });
         }, "PortMapping-Stop").start();
+    }
+
+    private PortMapping findActiveConflict(PortMapping candidate) {
+        synchronized (activeSessions) {
+            return findActiveConflictLocked(candidate);
+        }
+    }
+
+    /** 调用方必须已持有 activeSessions 锁。 */
+    private PortMapping findActiveConflictLocked(PortMapping candidate) {
+        for (String activeId : activeSessions.keySet()) {
+            PortMapping active = findMappingById(activeId);
+            if (active != null && runtimeEndpointsConflict(candidate, active)) return active;
+        }
+        return null;
+    }
+
+    /**
+     * 判断两条映射是否会竞争同一运行时监听端口。
+     * L 方向监听本机端口，因此不论 SSH 主机和远程目标是否相同，同本地端口都只允许启动一条。
+     * R 方向监听 SSH 服务器端口，仅同一 SSH 主机的同远程端口冲突。
+     */
+    static boolean runtimeEndpointsConflict(PortMapping first, PortMapping second) {
+        if (first == null || second == null) return false;
+        String firstDirection = "R".equals(first.getDirection()) ? "R" : "L";
+        String secondDirection = "R".equals(second.getDirection()) ? "R" : "L";
+        if (!firstDirection.equals(secondDirection)) return false;
+        if ("L".equals(firstDirection)) {
+            return first.getLocalPort() == second.getLocalPort();
+        }
+        return first.getRemotePort() == second.getRemotePort()
+                && java.util.Objects.equals(first.getSshHostId(), second.getSshHostId());
+    }
+
+    private void reportActiveConflict(MappingRow requested, PortMapping conflict) {
+        String conflictName = conflict.getName() == null || conflict.getName().isBlank()
+                ? MappingRow.defaultName(conflict) : conflict.getName();
+        String endpoint = "L".equals(requested.mapping.getDirection())
+                ? "本地端口 " + requested.mapping.getLocalPort()
+                : "SSH 服务器远程端口 " + requested.mapping.getRemotePort();
+        String message = endpoint + " 已由映射“" + conflictName
+                + "”占用。请先停止它，再启动“" + requested.name.get() + "”。";
+        setStatus(message);
+        Platform.runLater(() -> {
+            javafx.scene.control.Alert alert = new javafx.scene.control.Alert(
+                    javafx.scene.control.Alert.AlertType.INFORMATION, message, ButtonType.OK);
+            alert.setHeaderText("该端口已有运行中的映射");
+            DialogPositionUtil.centerOnOwner(alert, PortMappingPane.this);
+            alert.showAndWait();
+        });
     }
 
     // ==================== JSch 端口转发 ====================
