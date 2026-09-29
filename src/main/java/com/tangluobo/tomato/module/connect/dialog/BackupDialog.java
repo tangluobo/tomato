@@ -700,15 +700,36 @@ public class BackupDialog {
             backupBtn.setDisable(false);
             backupBtn.setText("备份");
             timeLabel.setText("失败");
+            Throwable failure = currentTask.getException();
+            String errorMessage = describeFailure(failure);
+            logArea.appendText("备份失败: " + errorMessage + "\n");
+            if (failure != null) {
+                failure.printStackTrace();
+            }
             Alert alert = new Alert(Alert.AlertType.ERROR);
             alert.setTitle("备份失败");
             alert.setHeaderText(null);
-            alert.setContentText("错误: " + currentTask.getException().getMessage());
+            alert.setContentText("错误: " + errorMessage);
             DialogPositionUtil.centerOnOwner(alert, dialogStage);
             alert.showAndWait();
         });
 
         new Thread(currentTask, "Backup-Task").start();
+    }
+
+    static String describeFailure(Throwable failure) {
+        if (failure == null) {
+            return "未知错误";
+        }
+        Throwable current = failure;
+        while (current.getCause() != null
+                && (current.getMessage() == null || current.getMessage().isBlank())) {
+            current = current.getCause();
+        }
+        String message = current.getMessage();
+        return message == null || message.isBlank()
+                ? current.getClass().getSimpleName()
+                : message;
     }
 
     private void showBackupProgress() {

@@ -219,7 +219,9 @@ public class TableDataView extends BorderPane {
         );
 
         // 只在数据行区域显示右键菜单，表头区域不显示
-        tableView.setOnContextMenuRequested(event -> {
+        // 行选择器和数据区是两个并排的 TableView；绑定到共同父容器，
+        // 两侧右键都使用同一菜单和数据表选择模型。
+        frozenTablePane.setOnContextMenuRequested(event -> {
             // 检查右键是否在表头区域
             Node target = event.getPickResult().getIntersectedNode();
             while (target != null && target != tableView) {
@@ -252,6 +254,8 @@ public class TableDataView extends BorderPane {
 
     // Shift选择锚点：记录最近一次普通点击的cell位置 [row, colIndex]
     private int[] anchorCell = {-1, -1};
+    // 从行选择器开始选择时的锚点；Shift 点击任意单元格也按整行扩展。
+    private int rowSelectionAnchor = -1;
 
     // ---- 拖拽范围选择矩形（Windows资源管理器风格） ----
     /** 范围选择矩形，从表格下方空白区域按下拖拽时显示 */
@@ -284,6 +288,17 @@ public class TableDataView extends BorderPane {
                 tableView.getSelectionModel().clearSelection();
                 anchorCell[0] = -1;
                 anchorCell[1] = -1;
+                rowSelectionAnchor = -1;
+                return;
+            }
+
+            if (event.isShiftDown() && rowSelectionAnchor >= 0) {
+                // 选择从行选择器开始：目标可以是任意数据单元格，但结果始终为整行范围。
+                int[] range = RowSelectorDragSelection.rowRange(rowSelectionAnchor, cellPos[0]);
+                tableView.getSelectionModel().clearSelection();
+                tableView.getSelectionModel().selectRange(range[0], range[1]);
+                tableView.getFocusModel().focus(cellPos[0]);
+                event.consume();
                 return;
             }
 
@@ -307,6 +322,7 @@ public class TableDataView extends BorderPane {
             dragStart[1] = cellPos[1];
             dragEnd[0] = cellPos[0];
             dragEnd[1] = cellPos[1];
+            rowSelectionAnchor = -1;
             // 更新锚点
             anchorCell[0] = cellPos[0];
             anchorCell[1] = cellPos[1];
@@ -1824,6 +1840,9 @@ public class TableDataView extends BorderPane {
 
     private void updateTableView(TableRowData data) {
         activeCellEditChanged = false;
+        rowSelectionAnchor = -1;
+        anchorCell[0] = -1;
+        anchorCell[1] = -1;
         tableView.getColumns().clear();
         tableView.getItems().clear();
 
@@ -1863,8 +1882,22 @@ public class TableDataView extends BorderPane {
                 addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
                     if (getTableRow() != null && getTableRow().getItem() != null) {
                         int row = getTableRow().getIndex();
+                        if (event.getButton() == MouseButton.SECONDARY) {
+                            dragStart[0] = -1;
+                            if (RowSelectorDragSelection.shouldReplaceSelectionOnPress(
+                                    event.getButton(), isRowSelected(row))) {
+                                tableView.getSelectionModel().clearSelection();
+                                tableView.getSelectionModel().select(row);
+                            }
+                            event.consume();
+                            return;
+                        }
+                        if (event.getButton() != MouseButton.PRIMARY) return;
                         if (event.isControlDown()) {
                             dragStart[0] = -1;
+                            rowSelectionAnchor = row;
+                            anchorCell[0] = -1;
+                            anchorCell[1] = -1;
                             if (isRowSelected(row)) {
                                 tableView.getSelectionModel().clearSelection(row);
                             } else {
@@ -1872,19 +1905,25 @@ public class TableDataView extends BorderPane {
                             }
                         } else if (event.isShiftDown()) {
                             dragStart[0] = -1;
-                            int anchor = tableView.getSelectionModel().getFocusedIndex();
+                            int anchor = rowSelectionAnchor >= 0
+                                    ? rowSelectionAnchor
+                                    : tableView.getSelectionModel().getFocusedIndex();
                             if (anchor >= 0) {
-                                int start = Math.min(row, anchor);
-                                int end = Math.max(row, anchor);
+                                int[] range = RowSelectorDragSelection.rowRange(anchor, row);
                                 tableView.getSelectionModel().clearSelection();
-                                tableView.getSelectionModel().selectRange(start, end + 1);
+                                tableView.getSelectionModel().selectRange(range[0], range[1]);
+                                tableView.getFocusModel().focus(row);
                             } else {
                                 tableView.getSelectionModel().clearSelection();
                                 tableView.getSelectionModel().select(row);
+                                rowSelectionAnchor = row;
                             }
                         } else {
                             tableView.getSelectionModel().clearSelection();
                             tableView.getSelectionModel().select(row);
+                            rowSelectionAnchor = row;
+                            anchorCell[0] = -1;
+                            anchorCell[1] = -1;
                             dragStart[0] = row;
                         }
                         event.consume();

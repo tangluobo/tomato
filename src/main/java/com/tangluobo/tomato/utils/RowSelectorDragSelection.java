@@ -25,6 +25,20 @@ public final class RowSelectorDragSelection {
     }
 
     /**
+     * Determines whether pressing a row selector should replace the current selection.
+     * A secondary click on a row that is already selected must keep the whole selection
+     * so context-menu actions can operate on every selected row.
+     */
+    public static boolean shouldReplaceSelectionOnPress(MouseButton button, boolean rowAlreadySelected) {
+        return button != MouseButton.SECONDARY || !rowAlreadySelected;
+    }
+
+    /** Returns the normalized [startInclusive, endExclusive] range between two rows. */
+    public static int[] rowRange(int anchorRow, int targetRow) {
+        return new int[]{Math.min(anchorRow, targetRow), Math.max(anchorRow, targetRow) + 1};
+    }
+
+    /**
      * 在行选择器列单元格上安装"按下并拖动选中多行"行为。
      *
      * @param tableView 目标表格

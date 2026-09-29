@@ -405,11 +405,20 @@ final class TableCellContextMenuUtils {
     @SuppressWarnings("unchecked")
     static void removeRows(TableView<ObservableList<String>> tableView,
                            java.util.Collection<? extends ObservableList<String>> rows) {
+        if (rows == null || rows.isEmpty()) return;
+        // Cell-selection positions are index based. Removing several rows while those
+        // positions remain selected makes JavaFX remap them onto unrelated rows/columns,
+        // leaving a patchwork of highlighted cells and stale row-selector arrows.
+        tableView.edit(-1, null);
+        tableView.getSelectionModel().clearSelection();
+        tableView.getFocusModel().focus(-1);
         Object source = tableView.getProperties().get(FILTER_SOURCE_KEY);
         ObservableList<ObservableList<String>> writableRows = source instanceof ObservableList<?>
                 ? (ObservableList<ObservableList<String>>) source
                 : tableView.getItems();
         writableRows.removeAll(rows);
+        tableView.refresh();
+        tableView.requestLayout();
     }
 
     private static int compareValues(String left, String right) {

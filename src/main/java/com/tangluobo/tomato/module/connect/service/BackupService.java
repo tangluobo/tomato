@@ -21,7 +21,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.*;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -41,6 +43,7 @@ public class BackupService {
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter
             .ofPattern("yyyy-MM-dd HH:mm:ss")
             .withZone(ZoneId.systemDefault());
+    private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss");
 
     private static final Gson GSON_META = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
     private static final Gson GSON_DATA = new GsonBuilder().disableHtmlEscaping().create();
@@ -580,27 +583,56 @@ public class BackupService {
                 if (index > 0) {
                     sb.append(", ");
                 }
-                if (value == null) {
-                    sb.append("NULL");
-                } else if (value instanceof String s) {
-                    sb.append("'").append(s.replace("'", "\\'")).append("'");
-                } else if (value instanceof Map || value instanceof List) {
-                    String json = GSON_DATA.toJson(GSON_DATA.toJson(value));
-                    json = "'" + json.substring(1, json.length() - 1).replace("'", "\\'") + "'";
-                    sb.append(json);
-                } else if (value instanceof java.util.Date d) {
-                    sb.append("'").append(DATE_TIME_FORMATTER.format(d.toInstant())).append("'");
-                } else if (value instanceof LocalDateTime ldt) {
-                    sb.append("'").append(ldt.format(DATE_TIME_FORMATTER)).append("'");
-                } else {
-                    sb.append(value);
-                }
+                sb.append(toSqlLiteral(value));
                 index++;
             }
             sb.append(")");
             recordIndex++;
         }
         return gzipBytes(sb.toString());
+    }
+
+    /**
+     * Converts a JDBC value to the SQL literal stored in an nb3 data entry.
+     * java.sql.Date and java.sql.Time deliberately do not support toInstant(),
+     * so they must be handled before their java.util.Date base class.
+     */
+    static String toSqlLiteral(Object value) {
+        if (value == null) {
+            return "NULL";
+        }
+        if (value instanceof String s) {
+            return quoteSqlString(s);
+        }
+        if (value instanceof Map || value instanceof List) {
+            return quoteSqlString(GSON_DATA.toJson(value));
+        }
+        if (value instanceof java.sql.Date date) {
+            return quoteSqlString(date.toLocalDate().format(DateTimeFormatter.ISO_LOCAL_DATE));
+        }
+        if (value instanceof Time time) {
+            return quoteSqlString(time.toLocalTime().format(TIME_FORMATTER));
+        }
+        if (value instanceof Timestamp timestamp) {
+            return quoteSqlString(timestamp.toLocalDateTime().format(DATE_TIME_FORMATTER));
+        }
+        if (value instanceof LocalDate date) {
+            return quoteSqlString(date.format(DateTimeFormatter.ISO_LOCAL_DATE));
+        }
+        if (value instanceof LocalTime time) {
+            return quoteSqlString(time.format(TIME_FORMATTER));
+        }
+        if (value instanceof LocalDateTime dateTime) {
+            return quoteSqlString(dateTime.format(DATE_TIME_FORMATTER));
+        }
+        if (value instanceof java.util.Date date) {
+            return quoteSqlString(DATE_TIME_FORMATTER.format(date.toInstant()));
+        }
+        return String.valueOf(value);
+    }
+
+    private static String quoteSqlString(String value) {
+        return "'" + value.replace("'", "\\'") + "'";
     }
 
     private static byte[] gzipBytes(String data) throws IOException {

@@ -1182,6 +1182,7 @@ public class SqlEditorView extends BorderPane {
             }
         }
         final QueryResultEditContext finalEditContext = editContext;
+        final int[] rowSelectionAnchor = {-1};
 
         // 创建行选择器列：选中行显示黑色实心三角箭头
         TableColumn<ObservableList<String>, String> selectorCol = new TableColumn<>();
@@ -1208,8 +1209,22 @@ public class SqlEditorView extends BorderPane {
                 addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, event -> {
                     if (getTableRow() != null && getTableRow().getItem() != null) {
                         int row = getTableRow().getIndex();
+                        if (event.getButton() == MouseButton.SECONDARY) {
+                            dragStart[0] = -1;
+                            boolean rowAlreadySelected = tableView.getSelectionModel()
+                                    .getSelectedIndices().contains(row);
+                            if (RowSelectorDragSelection.shouldReplaceSelectionOnPress(
+                                    event.getButton(), rowAlreadySelected)) {
+                                tableView.getSelectionModel().clearSelection();
+                                tableView.getSelectionModel().select(row);
+                            }
+                            event.consume();
+                            return;
+                        }
+                        if (event.getButton() != MouseButton.PRIMARY) return;
                         if (event.isControlDown()) {
                             dragStart[0] = -1;
+                            rowSelectionAnchor[0] = row;
                             if (tableView.getSelectionModel().isSelected(row)) {
                                 tableView.getSelectionModel().clearSelection(row);
                             } else {
@@ -1217,19 +1232,23 @@ public class SqlEditorView extends BorderPane {
                             }
                         } else if (event.isShiftDown()) {
                             dragStart[0] = -1;
-                            int anchor = tableView.getSelectionModel().getFocusedIndex();
+                            int anchor = rowSelectionAnchor[0] >= 0
+                                    ? rowSelectionAnchor[0]
+                                    : tableView.getSelectionModel().getFocusedIndex();
                             if (anchor >= 0) {
-                                int start = Math.min(row, anchor);
-                                int end = Math.max(row, anchor);
+                                int[] range = RowSelectorDragSelection.rowRange(anchor, row);
                                 tableView.getSelectionModel().clearSelection();
-                                tableView.getSelectionModel().selectRange(start, end + 1);
+                                tableView.getSelectionModel().selectRange(range[0], range[1]);
+                                tableView.getFocusModel().focus(row);
                             } else {
                                 tableView.getSelectionModel().clearSelection();
                                 tableView.getSelectionModel().select(row);
+                                rowSelectionAnchor[0] = row;
                             }
                         } else {
                             tableView.getSelectionModel().clearSelection();
                             tableView.getSelectionModel().select(row);
+                            rowSelectionAnchor[0] = row;
                             dragStart[0] = row;
                         }
                         event.consume();
@@ -1306,10 +1325,10 @@ public class SqlEditorView extends BorderPane {
         }
 
         // 鼠标拖拽选中多个cell
-        setupDragSelection(tableView);
+        setupDragSelection(tableView, rowSelectionAnchor);
         // Ctrl+C 复制选中cell
         setupKeyboardShortcuts(tableView, finalEditContext);
-        setupQueryResultContextMenu(tableView, finalEditContext, sourceTableName);
+        setupQueryResultContextMenu(tableView, frozenTablePane, finalEditContext, sourceTableName);
 
         if (!showResultFooter) return frozenTablePane;
 
@@ -1884,6 +1903,7 @@ public class SqlEditorView extends BorderPane {
 
     /** 查询结果右键菜单：复制始终可用；修改需可安全回写，删除还必须包含完整主键。 */
     private void setupQueryResultContextMenu(TableView<ObservableList<String>> tableView,
+                                             FrozenRowSelectorPane<ObservableList<String>> frozenTablePane,
                                              QueryResultEditContext context,
                                              String sourceTableName) {
         ContextMenu menu = new ContextMenu();
@@ -1940,7 +1960,7 @@ public class SqlEditorView extends BorderPane {
                 displayMenu,
                 refreshItem
         );
-        tableView.setOnContextMenuRequested(event -> {
+        frozenTablePane.setOnContextMenuRequested(event -> {
             Node target = event.getPickResult().getIntersectedNode();
             while (target != null && target != tableView) {
                 if (target.getStyleClass().contains("column-header")
@@ -2155,7 +2175,7 @@ public class SqlEditorView extends BorderPane {
                         }
                         Platform.runLater(() -> {
                             for (ObservableList<String> row : selectedRows) context.originalRows.remove(row);
-                            context.sourceRows.removeAll(selectedRows);
+                            TableCellContextMenuUtils.removeRows(tableView, selectedRows);
                             context.saving = false;
                             tableView.setDisable(false);
                             updateQueryResultButtons(context);
@@ -2840,7 +2860,8 @@ public class SqlEditorView extends BorderPane {
     /**
      * 鼠标拖拽选中多个cell + Shift点击范围选中
      */
-    private void setupDragSelection(TableView<ObservableList<String>> tableView) {
+    private void setupDragSelection(TableView<ObservableList<String>> tableView,
+                                    int[] rowSelectionAnchor) {
         final int[] dragStart = {-1, -1};
         final int[] dragEnd = {-1, -1};
         final int[] anchorCell = {-1, -1};
@@ -2849,6 +2870,15 @@ public class SqlEditorView extends BorderPane {
             if (event.getButton() != MouseButton.PRIMARY) return;
             int[] cellPos = getCellPositionAt(tableView, event);
             if (cellPos == null) return;
+
+            if (event.isShiftDown() && rowSelectionAnchor[0] >= 0) {
+                int[] range = RowSelectorDragSelection.rowRange(rowSelectionAnchor[0], cellPos[0]);
+                tableView.getSelectionModel().clearSelection();
+                tableView.getSelectionModel().selectRange(range[0], range[1]);
+                tableView.getFocusModel().focus(cellPos[0]);
+                event.consume();
+                return;
+            }
 
             if (event.isShiftDown() && anchorCell[0] >= 0) {
                 int minRow = Math.min(anchorCell[0], cellPos[0]);
@@ -2867,6 +2897,7 @@ public class SqlEditorView extends BorderPane {
             dragStart[1] = cellPos[1];
             dragEnd[0] = cellPos[0];
             dragEnd[1] = cellPos[1];
+            rowSelectionAnchor[0] = -1;
             anchorCell[0] = cellPos[0];
             anchorCell[1] = cellPos[1];
             tableView.getSelectionModel().clearSelection();
