@@ -3,6 +3,8 @@ module tomato {
     requires javafx.controls;
     requires javafx.fxml;
     requires javafx.swing;
+    requires org.bytedeco.javacpp;
+    requires org.bytedeco.ffmpeg;
     requires com.google.gson;
     requires com.google.guice;
     requires javax.inject;

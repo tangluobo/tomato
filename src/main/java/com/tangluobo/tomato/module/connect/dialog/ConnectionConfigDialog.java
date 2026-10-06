@@ -133,17 +133,23 @@ public class ConnectionConfigDialog {
     private CheckBox rdpMapClipboardCheck;
     private CheckBox rdpEnableSoundCheck;
 
-    // ===== VNC/SPICE 专属字段 =====
+    // ===== VNC/SPICE/ADB 远程桌面专属字段 =====
     private VBox remoteDesktopConfigContent;
     private TextField remoteDesktopNameField;
     private TextField remoteDesktopHostField;
     private TextField remoteDesktopPortField;
     private Label remoteDesktopTlsPortLabel;
     private TextField remoteDesktopTlsPortField;
+    private Label remoteDesktopUsernameLabel;
     private TextField remoteDesktopUsernameField;
+    private Label remoteDesktopPasswordLabel;
+    private VBox remoteDesktopPasswordBox;
     private PasswordField remoteDesktopPasswordField;
     private CheckBox remoteDesktopSavePasswordCheckBox;
     private TextField remoteDesktopClientPathField;
+    private Label adbExecutablePathLabel;
+    private HBox adbExecutablePathBox;
+    private TextField adbExecutablePathField;
     private CheckBox remoteDesktopFullscreenCheckBox;
     private TextField remoteDesktopDescriptionField;
     private Label remoteDesktopClientHint;
@@ -1301,7 +1307,7 @@ public class ConnectionConfigDialog {
         simpleConfigContent.getChildren().add(grid);
     }
 
-    /** 构建 VNC/SPICE 远程桌面配置。VNC 直接由 Tomato 内置 RFB 客户端打开。 */
+    /** 构建 VNC/SPICE/ADB 远程桌面配置。 */
     private void buildRemoteDesktopConfigContent() {
         remoteDesktopConfigContent = new VBox(12);
         remoteDesktopConfigContent.setVisible(false);
@@ -1337,22 +1343,46 @@ public class ConnectionConfigDialog {
         remoteDesktopTlsPortField.setPrefWidth(120);
         grid.add(remoteDesktopTlsPortField, 1, row++);
 
-        grid.add(new Label("用户名："), 0, row);
+        remoteDesktopUsernameLabel = new Label("用户名：");
+        grid.add(remoteDesktopUsernameLabel, 0, row);
         remoteDesktopUsernameField = new TextField();
         remoteDesktopUsernameField.setPromptText("可选");
         remoteDesktopUsernameField.setPrefWidth(320);
         grid.add(remoteDesktopUsernameField, 1, row++);
 
-        grid.add(new Label("密码："), 0, row);
-        VBox passwordBox = new VBox(4);
+        remoteDesktopPasswordLabel = new Label("密码：");
+        grid.add(remoteDesktopPasswordLabel, 0, row);
+        remoteDesktopPasswordBox = new VBox(4);
         remoteDesktopPasswordField = new PasswordField();
         remoteDesktopPasswordField.setPromptText("可选；留空时由客户端询问");
         remoteDesktopPasswordField.setPrefWidth(300);
         remoteDesktopSavePasswordCheckBox = new CheckBox("保存密码");
         remoteDesktopSavePasswordCheckBox.setSelected(true);
         remoteDesktopSavePasswordCheckBox.setStyle("-fx-font-size: 11px; -fx-text-fill: #666;");
-        passwordBox.getChildren().addAll(remoteDesktopPasswordField, remoteDesktopSavePasswordCheckBox);
-        grid.add(passwordBox, 1, row++);
+        remoteDesktopPasswordBox.getChildren().addAll(remoteDesktopPasswordField, remoteDesktopSavePasswordCheckBox);
+        grid.add(remoteDesktopPasswordBox, 1, row++);
+
+        adbExecutablePathLabel = new Label("ADB程序：");
+        grid.add(adbExecutablePathLabel, 0, row);
+        adbExecutablePathBox = new HBox(8);
+        adbExecutablePathField = new TextField();
+        adbExecutablePathField.setPromptText("可选；默认自动查找 adb");
+        adbExecutablePathField.setPrefWidth(260);
+        Button browseAdbButton = new Button("浏览...");
+        browseAdbButton.setOnAction(event -> {
+            FileChooser chooser = new FileChooser();
+            chooser.setTitle("选择 adb 可执行文件");
+            String currentPath = adbExecutablePathField.getText().trim();
+            if (!currentPath.isEmpty()) {
+                File currentFile = new File(currentPath);
+                File parent = currentFile.getParentFile();
+                if (parent != null && parent.isDirectory()) chooser.setInitialDirectory(parent);
+            }
+            File selected = chooser.showOpenDialog(dialogStage);
+            if (selected != null) adbExecutablePathField.setText(selected.getAbsolutePath());
+        });
+        adbExecutablePathBox.getChildren().addAll(adbExecutablePathField, browseAdbButton);
+        grid.add(adbExecutablePathBox, 1, row++);
 
         // 保留字段仅用于读取旧配置；内置 VNC 客户端不再需要可执行程序路径。
         remoteDesktopClientPathField = new TextField();
@@ -2395,12 +2425,29 @@ public class ConnectionConfigDialog {
                 remoteDesktopPortField.setText(String.valueOf(getDefaultPort(selectedType)));
             }
             boolean spice = selectedType == ConnectType.SPICE;
+            boolean adb = selectedType == ConnectType.ADB;
             remoteDesktopTlsPortLabel.setVisible(spice);
             remoteDesktopTlsPortLabel.setManaged(spice);
             remoteDesktopTlsPortField.setVisible(spice);
             remoteDesktopTlsPortField.setManaged(spice);
+            remoteDesktopUsernameLabel.setVisible(!adb);
+            remoteDesktopUsernameLabel.setManaged(!adb);
+            remoteDesktopUsernameField.setVisible(!adb);
+            remoteDesktopUsernameField.setManaged(!adb);
+            remoteDesktopPasswordLabel.setVisible(!adb);
+            remoteDesktopPasswordLabel.setManaged(!adb);
+            remoteDesktopPasswordBox.setVisible(!adb);
+            remoteDesktopPasswordBox.setManaged(!adb);
+            adbExecutablePathLabel.setVisible(adb);
+            adbExecutablePathLabel.setManaged(adb);
+            adbExecutablePathBox.setVisible(adb);
+            adbExecutablePathBox.setManaged(adb);
+            remoteDesktopHostField.setPromptText(adb
+                    ? "已开启无线调试的 Android 设备地址" : "VNC/SPICE 服务地址");
             remoteDesktopClientHint.setText(spice
                     ? "SPICE 不会启动外部程序；内置 SPICE 协议仍在开发中。"
+                    : adb
+                    ? "设备需开启无线调试，并允许此电脑的 ADB 调试授权；ADB 程序可留空自动查找。"
                     : "使用 Tomato 内置 VNC 客户端，无需安装 virt-viewer 或 VNC Viewer。");
         } else if (isS3orOSS) {
             if (s3RegionField.getText().isEmpty()) {
@@ -2437,7 +2484,7 @@ public class ConnectionConfigDialog {
     }
 
     private boolean isRemoteDesktopType(ConnectType type) {
-        return type == ConnectType.VNC || type == ConnectType.SPICE;
+        return type == ConnectType.VNC || type == ConnectType.SPICE || type == ConnectType.ADB;
     }
 
     private boolean isRelationalDatabaseType(ConnectType type) {
@@ -2541,6 +2588,8 @@ public class ConnectionConfigDialog {
             remoteDesktopSavePasswordCheckBox.setSelected(existingConfig.isSavePassword());
             remoteDesktopClientPathField.setText(existingConfig.getRemoteDesktopClientPath() != null
                     ? existingConfig.getRemoteDesktopClientPath() : "");
+            adbExecutablePathField.setText(existingConfig.getAdbExecutablePath() != null
+                    ? existingConfig.getAdbExecutablePath() : "");
             remoteDesktopFullscreenCheckBox.setSelected(existingConfig.isFullscreen());
             remoteDesktopDescriptionField.setText(existingConfig.getDescription() != null
                     ? existingConfig.getDescription() : "");
@@ -2801,15 +2850,19 @@ public class ConnectionConfigDialog {
             config.setHost(remoteDesktopHostField.getText().trim());
             config.setPort(Integer.parseInt(remoteDesktopPortField.getText().trim()));
             String tlsPort = remoteDesktopTlsPortField.getText().trim();
-            config.setRemoteDesktopTlsPort(tlsPort.isEmpty() ? 0 : Integer.parseInt(tlsPort));
+            config.setRemoteDesktopTlsPort(selectedType == ConnectType.SPICE && !tlsPort.isEmpty()
+                    ? Integer.parseInt(tlsPort) : 0);
+            boolean adb = selectedType == ConnectType.ADB;
             String username = remoteDesktopUsernameField.getText().trim();
-            config.setUsername(username.isEmpty() ? null : username);
-            config.setUsePassword(true);
+            config.setUsername(adb || username.isEmpty() ? null : username);
+            config.setUsePassword(!adb);
             config.setUseKey(false);
-            config.setSavePassword(remoteDesktopSavePasswordCheckBox.isSelected());
-            config.setPassword(remoteDesktopSavePasswordCheckBox.isSelected()
+            config.setSavePassword(!adb && remoteDesktopSavePasswordCheckBox.isSelected());
+            config.setPassword(!adb && remoteDesktopSavePasswordCheckBox.isSelected()
                     ? remoteDesktopPasswordField.getText() : null);
             config.setRemoteDesktopClientPath(null);
+            String adbPath = adbExecutablePathField.getText().trim();
+            config.setAdbExecutablePath(adb && !adbPath.isEmpty() ? adbPath : null);
             config.setFullscreen(remoteDesktopFullscreenCheckBox.isSelected());
             config.setDescription(remoteDesktopDescriptionField.getText().trim());
         } else if (isS3orOSS) {
@@ -3321,6 +3374,7 @@ public class ConnectionConfigDialog {
             case SSH, SFTP -> 22;
             case RDP -> 3389;
             case VNC, SPICE -> 5900;
+            case ADB -> 5555;
             case MYSQL -> 3306;
             case POSTGRESQL -> 5432;
             case FTP -> 21;

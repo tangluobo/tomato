@@ -31,7 +31,7 @@ class DatabaseLogoLoaderTest {
 
     @Test
     void rendersRemoteDesktopLogos() {
-        for (ConnectType type : new ConnectType[]{ConnectType.VNC, ConnectType.SPICE}) {
+        for (ConnectType type : new ConnectType[]{ConnectType.VNC, ConnectType.SPICE, ConnectType.ADB}) {
             Image image = DatabaseLogoLoader.load(type.getIconPath(), 32, 32);
             assertNotNull(image, type.name());
             assertFalse(image.isError(), type.name());

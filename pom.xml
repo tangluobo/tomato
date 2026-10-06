@@ -16,6 +16,9 @@
         <native.maven.plugin.version>0.11.3</native.maven.plugin.version>
         <mainClass>com.tangluobo.tomato.Launcher</mainClass>
         <javafx.version>27-ea+24</javafx.version>
+        <javacpp.version>1.5.13</javacpp.version>
+        <ffmpeg.version>8.0.1-${javacpp.version}</ffmpeg.version>
+        <ffmpeg.platform>${ffmpeg.platform.os}-${ffmpeg.platform.arch}</ffmpeg.platform>
         <!-- jpackage 相关属性 -->
         <!-- 默认 package 只构建普通 JAR，不启动 UI，也不启用 Native Image tracing agent。 -->
         <agent.exec.skip>true</agent.exec.skip>
@@ -66,11 +69,37 @@
               <artifactId>javafx-fxml</artifactId>
               <version>${javafx.version}</version>
             </dependency>
-            <dependency>
-              <groupId>org.openjfx</groupId>
-              <artifactId>javafx-swing</artifactId>
-              <version>${javafx.version}</version>
-            </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-swing</artifactId>
+            <version>${javafx.version}</version>
+        </dependency>
+        <!-- Native FFmpeg decoding keeps the ADB H.264 stream real-time.  Only the
+             current OS/CPU native bundle is selected by the profiles below. -->
+        <dependency>
+            <groupId>org.bytedeco</groupId>
+            <artifactId>javacpp</artifactId>
+            <version>${javacpp.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.bytedeco</groupId>
+            <artifactId>ffmpeg</artifactId>
+            <version>${ffmpeg.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.bytedeco</groupId>
+            <artifactId>ffmpeg</artifactId>
+            <version>${ffmpeg.version}</version>
+            <classifier>${ffmpeg.platform}</classifier>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.bytedeco</groupId>
+            <artifactId>javacpp</artifactId>
+            <version>${javacpp.version}</version>
+            <classifier>${ffmpeg.platform}</classifier>
+            <scope>runtime</scope>
+        </dependency>
         <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
@@ -761,6 +790,7 @@
             <properties>
                 <native.package.os>windows</native.package.os>
                 <native.executable.name>tomato.exe</native.executable.name>
+                <ffmpeg.platform.os>windows</ffmpeg.platform.os>
             </properties>
         </profile>
         <profile>
@@ -772,6 +802,7 @@
             </activation>
             <properties>
                 <native.package.os>linux</native.package.os>
+                <ffmpeg.platform.os>linux</ffmpeg.platform.os>
             </properties>
         </profile>
         <profile>
@@ -783,6 +814,7 @@
             </activation>
             <properties>
                 <native.package.os>macos</native.package.os>
+                <ffmpeg.platform.os>macosx</ffmpeg.platform.os>
             </properties>
         </profile>
         <profile>
@@ -794,6 +826,7 @@
             </activation>
             <properties>
                 <native.package.arch>x86_64</native.package.arch>
+                <ffmpeg.platform.arch>x86_64</ffmpeg.platform.arch>
             </properties>
         </profile>
         <profile>
@@ -805,6 +838,7 @@
             </activation>
             <properties>
                 <native.package.arch>x86_64</native.package.arch>
+                <ffmpeg.platform.arch>x86_64</ffmpeg.platform.arch>
             </properties>
         </profile>
         <profile>
@@ -816,6 +850,7 @@
             </activation>
             <properties>
                 <native.package.arch>arm64</native.package.arch>
+                <ffmpeg.platform.arch>arm64</ffmpeg.platform.arch>
             </properties>
         </profile>
         <profile>
@@ -827,6 +862,7 @@
             </activation>
             <properties>
                 <native.package.arch>arm64</native.package.arch>
+                <ffmpeg.platform.arch>arm64</ffmpeg.platform.arch>
             </properties>
         </profile>
         <profile>

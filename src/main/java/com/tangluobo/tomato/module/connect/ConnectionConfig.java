@@ -51,6 +51,9 @@ public class ConnectionConfig {
     private String remoteDesktopClientPath;
     private int remoteDesktopTlsPort; // SPICE TLS 端口；0 表示不使用
 
+    // ADB 远程桌面配置。为空时从 ANDROID_HOME/ANDROID_SDK_ROOT 或 PATH 查找 adb。
+    private String adbExecutablePath;
+
     // 本地终端配置
     private String terminalType; // Windows: "cmd" 或 "powershell"; Linux/macOS: "system"
 
@@ -191,6 +194,9 @@ public class ConnectionConfig {
 
     public int getRemoteDesktopTlsPort() { return remoteDesktopTlsPort; }
     public void setRemoteDesktopTlsPort(int remoteDesktopTlsPort) { this.remoteDesktopTlsPort = remoteDesktopTlsPort; }
+
+    public String getAdbExecutablePath() { return adbExecutablePath; }
+    public void setAdbExecutablePath(String adbExecutablePath) { this.adbExecutablePath = adbExecutablePath; }
 
     public String getTerminalType() { return terminalType; }
     public void setTerminalType(String terminalType) { this.terminalType = terminalType; }

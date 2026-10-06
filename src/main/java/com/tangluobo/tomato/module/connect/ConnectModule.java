@@ -1926,6 +1926,7 @@ public class ConnectModule implements Module {
         if (type == ConnectType.LOCAL_DIRECTORY) return new LocalDirectoryConnectHandler();
         if (type == ConnectType.S3 || type == ConnectType.ALIYUN_OSS) return new S3ConnectHandler();
         if (type == ConnectType.RDP) return new RdpConnectHandler();
+        if (type == ConnectType.ADB) return new AdbConnectHandler();
         if (type == ConnectType.VNC || type == ConnectType.SPICE) return new RemoteDesktopConnectHandler();
         if (type == ConnectType.SSH) return new SshTerminalConnectHandler();
         if (type == ConnectType.SFTP) return new SFTPConnectHandler();

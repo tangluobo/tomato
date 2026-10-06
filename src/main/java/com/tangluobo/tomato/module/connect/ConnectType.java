@@ -4,6 +4,7 @@ public enum ConnectType {
     SSH("SSH", "SSH连接", "/images/connect/connection-icons/ssh.svg", Category.OTHERS),
     RDP("RDP", "远程桌面", "/images/connect/windows.png", Category.OTHERS),
     VNC("VNC", "VNC远程桌面", "/images/connect/vnc.svg", Category.OTHERS),
+    ADB("ADB", "ADB远程桌面", "/images/connect/adb.svg", Category.OTHERS),
     SPICE("SPICE", "SPICE虚拟机", "/images/connect/spice.svg", Category.OTHERS),
     MYSQL("MySQL", "MySQL数据库", "/images/connect/mysql.png", Category.DATABASE),
     POSTGRESQL("PostgreSQL", "PostgreSQL数据库", "/images/connect/postgresql.png", Category.DATABASE),
