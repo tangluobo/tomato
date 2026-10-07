@@ -10,8 +10,6 @@ import javafx.scene.control.ToolBar;
 import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
-import javafx.scene.image.PixelFormat;
-import javafx.scene.image.WritableImage;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
@@ -31,7 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Embedded Android desktop using an H.264 video stream and a persistent ADB control channel. */
+/** Embedded Android desktop backed by one shared, encoder-free ADB session per endpoint. */
 final class AdbPane extends BorderPane {
     private static final double VIEWPORT_PADDING = 8;
     private static final Map<KeyCode, Integer> ANDROID_KEYS = Map.ofEntries(
@@ -53,22 +51,19 @@ final class AdbPane extends BorderPane {
     private final ImageView imageView = new ImageView();
     private final StackPane viewport = new StackPane(imageView);
     private final Button reconnectButton = new Button("重新连接");
-    private final ExecutorService captureExecutor = Executors.newSingleThreadExecutor(daemonFactory("ADB-Capture"));
     private final ExecutorService inputExecutor = Executors.newSingleThreadExecutor(daemonFactory("ADB-Input"));
     private final AtomicLong generation = new AtomicLong();
     private final AtomicReference<FrameUpdate> pendingFrame = new AtomicReference<>();
     private final AtomicBoolean frameRenderScheduled = new AtomicBoolean();
+    private final Object frameBufferLock = new Object();
 
-    private volatile AdbClient client;
-    private volatile AutoCloseable screenStream;
+    private volatile AdbSessionPool.Lease session;
     private volatile boolean connected;
     private volatile int framebufferWidth;
     private volatile int framebufferHeight;
     private int dragStartX;
     private int dragStartY;
     private long dragStartNanos;
-    private long lastMotionNanos;
-    private boolean liveGesture;
 
     AdbPane(String host, int port, String adbExecutablePath) {
         this.host = host;
@@ -120,141 +115,83 @@ final class AdbPane extends BorderPane {
     }
 
     void connect() {
-        long connectionGeneration = generation.incrementAndGet();
-        stopScreenStream();
-        AdbClient previous = client;
-        client = null;
-        if (previous != null) captureExecutor.execute(previous::disconnect);
-        AdbClient next;
-        try {
-            next = new AdbClient(host, port, adbExecutablePath);
-        } catch (RuntimeException error) {
-            updateStatus("连接失败：" + safeMessage(error));
+        AdbSessionPool.Lease current = session;
+        if (current != null) {
+            reconnectButton.setDisable(true);
+            current.reconnect();
             return;
         }
-        client = next;
+        long connectionGeneration = generation.incrementAndGet();
         connected = false;
         reconnectButton.setDisable(true);
-        updateStatus("正在连接 " + next.endpoint() + "…");
-
-        captureExecutor.execute(() -> {
-            if (generation.get() != connectionGeneration) return;
-            try {
-                next.connect();
-                if (generation.get() != connectionGeneration) {
-                    next.disconnect();
-                    return;
-                }
-                connected = true;
-                updateStatus("已连接 · " + next.endpoint());
-                Platform.runLater(this::requestFocus);
-                captureFrames(next, connectionGeneration);
-            } catch (Exception error) {
-                connected = false;
-                if (generation.get() == connectionGeneration) {
-                    updateStatus("连接失败：" + safeMessage(error));
-                }
-            } finally {
-                Platform.runLater(() -> reconnectButton.setDisable(false));
-            }
-        });
-    }
-
-    private void captureFrames(AdbClient activeClient, long connectionGeneration) throws IOException {
+        updateStatus("正在连接 " + AdbClient.endpoint(host, port) + "…");
         try {
-            captureVideoFrames(activeClient, connectionGeneration);
+            session = AdbSessionPool.acquire(host, port, adbExecutablePath,
+                    new AdbSessionPool.Listener() {
+                        @Override
+                        public void onStatus(boolean sessionConnected, String message) {
+                            if (generation.get() != connectionGeneration) return;
+                            connected = sessionConnected;
+                            updateStatus(message);
+                            Platform.runLater(() -> {
+                                reconnectButton.setDisable(false);
+                                if (sessionConnected) requestFocus();
+                            });
+                        }
+
+                        @Override
+                        public void onFrame(byte[] png, String endpoint) {
+                            if (generation.get() != connectionGeneration) return;
+                            try {
+                                Image frame = decodePngFrame(png);
+                                int width = (int) Math.round(frame.getWidth());
+                                int height = (int) Math.round(frame.getHeight());
+                                queueFrame(new FrameUpdate(frame, width, height, endpoint,
+                                        "ADB共享稳定模式", connectionGeneration));
+                            } catch (IOException error) {
+                                updateStatus("画面解码失败：" + safeMessage(error));
+                            }
+                        }
+                    });
+        } catch (RuntimeException error) {
+            updateStatus("连接失败：" + safeMessage(error));
+            reconnectButton.setDisable(false);
             return;
-        } catch (IOException | RuntimeException videoError) {
-            if (generation.get() != connectionGeneration || Thread.currentThread().isInterrupted()) return;
-            updateStatus("H.264 视频流不可用，正在切换兼容模式：" + safeMessage(videoError));
-        }
-        capturePngFrames(activeClient, connectionGeneration);
-    }
-
-    private void captureVideoFrames(AdbClient activeClient, long connectionGeneration) throws IOException {
-        AdbClient.VideoStream stream = activeClient.openVideoStream();
-        if (!registerStream(stream, connectionGeneration)) return;
-        try (stream) {
-            while (generation.get() == connectionGeneration && !Thread.currentThread().isInterrupted()) {
-                AdbClient.VideoFrame decoded = stream.readFrame();
-                WritableImage frame = new WritableImage(decoded.width(), decoded.height());
-                frame.getPixelWriter().setPixels(0, 0, decoded.width(), decoded.height(),
-                        PixelFormat.getByteBgraInstance(), decoded.bgra(), 0, decoded.width() * 4);
-                queueFrame(new FrameUpdate(frame, decoded.width(), decoded.height(),
-                        activeClient.endpoint(), "ADB H.264 · FFmpeg低延迟", connectionGeneration));
-            }
-        } finally {
-            if (screenStream == stream) screenStream = null;
         }
     }
 
-    private void capturePngFrames(AdbClient activeClient, long connectionGeneration) throws IOException {
-        AdbClient.ScreenStream stream = activeClient.openScreenStream();
-        if (!registerStream(stream, connectionGeneration)) return;
-        try (stream) {
-            while (generation.get() == connectionGeneration && !Thread.currentThread().isInterrupted()) {
-                byte[] png = stream.readFrame();
-                Image frame = new Image(new ByteArrayInputStream(png));
-                if (frame.isError() || frame.getWidth() <= 0 || frame.getHeight() <= 0) {
-                    throw new IOException("无法解码设备屏幕截图");
-                }
-                int width = (int) Math.round(frame.getWidth());
-                int height = (int) Math.round(frame.getHeight());
-                queueFrame(new FrameUpdate(frame, width, height,
-                        activeClient.endpoint(), "PNG兼容", connectionGeneration));
-            }
-        } finally {
-            if (screenStream == stream) screenStream = null;
+    private static Image decodePngFrame(byte[] png) throws IOException {
+        Image frame = new Image(new ByteArrayInputStream(png));
+        if (frame.isError() || frame.getWidth() <= 0 || frame.getHeight() <= 0) {
+            throw new IOException("无法解码设备屏幕截图");
         }
-    }
-
-    private boolean registerStream(AutoCloseable stream, long connectionGeneration) {
-        screenStream = stream;
-        if (generation.get() == connectionGeneration) return true;
-        try {
-            stream.close();
-        } catch (Exception ignored) {
-        }
-        if (screenStream == stream) screenStream = null;
-        return false;
+        return frame;
     }
 
     void disconnect() {
         generation.incrementAndGet();
-        stopScreenStream();
         connected = false;
-        AdbClient current = client;
-        client = null;
+        AdbSessionPool.Lease current = session;
+        session = null;
         updateStatus("已断开");
         reconnectButton.setDisable(false);
-        if (current != null) captureExecutor.execute(current::disconnect);
+        if (current != null) current.close();
     }
 
     void dispose() {
-        generation.incrementAndGet();
-        stopScreenStream();
-        connected = false;
-        AdbClient current = client;
-        client = null;
-        if (current != null) Thread.ofVirtual().name("ADB-dispose").start(current::disconnect);
-        captureExecutor.shutdownNow();
+        disconnect();
         inputExecutor.shutdownNow();
-    }
-
-    private void stopScreenStream() {
-        AutoCloseable current = screenStream;
-        screenStream = null;
-        if (current != null) {
-            try {
-                current.close();
-            } catch (Exception ignored) {
-            }
-        }
     }
 
     /** Keep only the newest decoded frame so a busy JavaFX thread never accumulates visual lag. */
     private void queueFrame(FrameUpdate update) {
-        pendingFrame.set(update);
+        synchronized (frameBufferLock) {
+            pendingFrame.set(update);
+        }
+        scheduleFrameRender();
+    }
+
+    private void scheduleFrameRender() {
         if (frameRenderScheduled.compareAndSet(false, true)) {
             Platform.runLater(this::renderLatestFrame);
         }
@@ -262,11 +199,16 @@ final class AdbPane extends BorderPane {
 
     private void renderLatestFrame() {
         try {
-            FrameUpdate update = pendingFrame.getAndSet(null);
-            if (update == null || generation.get() != update.generation()) return;
+            FrameUpdate update;
+            Image image;
+            synchronized (frameBufferLock) {
+                update = pendingFrame.getAndSet(null);
+                if (update == null || generation.get() != update.generation()) return;
+                image = update.image();
+            }
             framebufferWidth = update.width();
             framebufferHeight = update.height();
-            imageView.setImage(update.image());
+            imageView.setImage(image);
             layoutFrame();
             status.setText("已连接 · " + update.endpoint() + " · "
                     + update.width() + "×" + update.height() + " · " + update.transport());
@@ -322,34 +264,15 @@ final class AdbPane extends BorderPane {
         dragStartX = point[0];
         dragStartY = point[1];
         dragStartNanos = System.nanoTime();
-        lastMotionNanos = dragStartNanos;
-        AdbClient active = client;
-        liveGesture = connected && active != null && active.supportsMotionEvents();
-        if (liveGesture) submitInput(device -> device.motionEvent("DOWN", point[0], point[1]));
         event.consume();
     }
 
     private void handleMouseDragged(MouseEvent event) {
-        if (!liveGesture) return;
-        long now = System.nanoTime();
-        if (now - lastMotionNanos < 25_000_000L) {
-            event.consume();
-            return;
-        }
-        lastMotionNanos = now;
-        int[] point = remotePoint(event.getX(), event.getY());
-        submitInput(active -> active.motionEvent("MOVE", point[0], point[1]));
         event.consume();
     }
 
     private void handleMouseReleased(MouseEvent event) {
         int[] end = remotePoint(event.getX(), event.getY());
-        if (liveGesture) {
-            liveGesture = false;
-            submitInput(active -> active.motionEvent("UP", end[0], end[1]));
-            event.consume();
-            return;
-        }
         int dx = end[0] - dragStartX;
         int dy = end[1] - dragStartY;
         long heldMillis = (System.nanoTime() - dragStartNanos) / 1_000_000;
@@ -421,8 +344,8 @@ final class AdbPane extends BorderPane {
     }
 
     private void submitInput(InputAction action) {
-        AdbClient active = client;
-        if (!connected || active == null) return;
+        AdbSessionPool.Lease active = session;
+        if (!connected || active == null || !active.isConnected()) return;
         inputExecutor.execute(() -> {
             try {
                 action.run(active);
@@ -452,7 +375,7 @@ final class AdbPane extends BorderPane {
 
     @FunctionalInterface
     private interface InputAction {
-        void run(AdbClient client) throws IOException;
+        void run(AdbSessionPool.Lease session) throws IOException;
     }
 
     private record FrameUpdate(Image image, int width, int height, String endpoint,

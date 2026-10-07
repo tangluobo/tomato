@@ -105,9 +105,30 @@
             <artifactId>gson</artifactId>
             <version>2.11.0</version>
         </dependency>
-        <!-- The pure-Java BitTorrent artifacts are unpacked into this module at
-             generate-resources time. This avoids committing a merged binary and
-             also avoids their split packages becoming separate JPMS modules. -->
+        <!-- Keep the BitTorrent engine on the classpath. bt-core and bt-dht share
+             protocol packages, so resolving them as separate JPMS modules is not
+             valid. Regular dependencies also make the bt.* packages available to
+             IDE builds instead of relying on a Maven-only unpack step. -->
+        <dependency>
+            <groupId>com.github.atomashpolskiy</groupId>
+            <artifactId>bt-core</artifactId>
+            <version>1.10</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.atomashpolskiy</groupId>
+            <artifactId>bt-bencoding</artifactId>
+            <version>1.10</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.atomashpolskiy</groupId>
+            <artifactId>bt-http-tracker-client</artifactId>
+            <version>1.10</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.atomashpolskiy</groupId>
+            <artifactId>bt-dht</artifactId>
+            <version>1.10</version>
+        </dependency>
         <dependency>
             <groupId>com.google.inject</groupId>
             <artifactId>guice</artifactId>
@@ -462,58 +483,10 @@
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-dependency-plugin</artifactId>
-                <version>3.8.1</version>
-                <executions>
-                    <execution>
-                        <id>embed-pure-java-bittorrent-engine</id>
-                        <phase>generate-resources</phase>
-                        <goals>
-                            <goal>unpack</goal>
-                        </goals>
-                        <configuration>
-                            <artifactItems>
-                                <artifactItem>
-                                    <groupId>com.github.atomashpolskiy</groupId>
-                                    <artifactId>bt-core</artifactId>
-                                    <version>1.10</version>
-                                    <outputDirectory>${project.build.outputDirectory}</outputDirectory>
-                                </artifactItem>
-                                <artifactItem>
-                                    <groupId>com.github.atomashpolskiy</groupId>
-                                    <artifactId>bt-bencoding</artifactId>
-                                    <version>1.10</version>
-                                    <outputDirectory>${project.build.outputDirectory}</outputDirectory>
-                                </artifactItem>
-                                <artifactItem>
-                                    <groupId>com.github.atomashpolskiy</groupId>
-                                    <artifactId>bt-http-tracker-client</artifactId>
-                                    <version>1.10</version>
-                                    <outputDirectory>${project.build.outputDirectory}</outputDirectory>
-                                </artifactItem>
-                                <artifactItem>
-                                    <groupId>com.github.atomashpolskiy</groupId>
-                                    <artifactId>bt-dht</artifactId>
-                                    <version>1.10</version>
-                                    <outputDirectory>${project.build.outputDirectory}</outputDirectory>
-                                </artifactItem>
-                            </artifactItems>
-                            <excludes>META-INF/MANIFEST.MF,META-INF/services/bt.module.BtModuleProvider</excludes>
-                            <overWriteIfNewer>true</overWriteIfNewer>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.13.0</version>
                 <configuration>
                     <release>${maven.compiler.release}</release>
-                    <compilerArgs>
-                        <arg>--add-reads</arg>
-                        <arg>tomato=ALL-UNNAMED</arg>
-                    </compilerArgs>
                 </configuration>
             </plugin>
             <plugin>
@@ -576,9 +549,9 @@
                 <artifactId>maven-assembly-plugin</artifactId>
                 <version>3.7.0</version>
                 <configuration>
-                    <descriptorRefs>
-                        <descriptorRef>jar-with-dependencies</descriptorRef>
-                    </descriptorRefs>
+                    <descriptors>
+                        <descriptor>src/assembly/jar-with-dependencies.xml</descriptor>
+                    </descriptors>
                     <archive>
                         <manifest>
                             <mainClass>${mainClass}</mainClass>

@@ -42,9 +42,12 @@ class AdbClientTest {
         runner.reply(textResult(0, "connected to phone.lan:5555\n"));
         runner.reply(textResult(0, "device\n"));
         runner.reply(textResult(0, "Physical size: 1080x2400\n"));
-        runner.reply(textResult(0, "motionevent DOWN|UP|MOVE x y\n"));
         byte[] png = {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1};
-        runner.reply(new AdbClient.CommandResult(0, png, new byte[0]));
+        byte[] warning = "Warning: Multiple displays were found.\n".getBytes(StandardCharsets.UTF_8);
+        byte[] warningAndPng = new byte[warning.length + png.length];
+        System.arraycopy(warning, 0, warningAndPng, 0, warning.length);
+        System.arraycopy(png, 0, warningAndPng, warning.length, png.length);
+        runner.reply(new AdbClient.CommandResult(0, warningAndPng, new byte[0]));
         runner.reply(textResult(0, ""));
         runner.reply(textResult(0, ""));
 
@@ -58,18 +61,16 @@ class AdbClientTest {
         assertEquals(List.of("custom-adb", "-s", "phone.lan:5555", "get-state"), runner.commands.get(1));
         assertEquals(List.of("custom-adb", "-s", "phone.lan:5555", "shell", "wm", "size"),
                 runner.commands.get(2));
-        assertEquals(List.of("custom-adb", "-s", "phone.lan:5555", "shell", "input"),
-                runner.commands.get(3));
-        assertTrue(client.supportsMotionEvents());
         assertEquals(List.of("custom-adb", "-s", "phone.lan:5555", "exec-out", "sh", "-c",
-                "while screenrecord --output-format=h264 --bit-rate 2000000 --size 464x1024 -; do :; done"),
+                "while screenrecord --output-format=h264 --bit-rate 2000000 -; do :; done"),
                 client.videoStreamCommand());
-        assertEquals(List.of("custom-adb", "-s", "phone.lan:5555", "exec-out", "screencap", "-p"),
-                runner.commands.get(4));
+        assertEquals(List.of("custom-adb", "-s", "phone.lan:5555", "exec-out",
+                        "screencap", "-d", "0", "-p"),
+                runner.commands.get(3));
         assertEquals(List.of("custom-adb", "-s", "phone.lan:5555", "shell", "input", "tap", "12", "34"),
-                runner.commands.get(5));
+                runner.commands.get(4));
         assertEquals(List.of("custom-adb", "-s", "phone.lan:5555", "shell", "input", "keyevent", "3"),
-                runner.commands.get(6));
+                runner.commands.get(5));
     }
 
     @Test
@@ -96,11 +97,20 @@ class AdbClientTest {
         AdbClient client = new AdbClient("phone.lan", 5555, "custom-adb", new RecordingRunner());
 
         assertEquals(List.of("custom-adb", "-s", "phone.lan:5555", "exec-out", "sh", "-c",
-                "while screencap -p; do :; done"), client.screenStreamCommand());
+                "while screencap -d 0 -p 2>/dev/null; do :; done"), client.screenStreamCommand());
         assertEquals(List.of("custom-adb", "-s", "phone.lan:5555", "exec-out", "sh", "-c",
                 "while screenrecord --output-format=h264 --bit-rate 2000000 -; do :; done"),
                 client.videoStreamCommand());
-        assertEquals(List.of("custom-adb", "-s", "phone.lan:5555", "shell"), client.controlCommand());
+        assertEquals(List.of("custom-adb", "-s", "phone.lan:5555", "shell", "-T"), client.controlCommand());
+    }
+
+    @Test
+    void parsesPersistentShellAcknowledgementsWithoutAcceptingEchoedCommands() {
+        String marker = "__TOMATO_INPUT_7__:";
+
+        assertEquals(0, AdbClient.parseControlAck(marker + "0", marker));
+        assertEquals(127, AdbClient.parseControlAck("device:/ $ " + marker + "127", marker));
+        assertEquals(null, AdbClient.parseControlAck("echo " + marker + "$?", marker));
     }
 
     @Test
@@ -119,14 +129,32 @@ class AdbClientTest {
     void extractsBackToBackPngFramesFromPersistentStream() throws Exception {
         byte[] frame = java.util.HexFormat.of().parseHex(
                 "89504e470d0a1a0a0000000049454e4400000000");
-        byte[] concatenated = new byte[frame.length * 2];
-        System.arraycopy(frame, 0, concatenated, 0, frame.length);
-        System.arraycopy(frame, 0, concatenated, frame.length, frame.length);
+        byte[] warning = "Warning: Multiple displays were found.\n".getBytes(StandardCharsets.UTF_8);
+        byte[] concatenated = new byte[warning.length * 2 + frame.length * 2];
+        int offset = 0;
+        System.arraycopy(warning, 0, concatenated, offset, warning.length);
+        offset += warning.length;
+        System.arraycopy(frame, 0, concatenated, offset, frame.length);
+        offset += frame.length;
+        System.arraycopy(warning, 0, concatenated, offset, warning.length);
+        offset += warning.length;
+        System.arraycopy(frame, 0, concatenated, offset, frame.length);
         ByteArrayInputStream input = new ByteArrayInputStream(concatenated);
 
         assertArrayEquals(frame, AdbClient.readPngFrame(input));
         assertArrayEquals(frame, AdbClient.readPngFrame(input));
         assertThrows(IOException.class, () -> AdbClient.readPngFrame(input));
+    }
+
+    @Test
+    void stripsTextBeforeOneShotPngPayload() {
+        byte[] png = java.util.HexFormat.of().parseHex("89504e470d0a1a0a0102");
+        byte[] warning = "Warning: select a display.\n".getBytes(StandardCharsets.UTF_8);
+        byte[] output = new byte[warning.length + png.length];
+        System.arraycopy(warning, 0, output, 0, warning.length);
+        System.arraycopy(png, 0, output, warning.length, png.length);
+
+        assertArrayEquals(png, AdbClient.extractPngPayload(output));
     }
 
     private static AdbClient.CommandResult textResult(int exitCode, String stdout) {

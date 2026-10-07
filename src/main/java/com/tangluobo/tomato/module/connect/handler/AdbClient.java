@@ -4,10 +4,12 @@ import org.bytedeco.javacpp.Loader;
 import org.bytedeco.ffmpeg.ffmpeg;
 
 import java.io.BufferedInputStream;
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -18,8 +20,10 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
@@ -46,9 +50,12 @@ final class AdbClient {
     private static final Duration INPUT_TIMEOUT = Duration.ofSeconds(5);
     private static final int MAX_PNG_CHUNK_BYTES = 64 * 1024 * 1024;
     private static final int MAX_PNG_FRAME_BYTES = 96 * 1024 * 1024;
+    private static final int MAX_PNG_PREFIX_BYTES = 64 * 1024;
     private static final int MAX_VIDEO_EDGE = 1024;
     private static final int VIDEO_BIT_RATE = 2_000_000;
-    private static final String SCREEN_STREAM_COMMAND = "while screencap -p; do :; done";
+    private static final String PRIMARY_DISPLAY_ID = "0";
+    private static final String SCREEN_STREAM_COMMAND =
+            "while screencap -d " + PRIMARY_DISPLAY_ID + " -p 2>/dev/null; do :; done";
     private static final Pattern DISPLAY_SIZE_PATTERN = Pattern.compile("(?:Physical|Override) size:\\s*(\\d+)x(\\d+)");
     private static final byte[] PNG_SIGNATURE = {
             (byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a
@@ -59,7 +66,6 @@ final class AdbClient {
     private final CommandRunner commandRunner;
     private volatile ScreenSize displaySize;
     private volatile ControlChannel controlChannel;
-    private volatile boolean motionEventsSupported;
 
     AdbClient(String host, int port, String configuredExecutable) {
         this(host, port, configuredExecutable, new SystemCommandRunner());
@@ -101,13 +107,6 @@ final class AdbClient {
             // screenrecord can still select the device's native size if wm is unavailable.
         }
 
-        try {
-            CommandResult inputHelp = run(INPUT_TIMEOUT, "-s", endpoint, "shell", "input");
-            motionEventsSupported = inputHelp.combinedText().toLowerCase(Locale.ROOT).contains("motionevent");
-        } catch (IOException ignored) {
-            motionEventsSupported = false;
-        }
-
         if (commandRunner instanceof SystemCommandRunner) {
             try {
                 controlChannel = new ControlChannel(new ProcessBuilder(controlCommand()).start());
@@ -118,10 +117,11 @@ final class AdbClient {
     }
 
     byte[] captureScreen() throws IOException {
-        CommandResult result = run(CAPTURE_TIMEOUT, "-s", endpoint, "exec-out", "screencap", "-p");
+        CommandResult result = run(CAPTURE_TIMEOUT, "-s", endpoint, "exec-out",
+                "screencap", "-d", PRIMARY_DISPLAY_ID, "-p");
         if (result.exitCode() != 0) throw commandFailure("读取设备画面失败", result);
-        byte[] png = result.stdout();
-        if (!hasPngSignature(png)) {
+        byte[] png = extractPngPayload(result.stdout());
+        if (png == null) {
             throw new IOException("ADB 未返回有效的屏幕截图：" + usefulMessage(result));
         }
         return png;
@@ -148,7 +148,7 @@ final class AdbClient {
         }
         try {
             List<Process> pipeline = ProcessBuilder.startPipeline(List.of(
-                    new ProcessBuilder(videoStreamCommand(target)),
+                    new ProcessBuilder(videoStreamCommand()),
                     new ProcessBuilder(ffmpegCommand(target))));
             return new VideoStream(pipeline.get(0), pipeline.get(1), target);
         } catch (IOException | RuntimeException error) {
@@ -175,21 +175,18 @@ final class AdbClient {
         runInput("text", encodeInputText(value));
     }
 
-    boolean supportsMotionEvents() {
-        return motionEventsSupported;
-    }
-
-    void motionEvent(String action, int x, int y) throws IOException {
-        runInput("motionevent", action, Integer.toString(x), Integer.toString(y));
-    }
-
     void disconnect() {
-        closeControlChannel();
+        closeSession();
         try {
             run(INPUT_TIMEOUT, "disconnect", endpoint);
         } catch (IOException ignored) {
             // The view is already closing; a missing or stopped adb process needs no UI error.
         }
+    }
+
+    /** Closes this view's processes without disconnecting a newly reused endpoint globally. */
+    void closeSession() {
+        closeControlChannel();
     }
 
     private void runInput(String... arguments) throws IOException {
@@ -231,15 +228,9 @@ final class AdbClient {
     }
 
     List<String> videoStreamCommand() {
-        return videoStreamCommand(scaledVideoSize(displaySize, MAX_VIDEO_EDGE));
-    }
-
-    private List<String> videoStreamCommand(ScreenSize target) {
-        StringBuilder remote = new StringBuilder("while screenrecord --output-format=h264 --bit-rate ")
-                .append(VIDEO_BIT_RATE);
-        if (target != null) remote.append(" --size ").append(target.width()).append('x').append(target.height());
-        remote.append(" -; do :; done");
-        return buildCommand("-s", endpoint, "exec-out", "sh", "-c", remote.toString());
+        String remote = "while screenrecord --output-format=h264 --bit-rate "
+                + VIDEO_BIT_RATE + " -; do :; done";
+        return buildCommand("-s", endpoint, "exec-out", "sh", "-c", remote);
     }
 
     static String resolveFfmpegExecutable() throws IOException {
@@ -256,8 +247,8 @@ final class AdbClient {
         Objects.requireNonNull(target, "target");
         return List.of(resolveFfmpegExecutable(),
                 "-hide_banner", "-loglevel", "warning", "-nostats",
-                "-fflags", "nobuffer", "-flags", "low_delay", "-avioflags", "direct",
-                "-analyzeduration", "0", "-probesize", "32", "-threads", "1",
+                "-flags", "low_delay", "-avioflags", "direct",
+                "-analyzeduration", "0", "-probesize", "32768", "-threads", "1",
                 "-f", "h264", "-i", "pipe:0",
                 "-map", "0:v:0", "-an", "-sn", "-dn",
                 "-vf", "scale=" + target.width() + ':' + target.height() + ":flags=fast_bilinear",
@@ -266,7 +257,9 @@ final class AdbClient {
     }
 
     List<String> controlCommand() {
-        return buildCommand("-s", endpoint, "shell");
+        // A non-PTY shell does not echo commands or inject prompts, which makes the
+        // acknowledgement protocol deterministic on Windows, Linux and macOS hosts.
+        return buildCommand("-s", endpoint, "shell", "-T");
     }
 
     private void closeControlChannel() {
@@ -351,24 +344,42 @@ final class AdbClient {
 
     private static boolean containsFailure(String text) {
         return text.contains("failed") || text.contains("unable") || text.contains("cannot")
-                || text.contains("refused") || text.contains("unauthorized") || text.contains("offline");
+                || text.contains("refused") || text.contains("unauthorized") || text.contains("offline")
+                || text.contains("error") || text.contains("exception");
     }
 
-    private static boolean hasPngSignature(byte[] bytes) {
-        if (bytes == null || bytes.length < PNG_SIGNATURE.length) return false;
-        for (int i = 0; i < PNG_SIGNATURE.length; i++) {
-            if (bytes[i] != PNG_SIGNATURE[i]) return false;
+    static Integer parseControlAck(String line, String marker) {
+        String value = line == null ? "" : line.trim();
+        int markerIndex = value.lastIndexOf(marker);
+        if (markerIndex < 0) return null;
+        String status = value.substring(markerIndex + marker.length()).trim();
+        if (!status.matches("\\d+")) return null;
+        try {
+            return Integer.parseInt(status);
+        } catch (NumberFormatException ignored) {
+            return null;
         }
-        return true;
     }
 
-    /** Reads exactly one PNG from a stream containing back-to-back PNG files. */
+    static byte[] extractPngPayload(byte[] bytes) {
+        if (bytes == null || bytes.length < PNG_SIGNATURE.length) return null;
+        int lastStart = bytes.length - PNG_SIGNATURE.length;
+        for (int start = 0; start <= lastStart; start++) {
+            int offset = 0;
+            while (offset < PNG_SIGNATURE.length
+                    && bytes[start + offset] == PNG_SIGNATURE[offset]) {
+                offset++;
+            }
+            if (offset == PNG_SIGNATURE.length) {
+                return start == 0 ? bytes : Arrays.copyOfRange(bytes, start, bytes.length);
+            }
+        }
+        return null;
+    }
+
+    /** Reads exactly one PNG, tolerating device warnings between back-to-back frames. */
     static byte[] readPngFrame(InputStream input) throws IOException {
-        byte[] signature = input.readNBytes(PNG_SIGNATURE.length);
-        if (signature.length == 0) throw new EOFException("ADB 屏幕流已结束");
-        if (!Arrays.equals(signature, PNG_SIGNATURE)) {
-            throw new IOException("ADB 屏幕流格式无效（未找到 PNG 帧头）");
-        }
+        byte[] signature = seekPngSignature(input);
 
         ByteArrayOutputStream frame = new ByteArrayOutputStream(1024 * 1024);
         frame.write(signature);
@@ -396,6 +407,26 @@ final class AdbClient {
                 return frame.toByteArray();
             }
         }
+    }
+
+    private static byte[] seekPngSignature(InputStream input) throws IOException {
+        int matched = 0;
+        int scanned = 0;
+        while (scanned < MAX_PNG_PREFIX_BYTES + PNG_SIGNATURE.length) {
+            int next = input.read();
+            if (next < 0) {
+                if (scanned == 0) throw new EOFException("ADB 屏幕流已结束");
+                throw new IOException("ADB 屏幕流格式无效（未找到 PNG 帧头）");
+            }
+            scanned++;
+            if (next == (PNG_SIGNATURE[matched] & 0xff)) {
+                matched++;
+                if (matched == PNG_SIGNATURE.length) return PNG_SIGNATURE.clone();
+            } else {
+                matched = next == (PNG_SIGNATURE[0] & 0xff) ? 1 : 0;
+            }
+        }
+        throw new IOException("ADB 屏幕流格式无效（PNG 帧前的输出过长）");
     }
 
     private static byte[] readExactly(InputStream input, int length) throws IOException {
@@ -523,22 +554,53 @@ final class AdbClient {
     }
 
     private static final class ControlChannel implements AutoCloseable {
+        private static final String CLOSED_MARKER = "__TOMATO_ADB_SHELL_CLOSED__";
+        private static final long ACK_TIMEOUT_MILLIS = 2_000;
         private final Process process;
         private final OutputStream commands;
+        private final BlockingQueue<String> responses = new LinkedBlockingQueue<>();
+        private long commandSequence;
         private volatile boolean closed;
 
         private ControlChannel(Process process) {
             this.process = process;
             this.commands = process.getOutputStream();
-            drain(process.getInputStream(), "ADB-control-stdout");
+            readResponses(process.getInputStream());
             drain(process.getErrorStream(), "ADB-control-stderr");
         }
 
         synchronized void send(String... arguments) throws IOException {
             if (closed || !process.isAlive()) throw new IOException("ADB 控制通道已断开");
-            String command = "input " + String.join(" ", arguments) + '\n';
+            String marker = "__TOMATO_INPUT_" + (++commandSequence) + "__:";
+            String command = "input " + String.join(" ", arguments) + "; echo " + marker + "$?\n";
             commands.write(command.getBytes(StandardCharsets.UTF_8));
             commands.flush();
+
+            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ACK_TIMEOUT_MILLIS);
+            StringBuilder output = new StringBuilder();
+            while (true) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) throw new IOException("ADB 控制通道执行超时");
+                String line;
+                try {
+                    line = responses.poll(remaining, TimeUnit.NANOSECONDS);
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("ADB 控制指令被中断", error);
+                }
+                if (line == null) throw new IOException("ADB 控制通道执行超时");
+                if (CLOSED_MARKER.equals(line)) throw new IOException("ADB 控制通道已断开");
+                Integer status = parseControlAck(line, marker);
+                if (status != null) {
+                    String detail = output.toString().trim();
+                    if (status != 0 || containsFailure(detail.toLowerCase(Locale.ROOT))) {
+                        throw new IOException(detail.isBlank()
+                                ? "ADB input 命令退出码 " + status : detail);
+                    }
+                    return;
+                }
+                if (output.length() < 1_000) output.append(line).append('\n');
+            }
         }
 
         @Override
@@ -552,6 +614,19 @@ final class AdbClient {
             } catch (IOException ignored) {
             }
             process.destroy();
+        }
+
+        private void readResponses(InputStream input) {
+            Thread.ofVirtual().name("ADB-control-stdout").start(() -> {
+                try (input; BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(input, StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) responses.offer(line);
+                } catch (IOException ignored) {
+                } finally {
+                    responses.offer(CLOSED_MARKER);
+                }
+            });
         }
 
         private static void drain(InputStream input, String threadName) {
