@@ -56,6 +56,21 @@ class TerminalEmulatorTest {
     }
 
     @Test
+    void tracksLinesDiscardedFromAFullScrollbackBuffer() {
+        TerminalEmulator emulator = new TerminalEmulator(20, 2);
+        emulator.setMaxScrollback(1);
+        emulator.processString("one\r\ntwo\r\n");
+
+        assertEquals(1, emulator.getScrollbackSize());
+        assertEquals(0, emulator.getDiscardedScrollbackLines());
+
+        emulator.processString("three\r\n");
+
+        assertEquals(1, emulator.getScrollbackSize());
+        assertEquals(1, emulator.getDiscardedScrollbackLines());
+    }
+
+    @Test
     void ctrlAAfterHistoryUsesTheDisplayedCommandStartAcrossOutputChunks() {
         TerminalEmulator emulator = new TerminalEmulator(120, 24);
         emulator.processString("[user@host ~]$ ");

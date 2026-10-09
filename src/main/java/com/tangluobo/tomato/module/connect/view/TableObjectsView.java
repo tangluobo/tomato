@@ -1471,12 +1471,34 @@ public class TableObjectsView extends BorderPane {
 
     /**
      * 详细列表的鼠标拖拽范围选择。
-     * 参考 TableDataView 的实现：用 setOnMousePressed + setOnMouseDragged，
-     * 通过 PickResult 节点链遍历获取行索引，用 clearSelection + selectRange 更新选中。
-     * 从数据行下方空白区域按下拖拽时，额外显示橡皮筋矩形浮层（Windows资源管理器风格）。
+     * 直接在单元格上拖拽时按行连续选择；从空白区拖拽时显示橡皮筋矩形，
+     * 并仅选中与矩形实际相交的行和列（Windows 资源管理器风格）。
      */
     private void setupDetailDragSelection() {
         final int[] dragStart = {-1};
+
+        // 空白区必须在捕获阶段处理并消费事件，否则 TableRow 的默认行为会在
+        // 我们清空选择之后，又按鼠标纵坐标选回一行，造成要点两次才能清空。
+        detailTableView.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, e -> {
+            if (e.getButton() != javafx.scene.input.MouseButton.PRIMARY
+                    || e.isControlDown() || e.isShiftDown()
+                    || isPressOnHeader(e) || getRowIndexOf(e) >= 0) {
+                return;
+            }
+
+            detailMarqueeActive = true;
+            int rowAtPointerY = getVisibleRowIndexAtSceneY(e.getSceneY());
+            dragStart[0] = resolveDetailDragStartRow(
+                    -1, rowAtPointerY, detailTableView.getItems().size());
+            detailTableView.requestFocus();
+            clearDetailTableSelection();
+
+            Point2D p = centerStack.sceneToLocal(e.getSceneX(), e.getSceneY());
+            detailMarqueeStartX = p.getX();
+            detailMarqueeStartY = p.getY();
+            updateDetailRubberRect(p.getX(), p.getY());
+            e.consume();
+        });
 
         detailTableView.setOnMousePressed(e -> {
             if (e.getButton() != javafx.scene.input.MouseButton.PRIMARY) return;
@@ -1485,66 +1507,39 @@ public class TableObjectsView extends BorderPane {
                 detailRubberRect.setVisible(false);
                 return;
             }
-            int rowIdx = getRowIndexOf(e);
-            // 数据行下方空白区域按下（非表头）时启用橡皮筋矩形
-            detailMarqueeActive = rowIdx < 0 && !isPressOnHeader(e);
-            if (rowIdx < 0) {
-                // 点击空白区域（数据行之外）：清除选中，不选中任何行；
-                // 橡皮筋拖拽起点视为最后一行（拖入数据行时从该行选到最后一行）
-                dragStart[0] = detailTableView.getItems().size() - 1;
-                syncingDetail = true;
-                try {
-                    detailTableView.getSelectionModel().clearSelection();
-                } finally {
-                    syncingDetail = false;
-                }
-                syncFromDetail();
-                if (detailMarqueeActive) {
-                    Point2D p = centerStack.sceneToLocal(e.getSceneX(), e.getSceneY());
-                    detailMarqueeStartX = p.getX();
-                    detailMarqueeStartY = p.getY();
-                    updateDetailRubberRect(p.getX(), p.getY());
-                }
+            int pickedRowIdx = getRowIndexOf(e);
+            if (pickedRowIdx < 0) {
+                // 表头事件和已由捕获过滤器处理的空白区事件都不应落到这里。
                 return;
             }
-            dragStart[0] = rowIdx;
+            detailMarqueeActive = false;
+            dragStart[0] = pickedRowIdx;
             // 选中起点行
             syncingDetail = true;
             try {
                 detailTableView.getSelectionModel().clearSelection();
-                detailTableView.getSelectionModel().select(rowIdx);
+                detailTableView.getSelectionModel().select(pickedRowIdx);
             } finally {
                 syncingDetail = false;
             }
             syncFromDetail();
-            if (detailMarqueeActive) {
-                Point2D p = centerStack.sceneToLocal(e.getSceneX(), e.getSceneY());
-                detailMarqueeStartX = p.getX();
-                detailMarqueeStartY = p.getY();
-                updateDetailRubberRect(p.getX(), p.getY());
-            }
         });
 
-        detailTableView.setOnMouseDragged(e -> {
+        // 捕获阶段接管拖拽，防止 TableView 默认行为覆盖框选结果。
+        detailTableView.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_DRAGGED, e -> {
             if (e.getButton() != javafx.scene.input.MouseButton.PRIMARY) return;
             if (dragStart[0] < 0) return;
-            // 矩形框跟随鼠标（即使经过表头等无行区域也持续更新）
+            e.consume();
+
             if (detailMarqueeActive) {
                 Point2D p = centerStack.sceneToLocal(e.getSceneX(), e.getSceneY());
                 updateDetailRubberRect(p.getX(), p.getY());
-            }
-            int rowIdx = getRowIndexOf(e);
-            if (rowIdx < 0 && detailMarqueeActive) {
-                // 橡皮筋仍在空白区域：矩形未覆盖任何行，保持空选中
-                syncingDetail = true;
-                try {
-                    detailTableView.getSelectionModel().clearSelection();
-                } finally {
-                    syncingDetail = false;
-                }
-                syncFromDetail();
+                updateDetailMarqueeSelection();
                 return;
             }
+
+            int rowIdx = resolveDetailDragPointerRow(
+                    getRowIndexOf(e), getVisibleRowIndexAtSceneY(e.getSceneY()));
             if (rowIdx < 0) {
                 // 拖到空白区域：用最后一行
                 int lastRowIdx = detailTableView.getItems().size() - 1;
@@ -1563,11 +1558,71 @@ public class TableObjectsView extends BorderPane {
             syncFromDetail();
         });
 
-        detailTableView.setOnMouseReleased(e -> {
+        detailTableView.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_RELEASED, e -> {
+            boolean wasMarqueeActive = detailMarqueeActive;
             dragStart[0] = -1;
             detailMarqueeActive = false;
             detailRubberRect.setVisible(false);
+            if (wasMarqueeActive) {
+                // 连同释放事件一起拦截，避免空白区所在的 TableRow
+                // 在拖拽结束时又被默认选中。
+                e.consume();
+            }
         });
+    }
+
+    private void clearDetailTableSelection() {
+        if (singleClickTimer != null) {
+            singleClickTimer.stop();
+            singleClickTimer = null;
+        }
+        clickedBeforeObject = null;
+        clickedBeforeIndex = -1;
+        anchorObject = null;
+        syncingDetail = true;
+        try {
+            detailTableView.getSelectionModel().clearSelection();
+        } finally {
+            syncingDetail = false;
+        }
+        syncFromDetail();
+    }
+
+    /**
+     * 按橡皮筋与实际 TableCell 的二维交集选中行。这样矩形只在横向至少碰到
+     * 一列时生效，完全位于最后一列右侧空白区的拖拽不会误选任何对象。
+     */
+    private void updateDetailMarqueeSelection() {
+        Bounds marquee = detailRubberRect.getBoundsInParent();
+        Set<Integer> hitRows = new java.util.TreeSet<>();
+        int itemCount = detailTableView.getItems().size();
+
+        for (Node node : detailTableView.lookupAll(".table-cell")) {
+            if (!(node instanceof TableCell<?, ?> cell) || !cell.isVisible()
+                    || cell.getTableRow() == null || cell.getTableRow().isEmpty()
+                    || cell.getScene() == null) {
+                continue;
+            }
+            int rowIndex = cell.getTableRow().getIndex();
+            if (rowIndex < 0 || rowIndex >= itemCount) continue;
+
+            Bounds sceneBounds = cell.localToScene(cell.getBoundsInLocal());
+            Bounds localBounds = sceneBounds == null ? null : centerStack.sceneToLocal(sceneBounds);
+            if (localBounds != null && strictlyIntersects(marquee, localBounds)) {
+                hitRows.add(rowIndex);
+            }
+        }
+
+        syncingDetail = true;
+        try {
+            detailTableView.getSelectionModel().clearSelection();
+            for (int rowIndex : hitRows) {
+                detailTableView.getSelectionModel().select(rowIndex);
+            }
+        } finally {
+            syncingDetail = false;
+        }
+        syncFromDetail();
     }
 
     /**
@@ -1619,6 +1674,47 @@ public class TableObjectsView extends BorderPane {
             target = target.getParent();
         }
         return -1;
+    }
+
+    /**
+     * 根据场景纵坐标查找可见的数据行。TableView 在最后一列右侧不会创建
+     * TableCell，PickResult 因而取不到行；框选只应忽略横坐标，仍以所在行的
+     * 纵向范围作为拖拽起点/终点。
+     */
+    private int getVisibleRowIndexAtSceneY(double sceneY) {
+        int itemCount = detailTableView.getItems().size();
+        for (Node node : detailTableView.lookupAll(".table-row-cell")) {
+            if (!(node instanceof TableRow<?> row) || row.isEmpty() || !row.isVisible()) {
+                continue;
+            }
+            int index = row.getIndex();
+            if (index < 0 || index >= itemCount || row.getScene() == null) {
+                continue;
+            }
+            Bounds bounds = row.localToScene(row.getBoundsInLocal());
+            if (bounds != null && sceneY >= bounds.getMinY() && sceneY < bounds.getMaxY()) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    static int resolveDetailDragPointerRow(int pickedRow, int rowAtPointerY) {
+        return pickedRow >= 0 ? pickedRow : rowAtPointerY;
+    }
+
+    static int resolveDetailDragStartRow(int pickedRow, int rowAtPointerY, int itemCount) {
+        int resolved = resolveDetailDragPointerRow(pickedRow, rowAtPointerY);
+        if (resolved >= 0) return resolved;
+        return itemCount > 0 ? itemCount - 1 : -1;
+    }
+
+    static boolean strictlyIntersects(Bounds first, Bounds second) {
+        return first != null && second != null
+                && first.getMaxX() > second.getMinX()
+                && first.getMinX() < second.getMaxX()
+                && first.getMaxY() > second.getMinY()
+                && first.getMinY() < second.getMaxY();
     }
 
     /** 从详细列表选中行反向同步到图标视图 */

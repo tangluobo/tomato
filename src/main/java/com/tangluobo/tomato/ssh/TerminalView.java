@@ -74,6 +74,10 @@ public class TerminalView extends Canvas {
     private int selectionPressRow = -1;
     private int selectionAnchorStartCol = -1;
     private int selectionAnchorEndCol = -1;
+    // 选择完成时冻结文本。终端仍可继续接收输出，但随后复制必须返回用户
+    // 当时选中的内容，不能再用已经发生滚屏/淘汰后的缓冲区重新取值。
+    private String selectedTextSnapshot;
+    private long observedDiscardedScrollbackLines;
     // 记录鼠标按下前是否已有选择，用于避免单击时不必要重绘
     private boolean hadSelectionBeforePress = false;
 
@@ -111,6 +115,7 @@ public class TerminalView extends Canvas {
     public TerminalView(TerminalEmulator emulator) {
         this.emulator = emulator;
         this.gc = getGraphicsContext2D();
+        this.observedDiscardedScrollbackLines = emulator.getDiscardedScrollbackLines();
 
         // 初始化字体度量
         updateFontMetrics();
@@ -502,6 +507,7 @@ public class TerminalView extends Canvas {
      * 渲染终端
      */
     public void render() {
+        reconcileSelectionRows();
         int cols = emulator.getCols();
         int rows = emulator.getRows();
         int scrollOffset = emulator.getScrollOffset();
@@ -911,6 +917,7 @@ public class TerminalView extends Canvas {
     }
 
     private void handleMousePressed(MouseEvent e) {
+        reconcileSelectionRows();
         requestFocus();
         if (e.getButton() == MouseButton.PRIMARY) {
             // SecureCRT 风格：按下鼠标立即暂停跟随，但不让当前画面跳动。
@@ -921,6 +928,7 @@ public class TerminalView extends Canvas {
             isSelecting = true;
             // 记录按下前是否有选择，用于决定是否需要重绘清除旧高亮
             hadSelectionBeforePress = hasSelection();
+            selectedTextSnapshot = null;
             selectionPressCol = mouseToCol(e.getX());
             selectionPressRow = screenRowToAbsolute(mouseToRow(e.getY()));
             selectionAnchorStartCol = characterStartCol(selectionPressCol, selectionPressRow);
@@ -935,6 +943,7 @@ public class TerminalView extends Canvas {
     }
 
     private void handleMouseDragged(MouseEvent e) {
+        reconcileSelectionRows();
         if (isSelecting && e.isPrimaryButtonDown()) {
             int rawCol = mouseToCol(e.getX());
             int absoluteRow = screenRowToAbsolute(mouseToRow(e.getY()));
@@ -967,6 +976,7 @@ public class TerminalView extends Canvas {
     }
 
     private void handleMouseReleased(MouseEvent e) {
+        reconcileSelectionRows();
         if (isSelecting && e.getButton() == MouseButton.PRIMARY) {
             int rawCol = mouseToCol(e.getX());
             int absoluteRow = screenRowToAbsolute(mouseToRow(e.getY()));
@@ -980,7 +990,10 @@ public class TerminalView extends Canvas {
                 selectionStartRow = -1;
                 selectionEndCol = -1;
                 selectionEndRow = -1;
+                selectedTextSnapshot = null;
             } else {
+                // 此刻冻结选中内容。后续 tail -f 等输出即使继续滚屏，复制结果也不变。
+                selectedTextSnapshot = getSelectedTextFromBuffer();
                 // 拖拽选择完成，确保最终渲染（取消任何pending的节流渲染）
                 dragRenderPending = false;
                 render();
@@ -989,6 +1002,7 @@ public class TerminalView extends Canvas {
     }
 
     private void handleMouseClicked(MouseEvent e) {
+        reconcileSelectionRows();
         requestFocus();
         if (e.getButton() != MouseButton.PRIMARY) return;
 
@@ -1022,6 +1036,7 @@ public class TerminalView extends Canvas {
             selectionEndRow = absRow;
             selectionEndCol = endCol;
             isSelecting = false;
+            selectedTextSnapshot = getSelectedTextFromBuffer();
             render();
         } else if (e.getClickCount() == 3) {
             // 三击选中整行
@@ -1030,6 +1045,7 @@ public class TerminalView extends Canvas {
             selectionEndRow = absRow;
             selectionEndCol = cols - 1;
             isSelecting = false;
+            selectedTextSnapshot = getSelectedTextFromBuffer();
             render();
         }
     }
@@ -1096,15 +1112,26 @@ public class TerminalView extends Canvas {
      * 是否有选中文本
      */
     public boolean hasSelection() {
-        return selectionStartCol >= 0 && selectionStartRow >= 0
+        return selectedTextSnapshot != null
+                || (selectionStartCol >= 0 && selectionStartRow >= 0
                 && selectionEndCol >= 0 && selectionEndRow >= 0
-                && (selectionStartCol != selectionEndCol || selectionStartRow != selectionEndRow);
+                && (selectionStartCol != selectionEndCol || selectionStartRow != selectionEndRow));
     }
 
     /**
      * 获取选中的文本
      */
     public String getSelectedText() {
+        if (!hasSelection()) return "";
+
+        if (selectedTextSnapshot != null) {
+            return selectedTextSnapshot;
+        }
+        reconcileSelectionRows();
+        return getSelectedTextFromBuffer();
+    }
+
+    private String getSelectedTextFromBuffer() {
         if (!hasSelection()) return "";
 
         int startRow, endRow, startCol, endCol;
@@ -1129,11 +1156,13 @@ public class TerminalView extends Canvas {
      * 全选（覆盖scrollback历史行 + 当前主缓冲区所有行）
      */
     public void selectAll() {
+        reconcileSelectionRows();
         int scrollbackSize = emulator.isUsingAltBuffer() ? 0 : emulator.getScrollbackSize();
         selectionStartRow = 0;
         selectionStartCol = 0;
         selectionEndRow = scrollbackSize + emulator.getRows() - 1;
         selectionEndCol = emulator.getCols() - 1;
+        selectedTextSnapshot = getSelectedTextFromBuffer();
         render();
     }
 
@@ -1145,8 +1174,30 @@ public class TerminalView extends Canvas {
         selectionStartRow = -1;
         selectionEndCol = -1;
         selectionEndRow = -1;
+        selectedTextSnapshot = null;
         isSelecting = false;
         render();
+    }
+
+    /**
+     * 回滚缓冲达到上限后，新日志会从头部淘汰旧行。选择坐标是当前缓冲区内的
+     * 绝对行号，因此必须同步左移，才能继续指向原来选中的文本。
+     */
+    private void reconcileSelectionRows() {
+        long currentDiscarded = emulator.getDiscardedScrollbackLines();
+        long delta = currentDiscarded - observedDiscardedScrollbackLines;
+        observedDiscardedScrollbackLines = currentDiscarded;
+        if (delta <= 0) return;
+
+        selectionStartRow = shiftSelectionRow(selectionStartRow, delta);
+        selectionEndRow = shiftSelectionRow(selectionEndRow, delta);
+        selectionPressRow = shiftSelectionRow(selectionPressRow, delta);
+    }
+
+    private int shiftSelectionRow(int row, long delta) {
+        if (row < 0) return row;
+        long shifted = row - delta;
+        return shifted < Integer.MIN_VALUE ? Integer.MIN_VALUE : (int) shifted;
     }
 
     /**

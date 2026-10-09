@@ -1033,6 +1033,11 @@ public class SSHTerminalPane extends BorderPane {
                 ? null : List.copyOf(privateKeyPaths);
         connectionLost = false;
         updateStatusBar("重新连接中...");
+        // MonitorPanel 持有自己的定时任务；重连期间先停掉旧会话的采集。
+        // reconnect() 由键盘事件触发，此处仍在 JavaFX 线程。
+        if (monitorPanel != null) {
+            monitorPanel.stopMonitoring();
+        }
 
         new Thread(() -> {
             try {
@@ -1069,45 +1074,44 @@ public class SSHTerminalPane extends BorderPane {
                 sshSession.connect();
                 restartInputWriter();
                 running.set(true);
+                SSHSession reconnectedSession = sshSession;
 
                 // 通知SSH服务器终端大小
                 sshSession.resize(emulator.getCols(), emulator.getRows(),
                         (int) terminalView.getCharWidth() * emulator.getCols(),
                         (int) terminalView.getCharHeight() * emulator.getRows());
 
-                // 如果文件浏览器打开，重新初始化SFTP
-                if (fileBrowserVisible) {
-                    sftpClient = new SFTPClient();
-                    fileBrowser = new SFTPFileBrowser(sshSession, sftpClient);
-                    Platform.runLater(() -> {
+                // SFTPFileBrowser、PortPanel、MonitorPanel 都是 JavaFX Node，构造器本身
+                // 也必须在 FX 线程执行，不能只把挂载布局的部分放进 runLater。
+                Platform.runLater(() -> {
+                    // 标签可能在后台连接期间已被关闭，不能让完成回调复活旧 UI。
+                    if (sshSession != reconnectedSession || !reconnectedSession.isConnected()) {
+                        return;
+                    }
+
+                    // 如果文件浏览器打开，重新初始化SFTP
+                    if (fileBrowserVisible) {
+                        sftpClient = new SFTPClient();
+                        fileBrowser = new SFTPFileBrowser(reconnectedSession, sftpClient);
                         rebuildRightPanel();
                         splitPane.setDividerPositions(0.7);
                         fileBrowser.initConnection();
-                    });
-                }
+                    }
 
-                // 如果端口视图打开，重新绑定新会话
-                if (portVisible) {
-                    portPanel = new PortPanel(sshSession);
-                    Platform.runLater(() -> {
+                    // 如果端口视图打开，重新绑定新会话
+                    if (portVisible) {
+                        portPanel = new PortPanel(reconnectedSession);
                         rebuildRightPanel();
                         portPanel.refresh();
-                    });
-                }
-
-                // 如果监控视图打开，重新绑定新会话并重启监控
-                if (monitorVisible) {
-                    if (monitorPanel != null) {
-                        monitorPanel.stopMonitoring();
                     }
-                    monitorPanel = new MonitorPanel(sshSession);
-                    Platform.runLater(() -> {
+
+                    // 如果监控视图打开，重新绑定新会话并重启监控
+                    if (monitorVisible) {
+                        monitorPanel = new MonitorPanel(reconnectedSession);
                         rebuildRightPanel();
                         monitorPanel.startMonitoring();
-                    });
-                }
+                    }
 
-                Platform.runLater(() -> {
                     emulator.process(("\r\n[重新连接成功]\r\n").getBytes());
                     scheduleRender();
                     updateStatusBar("已连接");

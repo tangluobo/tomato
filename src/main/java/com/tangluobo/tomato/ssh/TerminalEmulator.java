@@ -109,6 +109,9 @@ public class TerminalEmulator {
     private java.util.LinkedList<int[]> scrollbackBgTc = new java.util.LinkedList<>();
     private java.util.LinkedList<Boolean> scrollbackWrapped = new java.util.LinkedList<>();
     private int maxScrollback = DEFAULT_SCROLLBACK;
+    // 从回滚缓冲区头部永久淘汰的累计行数。TerminalView 用它修正仍处于
+    // 选中状态的绝对行号，避免持续输出达到回滚上限后复制到后续日志。
+    private long discardedScrollbackLines = 0;
     // 用户滚动偏移（0=底部，>0=向上回看）
     private int scrollOffset = 0;
     // 用户点击/回看输出后暂停跟随；新输出到达时通过增加 scrollOffset 固定当前视口。
@@ -426,6 +429,7 @@ public class TerminalEmulator {
             scrollbackFgTc.removeFirst();
             scrollbackBgTc.removeFirst();
             scrollbackWrapped.removeFirst();
+            discardedScrollbackLines++;
         }
         if (scrollOffset > scrollbackLines.size()) {
             scrollOffset = scrollbackLines.size();
@@ -434,6 +438,11 @@ public class TerminalEmulator {
 
     public int getScrollOffset() {
         return scrollOffset;
+    }
+
+    /** 返回从回滚缓冲区头部永久淘汰的累计行数。 */
+    public long getDiscardedScrollbackLines() {
+        return discardedScrollbackLines;
     }
 
     /**
@@ -2041,6 +2050,7 @@ public class TerminalEmulator {
                     scrollbackFgTc.removeFirst();
                     scrollbackBgTc.removeFirst();
                     scrollbackWrapped.removeFirst();
+                    discardedScrollbackLines++;
                 }
             }
             for (int y = top; y < bottom; y++) {
