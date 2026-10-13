@@ -82,6 +82,7 @@ Windows 本地打包后可运行 `./packaging/windows/test-aot-ui.ps1 -Executabl
 此检查使用隔离配置，验证客户端列表、SSH/RDP/ADB/VNC/SPICE 配置页及 JSON 格式化按钮，需要桌面环境，不在 GitHub Actions 中执行。
 GitHub Actions 使用 `native-direct` 和仓库中已有的 AOT 元数据、PNG 图标进行无界面构建，不启动图形界面，也不进行交互采集。
 构建后运行 `tomato --aot-adb-video-self-check`（Windows 为 `tomato.exe`），通过内置的 64×48 H.264 样本验证 FFmpeg 初始化、视频解码及 BGRA 转换；失败时停止发布。此检查不需要桌面环境或 ADB 设备，也不读取用户配置。
+Linux 的 FFmpeg 库还依赖 VA-API/DRM 运行库。DEB/RPM 已声明对应依赖；使用 TAR/AppImage 时，Debian/Ubuntu 可执行 `sudo apt-get install libva2 libva-drm2 libdrm2 libstdc++6` 安装。解码自检失败时，Linux Actions 会输出缓存中动态库的 `ldd` 结果，便于定位未安装的系统库。
 
 Windows GUI 启动器会将启动异常写入 `%USERPROFILE%\.tomato\logs\startup-*.log`。
 用户目录不可写时回退到 `%TEMP%\tomato-logs`。启动无窗口时先检查最新日志；

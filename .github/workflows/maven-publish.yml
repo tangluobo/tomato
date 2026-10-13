@@ -98,7 +98,8 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y build-essential zlib1g-dev libgtk-3-dev libx11-dev \
-            libxtst-dev libxrender-dev libxi-dev libasound2-dev
+            libxtst-dev libxrender-dev libxi-dev libasound2-dev \
+            libva2 libva-drm2 libdrm2 libstdc++6
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           sudo curl --fail --location --retry 3 \
@@ -145,7 +146,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          check_output=$(./target/tomato "-Dorg.bytedeco.javacpp.cachedir=$RUNNER_TEMP/adb-native-check-cache" --aot-adb-video-self-check)
+          native_cache="$RUNNER_TEMP/adb-native-check-cache"
+          if ! check_output=$(./target/tomato "-Dorg.bytedeco.javacpp.cachedir=$native_cache" --aot-adb-video-self-check); then
+            if [[ "$RUNNER_OS" == 'Linux' && -d "$native_cache" ]]; then
+              find "$native_cache" -type f -name '*.so*' -print -exec ldd {} \; || true
+            fi
+            exit 1
+          fi
           printf '%s\n' "$check_output"
           [[ "$check_output" == *AOT_ADB_VIDEO_SELF_CHECK_PASS* ]]
 

@@ -43,6 +43,10 @@ overrides:
       - libfontconfig1
       - libasound2 | libasound2t64
       - zlib1g
+      - libva2
+      - libva-drm2
+      - libdrm2
+      - libstdc++6
   rpm:
     depends:
       - gtk3
@@ -55,3 +59,6 @@ overrides:
       - fontconfig
       - alsa-lib
       - zlib
+      - libva
+      - libdrm
+      - libstdc++
