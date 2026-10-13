@@ -51,8 +51,8 @@ final class AdbClient {
     private static final int MAX_PNG_CHUNK_BYTES = 64 * 1024 * 1024;
     private static final int MAX_PNG_FRAME_BYTES = 96 * 1024 * 1024;
     private static final int MAX_PNG_PREFIX_BYTES = 64 * 1024;
-    private static final int MAX_VIDEO_EDGE = 1024;
-    private static final int VIDEO_BIT_RATE = 2_000_000;
+    private static final int MAX_VIDEO_EDGE = 1920;
+    private static final int VIDEO_BIT_RATE = 8_000_000;
     private static final String PRIMARY_DISPLAY_ID = "0";
     private static final String SCREEN_STREAM_COMMAND =
             "while screencap -d " + PRIMARY_DISPLAY_ID + " -p 2>/dev/null; do :; done";
@@ -66,6 +66,26 @@ final class AdbClient {
     private final CommandRunner commandRunner;
     private volatile ScreenSize displaySize;
     private volatile ControlChannel controlChannel;
+    private volatile ScrcpyControlClient directControl;
+    private volatile String controlDescription = "ADB命令控制";
+    private volatile boolean sessionClosed;
+    private volatile int videoMaxEdge = MAX_VIDEO_EDGE;
+    private volatile int videoBitRate = VIDEO_BIT_RATE;
+    private volatile boolean videoEnabled = true;
+
+    void setVideoEnabled(boolean enabled) {
+        videoEnabled = enabled;
+    }
+
+    void setVideoQuality(int maxEdge, int bitRate) {
+        if (maxEdge < 0 || bitRate <= 0) throw new IllegalArgumentException("无效的视频质量参数");
+        videoMaxEdge = maxEdge;
+        videoBitRate = bitRate;
+    }
+
+    private ScreenSize videoSize() {
+        return videoMaxEdge == 0 ? displaySize : scaledVideoSize(displaySize, videoMaxEdge);
+    }
 
     AdbClient(String host, int port, String configuredExecutable) {
         this(host, port, configuredExecutable, new SystemCommandRunner());
@@ -83,6 +103,33 @@ final class AdbClient {
 
     String executable() {
         return executable;
+    }
+
+    ScreenSize displaySize() {
+        return displaySize;
+    }
+
+    boolean hasDirectControl() {
+        // Keep the gesture protocol stable on failure: report an error instead of replaying it.
+        return directControl != null;
+    }
+
+    String controlDescription() {
+        return controlDescription;
+    }
+
+    void touch(int action, long pointerId, int x, int y, int width, int height) throws IOException {
+        requireDirectControl().touch(action, pointerId, x, y, width, height);
+    }
+
+    void scroll(int x, int y, int width, int height, double horizontal, double vertical) throws IOException {
+        requireDirectControl().scroll(x, y, width, height, horizontal, vertical);
+    }
+
+    private ScrcpyControlClient requireDirectControl() throws IOException {
+        ScrcpyControlClient control = directControl;
+        if (control == null || sessionClosed) throw new IOException("直接控制不可用，请重新连接");
+        return control;
     }
 
     void connect() throws IOException {
@@ -108,8 +155,34 @@ final class AdbClient {
         }
 
         if (commandRunner instanceof SystemCommandRunner) {
+            if (videoEnabled) {
             try {
-                controlChannel = new ControlChannel(new ProcessBuilder(controlCommand()).start());
+                ScrcpyControlClient control = ScrcpyControlClient.open(executable, endpoint, commandRunner,
+                        true, videoMaxEdge, videoBitRate);
+                synchronized (this) {
+                    if (sessionClosed) {
+                        control.close();
+                        throw new IOException("ADB 会话已关闭");
+                    }
+                    directControl = control;
+                    displaySize = control.videoSize();
+                    controlDescription = "scrcpy直接控制";
+                }
+                return;
+            } catch (IOException error) {
+                if (sessionClosed) throw error;
+                controlDescription = "ADB兼容控制（" + error.getMessage() + "）";
+            }
+            }
+            try {
+                ControlChannel channel = new ControlChannel(new ProcessBuilder(controlCommand()).start());
+                synchronized (this) {
+                    if (sessionClosed) {
+                        channel.close();
+                        throw new IOException("ADB 会话已关闭");
+                    }
+                    controlChannel = channel;
+                }
             } catch (IOException ignored) {
                 // Individual adb shell commands remain available as a compatibility fallback.
             }
@@ -142,7 +215,16 @@ final class AdbClient {
 
     /** Starts Android's hardware H.264 screen encoder and decodes its low-latency stream. */
     VideoStream openVideoStream() throws IOException {
-        ScreenSize target = scaledVideoSize(displaySize, MAX_VIDEO_EDGE);
+        ScrcpyControlClient control = directControl;
+        if (control == null || control.videoSize() == null) {
+            throw new IOException("scrcpy 视频服务未启动，" + controlDescription);
+        }
+        return new VideoStream(control);
+    }
+
+    /** Compatibility implementation retained for command diagnostics, not used for live mirroring. */
+    private VideoStream openLegacyVideoStream() throws IOException {
+        ScreenSize target = videoSize();
         if (target == null) {
             throw new IOException("无法读取设备屏幕尺寸，不能启动 H.264 视频流");
         }
@@ -157,6 +239,11 @@ final class AdbClient {
     }
 
     void tap(int x, int y) throws IOException {
+        if (hasDirectControl() && displaySize != null) {
+            touch(0, -2, x, y, displaySize.width(), displaySize.height());
+            touch(1, -2, x, y, displaySize.width(), displaySize.height());
+            return;
+        }
         runInput("tap", Integer.toString(x), Integer.toString(y));
     }
 
@@ -167,11 +254,19 @@ final class AdbClient {
     }
 
     void keyEvent(int keyCode) throws IOException {
+        if (hasDirectControl()) {
+            requireDirectControl().keyEvent(keyCode);
+            return;
+        }
         runInput("keyevent", Integer.toString(keyCode));
     }
 
     void text(String value) throws IOException {
         if (value == null || value.isEmpty()) return;
+        if (hasDirectControl()) {
+            requireDirectControl().text(value.replaceAll("[^\\x20-\\x7e]", ""));
+            return;
+        }
         runInput("text", encodeInputText(value));
     }
 
@@ -186,10 +281,18 @@ final class AdbClient {
 
     /** Closes this view's processes without disconnecting a newly reused endpoint globally. */
     void closeSession() {
+        ScrcpyControlClient direct;
+        synchronized (this) {
+            sessionClosed = true;
+            direct = directControl;
+            directControl = null;
+        }
+        if (direct != null) direct.close();
         closeControlChannel();
     }
 
     private void runInput(String... arguments) throws IOException {
+        if (sessionClosed) throw new IOException("ADB 会话已关闭");
         ControlChannel channel = controlChannel;
         if (channel != null) {
             try {
@@ -197,7 +300,9 @@ final class AdbClient {
                 return;
             } catch (IOException error) {
                 closeControlChannel();
-                // Retry once through a standalone command so input still works on unusual shells.
+                // An acknowledgement timeout does not mean the input was not executed.
+                // Replaying it could duplicate taps/text and stalls every later queued event.
+                throw new IOException("ADB 控制失败，请重新连接：" + error.getMessage(), error);
             }
         }
         List<String> args = new ArrayList<>();
@@ -228,8 +333,10 @@ final class AdbClient {
     }
 
     List<String> videoStreamCommand() {
+        ScreenSize size = videoSize();
         String remote = "while screenrecord --output-format=h264 --bit-rate "
-                + VIDEO_BIT_RATE + " -; do :; done";
+                + videoBitRate + (size == null ? "" : " --size " + size.width() + "x" + size.height())
+                + " -; do :; done";
         return buildCommand("-s", endpoint, "exec-out", "sh", "-c", remote);
     }
 
@@ -487,6 +594,8 @@ final class AdbClient {
     }
 
     static final class VideoStream implements AutoCloseable {
+        private final ScrcpyVideoDecoder nativeDecoder;
+        private final ScrcpyControlClient scrcpy;
         private final Process adbProcess;
         private final Process decoderProcess;
         private final InputStream frames;
@@ -498,6 +607,8 @@ final class AdbClient {
         private volatile boolean closed;
 
         private VideoStream(Process adbProcess, Process decoderProcess, ScreenSize size) {
+            nativeDecoder = null;
+            scrcpy = null;
             this.adbProcess = adbProcess;
             this.decoderProcess = decoderProcess;
             this.frames = new BufferedInputStream(decoderProcess.getInputStream(), 512 * 1024);
@@ -508,7 +619,24 @@ final class AdbClient {
             this.bgra = new byte[Math.multiplyExact(Math.multiplyExact(width, height), 4)];
         }
 
+        private VideoStream(ScrcpyControlClient scrcpy) throws IOException {
+            this.scrcpy = scrcpy;
+            nativeDecoder = new ScrcpyVideoDecoder(scrcpy);
+            adbProcess = decoderProcess = null;
+            frames = null;
+            adbStderr = decoderStderr = null;
+            width = height = 0;
+            bgra = null;
+        }
+
         VideoFrame readFrame() throws IOException {
+            if (nativeDecoder != null) {
+                try {
+                    return nativeDecoder.readFrame();
+                } catch (IOException error) {
+                    throw new IOException(error.getMessage() + " " + scrcpy.diagnostics(), error);
+                }
+            }
             try {
                 int offset = 0;
                 while (!closed && offset < bgra.length) {
@@ -545,6 +673,10 @@ final class AdbClient {
         public void close() {
             if (closed) return;
             closed = true;
+            if (nativeDecoder != null) {
+                nativeDecoder.close();
+                return;
+            }
             closeProcessStream(decoderProcess, frames, "FFmpeg-video-close");
             stopProcess(adbProcess, "ADB-video-close");
         }

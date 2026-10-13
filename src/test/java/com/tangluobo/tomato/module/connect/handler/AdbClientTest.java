@@ -62,7 +62,7 @@ class AdbClientTest {
         assertEquals(List.of("custom-adb", "-s", "phone.lan:5555", "shell", "wm", "size"),
                 runner.commands.get(2));
         assertEquals(List.of("custom-adb", "-s", "phone.lan:5555", "exec-out", "sh", "-c",
-                "while screenrecord --output-format=h264 --bit-rate 2000000 -; do :; done"),
+                "while screenrecord --output-format=h264 --bit-rate 8000000 --size 864x1920 -; do :; done"),
                 client.videoStreamCommand());
         assertEquals(List.of("custom-adb", "-s", "phone.lan:5555", "exec-out",
                         "screencap", "-d", "0", "-p"),
@@ -99,7 +99,7 @@ class AdbClientTest {
         assertEquals(List.of("custom-adb", "-s", "phone.lan:5555", "exec-out", "sh", "-c",
                 "while screencap -d 0 -p 2>/dev/null; do :; done"), client.screenStreamCommand());
         assertEquals(List.of("custom-adb", "-s", "phone.lan:5555", "exec-out", "sh", "-c",
-                "while screenrecord --output-format=h264 --bit-rate 2000000 -; do :; done"),
+                "while screenrecord --output-format=h264 --bit-rate 8000000 -; do :; done"),
                 client.videoStreamCommand());
         assertEquals(List.of("custom-adb", "-s", "phone.lan:5555", "shell", "-T"), client.controlCommand());
     }
@@ -111,6 +111,22 @@ class AdbClientTest {
         assertEquals(0, AdbClient.parseControlAck(marker + "0", marker));
         assertEquals(127, AdbClient.parseControlAck("device:/ $ " + marker + "127", marker));
         assertEquals(null, AdbClient.parseControlAck("echo " + marker + "$?", marker));
+    }
+
+    @Test
+    void selectsHdNativeAndLowBandwidthProfilesFor4kDevice() throws Exception {
+        RecordingRunner runner = new RecordingRunner();
+        runner.reply(textResult(0, "connected\n"));
+        runner.reply(textResult(0, "device\n"));
+        runner.reply(textResult(0, "Physical size: 3840x2160\n"));
+        AdbClient client = new AdbClient("phone.lan", 5555, "custom-adb", runner);
+        client.connect();
+        assertTrue(client.videoStreamCommand().getLast().contains("--bit-rate 8000000 --size 1920x1088"));
+        client.setVideoQuality(0, 16_000_000);
+        assertTrue(client.videoStreamCommand().getLast().contains("--bit-rate 16000000 --size 3840x2160"));
+        client.setVideoQuality(1024, 4_000_000);
+        assertTrue(client.videoStreamCommand().getLast().contains("--bit-rate 4000000 --size 1024x576"));
+        assertEquals(new AdbClient.ScreenSize(3840, 2160), client.displaySize());
     }
 
     @Test

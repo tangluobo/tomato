@@ -99,6 +99,12 @@ class AdbSessionPoolTest {
                                                          CountDownLatch frameAfterFirstClosed) {
         return new AdbSessionPool.Listener() {
             @Override
+            public void onVideoFrame(AdbClient.VideoFrame frame, AdbClient.ScreenSize displaySize,
+                                     String endpoint) {
+                onFrame(null, endpoint);
+            }
+
+            @Override
             public void onStatus(boolean connected, String message) {
             }
 

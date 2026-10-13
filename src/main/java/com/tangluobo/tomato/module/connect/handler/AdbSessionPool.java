@@ -11,15 +11,13 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Shares one ADB screen service per device endpoint.
  *
- * <p>The previous implementation started an independent {@code screenrecord} process for every
- * view. On some Rockchip firmware that encoder leaks DMA buffers. This pool deliberately uses the
- * native-resolution PNG screenshot stream instead: it is slower than hardware H.264, but does not
- * allocate a video encoder or a growing DMA buffer pool. Reopening the same device reuses the same
- * session object, and simultaneous views subscribe to the same stream.</p>
+ * <p>Views share one encoder. Encoder-free screenshots remain available for firmware whose
+ * hardware encoder leaks DMA buffers. Reopening a device reuses the session.</p>
  */
 final class AdbSessionPool {
     private static final long IDLE_CLOSE_DELAY_SECONDS = 30;
@@ -62,12 +60,19 @@ final class AdbSessionPool {
         void onStatus(boolean connected, String message);
 
         void onFrame(byte[] png, String endpoint);
+
+        default void onVideoFrame(AdbClient.VideoFrame frame, AdbClient.ScreenSize displaySize,
+                                  String endpoint) { }
     }
 
     static final class Lease implements AutoCloseable {
+        private static final AtomicLong POINTER_IDS = new AtomicLong();
+        private final long pointerId = POINTER_IDS.incrementAndGet();
         private final SharedSession session;
         private final Listener listener;
         private final AtomicBoolean closed = new AtomicBoolean();
+        private AdbClient gestureClient;
+        private int touchX, touchY, touchWidth, touchHeight;
 
         private Lease(SharedSession session, Listener listener) {
             this.session = session;
@@ -78,8 +83,61 @@ final class AdbSessionPool {
             return !closed.get() && session.isConnected();
         }
 
+        boolean hasDirectControl() {
+            AdbClient active = session.client;
+            return !closed.get() && active != null && active.hasDirectControl();
+        }
+
+        String controlDescription() {
+            AdbClient active = session.client;
+            return active == null ? "" : active.controlDescription();
+        }
+
+        synchronized void touch(int action, int x, int y, int width, int height) throws IOException {
+            requireOpen();
+            if (action == 0) gestureClient = session.activeClient();
+            AdbClient active = gestureClient;
+            if (active == null) return;
+            touchX = x;
+            touchY = y;
+            touchWidth = width;
+            touchHeight = height;
+            active.touch(action, pointerId, x, y, width, height);
+            if (action == 1) gestureClient = null;
+        }
+
+        void scroll(int x, int y, int width, int height, double horizontal, double vertical) throws IOException {
+            requireOpen().activeClient().scroll(x, y, width, height, horizontal, vertical);
+        }
+
+        private synchronized void cancelTouch() {
+            AdbClient active = gestureClient;
+            gestureClient = null;
+            if (active != null) {
+                try {
+                    active.touch(1, pointerId, touchX, touchY, touchWidth, touchHeight);
+                } catch (IOException ignored) { }
+            }
+        }
+
         void reconnect() {
             if (!closed.get()) session.reconnect();
+        }
+
+        void setVideoEnabled(boolean enabled) {
+            if (!closed.get()) {
+                session.videoEnabled = enabled;
+                session.reconnect();
+            }
+        }
+
+        void setVideoQuality(int maxEdge, int bitRate) {
+            if (!closed.get()) {
+                session.videoMaxEdge = maxEdge;
+                session.videoBitRate = bitRate;
+                session.videoEnabled = true;
+                session.reconnect();
+            }
         }
 
         void tap(int x, int y) throws IOException {
@@ -105,7 +163,10 @@ final class AdbSessionPool {
 
         @Override
         public void close() {
-            if (closed.compareAndSet(false, true)) session.release(listener);
+            if (closed.compareAndSet(false, true)) {
+                Thread.ofVirtual().name("ADB-pointer-release").start(this::cancelTouch);
+                session.release(listener);
+            }
         }
     }
 
@@ -121,11 +182,17 @@ final class AdbSessionPool {
 
         private volatile AdbClient client;
         private volatile AdbClient.ScreenStream stream;
+        private volatile AdbClient.VideoStream videoStream;
+        private volatile boolean videoEnabled = true;
+        private volatile int videoMaxEdge = 1920;
+        private volatile int videoBitRate = 8_000_000;
         private volatile boolean connected;
         private volatile boolean closed;
         private volatile boolean stopRequested;
         private volatile String statusMessage;
         private volatile byte[] lastFrame;
+        private volatile AdbClient.VideoFrame lastVideoFrame;
+        private volatile AdbClient.ScreenSize lastDisplaySize;
         private ScheduledFuture<?> idleClose;
 
         private SharedSession(SessionKey key) {
@@ -230,6 +297,8 @@ final class AdbSessionPool {
 
         private void captureUntilDisconnected() throws IOException {
             AdbClient next = new AdbClient(key.endpoint(), 5555, key.executable());
+            next.setVideoQuality(videoMaxEdge, videoBitRate);
+            next.setVideoEnabled(videoEnabled);
             synchronized (resourceLock) {
                 if (!shouldRun()) return;
                 client = next;
@@ -237,6 +306,20 @@ final class AdbSessionPool {
             publishStatus(false, "正在连接 " + key.endpoint() + "…");
             next.connect();
             if (!shouldRun()) return;
+
+            if (videoEnabled) {
+                try {
+                    captureVideo(next);
+                    return;
+                } catch (IOException error) {
+                    if (!shouldRun() || client != next) return;
+                    videoEnabled = false;
+                    // A failed video closes the server's control socket too. Reconnect with
+                    // an encoder-free shell session instead of keeping a dead direct controller.
+                    publishStatus(false, "视频不可用，正在回退稳定截图：" + safeMessage(error));
+                    throw new IOException("scrcpy 视频失败，改用截图模式", error);
+                }
+            }
 
             connected = true;
             publishStatus(true, "已连接 · " + key.endpoint() + " · 共享稳定模式");
@@ -263,6 +346,44 @@ final class AdbSessionPool {
 
         private boolean shouldRun() {
             return !closed && !stopRequested;
+        }
+
+        private void captureVideo(AdbClient next) throws IOException {
+            AdbClient.VideoStream opened = next.openVideoStream();
+            synchronized (resourceLock) {
+                if (!shouldRun() || client != next) {
+                    opened.close();
+                    return;
+                }
+                videoStream = opened;
+            }
+            lastFrame = null;
+            ScheduledFuture<?> startupTimeout = IDLE_CLOSER.schedule(opened::close, 10, TimeUnit.SECONDS);
+            try (opened) {
+                while (shouldRun() && client == next) {
+                    AdbClient.VideoFrame frame = opened.readFrame();
+                    startupTimeout.cancel(false);
+                    // The in-process decoder returns an owned frame; no second full-frame clone.
+                    AdbClient.VideoFrame snapshot = frame;
+                    // Input positions must use this exact video's size, including after rotation.
+                    AdbClient.ScreenSize coordinates = new AdbClient.ScreenSize(frame.width(), frame.height());
+                    lastDisplaySize = coordinates;
+                    lastVideoFrame = snapshot;
+                    if (!connected) publishStatus(true, "已连接 · H.264低延迟模式");
+                    for (Listener listener : listeners) {
+                        try {
+                            listener.onVideoFrame(snapshot, coordinates, key.endpoint());
+                        } catch (RuntimeException ignored) {
+                            // A faulty view must not interrupt other subscribers.
+                        }
+                    }
+                }
+            } finally {
+                startupTimeout.cancel(false);
+                synchronized (resourceLock) {
+                    if (videoStream == opened) videoStream = null;
+                }
+            }
         }
 
         private void scheduleIdleClose() {
@@ -298,6 +419,7 @@ final class AdbSessionPool {
         }
 
         private void publishFrame(byte[] png) {
+            lastVideoFrame = null;
             lastFrame = png;
             for (Listener listener : listeners) {
                 try {
@@ -325,6 +447,8 @@ final class AdbSessionPool {
                 listener.onStatus(connected, statusMessage);
                 byte[] frame = lastFrame;
                 if (frame != null) listener.onFrame(frame, key.endpoint());
+                AdbClient.VideoFrame video = lastVideoFrame;
+                if (video != null) listener.onVideoFrame(video, lastDisplaySize, key.endpoint());
             } catch (RuntimeException ignored) {
                 // The normal capture loop will provide the next state/frame update.
             }
@@ -332,14 +456,18 @@ final class AdbSessionPool {
 
         private void closeCurrentResources() {
             AdbClient.ScreenStream oldStream;
+            AdbClient.VideoStream oldVideo;
             AdbClient oldClient;
             synchronized (resourceLock) {
                 oldStream = stream;
                 stream = null;
+                oldVideo = videoStream;
+                videoStream = null;
                 oldClient = client;
                 client = null;
             }
             if (oldStream != null) oldStream.close();
+            if (oldVideo != null) oldVideo.close();
             if (oldClient != null) {
                 Thread.ofVirtual().name("ADB-shared-close").start(oldClient::closeSession);
             }
