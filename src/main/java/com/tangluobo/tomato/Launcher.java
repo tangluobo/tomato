@@ -4,6 +4,11 @@ import javafx.application.Application;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.util.Locale;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.charset.StandardCharsets;
+import java.io.IOException;
 
 public class Launcher {
     public static void main(String[] args) {
@@ -12,15 +17,61 @@ public class Launcher {
         // 启用LCD文字渲染，消除模糊
         System.setProperty("prism.lcdtext", "true");
         System.setProperty("prism.text", "lcd");
-        // javaw / jpackage GUI 启动器无控制台，System.out/err 为无效句柄，
-        // JavaFX 内部（java.util.logging）写入会抛异常导致启动失败，重定向到空输出流规避。
-        // 原生镜像启动异常可通过 TOMATO_CONSOLE_DIAGNOSTICS=1 临时保留控制台输出进行排查。
+        // GUI executables have no reliable console handles. Preserve errors in a writable
+        // per-user log instead of silently discarding JavaFX/Native Image startup failures.
         boolean windows = System.getProperty("os.name", "")
                 .toLowerCase(Locale.ROOT).startsWith("windows");
-        if (windows && !"1".equals(System.getenv("TOMATO_CONSOLE_DIAGNOSTICS"))) {
-            System.setOut(new PrintStream(OutputStream.nullOutputStream(), true));
-            System.setErr(new PrintStream(OutputStream.nullOutputStream(), true));
+        if (windows && !"1".equals(System.getenv("TOMATO_CONSOLE_DIAGNOSTICS"))
+                && !(args.length == 1 && "--aot-adb-video-self-check".equals(args[0]))) {
+            PrintStream diagnostics = openDiagnostics();
+            System.setOut(diagnostics);
+            System.setErr(diagnostics);
         }
-        Application.launch(TomatoApplication.class, args);
+        Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
+            System.err.println("Uncaught exception on " + thread.getName());
+            error.printStackTrace(System.err);
+        });
+        try {
+            if (args.length == 1 && "--aot-adb-video-self-check".equals(args[0])) {
+                com.tangluobo.tomato.module.connect.handler.AdbVideoSelfCheck.run();
+            } else if (args.length > 0 && "--aot-ui-self-check".equals(args[0])) {
+                if (args.length != 2) throw new IllegalArgumentException("Self-check requires an isolated profile directory");
+                Files.createDirectories(Path.of(args[1]));
+                System.setProperty("user.home", Path.of(args[1]).toAbsolutePath().toString());
+                Application.launch(AotUiSelfCheck.class, args);
+            } else {
+                Application.launch(TomatoApplication.class, args);
+            }
+        } catch (Throwable error) {
+            error.printStackTrace(System.err);
+            System.exit(1);
+        }
+    }
+
+    static PrintStream openDiagnostics() {
+        Path[] directories = {
+                Path.of(System.getProperty("user.home", "."), ".tomato", "logs"),
+                Path.of(System.getProperty("java.io.tmpdir", "."), "tomato-logs")
+        };
+        for (Path directory : directories) {
+            try {
+                PrintStream log = openDiagnostics(directory);
+                log.println("Tomato launch " + java.time.Instant.now());
+                log.println("Runtime: " + System.getProperty("java.runtime.version")
+                        + ", native image: " + System.getProperty("org.graalvm.nativeimage.imagecode", "false"));
+                return log;
+            } catch (IOException | SecurityException ignored) {
+                // Try the temporary directory if the user profile is not writable.
+            }
+        }
+        return new PrintStream(OutputStream.nullOutputStream(), true);
+    }
+
+    static PrintStream openDiagnostics(Path directory) throws IOException {
+        Files.createDirectories(directory);
+        // One log per invocation prevents concurrent launches from overwriting each other.
+        Path file = Files.createTempFile(directory, "startup-", ".log");
+        return new PrintStream(Files.newOutputStream(file, StandardOpenOption.WRITE), true,
+                StandardCharsets.UTF_8);
     }
 }

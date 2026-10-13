@@ -35,9 +35,7 @@ public class TomatoApplication extends Application {
             stage.setScene(scene);
             stage.show();
         } catch (Throwable error) {
-            if ("1".equals(System.getenv("TOMATO_CONSOLE_DIAGNOSTICS"))) {
-                error.printStackTrace();
-            }
+            error.printStackTrace(System.err);
             throw new RuntimeException("Tomato startup failed", error);
         }
     }

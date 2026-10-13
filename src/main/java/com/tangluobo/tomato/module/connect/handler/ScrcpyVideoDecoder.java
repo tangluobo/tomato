@@ -64,7 +64,7 @@ final class ScrcpyVideoDecoder implements AutoCloseable {
                     packets.finish(new IOException("读取视频流失败", error));
                 }
             });
-        } catch (IOException | RuntimeException | UnsatisfiedLinkError error) {
+        } catch (IOException | RuntimeException | LinkageError error) {
             close();
             throw new IOException("无法初始化内置视频解码器：" + error.getMessage(), error);
         }

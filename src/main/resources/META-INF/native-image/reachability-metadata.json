@@ -814,6 +814,9 @@
       "type": "com.aliyuncs.http.clients.ApacheHttpClient"
     },
     {
+      "type": "com.ctc.wstx.stax.WstxInputFactory"
+    },
+    {
       "type": "com.fasterxml.jackson.databind.ext.Java7SupportImpl",
       "methods": [
         {
@@ -1018,6 +1021,9 @@
       "type": "com.mysql.cj.jdbc.Driver"
     },
     {
+      "type": "com.mysql.cj.jdbc.result.ResultSetMetaData"
+    },
+    {
       "type": "com.mysql.cj.log.StandardLogger",
       "methods": [
         {
@@ -1106,6 +1112,17 @@
         {
           "name": "<init>",
           "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.sun.crypto.provider.HKDFKeyDerivation$HKDFSHA256",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "javax.crypto.KDFParameters"
+          ]
         }
       ]
     },
@@ -2447,6 +2464,15 @@
       ]
     },
     {
+      "type": "com.sun.javafx.iio.java2d.J2DImageLoaderFactory",
+      "methods": [
+        {
+          "name": "getInstance",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
       "type": "com.sun.javafx.iio.jpeg.JPEGImageLoader",
       "jniAccessible": true,
       "methods": [
@@ -3040,6 +3066,15 @@
     },
     {
       "type": "com.sun.management.internal.VirtualThreadSchedulerImpls$VirtualThreadSchedulerImpl"
+    },
+    {
+      "type": "com.sun.org.apache.xerces.internal.jaxp.SAXParserFactoryImpl",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
     },
     {
       "type": "com.sun.org.apache.xerces.internal.jaxp.datatype.DatatypeFactoryImpl",
@@ -6060,6 +6095,19 @@
       ]
     },
     {
+      "type": "com.sun.scenario.effect.impl.prism.ps.PPSBlend_SRC_INPeer",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "com.sun.scenario.effect.FilterContext",
+            "com.sun.scenario.effect.impl.Renderer",
+            "java.lang.String"
+          ]
+        }
+      ]
+    },
+    {
       "type": "com.sun.scenario.effect.impl.prism.ps.PPSLinearConvolveShadowPeer",
       "methods": [
         {
@@ -6435,72 +6483,178 @@
     },
     {
       "type": "com.tangluobo.tomato.module.connect.ConnectType",
-      "fields": [
-        {
-          "name": "ALIYUN"
-        },
-        {
-          "name": "ALIYUN_OSS"
-        },
-        {
-          "name": "FTP"
-        },
-        {
-          "name": "FTP_SERVER"
-        },
-        {
-          "name": "HTTP_SERVER"
-        },
-        {
-          "name": "KAFKA"
-        },
-        {
-          "name": "LOCAL_DIRECTORY"
-        },
-        {
-          "name": "LOCAL_TERMINAL"
-        },
-        {
-          "name": "MYSQL"
-        },
-        {
-          "name": "ORACLE"
-        },
-        {
-          "name": "POSTGRESQL"
-        },
-        {
-          "name": "RDP"
-        },
-        {
-          "name": "REDIS"
-        },
-        {
-          "name": "ROCKETMQ"
-        },
-        {
-          "name": "S3"
-        },
-        {
-          "name": "SFTP"
-        },
-        {
-          "name": "SMB_SERVER"
-        },
-        {
-          "name": "SSH"
-        },
-        {
-          "name": "TENCENT_CLOUD"
-        },
-        {
-          "name": "TOOL"
-        }
-      ]
+      "allDeclaredFields": true
     },
     {
       "type": "com.tangluobo.tomato.module.connect.ConnectionConfig",
       "allDeclaredFields": true,
+      "fields": [
+        {
+          "name": "adbExecutablePath"
+        },
+        {
+          "name": "bucket"
+        },
+        {
+          "name": "certificateEmail"
+        },
+        {
+          "name": "colorDepth"
+        },
+        {
+          "name": "database"
+        },
+        {
+          "name": "databaseProfileId"
+        },
+        {
+          "name": "defaultFileViewMode"
+        },
+        {
+          "name": "description"
+        },
+        {
+          "name": "directoryType"
+        },
+        {
+          "name": "domain"
+        },
+        {
+          "name": "enableSound"
+        },
+        {
+          "name": "endpoint"
+        },
+        {
+          "name": "fullscreen"
+        },
+        {
+          "name": "host"
+        },
+        {
+          "name": "id"
+        },
+        {
+          "name": "localDirectoryPath"
+        },
+        {
+          "name": "mapClipboard"
+        },
+        {
+          "name": "name"
+        },
+        {
+          "name": "parentId"
+        },
+        {
+          "name": "password"
+        },
+        {
+          "name": "pathStyleAccess"
+        },
+        {
+          "name": "port"
+        },
+        {
+          "name": "privateKeyPaths"
+        },
+        {
+          "name": "publicAccessUrl"
+        },
+        {
+          "name": "rdpFullScreenShortcut"
+        },
+        {
+          "name": "rdpOpenMode"
+        },
+        {
+          "name": "redisCluster"
+        },
+        {
+          "name": "redisClusterNodes"
+        },
+        {
+          "name": "redisDatabase"
+        },
+        {
+          "name": "region"
+        },
+        {
+          "name": "remoteDesktopClientPath"
+        },
+        {
+          "name": "remoteDesktopTlsPort"
+        },
+        {
+          "name": "s3Prefix"
+        },
+        {
+          "name": "savePassword"
+        },
+        {
+          "name": "screenHeight"
+        },
+        {
+          "name": "screenWidth"
+        },
+        {
+          "name": "scrollbackLines"
+        },
+        {
+          "name": "serverConfig"
+        },
+        {
+          "name": "sshTunnelHost"
+        },
+        {
+          "name": "sshTunnelHostId"
+        },
+        {
+          "name": "sshTunnelPassword"
+        },
+        {
+          "name": "sshTunnelPort"
+        },
+        {
+          "name": "sshTunnelPrivateKeyPaths"
+        },
+        {
+          "name": "sshTunnelSavePassword"
+        },
+        {
+          "name": "sshTunnelUseKey"
+        },
+        {
+          "name": "sshTunnelUsePassword"
+        },
+        {
+          "name": "sshTunnelUsername"
+        },
+        {
+          "name": "terminalType"
+        },
+        {
+          "name": "toolType"
+        },
+        {
+          "name": "type"
+        },
+        {
+          "name": "useKey"
+        },
+        {
+          "name": "usePassword"
+        },
+        {
+          "name": "useSshTunnel"
+        },
+        {
+          "name": "useSsl"
+        },
+        {
+          "name": "username"
+        }
+      ],
       "methods": [
         {
           "name": "<init>",
@@ -6514,6 +6668,53 @@
     {
       "type": "com.tangluobo.tomato.module.connect.GlobalConfig",
       "allDeclaredFields": true,
+      "fields": [
+        {
+          "name": "aiApiBaseUrl"
+        },
+        {
+          "name": "aiApiKey"
+        },
+        {
+          "name": "aiIncludeSchema"
+        },
+        {
+          "name": "aiModel"
+        },
+        {
+          "name": "aiRequestTimeoutSeconds"
+        },
+        {
+          "name": "rdpFullScreenShortcut"
+        },
+        {
+          "name": "rdpOpenMode"
+        },
+        {
+          "name": "scrollbackLines"
+        },
+        {
+          "name": "sidebarVisible"
+        },
+        {
+          "name": "sshDefaultFileViewMode"
+        },
+        {
+          "name": "sshServiceManagementEnabled"
+        },
+        {
+          "name": "sshTerminalFontName"
+        },
+        {
+          "name": "sshTerminalFontSize"
+        },
+        {
+          "name": "tableFontName"
+        },
+        {
+          "name": "tableFontSize"
+        }
+      ],
       "methods": [
         {
           "name": "<init>",
@@ -6636,6 +6837,29 @@
     {
       "type": "com.tangluobo.tomato.module.connect.service.DdnsService$DdnsEntry",
       "allDeclaredFields": true,
+      "fields": [
+        {
+          "name": "connectionId"
+        },
+        {
+          "name": "domainName"
+        },
+        {
+          "name": "line"
+        },
+        {
+          "name": "recordId"
+        },
+        {
+          "name": "rr"
+        },
+        {
+          "name": "ttl"
+        },
+        {
+          "name": "type"
+        }
+      ],
       "methods": [
         {
           "name": "<init>",
@@ -6736,6 +6960,162 @@
       ]
     },
     {
+      "type": "com.tangluobo.tomato.module.tools.DevelopmentConfigManager$BuildToolEntry",
+      "fields": [
+        {
+          "name": "homePath"
+        },
+        {
+          "name": "id"
+        },
+        {
+          "name": "name"
+        },
+        {
+          "name": "settingsPath"
+        },
+        {
+          "name": "type"
+        },
+        {
+          "name": "version"
+        }
+      ]
+    },
+    {
+      "type": "com.tangluobo.tomato.module.tools.DevelopmentConfigManager$ConfigData",
+      "fields": [
+        {
+          "name": "buildTools"
+        },
+        {
+          "name": "projects"
+        },
+        {
+          "name": "runtimes"
+        }
+      ],
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.tangluobo.tomato.module.tools.DevelopmentConfigManager$Entry",
+      "fields": [
+        {
+          "name": "activeProfiles"
+        },
+        {
+          "name": "jdkId"
+        },
+        {
+          "name": "mainClass"
+        },
+        {
+          "name": "mainSourcePath"
+        },
+        {
+          "name": "mavenId"
+        },
+        {
+          "name": "name"
+        },
+        {
+          "name": "nodeId"
+        },
+        {
+          "name": "path"
+        },
+        {
+          "name": "projectType"
+        },
+        {
+          "name": "runTarget"
+        },
+        {
+          "name": "runType"
+        }
+      ]
+    },
+    {
+      "type": "com.tangluobo.tomato.module.tools.DevelopmentConfigManager$RuntimeEntry",
+      "fields": [
+        {
+          "name": "id"
+        },
+        {
+          "name": "name"
+        },
+        {
+          "name": "path"
+        },
+        {
+          "name": "type"
+        },
+        {
+          "name": "version"
+        }
+      ]
+    },
+    {
+      "type": "com.tangluobo.tomato.module.tools.DownloadTaskStore$StoreData",
+      "fields": [
+        {
+          "name": "tasks"
+        },
+        {
+          "name": "version"
+        }
+      ]
+    },
+    {
+      "type": "com.tangluobo.tomato.module.tools.DownloadTaskStore$TaskRecord",
+      "fields": [
+        {
+          "name": "actualThreads"
+        },
+        {
+          "name": "completedFile"
+        },
+        {
+          "name": "directory"
+        },
+        {
+          "name": "downloadedBytes"
+        },
+        {
+          "name": "fileName"
+        },
+        {
+          "name": "protocol"
+        },
+        {
+          "name": "rebalanceCount"
+        },
+        {
+          "name": "requestedThreads"
+        },
+        {
+          "name": "state"
+        },
+        {
+          "name": "status"
+        },
+        {
+          "name": "targetFile"
+        },
+        {
+          "name": "totalBytes"
+        },
+        {
+          "name": "url"
+        }
+      ]
+    },
+    {
       "type": "com.tangluobo.tomato.module.tools.PortMappingPane$PortMapping",
       "fields": [
         {
@@ -6773,6 +7153,20 @@
     {
       "type": "com.tangluobo.tomato.module.tools.server.ServerAccount",
       "allDeclaredFields": true,
+      "fields": [
+        {
+          "name": "enabled"
+        },
+        {
+          "name": "homeDirectory"
+        },
+        {
+          "name": "password"
+        },
+        {
+          "name": "username"
+        }
+      ],
       "methods": [
         {
           "name": "<init>",
@@ -6783,6 +7177,29 @@
     {
       "type": "com.tangluobo.tomato.module.tools.server.ServerConfig",
       "allDeclaredFields": true,
+      "fields": [
+        {
+          "name": "accounts"
+        },
+        {
+          "name": "anonymousAccess"
+        },
+        {
+          "name": "bindAddress"
+        },
+        {
+          "name": "port"
+        },
+        {
+          "name": "rootDirectory"
+        },
+        {
+          "name": "sharedDirectories"
+        },
+        {
+          "name": "type"
+        }
+      ],
       "methods": [
         {
           "name": "<init>",
@@ -7330,6 +7747,26 @@
       ]
     },
     {
+      "type": "java.awt.Cursor",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "pData"
+        },
+        {
+          "name": "type"
+        }
+      ],
+      "methods": [
+        {
+          "name": "setPData",
+          "parameterTypes": [
+            "long"
+          ]
+        }
+      ]
+    },
+    {
       "type": "java.awt.Dimension",
       "jniAccessible": true,
       "fields": [
@@ -7410,6 +7847,18 @@
             "int",
             "int"
           ]
+        }
+      ]
+    },
+    {
+      "type": "java.awt.Point",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "x"
+        },
+        {
+          "name": "y"
         }
       ]
     },
@@ -7514,6 +7963,26 @@
       ]
     },
     {
+      "type": "java.awt.geom.GeneralPath",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        },
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "int",
+            "byte[]",
+            "int",
+            "float[]",
+            "int"
+          ]
+        }
+      ]
+    },
+    {
       "type": "java.awt.geom.Path2D",
       "jniAccessible": true,
       "fields": [
@@ -7534,6 +8003,60 @@
       "fields": [
         {
           "name": "floatCoords"
+        }
+      ]
+    },
+    {
+      "type": "java.awt.geom.Point2D$Float",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "x"
+        },
+        {
+          "name": "y"
+        }
+      ],
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "float",
+            "float"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "java.awt.geom.Rectangle2D$Float",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "height"
+        },
+        {
+          "name": "width"
+        },
+        {
+          "name": "x"
+        },
+        {
+          "name": "y"
+        }
+      ],
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        },
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "float",
+            "float",
+            "float",
+            "float"
+          ]
         }
       ]
     },
@@ -8108,6 +8631,19 @@
           "parameterTypes": [
             "java.util.Locale"
           ]
+        },
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "byte[]",
+            "java.nio.charset.Charset"
+          ]
+        },
+        {
+          "name": "getBytes",
+          "parameterTypes": [
+            "java.nio.charset.Charset"
+          ]
         }
       ]
     },
@@ -8283,11 +8819,28 @@
       "fields": [
         {
           "name": "address"
+        },
+        {
+          "name": "capacity"
+        },
+        {
+          "name": "limit"
+        },
+        {
+          "name": "position"
         }
       ],
       "methods": [
         {
           "name": "position",
+          "parameterTypes": []
+        },
+        {
+          "name": "array",
+          "parameterTypes": []
+        },
+        {
+          "name": "arrayOffset",
           "parameterTypes": []
         }
       ]
@@ -9084,6 +9637,12 @@
       "type": "javafx.stage.Window"
     },
     {
+      "type": "javax.imageio.spi.ImageReaderSpi"
+    },
+    {
+      "type": "javax.imageio.spi.ImageWriterSpi"
+    },
+    {
       "type": "javax.management.MBeanOperationInfo"
     },
     {
@@ -9094,6 +9653,9 @@
           "parameterTypes": []
         }
       ]
+    },
+    {
+      "type": "javax.management.MXBean"
     },
     {
       "type": "javax.management.ObjectName"
@@ -9159,6 +9721,51 @@
       "type": "long[]"
     },
     {
+      "type": "oracle.as.jmx.framework.PortableMBeanFactory"
+    },
+    {
+      "type": "oracle.jdbc.OracleDriver"
+    },
+    {
+      "type": "oracle.jdbc.diagnostics.DiagnosticsMXBean"
+    },
+    {
+      "type": "oracle.jdbc.diagnostics.OracleDiagnosticsMXBean"
+    },
+    {
+      "type": "oracle.sql.AnyDataFactory"
+    },
+    {
+      "type": "oracle.sql.TypeDescriptorFactory"
+    },
+    {
+      "type": "org.apache.batik.bridge.RhinoInterpreterFactory",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "org.apache.batik.css.parser.Parser",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "org.apache.batik.ext.awt.image.codec.png.PNGTranscoderInternalCodecWriteAdapter",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
       "type": "org.apache.commons.logging.LogFactory"
     },
     {
@@ -9192,6 +9799,9 @@
           "parameterTypes": []
         }
       ]
+    },
+    {
+      "type": "org.apache.hive.jdbc.HiveDriver"
     },
     {
       "type": "org.apache.kafka.common.metrics.JmxReporter",
@@ -10347,6 +10957,135 @@
       ]
     },
     {
+      "type": "org.dkf.jed2k.protocol.TransferResumeData",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "org.dkf.jed2k.protocol.kad.Kad2HelloRes",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "org.dkf.jed2k.protocol.kad.Kad2Req",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "org.dkf.jed2k.protocol.kad.Kad2Res",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "org.dkf.jed2k.protocol.kad.Kad2SearchRes",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "org.dkf.jed2k.protocol.kad.KadEntry",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "org.dkf.jed2k.protocol.kad.KadSearchEntry",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "org.dkf.jed2k.protocol.server.FoundFileSources",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "org.dkf.jed2k.protocol.server.IdChange",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "org.dkf.jed2k.protocol.server.Message",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "org.dkf.jed2k.protocol.server.ServerInfo",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "org.dkf.jed2k.protocol.server.ServerMet$ServerMetEntry",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "org.dkf.jed2k.protocol.server.Status",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "org.dkf.jed2k.protocol.tag.Tag",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "org.mariadb.jdbc.Driver"
+    },
+    {
       "type": "org.postgresql.Driver"
     },
     {
@@ -10869,6 +11608,272 @@
         {
           "name": "windowsSettingChange",
           "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.font.CharToGlyphMapper",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "charToGlyph",
+          "parameterTypes": [
+            "int"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.font.Font2D",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "canDisplay",
+          "parameterTypes": [
+            "char"
+          ]
+        },
+        {
+          "name": "charToGlyphRaw",
+          "parameterTypes": [
+            "int"
+          ]
+        },
+        {
+          "name": "charToVariationGlyphRaw",
+          "parameterTypes": [
+            "int",
+            "int"
+          ]
+        },
+        {
+          "name": "getMapper",
+          "parameterTypes": []
+        },
+        {
+          "name": "getTableBytes",
+          "parameterTypes": [
+            "int"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.font.FontStrike",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "getGlyphMetrics",
+          "parameterTypes": [
+            "int"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.font.FontUtilities",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "debugFonts",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.font.FreetypeFontScaler",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "invalidateScaler",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.font.GlyphList",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "gposx"
+        },
+        {
+          "name": "gposy"
+        },
+        {
+          "name": "images"
+        },
+        {
+          "name": "lcdRGBOrder"
+        },
+        {
+          "name": "lcdSubPixPos"
+        },
+        {
+          "name": "len"
+        },
+        {
+          "name": "positions"
+        },
+        {
+          "name": "usePositions"
+        }
+      ]
+    },
+    {
+      "type": "sun.font.HBShaper",
+      "methods": [
+        {
+          "name": "getFontTableData",
+          "parameterTypes": [
+            "sun.font.Font2D",
+            "int",
+            "java.lang.foreign.MemorySegment"
+          ]
+        },
+        {
+          "name": "get_glyph_contour_point",
+          "parameterTypes": [
+            "java.lang.foreign.MemorySegment",
+            "java.lang.foreign.MemorySegment",
+            "int",
+            "int",
+            "java.lang.foreign.MemorySegment",
+            "java.lang.foreign.MemorySegment",
+            "java.lang.foreign.MemorySegment"
+          ]
+        },
+        {
+          "name": "get_glyph_h_advance",
+          "parameterTypes": [
+            "java.lang.foreign.MemorySegment",
+            "java.lang.foreign.MemorySegment",
+            "int",
+            "java.lang.foreign.MemorySegment"
+          ]
+        },
+        {
+          "name": "get_glyph_v_advance",
+          "parameterTypes": [
+            "java.lang.foreign.MemorySegment",
+            "java.lang.foreign.MemorySegment",
+            "int",
+            "java.lang.foreign.MemorySegment"
+          ]
+        },
+        {
+          "name": "get_nominal_glyph",
+          "parameterTypes": [
+            "java.lang.foreign.MemorySegment",
+            "java.lang.foreign.MemorySegment",
+            "int",
+            "java.lang.foreign.MemorySegment",
+            "java.lang.foreign.MemorySegment"
+          ]
+        },
+        {
+          "name": "get_variation_glyph",
+          "parameterTypes": [
+            "java.lang.foreign.MemorySegment",
+            "java.lang.foreign.MemorySegment",
+            "int",
+            "int",
+            "java.lang.foreign.MemorySegment",
+            "java.lang.foreign.MemorySegment"
+          ]
+        },
+        {
+          "name": "store_layout_results",
+          "parameterTypes": [
+            "int",
+            "int",
+            "int",
+            "float",
+            "float",
+            "float",
+            "int",
+            "int",
+            "java.lang.foreign.MemorySegment",
+            "java.lang.foreign.MemorySegment"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.font.PhysicalStrike",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "pScalerContext"
+        }
+      ],
+      "methods": [
+        {
+          "name": "adjustPoint",
+          "parameterTypes": [
+            "java.awt.geom.Point2D$Float"
+          ]
+        },
+        {
+          "name": "getGlyphPoint",
+          "parameterTypes": [
+            "int",
+            "int"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.font.StrikeMetrics",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "float",
+            "float",
+            "float",
+            "float",
+            "float",
+            "float",
+            "float",
+            "float",
+            "float",
+            "float"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.font.TrueTypeFont",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "readBlock",
+          "parameterTypes": [
+            "java.nio.ByteBuffer",
+            "int",
+            "int"
+          ]
+        },
+        {
+          "name": "readBytes",
+          "parameterTypes": [
+            "int",
+            "int"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sun.font.Type1Font",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "readFile",
+          "parameterTypes": [
+            "java.nio.ByteBuffer"
+          ]
         }
       ]
     },
@@ -11408,6 +12413,15 @@
       ]
     },
     {
+      "type": "sun.java2d.pipe.ShapeSpanIterator",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "pData"
+        }
+      ]
+    },
+    {
       "type": "sun.java2d.windows.WindowsFlags",
       "jniAccessible": true,
       "fields": [
@@ -11514,6 +12528,12 @@
         }
       ],
       "methods": [
+        {
+          "name": "allocateInstance",
+          "parameterTypes": [
+            "java.lang.Class"
+          ]
+        },
         {
           "name": "invokeCleaner",
           "parameterTypes": [
@@ -11981,65 +13001,871 @@
           ]
         }
       }
+    },
+    {
+      "type": "com.tangluobo.tomato.AotUiSelfCheck",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "java.lang.NullPointerException"
+    },
+    {
+      "type": "java.lang.RuntimeException"
+    },
+    {
+      "type": "java.nio.charset.Charset",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "forName",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVBSFContext"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVBSFList"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVBitStreamFilter"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCPBProperties"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodec",
+      "unsafeAllocated": true
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodecContext",
+      "unsafeAllocated": true
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodecContext$Draw_horiz_band_AVCodecContext_AVFrame_IntPointer_int_int_int"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodecContext$Execute2_AVCodecContext_Func_AVCodecContext_Pointer_int_int_Pointer_IntPointer_int"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodecContext$Execute_AVCodecContext_Func_AVCodecContext_Pointer_Pointer_IntPointer_int_int"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodecContext$Func_AVCodecContext_Pointer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodecContext$Func_AVCodecContext_Pointer_int_int"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodecContext$Get_buffer2_AVCodecContext_AVFrame_int"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodecContext$Get_encode_buffer_AVCodecContext_AVPacket_int"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodecContext$Get_format_AVCodecContext_IntPointer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodecDescriptor"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodecHWConfig"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodecParameters"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodecParser"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodecParser$Parser_close_AVCodecParserContext"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodecParser$Parser_init_AVCodecParserContext"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodecParser$Parser_parse_AVCodecParserContext_AVCodecContext_PointerPointer_IntPointer_BytePointer_int"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodecParser$Split_AVCodecContext_BytePointer_int"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVCodecParserContext"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVHWAccel"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVPacket",
+      "unsafeAllocated": true
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVPacketList"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVPacketSideData"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVPanScan"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVProducerReferenceTime"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVProfile"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVRTCPSenderReport"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVSubtitle"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.AVSubtitleRect"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.Func_AVCodecContext_Pointer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.Func_AVCodecContext_Pointer_int_int"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avcodec.RcOverride"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVAES"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVAESCTR"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVAudioFifo"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVBPrint"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVBlowfish"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVBuffer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVBufferPool"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVBufferRef"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVCAMELLIA"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVCAST5"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVChannelCustom"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVChannelLayout",
+      "unsafeAllocated": true
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVClass"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVClass$Child_class_iterate_PointerPointer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVClass$Child_next_Pointer_Pointer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVClass$Get_category_Pointer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVClass$Item_name_Pointer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVClass$Query_ranges_PointerPointer_Pointer_BytePointer_int"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVComplexDouble"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVComplexFloat"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVComplexInt32"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVComponentDescriptor"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVContainerFifo"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVContentLightMetadata"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVDES"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVDictionary"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVDictionaryEntry"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVDownmixInfo"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVDynamicHDRPlus"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVEncryptionInfo"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVEncryptionInitInfo"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVFifo"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVFifoCB"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVFrame",
+      "unsafeAllocated": true
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVFrameSideData"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVHDRPlusColorTransformParams"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVHDRPlusPercentile"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVHMAC"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVHWDeviceContext"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVHWDeviceContext$Free_AVHWDeviceContext"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVHWFramesConstraints"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVHWFramesContext"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVHWFramesContext$Free_AVHWFramesContext"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVLFG"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVMD5"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVMasteringDisplayMetadata"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVMotionVector"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVOption"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVOptionArrayDef"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVOptionRange"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVOptionRanges"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVPixFmtDescriptor"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVRC4"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVRIPEMD"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVRational"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVRegionOfInterest"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVReplayGain"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVSHA"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVSHA512"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVSideDataDescriptor"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVSphericalMapping"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVStereo3D"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVSubsampleEncryptionInfo"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVTEA"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVTWOFISH"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVTXContext"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVTimecode"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVTreeNode"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.AVXTEA"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.Alloc_Pointer_long"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.Alloc_long"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.Callback_Pointer_int_BytePointer_Pointer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.Callback_Pointer_int_String_Pointer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.Cmp_Const_Pointer_Const_Pointer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.Cmp_Pointer_Pointer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.Container_alloc_Pointer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.Container_free_Pointer_Pointer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.Container_reset_Pointer_Pointer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.Enu_Pointer_Pointer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.Fifo_transfer_Pointer_Pointer_Pointer_int"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.Free_Pointer_ByteBuffer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.Free_Pointer_BytePointer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.Free_Pointer_byte__"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.Free_func_Pointer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.Funcs1_Pointer_double"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.Funcs2_Pointer_double_double"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.LogCallback"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.Pool_free_Pointer"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.av_alias16"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.av_alias32"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.av_alias64"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.av_intfloat32"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.av_intfloat64"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.av_pixelutils_sad_fn"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.av_tx_fn"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.ff_pad_helper_AVBPrint"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.unaligned_16"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.unaligned_32"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.avutil.unaligned_64"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.global.avcodec"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.global.avutil"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.global.swresample"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.global.swscale"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.swresample.SwrContext"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.swscale.SwsContext",
+      "unsafeAllocated": true
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.swscale.SwsFilter"
+    },
+    {
+      "type": "org.bytedeco.ffmpeg.swscale.SwsVector"
+    },
+    {
+      "type": "org.bytedeco.javacpp.BoolPointer"
+    },
+    {
+      "type": "org.bytedeco.javacpp.BooleanPointer"
+    },
+    {
+      "type": "org.bytedeco.javacpp.BytePointer",
+      "unsafeAllocated": true
+    },
+    {
+      "type": "org.bytedeco.javacpp.CLongPointer"
+    },
+    {
+      "type": "org.bytedeco.javacpp.CharPointer"
+    },
+    {
+      "type": "org.bytedeco.javacpp.DoublePointer"
+    },
+    {
+      "type": "org.bytedeco.javacpp.FloatPointer"
+    },
+    {
+      "type": "org.bytedeco.javacpp.IntPointer",
+      "unsafeAllocated": true
+    },
+    {
+      "type": "org.bytedeco.javacpp.Loader",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "putMemberOffset",
+          "parameterTypes": [
+            "java.lang.String",
+            "java.lang.String",
+            "int"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "org.bytedeco.javacpp.Loader$Helper"
+    },
+    {
+      "type": "org.bytedeco.javacpp.LongPointer"
+    },
+    {
+      "type": "org.bytedeco.javacpp.Pointer",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "address"
+        },
+        {
+          "name": "capacity"
+        },
+        {
+          "name": "deallocator"
+        },
+        {
+          "name": "limit"
+        },
+        {
+          "name": "position"
+        }
+      ],
+      "methods": [
+        {
+          "name": "init",
+          "parameterTypes": [
+            "long",
+            "long",
+            "long",
+            "long"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "org.bytedeco.javacpp.Pointer$NativeDeallocator",
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "ownerAddress"
+        }
+      ]
+    },
+    {
+      "type": "org.bytedeco.javacpp.PointerPointer",
+      "unsafeAllocated": true
+    },
+    {
+      "type": "org.bytedeco.javacpp.ShortPointer"
+    },
+    {
+      "type": "org.bytedeco.javacpp.SizeTPointer"
+    },
+    {
+      "type": "org.bytedeco.javacpp.chrono.HighResolutionDuration"
+    },
+    {
+      "type": "org.bytedeco.javacpp.chrono.HighResolutionTime"
+    },
+    {
+      "type": "org.bytedeco.javacpp.chrono.Hours"
+    },
+    {
+      "type": "org.bytedeco.javacpp.chrono.Microseconds"
+    },
+    {
+      "type": "org.bytedeco.javacpp.chrono.Milliseconds"
+    },
+    {
+      "type": "org.bytedeco.javacpp.chrono.Minutes"
+    },
+    {
+      "type": "org.bytedeco.javacpp.chrono.Nanoseconds"
+    },
+    {
+      "type": "org.bytedeco.javacpp.chrono.Seconds"
+    },
+    {
+      "type": "org.bytedeco.javacpp.chrono.SecondsDouble"
+    },
+    {
+      "type": "org.bytedeco.javacpp.chrono.SecondsFloat"
+    },
+    {
+      "type": "org.bytedeco.javacpp.chrono.SteadyDuration"
+    },
+    {
+      "type": "org.bytedeco.javacpp.chrono.SteadyTime"
+    },
+    {
+      "type": "org.bytedeco.javacpp.chrono.SystemDuration"
+    },
+    {
+      "type": "org.bytedeco.javacpp.chrono.SystemTime"
+    },
+    {
+      "type": "org.bytedeco.javacpp.presets.javacpp",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
     }
   ],
+  "foreign": {
+    "downcalls": [
+      {
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
+          "jint",
+          "jlong",
+          "void*",
+          "jlong",
+          "void*",
+          "void*"
+        ]
+      },
+      {
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
+          "void*"
+        ]
+      },
+      {
+        "returnType": "void",
+        "parameterTypes": [
+          "jfloat",
+          "void*",
+          "void*",
+          "void*",
+          "jint",
+          "jint",
+          "jint",
+          "jint",
+          "jint",
+          "jfloat",
+          "jfloat",
+          "jint",
+          "jint",
+          "void*",
+          "void*"
+        ]
+      },
+      {
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
+          "void*",
+          "void*",
+          "void*",
+          "jint",
+          "jint",
+          "void*",
+          "void*",
+          "void*",
+          "void*"
+        ]
+      },
+      {
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
+          "void*",
+          "jint",
+          "void*",
+          "void*",
+          "void*"
+        ]
+      },
+      {
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
+          "jint",
+          "jint",
+          "void*"
+        ]
+      },
+      {
+        "returnType": "void*",
+        "parameterTypes": [
+          "void*"
+        ]
+      },
+      {
+        "returnType": "void",
+        "parameterTypes": [
+          "void*"
+        ]
+      },
+      {
+        "returnType": "jint",
+        "parameterTypes": [
+          "jlong",
+          "jlong",
+          "jlong",
+          "jint",
+          "jlong"
+        ]
+      },
+      {
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
+          "jlong"
+        ]
+      },
+      {
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
+          "void*",
+          "void*",
+          "jint"
+        ]
+      },
+      {
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*"
+        ]
+      },
+      {
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
+          "jint"
+        ]
+      },
+      {
+        "returnType": "void*",
+        "parameterTypes": [
+          "jlong"
+        ]
+      },
+      {
+        "returnType": "void*",
+        "parameterTypes": [
+          "void*",
+          "void*",
+          "void*",
+          "void*",
+          "void*"
+        ]
+      },
+      {
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
+          "void*",
+          "jint",
+          "void*",
+          "void*"
+        ]
+      }
+    ],
+    "directUpcalls": [
+      {
+        "class": "sun.font.HBShaper",
+        "method": "get_glyph_contour_point",
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
+          "void*",
+          "jint",
+          "jint",
+          "void*",
+          "void*",
+          "void*"
+        ]
+      },
+      {
+        "class": "sun.font.HBShaper",
+        "method": "store_layout_results",
+        "returnType": "void",
+        "parameterTypes": [
+          "jint",
+          "jint",
+          "jint",
+          "jfloat",
+          "jfloat",
+          "jfloat",
+          "jint",
+          "jint",
+          "void*",
+          "void*"
+        ]
+      },
+      {
+        "class": "sun.font.HBShaper",
+        "method": "get_glyph_h_advance",
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
+          "void*",
+          "jint",
+          "void*"
+        ]
+      },
+      {
+        "class": "sun.font.HBShaper",
+        "method": "get_variation_glyph",
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
+          "void*",
+          "jint",
+          "jint",
+          "void*",
+          "void*"
+        ]
+      },
+      {
+        "class": "sun.font.HBShaper",
+        "method": "get_glyph_v_advance",
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
+          "void*",
+          "jint",
+          "void*"
+        ]
+      },
+      {
+        "class": "sun.font.HBShaper",
+        "method": "get_nominal_glyph",
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
+          "void*",
+          "jint",
+          "void*",
+          "void*"
+        ]
+      }
+    ],
+    "upcalls": [
+      {
+        "returnType": "jint",
+        "parameterTypes": [
+          "jint",
+          "void*"
+        ]
+      }
+    ]
+  },
   "resources": [
     {
-      "glob": ""
-    },
-    {
-      "glob": "META-INF/MANIFEST.MF"
-    },
-    {
       "glob": "META-INF/fonts.mf"
-    },
-    {
-      "glob": "META-INF/services/com.alibaba.fastjson.parser.deserializer.AutowiredObjectDeserializer"
-    },
-    {
-      "glob": "META-INF/services/com.alibaba.fastjson.serializer.AutowiredObjectSerializer"
-    },
-    {
-      "glob": "META-INF/services/io.opentelemetry.context.ContextStorageProvider"
-    },
-    {
-      "glob": "META-INF/services/java.net.spi.InetAddressResolverProvider"
-    },
-    {
-      "glob": "META-INF/services/java.net.spi.URLStreamHandlerProvider"
-    },
-    {
-      "glob": "META-INF/services/java.nio.channels.spi.SelectorProvider"
-    },
-    {
-      "glob": "META-INF/services/java.sql.Driver"
     },
     {
       "glob": "META-INF/services/java.time.zone.ZoneRulesProvider"
     },
     {
-      "glob": "META-INF/services/java.util.prefs.PreferencesFactory"
-    },
-    {
       "glob": "META-INF/services/java.util.spi.ResourceBundleControlProvider"
-    },
-    {
-      "glob": "META-INF/services/javax.xml.datatype.DatatypeFactory"
-    },
-    {
-      "glob": "META-INF/services/javax.xml.stream.XMLInputFactory"
-    },
-    {
-      "glob": "META-INF/services/org.apache.commons.logging.LogFactory"
-    },
-    {
-      "glob": "META-INF/services/org.apache.rocketmq.common.namesrv.TopAddressing"
-    },
-    {
-      "glob": "META-INF/services/org.apache.rocketmq.logging.org.slf4j.spi.SLF4JServiceProvider"
-    },
-    {
-      "glob": "META-INF/services/org.slf4j.spi.SLF4JServiceProvider"
     },
     {
       "glob": "api-ms-win-core-console-l1-1-0.dll"
@@ -12163,21 +13989,6 @@
     },
     {
       "glob": "api-ms-win-crt-utility-l1-1-0.dll"
-    },
-    {
-      "glob": "com/mysql/cj/LocalizedErrorMessages.properties"
-    },
-    {
-      "glob": "com/mysql/cj/LocalizedErrorMessages_zh.properties"
-    },
-    {
-      "glob": "com/mysql/cj/LocalizedErrorMessages_zh_CN.properties"
-    },
-    {
-      "glob": "com/mysql/cj/LocalizedErrorMessages_zh_Hans.properties"
-    },
-    {
-      "glob": "com/mysql/cj/LocalizedErrorMessages_zh_Hans_CN.properties"
     },
     {
       "glob": "com/sun/glass/ui/win/themes.properties"
@@ -16419,34 +18230,7 @@
       "glob": "com/sun/glass/utils/NativeLibLoader.class"
     },
     {
-      "glob": "com/sun/javafx/scene/control/skin/modena/dialog-confirm.png"
-    },
-    {
-      "glob": "com/sun/javafx/scene/control/skin/modena/dialog-error.png"
-    },
-    {
-      "glob": "com/sun/javafx/scene/control/skin/modena/dialog-information.png"
-    },
-    {
-      "glob": "com/sun/javafx/scene/control/skin/modena/dialog-warning.png"
-    },
-    {
       "glob": "com/sun/javafx/scene/control/skin/modena/modena.bss"
-    },
-    {
-      "glob": "com/sun/javafx/scene/control/skin/resources/controls-nt.properties"
-    },
-    {
-      "glob": "com/sun/javafx/scene/control/skin/resources/controls-nt_zh.properties"
-    },
-    {
-      "glob": "com/sun/javafx/scene/control/skin/resources/controls-nt_zh_CN.properties"
-    },
-    {
-      "glob": "com/sun/javafx/scene/control/skin/resources/controls-nt_zh_Hans.properties"
-    },
-    {
-      "glob": "com/sun/javafx/scene/control/skin/resources/controls-nt_zh_Hans_CN.properties"
     },
     {
       "glob": "com/sun/javafx/scene/control/skin/resources/controls.properties"
@@ -16479,28 +18263,7 @@
       "glob": "com/sun/javafx/tk/quantum/QuantumMessagesBundle_zh_Hans_CN.properties"
     },
     {
-      "glob": "com/sun/jna/linux-x86-64/libjnidispatch.so"
-    },
-    {
-      "glob": "com/sun/jna/win32-x86-64/jnidispatch.dll"
-    },
-    {
-      "glob": "com/sun/prism/d3d/hlsl/**"
-    },
-    {
-      "glob": "com/sun/prism/d3d/hlsl/DrawCircle_Color.obj"
-    },
-    {
-      "glob": "com/sun/prism/d3d/hlsl/DrawPgram_Color.obj"
-    },
-    {
       "glob": "com/sun/prism/d3d/hlsl/DrawRoundRect_Color.obj"
-    },
-    {
-      "glob": "com/sun/prism/d3d/hlsl/DrawSemiRoundRect_Color.obj"
-    },
-    {
-      "glob": "com/sun/prism/d3d/hlsl/FillCircle_Color.obj"
     },
     {
       "glob": "com/sun/prism/d3d/hlsl/FillPgram_Color.obj"
@@ -16510,15 +18273,6 @@
     },
     {
       "glob": "com/sun/prism/d3d/hlsl/FillRoundRect_Color.obj"
-    },
-    {
-      "glob": "com/sun/prism/d3d/hlsl/FillRoundRect_LinearGradient_PAD.obj"
-    },
-    {
-      "glob": "com/sun/prism/d3d/hlsl/Mask_TextureSuper.obj"
-    },
-    {
-      "glob": "com/sun/prism/d3d/hlsl/Solid_Color.obj"
     },
     {
       "glob": "com/sun/prism/d3d/hlsl/Solid_TextureFirstPassLCD.obj"
@@ -16536,298 +18290,121 @@
       "glob": "com/sun/prism/d3d/hlsl/Texture_LinearGradient_PAD.obj"
     },
     {
-      "glob": "com/sun/prism/es2/glsl/DrawPgram_Color.frag"
-    },
-    {
-      "glob": "com/sun/prism/es2/glsl/DrawRoundRect_Color.frag"
-    },
-    {
-      "glob": "com/sun/prism/es2/glsl/DrawSemiRoundRect_Color.frag"
-    },
-    {
-      "glob": "com/sun/prism/es2/glsl/FillCircle_Color.frag"
-    },
-    {
-      "glob": "com/sun/prism/es2/glsl/FillPgram_Color.frag"
-    },
-    {
-      "glob": "com/sun/prism/es2/glsl/FillPgram_LinearGradient_PAD.frag"
-    },
-    {
-      "glob": "com/sun/prism/es2/glsl/FillRoundRect_Color.frag"
-    },
-    {
-      "glob": "com/sun/prism/es2/glsl/FillRoundRect_LinearGradient_PAD.frag"
-    },
-    {
-      "glob": "com/sun/prism/es2/glsl/Mask_TextureSuper.frag"
-    },
-    {
-      "glob": "com/sun/prism/es2/glsl/Solid_Color.frag"
-    },
-    {
-      "glob": "com/sun/prism/es2/glsl/Solid_TextureFirstPassLCD.frag"
-    },
-    {
-      "glob": "com/sun/prism/es2/glsl/Solid_TextureRGB.frag"
-    },
-    {
-      "glob": "com/sun/prism/es2/glsl/Solid_TextureSecondPassLCD.frag"
-    },
-    {
-      "glob": "com/sun/prism/es2/glsl/Texture_Color.frag"
-    },
-    {
-      "glob": "com/sun/prism/es2/glsl/Texture_LinearGradient_PAD.frag"
-    },
-    {
-      "glob": "com/sun/scenario/effect/impl/es2/glsl/LinearConvolveShadow_12.frag"
-    },
-    {
-      "glob": "com/sun/scenario/effect/impl/es2/glsl/LinearConvolveShadow_16.frag"
-    },
-    {
-      "glob": "com/sun/scenario/effect/impl/es2/glsl/LinearConvolveShadow_20.frag"
-    },
-    {
-      "glob": "com/sun/scenario/effect/impl/es2/glsl/LinearConvolveShadow_28.frag"
-    },
-    {
-      "glob": "com/sun/scenario/effect/impl/es2/glsl/LinearConvolveShadow_4.frag"
-    },
-    {
-      "glob": "com/sun/scenario/effect/impl/es2/glsl/LinearConvolveShadow_8.frag"
-    },
-    {
-      "glob": "com/sun/scenario/effect/impl/hw/d3d/hlsl/LinearConvolveShadow_12.obj"
-    },
-    {
-      "glob": "com/sun/scenario/effect/impl/hw/d3d/hlsl/LinearConvolveShadow_16.obj"
-    },
-    {
-      "glob": "com/sun/scenario/effect/impl/hw/d3d/hlsl/LinearConvolveShadow_20.obj"
-    },
-    {
-      "glob": "com/sun/scenario/effect/impl/hw/d3d/hlsl/LinearConvolveShadow_28.obj"
-    },
-    {
       "glob": "com/sun/scenario/effect/impl/hw/d3d/hlsl/LinearConvolveShadow_4.obj"
-    },
-    {
-      "glob": "com/sun/scenario/effect/impl/hw/d3d/hlsl/LinearConvolveShadow_8.obj"
-    },
-    {
-      "glob": "com/tangluobo/tomato/tomato-view.fxml"
-    },
-    {
-      "glob": "commons-logging.properties"
-    },
-    {
-      "glob": "css/**"
     },
     {
       "glob": "css/connect-tree.css"
     },
     {
-      "glob": "css/markdown-editor-highlight.css"
-    },
-    {
-      "glob": "css/markdown-editor-toolbar.css"
-    },
-    {
-      "glob": "css/tab-nogap.css"
-    },
-    {
-      "glob": "de/jensd/fx/glyphs/fontawesome/fontawesome-webfont.ttf"
-    },
-    {
-      "glob": "decora_sse.dll"
-    },
-    {
-      "glob": "endpoints.json"
-    },
-    {
-      "glob": "fastjson.properties"
+      "glob": "css/connection-dialog.css"
     },
     {
       "glob": "glass.dll"
     },
     {
-      "glob": "images/**"
-    },
-    {
-      "glob": "images/connect/aliyun.png"
-    },
-    {
-      "glob": "images/connect/backup.png"
+      "glob": "images/connect/adb.svg.png"
     },
     {
       "glob": "images/connect/beautiful.png"
     },
     {
-      "glob": "images/connect/code.png"
+      "glob": "images/connect/connection-icons/aliyun-oss.svg.png"
     },
     {
-      "glob": "images/connect/col_add.png"
+      "glob": "images/connect/connection-icons/aliyun.svg.png"
     },
     {
-      "glob": "images/connect/col_del.png"
+      "glob": "images/connect/connection-icons/ftp-client.svg.png"
     },
     {
-      "glob": "images/connect/col_jump.png"
+      "glob": "images/connect/connection-icons/ftp-server.svg.png"
     },
     {
-      "glob": "images/connect/connect.png"
+      "glob": "images/connect/connection-icons/http-server.svg.png"
     },
     {
-      "glob": "images/connect/copy_tables.png"
+      "glob": "images/connect/connection-icons/sftp.svg.png"
     },
     {
-      "glob": "images/connect/create_query_tool.png"
+      "glob": "images/connect/connection-icons/smb-server.svg.png"
     },
     {
-      "glob": "images/connect/database-logos/**"
+      "glob": "images/connect/connection-icons/ssh.svg.png"
     },
     {
-      "glob": "images/connect/database.png"
+      "glob": "images/connect/connection-icons/tencent-cloud.svg.png"
     },
     {
-      "glob": "images/connect/database_gray.png"
+      "glob": "images/connect/database-logos/cockroachdb.svg.png"
     },
     {
-      "glob": "images/connect/docker.png"
+      "glob": "images/connect/database-logos/doris.svg.png"
     },
     {
-      "glob": "images/connect/down.png"
+      "glob": "images/connect/database-logos/gaussdb.svg.png"
     },
     {
-      "glob": "images/connect/event.png"
+      "glob": "images/connect/database-logos/goldendb.svg.png"
     },
     {
-      "glob": "images/connect/execute.png"
+      "glob": "images/connect/database-logos/highgo.svg.png"
     },
     {
-      "glob": "images/connect/fileTypes/1.png"
+      "glob": "images/connect/database-logos/hive.svg.png"
     },
     {
-      "glob": "images/connect/fileTypes/2.png"
+      "glob": "images/connect/database-logos/kingbase.svg.png"
     },
     {
-      "glob": "images/connect/fileTypes/3.png"
+      "glob": "images/connect/database-logos/mariadb.svg.png"
     },
     {
-      "glob": "images/connect/fileTypes/4.png"
+      "glob": "images/connect/database-logos/mongodb.svg.png"
     },
     {
-      "glob": "images/connect/fileTypes/BIN.png"
+      "glob": "images/connect/database-logos/mysql.svg.png"
     },
     {
-      "glob": "images/connect/fileTypes/CFG.png"
+      "glob": "images/connect/database-logos/oceanbase.svg.png"
     },
     {
-      "glob": "images/connect/fileTypes/CONF.png"
+      "glob": "images/connect/database-logos/opengauss.svg.png"
     },
     {
-      "glob": "images/connect/fileTypes/DESKTOP.png"
+      "glob": "images/connect/database-logos/oracle.svg.png"
     },
     {
-      "glob": "images/connect/fileTypes/DOC.png"
+      "glob": "images/connect/database-logos/postgresql.svg.png"
     },
     {
-      "glob": "images/connect/fileTypes/EXE.png"
+      "glob": "images/connect/database-logos/redshift.svg.png"
     },
     {
-      "glob": "images/connect/fileTypes/GZ.png"
+      "glob": "images/connect/database-logos/starrocks.svg.png"
     },
     {
-      "glob": "images/connect/fileTypes/JAVA.png"
+      "glob": "images/connect/database-logos/tidb.svg.png"
     },
     {
-      "glob": "images/connect/fileTypes/JPEG.png"
-    },
-    {
-      "glob": "images/connect/fileTypes/JPG.png"
-    },
-    {
-      "glob": "images/connect/fileTypes/JSON.png"
-    },
-    {
-      "glob": "images/connect/fileTypes/KEY.png"
-    },
-    {
-      "glob": "images/connect/fileTypes/MD.png"
-    },
-    {
-      "glob": "images/connect/fileTypes/PEM.png"
-    },
-    {
-      "glob": "images/connect/fileTypes/PNG.png"
-    },
-    {
-      "glob": "images/connect/fileTypes/PNG111.png"
-    },
-    {
-      "glob": "images/connect/fileTypes/RPM.png"
-    },
-    {
-      "glob": "images/connect/fileTypes/SH.png"
-    },
-    {
-      "glob": "images/connect/fileTypes/SWP.png"
-    },
-    {
-      "glob": "images/connect/fileTypes/TXT.png"
-    },
-    {
-      "glob": "images/connect/fileTypes/ZIP.png"
+      "glob": "images/connect/database-logos/vastbase.svg.png"
     },
     {
       "glob": "images/connect/folder.png"
     },
     {
-      "glob": "images/connect/ftp.png"
-    },
-    {
-      "glob": "images/connect/function.png"
-    },
-    {
       "glob": "images/connect/kafka.png"
-    },
-    {
-      "glob": "images/connect/linux.png"
-    },
-    {
-      "glob": "images/connect/md.png"
-    },
-    {
-      "glob": "images/connect/mod.png"
-    },
-    {
-      "glob": "images/connect/mod_open.png"
-    },
-    {
-      "glob": "images/connect/monitor.png"
     },
     {
       "glob": "images/connect/mysql.png"
     },
     {
-      "glob": "images/connect/mysql_open.png"
+      "glob": "images/connect/oracle.png"
     },
     {
       "glob": "images/connect/postgresql.png"
     },
     {
-      "glob": "images/connect/primary_key.png"
-    },
-    {
-      "glob": "images/connect/query.png"
-    },
-    {
       "glob": "images/connect/redis.png"
-    },
-    {
-      "glob": "images/connect/refresh.png"
     },
     {
       "glob": "images/connect/rocketmq.png"
@@ -16836,100 +18413,52 @@
       "glob": "images/connect/s3.png"
     },
     {
-      "glob": "images/connect/save.png"
-    },
-    {
-      "glob": "images/connect/server.png"
-    },
-    {
-      "glob": "images/connect/sftp.png"
-    },
-    {
       "glob": "images/connect/shell.png"
     },
     {
-      "glob": "images/connect/table.png"
+      "glob": "images/connect/spice.svg.png"
     },
     {
-      "glob": "images/connect/table_add.png"
+      "glob": "images/connect/tool-icons/color-transpose.svg.png"
     },
     {
-      "glob": "images/connect/table_drop.png"
+      "glob": "images/connect/tool-icons/dataset-converter.svg.png"
     },
     {
-      "glob": "images/connect/table_edit.png"
+      "glob": "images/connect/tool-icons/desktop-shortcut.svg.png"
     },
     {
-      "glob": "images/connect/table_export.png"
+      "glob": "images/connect/tool-icons/downloader.svg.png"
     },
     {
-      "glob": "images/connect/table_import.png"
+      "glob": "images/connect/tool-icons/hosts-file.svg.png"
     },
     {
-      "glob": "images/connect/table_open.png"
+      "glob": "images/connect/tool-icons/icon-maker.svg.png"
     },
     {
-      "glob": "images/connect/up.png"
+      "glob": "images/connect/tool-icons/image-converter.svg.png"
     },
     {
-      "glob": "images/connect/user.png"
+      "glob": "images/connect/tool-icons/json-tool.svg.png"
     },
     {
-      "glob": "images/connect/view.png"
+      "glob": "images/connect/tool-icons/port-mapping.svg.png"
+    },
+    {
+      "glob": "images/connect/tool-icons/resource-extractor.svg.png"
+    },
+    {
+      "glob": "images/connect/tool-icons/session.svg.png"
+    },
+    {
+      "glob": "images/connect/vnc.svg.png"
     },
     {
       "glob": "images/connect/windows.png"
     },
     {
-      "glob": "images/copy.png"
-    },
-    {
-      "glob": "images/logo.png"
-    },
-    {
-      "glob": "images/rdp/mstsc.png"
-    },
-    {
-      "glob": "images/settings.png"
-    },
-    {
       "glob": "javafx_font.dll"
-    },
-    {
-      "glob": "javafx_iio.dll"
-    },
-    {
-      "glob": "kafka/kafka-version.properties"
-    },
-    {
-      "glob": "keymaps/en-us"
-    },
-    {
-      "glob": "libglass.so"
-    },
-    {
-      "glob": "libglassgtk3.so"
-    },
-    {
-      "glob": "libjavafx_font.so"
-    },
-    {
-      "glob": "libjavafx_font_freetype.so"
-    },
-    {
-      "glob": "libjavafx_font_pango.so"
-    },
-    {
-      "glob": "libjavafx_iio.so"
-    },
-    {
-      "glob": "libprism_es2.so"
-    },
-    {
-      "glob": "markdown/**"
-    },
-    {
-      "glob": "mozilla/public-suffix-list.txt"
     },
     {
       "glob": "msvcp140.dll"
@@ -16941,46 +18470,13 @@
       "glob": "msvcp140_2.dll"
     },
     {
-      "glob": "org/apache/http/client/version.properties"
-    },
-    {
-      "glob": "org/apache/rocketmq/logging/org/slf4j/impl/StaticLoggerBinder.class"
-    },
-    {
       "glob": "org/fxmisc/richtext/styled-text-area.bss"
     },
     {
       "glob": "org/fxmisc/richtext/styled-text-area.css"
     },
     {
-      "glob": "org/postgresql/driverconfig.properties"
-    },
-    {
-      "glob": "org/postgresql/translation/messages.properties"
-    },
-    {
-      "glob": "org/postgresql/translation/messages_zh.properties"
-    },
-    {
-      "glob": "org/postgresql/translation/messages_zh_Hans.properties"
-    },
-    {
-      "glob": "org/postgresql/translation/messages_zh_Hans_CN.properties"
-    },
-    {
-      "glob": "prism_common.dll"
-    },
-    {
       "glob": "prism_d3d.dll"
-    },
-    {
-      "glob": "prism_sw.dll"
-    },
-    {
-      "glob": "project.properties"
-    },
-    {
-      "glob": "scripts/extract-windows-virtual-files.ps1"
     },
     {
       "glob": "ucrtbase.dll"
@@ -16993,10 +18489,6 @@
     },
     {
       "module": "java.base",
-      "glob": "jdk/internal/icu/impl/data/icudt76b/nfkc.nrm"
-    },
-    {
-      "module": "java.base",
       "glob": "jdk/internal/icu/impl/data/icudt76b/ubidi.icu"
     },
     {
@@ -17005,39 +18497,7 @@
     },
     {
       "module": "java.base",
-      "glob": "sun/net/idn/uidna.spp"
-    },
-    {
-      "module": "java.base",
-      "glob": "sun/net/www/content-types.properties"
-    },
-    {
-      "module": "java.base",
       "glob": "sun/text/resources/LineBreakIteratorData"
-    },
-    {
-      "module": "java.datatransfer",
-      "glob": "sun/datatransfer/resources/flavormap.properties"
-    },
-    {
-      "module": "java.desktop",
-      "glob": "javax/swing/plaf/metal/icons/ocean/directory.gif"
-    },
-    {
-      "module": "java.desktop",
-      "glob": "javax/swing/plaf/metal/icons/ocean/file.gif"
-    },
-    {
-      "module": "java.desktop",
-      "glob": "sun/awt/resources/awt_zh.properties"
-    },
-    {
-      "module": "java.desktop",
-      "glob": "sun/awt/resources/awt_zh_Hans.properties"
-    },
-    {
-      "module": "java.desktop",
-      "glob": "sun/awt/resources/awt_zh_Hans_CN.properties"
     },
     {
       "module": "java.logging",
@@ -17052,13 +18512,6 @@
       "glob": "sun/util/logging/resources/logging_zh_Hans_CN.properties"
     },
     {
-      "module": "jdk.jfr",
-      "glob": "jdk/jfr/internal/query/view.ini"
-    },
-    {
-      "bundle": "com.mysql.cj.LocalizedErrorMessages"
-    },
-    {
       "bundle": "com.sun.javafx.tk.quantum.QuantumMessagesBundle"
     },
     {
@@ -17068,129 +18521,2140 @@
       "bundle": "com/sun/javafx/scene/control/skin/resources/controls"
     },
     {
-      "bundle": "com/sun/javafx/scene/control/skin/resources/controls-nt"
-    },
-    {
-      "bundle": "org.postgresql.translation.messages"
-    },
-    {
-      "bundle": "sun.awt.resources.awt"
-    },
-    {
       "bundle": "sun.util.logging.resources.logging"
+    },
+    {
+      "glob": "META-INF/maven/org.bytedeco/ffmpeg/pom.properties"
+    },
+    {
+      "glob": "META-INF/maven/org.bytedeco/javacpp/pom.properties"
+    },
+    {
+      "glob": "adb/red64x48.scrcpy"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-console-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-console-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-datetime-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-debug-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-errorhandling-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-file-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-file-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-file-l2-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-handle-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-interlocked-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-libraryloader-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-localization-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-memory-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-namedpipe-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-processenvironment-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-processthreads-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-processthreads-l1-1-1.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-profile-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-rtlsupport-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-string-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-synch-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-synch-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-sysinfo-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-timezone-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-core-util-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-crt-conio-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-crt-convert-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-crt-environment-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-crt-filesystem-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-crt-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-crt-locale-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-crt-math-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-crt-multibyte-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-crt-private-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-crt-process-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-crt-runtime-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-crt-stdio-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-crt-string-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-crt-time-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/api-ms-win-crt-utility-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/avcodec-62.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/avcodec.62.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/avcodec.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/avcodec.dll.62"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/avutil-60.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/avutil.60.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/avutil.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/avutil.dll.60"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/concrt140.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/jniavcodec.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/jniavutil.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/jniswresample.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/jniswscale.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/libomp140.aarch64.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/libomp140.i386.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/libomp140.x86_64.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/msvcp140.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/msvcp140_1.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/msvcp140_2.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/swresample-6.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/swresample.6.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/swresample.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/swresample.dll.6"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/swscale-9.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/swscale.9.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/swscale.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/swscale.dll.9"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/ucrtbase.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/vcomp140.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/vcruntime140.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/vcruntime140_1.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64-gpl/vcruntime140_threads.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-console-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-console-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-datetime-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-debug-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-errorhandling-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-file-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-file-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-file-l2-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-handle-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-interlocked-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-libraryloader-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-localization-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-memory-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-namedpipe-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-processenvironment-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-processthreads-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-processthreads-l1-1-1.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-profile-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-rtlsupport-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-string-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-synch-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-synch-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-sysinfo-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-timezone-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-core-util-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-crt-conio-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-crt-convert-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-crt-environment-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-crt-filesystem-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-crt-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-crt-locale-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-crt-math-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-crt-multibyte-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-crt-private-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-crt-process-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-crt-runtime-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-crt-stdio-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-crt-string-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-crt-time-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/api-ms-win-crt-utility-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/avcodec-62.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/avcodec.62.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/avcodec.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/avcodec.dll.62"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/avutil-60.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/avutil.60.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/avutil.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/avutil.dll.60"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/concrt140.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/jniavcodec.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/jniavutil.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/jniswresample.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/jniswscale.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/libomp140.aarch64.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/libomp140.i386.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/libomp140.x86_64.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/msvcp140.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/msvcp140_1.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/msvcp140_2.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/swresample-6.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/swresample.6.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/swresample.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/swresample.dll.6"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/swscale-9.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/swscale.9.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/swscale.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/swscale.dll.9"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/ucrtbase.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/vcomp140.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/vcruntime140.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/vcruntime140_1.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/global/windows-x86_64/vcruntime140_threads.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-console-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-console-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-datetime-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-debug-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-errorhandling-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-file-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-file-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-file-l2-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-handle-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-interlocked-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-libraryloader-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-localization-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-memory-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-namedpipe-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-processenvironment-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-processthreads-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-processthreads-l1-1-1.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-profile-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-rtlsupport-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-string-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-synch-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-synch-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-sysinfo-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-timezone-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-core-util-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-crt-conio-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-crt-convert-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-crt-environment-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-crt-filesystem-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-crt-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-crt-locale-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-crt-math-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-crt-multibyte-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-crt-private-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-crt-process-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-crt-runtime-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-crt-stdio-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-crt-string-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-crt-time-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/api-ms-win-crt-utility-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/avcodec-62.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/avcodec.62.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/avcodec.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/avcodec.dll.62"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/avutil-60.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/avutil.60.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/avutil.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/avutil.dll.60"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/concrt140.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/jniavcodec.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/jniavutil.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/jniswresample.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/jniswscale.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/libomp140.aarch64.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/libomp140.i386.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/libomp140.x86_64.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/msvcp140.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/msvcp140_1.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/msvcp140_2.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/swresample-6.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/swresample.6.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/swresample.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/swresample.dll.6"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/swscale-9.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/swscale.9.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/swscale.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/swscale.dll.9"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/ucrtbase.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/vcomp140.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/vcruntime140.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/vcruntime140_1.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64-gpl/vcruntime140_threads.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-console-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-console-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-datetime-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-debug-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-errorhandling-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-file-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-file-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-file-l2-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-handle-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-interlocked-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-libraryloader-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-localization-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-memory-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-namedpipe-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-processenvironment-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-processthreads-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-processthreads-l1-1-1.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-profile-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-rtlsupport-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-string-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-synch-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-synch-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-sysinfo-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-timezone-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-core-util-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-crt-conio-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-crt-convert-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-crt-environment-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-crt-filesystem-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-crt-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-crt-locale-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-crt-math-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-crt-multibyte-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-crt-private-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-crt-process-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-crt-runtime-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-crt-stdio-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-crt-string-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-crt-time-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/api-ms-win-crt-utility-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/avcodec-62.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/avcodec.62.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/avcodec.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/avcodec.dll.62"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/avutil-60.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/avutil.60.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/avutil.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/avutil.dll.60"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/concrt140.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/jniavcodec.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/jniavutil.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/jniswresample.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/jniswscale.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/libomp140.aarch64.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/libomp140.i386.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/libomp140.x86_64.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/msvcp140.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/msvcp140_1.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/msvcp140_2.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/swresample-6.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/swresample.6.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/swresample.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/swresample.dll.6"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/swscale-9.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/swscale.9.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/swscale.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/swscale.dll.9"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/ucrtbase.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/vcomp140.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/vcruntime140.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/vcruntime140_1.dll"
+    },
+    {
+      "glob": "org/bytedeco/ffmpeg/windows-x86_64/vcruntime140_threads.dll"
+    },
+    {
+      "glob": "org/bytedeco/javacpp/properties/windows-x86_64.properties"
+    },
+    {
+      "glob": "org/bytedeco/javacpp/windows-x86_64/jnijavacpp.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-console-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-console-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-datetime-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-debug-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-errorhandling-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-file-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-file-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-file-l2-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-handle-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-interlocked-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-libraryloader-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-localization-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-memory-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-namedpipe-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-processenvironment-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-processthreads-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-processthreads-l1-1-1.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-profile-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-rtlsupport-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-string-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-synch-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-synch-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-sysinfo-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-timezone-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-core-util-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-crt-conio-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-crt-convert-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-crt-environment-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-crt-filesystem-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-crt-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-crt-locale-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-crt-math-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-crt-multibyte-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-crt-private-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-crt-process-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-crt-runtime-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-crt-stdio-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-crt-string-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-crt-time-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/api-ms-win-crt-utility-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/avcodec-62.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/avcodec.62.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/avcodec.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/avcodec.dll.62"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/avutil-60.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/avutil.60.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/avutil.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/avutil.dll.60"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/concrt140.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/jniavcodec.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/jniavutil.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/jniswresample.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/jniswscale.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/libomp140.aarch64.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/libomp140.i386.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/libomp140.x86_64.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/msvcp140.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/msvcp140_1.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/msvcp140_2.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/swresample-6.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/swresample.6.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/swresample.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/swresample.dll.6"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/swscale-9.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/swscale.9.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/swscale.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/swscale.dll.9"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/ucrtbase.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/vcomp140.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/vcruntime140.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/vcruntime140_1.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64-gpl/vcruntime140_threads.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-console-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-console-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-datetime-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-debug-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-errorhandling-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-file-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-file-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-file-l2-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-handle-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-interlocked-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-libraryloader-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-localization-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-memory-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-namedpipe-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-processenvironment-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-processthreads-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-processthreads-l1-1-1.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-profile-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-rtlsupport-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-string-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-synch-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-synch-l1-2-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-sysinfo-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-timezone-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-core-util-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-crt-conio-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-crt-convert-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-crt-environment-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-crt-filesystem-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-crt-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-crt-locale-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-crt-math-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-crt-multibyte-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-crt-private-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-crt-process-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-crt-runtime-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-crt-stdio-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-crt-string-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-crt-time-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/api-ms-win-crt-utility-l1-1-0.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/avcodec.62.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/avcodec.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/avcodec.dll.62"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/avutil.60.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/avutil.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/avutil.dll.60"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/concrt140.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/libomp140.aarch64.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/libomp140.i386.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/libomp140.x86_64.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/msvcp140.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/msvcp140_1.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/msvcp140_2.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/swresample.6.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/swresample.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/swresample.dll.6"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/swscale.9.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/swscale.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/swscale.dll.9"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/ucrtbase.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/vcomp140.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/vcruntime140.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/vcruntime140_1.dll"
+    },
+    {
+      "glob": "org/bytedeco/windows-x86_64/vcruntime140_threads.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-console-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-console-l1-2-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-datetime-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-debug-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-errorhandling-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-file-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-file-l1-2-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-file-l2-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-handle-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-interlocked-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-libraryloader-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-localization-l1-2-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-memory-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-namedpipe-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-processenvironment-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-processthreads-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-processthreads-l1-1-1.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-profile-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-rtlsupport-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-string-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-synch-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-synch-l1-2-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-sysinfo-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-timezone-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-core-util-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-crt-conio-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-crt-convert-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-crt-environment-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-crt-filesystem-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-crt-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-crt-locale-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-crt-math-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-crt-multibyte-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-crt-private-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-crt-process-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-crt-runtime-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-crt-stdio-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-crt-string-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-crt-time-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/api-ms-win-crt-utility-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/avcodec-62.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/avcodec.62.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/avcodec.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/avcodec.dll.62"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/avutil-60.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/avutil.60.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/avutil.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/avutil.dll.60"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/concrt140.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/jniavcodec.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/jniavutil.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/jniswresample.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/jniswscale.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/libomp140.aarch64.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/libomp140.i386.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/libomp140.x86_64.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/msvcp140.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/msvcp140_1.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/msvcp140_2.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/swresample-6.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/swresample.6.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/swresample.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/swresample.dll.6"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/swscale-9.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/swscale.9.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/swscale.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/swscale.dll.9"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/ucrtbase.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/vcomp140.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/vcruntime140.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/vcruntime140_1.dll"
+    },
+    {
+      "glob": "org/windows-x86_64-gpl/vcruntime140_threads.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-console-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-console-l1-2-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-datetime-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-debug-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-errorhandling-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-file-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-file-l1-2-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-file-l2-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-handle-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-interlocked-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-libraryloader-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-localization-l1-2-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-memory-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-namedpipe-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-processenvironment-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-processthreads-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-processthreads-l1-1-1.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-profile-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-rtlsupport-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-string-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-synch-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-synch-l1-2-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-sysinfo-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-timezone-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-core-util-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-crt-conio-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-crt-convert-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-crt-environment-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-crt-filesystem-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-crt-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-crt-locale-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-crt-math-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-crt-multibyte-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-crt-private-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-crt-process-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-crt-runtime-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-crt-stdio-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-crt-string-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-crt-time-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/api-ms-win-crt-utility-l1-1-0.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/avcodec.62.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/avcodec.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/avcodec.dll.62"
+    },
+    {
+      "glob": "org/windows-x86_64/avutil.60.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/avutil.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/avutil.dll.60"
+    },
+    {
+      "glob": "org/windows-x86_64/concrt140.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/libomp140.aarch64.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/libomp140.i386.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/libomp140.x86_64.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/msvcp140.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/msvcp140_1.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/msvcp140_2.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/swresample.6.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/swresample.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/swresample.dll.6"
+    },
+    {
+      "glob": "org/windows-x86_64/swscale.9.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/swscale.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/swscale.dll.9"
+    },
+    {
+      "glob": "org/windows-x86_64/ucrtbase.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/vcomp140.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/vcruntime140.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/vcruntime140_1.dll"
+    },
+    {
+      "glob": "org/windows-x86_64/vcruntime140_threads.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-console-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-console-l1-2-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-datetime-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-debug-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-errorhandling-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-file-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-file-l1-2-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-file-l2-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-handle-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-interlocked-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-libraryloader-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-localization-l1-2-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-memory-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-namedpipe-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-processenvironment-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-processthreads-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-processthreads-l1-1-1.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-profile-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-rtlsupport-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-string-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-synch-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-synch-l1-2-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-sysinfo-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-timezone-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-core-util-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-crt-conio-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-crt-convert-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-crt-environment-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-crt-filesystem-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-crt-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-crt-locale-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-crt-math-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-crt-multibyte-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-crt-private-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-crt-process-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-crt-runtime-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-crt-stdio-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-crt-string-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-crt-time-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/api-ms-win-crt-utility-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/avcodec-62.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/avcodec.62.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/avcodec.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/avcodec.dll.62"
+    },
+    {
+      "glob": "windows-x86_64-gpl/avutil-60.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/avutil.60.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/avutil.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/avutil.dll.60"
+    },
+    {
+      "glob": "windows-x86_64-gpl/concrt140.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/jniavcodec.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/jniavutil.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/jniswresample.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/jniswscale.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/libomp140.aarch64.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/libomp140.i386.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/libomp140.x86_64.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/msvcp140.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/msvcp140_1.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/msvcp140_2.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/swresample-6.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/swresample.6.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/swresample.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/swresample.dll.6"
+    },
+    {
+      "glob": "windows-x86_64-gpl/swscale-9.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/swscale.9.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/swscale.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/swscale.dll.9"
+    },
+    {
+      "glob": "windows-x86_64-gpl/ucrtbase.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/vcomp140.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/vcruntime140.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/vcruntime140_1.dll"
+    },
+    {
+      "glob": "windows-x86_64-gpl/vcruntime140_threads.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-console-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-console-l1-2-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-datetime-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-debug-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-errorhandling-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-file-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-file-l1-2-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-file-l2-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-handle-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-interlocked-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-libraryloader-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-localization-l1-2-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-memory-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-namedpipe-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-processenvironment-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-processthreads-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-processthreads-l1-1-1.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-profile-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-rtlsupport-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-string-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-synch-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-synch-l1-2-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-sysinfo-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-timezone-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-core-util-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-crt-conio-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-crt-convert-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-crt-environment-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-crt-filesystem-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-crt-heap-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-crt-locale-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-crt-math-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-crt-multibyte-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-crt-private-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-crt-process-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-crt-runtime-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-crt-stdio-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-crt-string-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-crt-time-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/api-ms-win-crt-utility-l1-1-0.dll"
+    },
+    {
+      "glob": "windows-x86_64/avcodec.62.dll"
+    },
+    {
+      "glob": "windows-x86_64/avcodec.dll"
+    },
+    {
+      "glob": "windows-x86_64/avcodec.dll.62"
+    },
+    {
+      "glob": "windows-x86_64/avutil.60.dll"
+    },
+    {
+      "glob": "windows-x86_64/avutil.dll"
+    },
+    {
+      "glob": "windows-x86_64/avutil.dll.60"
+    },
+    {
+      "glob": "windows-x86_64/concrt140.dll"
+    },
+    {
+      "glob": "windows-x86_64/libomp140.aarch64.dll"
+    },
+    {
+      "glob": "windows-x86_64/libomp140.i386.dll"
+    },
+    {
+      "glob": "windows-x86_64/libomp140.x86_64.dll"
+    },
+    {
+      "glob": "windows-x86_64/msvcp140.dll"
+    },
+    {
+      "glob": "windows-x86_64/msvcp140_1.dll"
+    },
+    {
+      "glob": "windows-x86_64/msvcp140_2.dll"
+    },
+    {
+      "glob": "windows-x86_64/swresample.6.dll"
+    },
+    {
+      "glob": "windows-x86_64/swresample.dll"
+    },
+    {
+      "glob": "windows-x86_64/swresample.dll.6"
+    },
+    {
+      "glob": "windows-x86_64/swscale.9.dll"
+    },
+    {
+      "glob": "windows-x86_64/swscale.dll"
+    },
+    {
+      "glob": "windows-x86_64/swscale.dll.9"
+    },
+    {
+      "glob": "windows-x86_64/ucrtbase.dll"
+    },
+    {
+      "glob": "windows-x86_64/vcomp140.dll"
+    },
+    {
+      "glob": "windows-x86_64/vcruntime140.dll"
+    },
+    {
+      "glob": "windows-x86_64/vcruntime140_1.dll"
+    },
+    {
+      "glob": "windows-x86_64/vcruntime140_threads.dll"
     }
-  ],
-  "foreign": {
-    "downcalls": [
-      {
-        "returnType": "jint",
-        "parameterTypes": [
-          "void*",
-          "jint",
-          "jlong",
-          "void*",
-          "jlong",
-          "void*",
-          "void*"
-        ]
-      },
-      {
-        "returnType": "jint",
-        "parameterTypes": [
-          "void*",
-          "void*"
-        ]
-      },
-      {
-        "returnType": "jint",
-        "parameterTypes": [
-          "void*",
-          "void*",
-          "void*",
-          "void*",
-          "jint",
-          "jint",
-          "void*",
-          "void*",
-          "void*",
-          "void*"
-        ]
-      },
-      {
-        "returnType": "jint",
-        "parameterTypes": [
-          "void*",
-          "void*",
-          "jint",
-          "void*",
-          "void*",
-          "void*"
-        ]
-      },
-      {
-        "returnType": "jint",
-        "parameterTypes": [
-          "void*",
-          "jint",
-          "jint",
-          "void*"
-        ]
-      },
-      {
-        "returnType": "void",
-        "parameterTypes": [
-          "void*"
-        ]
-      },
-      {
-        "returnType": "jint",
-        "parameterTypes": [
-          "jlong",
-          "jlong",
-          "jlong",
-          "jint",
-          "jlong"
-        ]
-      },
-      {
-        "returnType": "jint",
-        "parameterTypes": [
-          "void*",
-          "jlong"
-        ]
-      },
-      {
-        "returnType": "jint",
-        "parameterTypes": [
-          "void*",
-          "void*",
-          "void*",
-          "jint"
-        ]
-      },
-      {
-        "returnType": "jint",
-        "parameterTypes": [
-          "void*"
-        ]
-      },
-      {
-        "returnType": "jint",
-        "parameterTypes": [
-          "void*",
-          "jint"
-        ]
-      },
-      {
-        "returnType": "jint",
-        "parameterTypes": [
-          "void*",
-          "void*",
-          "jint",
-          "void*",
-          "void*"
-        ]
-      }
-    ]
-  }
+  ]
 }

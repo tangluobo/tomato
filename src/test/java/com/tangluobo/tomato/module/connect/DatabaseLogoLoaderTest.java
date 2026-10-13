@@ -12,6 +12,35 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DatabaseLogoLoaderTest {
 
     @Test
+    void bundledSvgIconsLoadWithoutAJdkFontDirectory() {
+        // Initialize JavaFX's image decoder before changing a JVM-only runtime property.
+        assertNotNull(DatabaseLogoLoader.load("/images/logo.png", 32, 32));
+        String original = System.getProperty("java.home");
+        try {
+            System.clearProperty("java.home");
+            for (ConnectType type : ConnectType.values()) {
+                assertNotNull(DatabaseLogoLoader.load(type.getIconPath(), 43, 43), type.name());
+            }
+            for (ToolType type : ToolType.values()) {
+                assertNotNull(DatabaseLogoLoader.load(type.getIconPath(), 43, 43), type.name());
+            }
+        } finally {
+            if (original != null) System.setProperty("java.home", original);
+        }
+    }
+
+    @Test
+    void everyBundledSvgHasAPrerenderedPng() throws Exception {
+        var root = java.nio.file.Path.of(getClass().getResource("/images").toURI());
+        try (var resources = java.nio.file.Files.walk(root)) {
+            for (var svg : resources.filter(path -> path.toString().endsWith(".svg")).toList()) {
+                assertTrue(java.nio.file.Files.isRegularFile(svg.resolveSibling(svg.getFileName() + ".png")),
+                        "Generate raster companion for " + svg);
+            }
+        }
+    }
+
+    @Test
     void rendersEveryDatabaseProductLogo() {
         assertAll(DatabaseProfileRegistry.profiles().stream().map(profile -> () -> {
             Image image = DatabaseLogoLoader.load(profile.iconPath(), 32, 32);

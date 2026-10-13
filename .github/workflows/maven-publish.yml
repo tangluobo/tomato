@@ -133,6 +133,22 @@ jobs:
             -Dnative.package.os=${{ matrix.platform }} \
             -Dnative.package.arch=${{ matrix.arch }}
 
+      - name: 无界面验证 Windows ADB 视频解码
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          ./packaging/windows/test-aot-adb-video.ps1 -Executable target/tomato.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 无界面验证 Unix ADB 视频解码
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          check_output=$(./target/tomato "-Dorg.bytedeco.javacpp.cachedir=$RUNNER_TEMP/adb-native-check-cache" --aot-adb-video-self-check)
+          printf '%s\n' "$check_output"
+          [[ "$check_output" == *AOT_ADB_VIDEO_SELF_CHECK_PASS* ]]
+
       - name: 生成 Windows AOT 安装包
         if: matrix.platform == 'windows'
         shell: pwsh

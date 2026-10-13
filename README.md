@@ -75,6 +75,18 @@ Native Image 不做跨平台交叉编译：Windows 产物必须在 Windows 构�
 
 ## AOT 自动发行包
 
+内置 SVG 图标带有预生成的 `.svg.png` 文件，运行时优先读取 PNG，避免原生程序依赖 JDK 的字体目录。
+修改或新增 SVG 后，用应用依赖类路径编译并运行 `packaging/RenderSvgIcons.java`，参数为 `src/main/resources/images`；图标测试会检查 PNG 是否齐全。
+
+Windows 本地打包后可运行 `./packaging/windows/test-aot-ui.ps1 -Executable target/tomato.exe`。
+此检查使用隔离配置，验证客户端列表、SSH/RDP/ADB/VNC/SPICE 配置页及 JSON 格式化按钮，需要桌面环境，不在 GitHub Actions 中执行。
+GitHub Actions 使用 `native-direct` 和仓库中已有的 AOT 元数据、PNG 图标进行无界面构建，不启动图形界面，也不进行交互采集。
+构建后运行 `tomato --aot-adb-video-self-check`（Windows 为 `tomato.exe`），通过内置的 64×48 H.264 样本验证 FFmpeg 初始化、视频解码及 BGRA 转换；失败时停止发布。此检查不需要桌面环境或 ADB 设备，也不读取用户配置。
+
+Windows GUI 启动器会将启动异常写入 `%USERPROFILE%\.tomato\logs\startup-*.log`。
+用户目录不可写时回退到 `%TEMP%\tomato-logs`。启动无窗口时先检查最新日志；
+不要删除已有连接配置。设置 `TOMATO_CONSOLE_DIAGNOSTICS=1` 可保留标准输出和错误输出，供进程重定向捕获。
+
 本地执行以下命令即可完成 AOT 编译、依赖收集和双格式压缩：
 
 ```shell

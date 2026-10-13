@@ -23,8 +23,15 @@ public final class DatabaseLogoLoader {
         String cacheKey = path + "@" + Math.round(width) + "x" + Math.round(height);
         Image cached = CACHE.get(cacheKey);
         if (cached != null) return cached;
-        Image loaded = path.toLowerCase(java.util.Locale.ROOT).endsWith(".svg")
-                ? renderSvg(path, width, height) : loadRaster(path, width, height);
+        Image loaded;
+        if (path.toLowerCase(java.util.Locale.ROOT).endsWith(".svg")) {
+            // Bundled icons are rasterized ahead of time. Native Image has no JDK
+            // font directory/java.home, so invoking Batik here can abort a window/event.
+            loaded = loadRaster(path + ".png", width, height);
+            if (loaded == null || loaded.isError()) loaded = renderSvg(path, width, height);
+        } else {
+            loaded = loadRaster(path, width, height);
+        }
         if (loaded != null && !loaded.isError()) CACHE.put(cacheKey, loaded);
         return loaded;
     }
