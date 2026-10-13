@@ -9,6 +9,20 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ScrcpyVideoDecoderTest {
     @Test
+    void recognizesReceiveAgainWithoutIgnoringOtherPlatformErrors() {
+        for (String platform : new String[]{"macosx-arm64", "macosx-x86_64"}) {
+            assertTrue(ScrcpyVideoDecoder.needsMoreInput(-35, platform));
+            assertFalse(ScrcpyVideoDecoder.needsMoreInput(-11, platform));
+            assertFalse(ScrcpyVideoDecoder.needsMoreInput(-22, platform));
+        }
+        for (String platform : new String[]{"linux-arm64", "linux-x86_64", "windows-x86_64"}) {
+            assertTrue(ScrcpyVideoDecoder.needsMoreInput(-11, platform));
+            assertFalse(ScrcpyVideoDecoder.needsMoreInput(-35, platform));
+            assertFalse(ScrcpyVideoDecoder.needsMoreInput(-22, platform));
+        }
+    }
+
+    @Test
     void decodesANewKeyframeAfterTheConsumerStallsAndOldPacketsAreDiscarded() throws Exception {
         byte[] fixture = getClass().getResourceAsStream("/adb/red64x48.scrcpy").readAllBytes();
         var source = new DataInputStream(new ByteArrayInputStream(fixture));

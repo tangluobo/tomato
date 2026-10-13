@@ -7,6 +7,7 @@ import org.bytedeco.ffmpeg.avutil.AVFrame;
 import org.bytedeco.ffmpeg.swscale.SwsContext;
 import org.bytedeco.javacpp.PointerPointer;
 import org.bytedeco.javacpp.BytePointer;
+import org.bytedeco.javacpp.Loader;
 
 import java.io.DataInputStream;
 import java.io.EOFException;
@@ -86,7 +87,7 @@ final class ScrcpyVideoDecoder implements AutoCloseable {
                     av_frame_unref(decoded);
                     return frame;
                 }
-                if (result != -11) check(result, "接收视频帧");
+                if (!needsMoreInput(result, Loader.getPlatform())) check(result, "接收视频帧");
             }
             ScrcpyPacketBuffer.Packet encoded = packets.take();
             byte[] payload = encoded.data();
@@ -101,6 +102,12 @@ final class ScrcpyVideoDecoder implements AutoCloseable {
             }
         }
         throw new EOFException("scrcpy 视频流已关闭");
+    }
+
+    static boolean needsMoreInput(int result, String platform) {
+        // AVERROR(EAGAIN) is -35 on Darwin, -11 on the Linux/Windows FFmpeg builds.
+        // Do not accept both everywhere: -11 is EDEADLK on Darwin.
+        return result == (platform.startsWith("macosx") ? -35 : -11);
     }
 
     static EncodedPacket readPacket(DataInputStream input) throws IOException {
