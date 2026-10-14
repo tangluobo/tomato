@@ -896,6 +896,30 @@
             </build>
         </profile>
         <profile>
+            <!-- Opt-in for 7 GB hosted macOS ARM64 runners; keep the normal release profile optimized. -->
+            <id>native-low-memory</id>
+            <properties>
+                <native.low-memory.heap>5g</native.low-memory.heap>
+                <native.low-memory.parallelism>1</native.low-memory.parallelism>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.graalvm.buildtools</groupId>
+                        <artifactId>native-maven-plugin</artifactId>
+                        <configuration>
+                            <buildArgs combine.children="append">
+                                <buildArg>-Ob</buildArg>
+                                <buildArg>-J-Xmx${native.low-memory.heap}</buildArg>
+                                <buildArg>--parallelism=${native.low-memory.parallelism}</buildArg>
+                                <buildArg>-J-Xlog:gc</buildArg>
+                            </buildArgs>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
             <id>native-direct</id>
             <properties>
                 <agent.exec.skip>true</agent.exec.skip>

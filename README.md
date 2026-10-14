@@ -75,6 +75,8 @@ Native Image 不做跨平台交叉编译：Windows 产物必须在 Windows 构�
 
 ## AOT 自动发行包
 
+标准 macOS ARM64 Actions runner 只有 7 GB 内存，因此流水线额外启用 `native-low-memory`：`-Ob` 快速构建、5 GB 构建堆和单线程编译，并记录 GC 日志。快速构建模式减少 Java 代码优化，FFmpeg 原生库保持不变；其他平台使用原有优化配置。内存充足的本地 macOS 构建可只使用 `native-direct`。Unix 编译失败时上传完整构建日志供排查。
+
 内置 SVG 图标带有预生成的 `.svg.png` 文件，运行时优先读取 PNG，避免原生程序依赖 JDK 的字体目录。
 修改或新增 SVG 后，用应用依赖类路径编译并运行 `packaging/RenderSvgIcons.java`，参数为 `src/main/resources/images`；图标测试会检查 PNG 是否齐全。
 

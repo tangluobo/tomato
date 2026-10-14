@@ -130,9 +130,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mvn --batch-mode --no-transfer-progress clean package -Pnative-direct -DskipTests \
+          profiles=native-direct
+          if [[ '${{ matrix.platform }}' == macos && '${{ matrix.arch }}' == arm64 ]]; then
+            profiles=native-direct,native-low-memory
+            sysctl hw.memsize
+            vm_stat
+          fi
+          mvn --batch-mode --no-transfer-progress clean package "-P$profiles" -DskipTests \
             -Dnative.package.os=${{ matrix.platform }} \
-            -Dnative.package.arch=${{ matrix.arch }}
+            -Dnative.package.arch=${{ matrix.arch }} 2>&1 | tee native-image-build.log
+
+      - name: 保存 Unix AOT 失败日志
+        if: failure() && matrix.platform != 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-build-diagnostics-${{ matrix.platform }}-${{ matrix.arch }}
+          path: native-image-build.log
+          if-no-files-found: ignore
 
       - name: 无界面验证 Windows ADB 视频解码
         if: matrix.platform == 'windows'
