@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 exec > >(tee native-image-build.log) 2>&1
-export MAVEN_OPTS="${MAVEN_OPTS:-} -Xms64m -Xmx512m"
+export MAVEN_OPTS="${MAVEN_OPTS:-} -Xms64m -Xmx512m -XX:+UnlockExperimentalVMOptions -XX:-UseJVMCICompiler -XX:-UseJVMCINativeLibrary"
 sysctl hw.memsize
 sysctl vm.swapusage
 vm_stat

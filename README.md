@@ -77,7 +77,7 @@ Native Image 不做跨平台交叉编译：Windows 产物必须在 Windows 构�
 
 排查 macOS ARM64 时可手动运行 `Check macOS ARM64 AOT` 工作流：它只在标准免费 runner 上构建并执行无界面解码自检，不创建 Release，与发布流程共用 `packaging/macos/build-aot-arm64.sh`。
 
-标准 macOS ARM64 Actions runner 只有 7 GB 内存，流水线仍使用这个免费 runner，额外启用 `native-low-memory`：`-Ob` 快速构建、8 GB 虚拟构建堆、构建 JVM 使用 G1、单线程编译，并限制 Maven 堆为 512 MB。5 GB 配置在分析时发生 GC 停滞，6 GB 本地验证又在机器码生成时达到堆上限并连续 Full GC，因此不能继续压低堆。8 GB 堆依赖 macOS 自带的压缩内存和交换空间，构建前要求至少 8 GiB 可用磁盘，并输出内存、交换和磁盘状态；耗时可能增加，仍需以免费 Mac runner 的实际结果为准。切换 G1 前显式关闭构建器默认的 Parallel/Serial GC，应用运行时 GC 不变。构建记录 GC 日志，内存耗尽时退出，macOS ARM64 编译步骤最多运行 120 分钟，其他平台保留原有时限。快速构建模式减少 Java 代码优化，FFmpeg 原生库保持不变；其他平台使用原有优化配置。内存充足的本地 macOS 构建可只使用 `native-direct`。Unix 构建日志始终上传，供核对成功、失败或取消时的内存行为。
+标准 macOS ARM64 Actions runner 只有 7 GB 内存，流水线保留这个免费 runner，并启用 `native-low-memory`：`-Ob` 快速构建、8 GB 虚拟构建堆、G1、两个并发标记线程和单线程 AOT 编译。Maven 堆限制为 512 MB；Maven 与构建 JVM 自身均改用 HotSpot C2 JIT，并关闭 libgraal JIT，减少单独的堆外占用。应用的 AOT 编译器仍是 Graal，运行时 GC 和功能不变。8 GB 是虚拟堆上限，仍需系统压缩内存/交换空间，构建前检查至少 8 GiB 可用磁盘并记录资源状态。watchdog 无进展阈值为 30 分钟，整个 ARM64 编译步骤最多 120 分钟，内存耗尽时退出。其他平台保留原有配置；内存充足的本地 Mac 可只使用 `native-direct`。Unix 构建日志始终上传，便于核对成功、失败或取消时的内存行为。
 
 内置 SVG 图标带有预生成的 `.svg.png` 文件，运行时优先读取 PNG，避免原生程序依赖 JDK 的字体目录。
 修改或新增 SVG 后，用应用依赖类路径编译并运行 `packaging/RenderSvgIcons.java`，参数为 `src/main/resources/images`；图标测试会检查 PNG 是否齐全。

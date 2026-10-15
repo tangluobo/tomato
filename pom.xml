@@ -911,6 +911,9 @@
                             <buildArgs combine.children="append">
                                 <buildArg>-Ob</buildArg>
                                 <buildArg>-J-Xmx${native.low-memory.heap}</buildArg>
+                                <!-- Only the hosted JVM JIT uses C2; application AOT remains Graal. -->
+                                <buildArg>-J-XX:-UseJVMCICompiler</buildArg>
+                                <buildArg>-J-XX:-UseJVMCINativeLibrary</buildArg>
                                 <buildArg>-J-XX:-UseParallelGC</buildArg>
                                 <buildArg>-J-XX:-UseSerialGC</buildArg>
                                 <buildArg>-J-XX:+UseG1GC</buildArg>
@@ -918,6 +921,7 @@
                                 <buildArg>-J-XX:+ExitOnOutOfMemoryError</buildArg>
                                 <buildArg>--parallelism=${native.low-memory.parallelism}</buildArg>
                                 <buildArg>-J-Xlog:gc</buildArg>
+                                <buildArg>-H:DeadlockWatchdogInterval=30</buildArg>
                             </buildArgs>
                         </configuration>
                     </plugin>
