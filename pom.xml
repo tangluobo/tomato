@@ -899,7 +899,7 @@
             <!-- Opt-in for 7 GB hosted macOS ARM64 runners; keep the normal release profile optimized. -->
             <id>native-low-memory</id>
             <properties>
-                <native.low-memory.heap>5g</native.low-memory.heap>
+                <native.low-memory.heap>8g</native.low-memory.heap>
                 <native.low-memory.parallelism>1</native.low-memory.parallelism>
             </properties>
             <build>
@@ -911,6 +911,11 @@
                             <buildArgs combine.children="append">
                                 <buildArg>-Ob</buildArg>
                                 <buildArg>-J-Xmx${native.low-memory.heap}</buildArg>
+                                <buildArg>-J-XX:-UseParallelGC</buildArg>
+                                <buildArg>-J-XX:-UseSerialGC</buildArg>
+                                <buildArg>-J-XX:+UseG1GC</buildArg>
+                                <buildArg>-J-XX:ConcGCThreads=2</buildArg>
+                                <buildArg>-J-XX:+ExitOnOutOfMemoryError</buildArg>
                                 <buildArg>--parallelism=${native.low-memory.parallelism}</buildArg>
                                 <buildArg>-J-Xlog:gc</buildArg>
                             </buildArgs>

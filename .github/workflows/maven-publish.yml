@@ -127,21 +127,20 @@ jobs:
 
       - name: 编译并归档 Unix AOT
         if: matrix.platform != 'windows'
+        timeout-minutes: ${{ matrix.platform == 'macos' && matrix.arch == 'arm64' && 120 || 360 }}
         shell: bash
         run: |
           set -euo pipefail
-          profiles=native-direct
           if [[ '${{ matrix.platform }}' == macos && '${{ matrix.arch }}' == arm64 ]]; then
-            profiles=native-direct,native-low-memory
-            sysctl hw.memsize
-            vm_stat
+            bash packaging/macos/build-aot-arm64.sh
+          else
+            mvn --batch-mode --no-transfer-progress clean package -Pnative-direct -DskipTests \
+              -Dnative.package.os=${{ matrix.platform }} \
+              -Dnative.package.arch=${{ matrix.arch }} 2>&1 | tee native-image-build.log
           fi
-          mvn --batch-mode --no-transfer-progress clean package "-P$profiles" -DskipTests \
-            -Dnative.package.os=${{ matrix.platform }} \
-            -Dnative.package.arch=${{ matrix.arch }} 2>&1 | tee native-image-build.log
 
-      - name: 保存 Unix AOT 失败日志
-        if: failure() && matrix.platform != 'windows'
+      - name: 保存 Unix AOT 构建日志
+        if: always() && matrix.platform != 'windows'
         uses: actions/upload-artifact@v4
         with:
           name: native-build-diagnostics-${{ matrix.platform }}-${{ matrix.arch }}

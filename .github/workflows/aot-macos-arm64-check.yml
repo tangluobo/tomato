@@ -1,0 +1,39 @@
+name: Check macOS ARM64 AOT
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: macos-15
+    timeout-minutes: 125
+    steps:
+      - uses: actions/checkout@v5
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: graalvm
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: maven
+          native-image-job-reports: 'true'
+      - name: Build on standard macOS ARM64 runner
+        timeout-minutes: 120
+        run: bash packaging/macos/build-aot-arm64.sh
+      - name: Check ADB video decoder without GUI or device
+        shell: bash
+        run: |
+          set -euo pipefail
+          output=$(./target/tomato "-Dorg.bytedeco.javacpp.cachedir=$RUNNER_TEMP/adb-native-check-cache" --aot-adb-video-self-check)
+          printf '%s\n' "$output"
+          [[ "$output" == *AOT_ADB_VIDEO_SELF_CHECK_PASS* ]]
+      - name: Save build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-build-log
+          path: native-image-build.log
+          retention-days: 1
+          if-no-files-found: ignore
