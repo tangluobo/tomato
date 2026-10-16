@@ -252,6 +252,8 @@ jobs:
       - name: 下载全部平台产物
         uses: actions/download-artifact@v4
         with:
+          # Only release packages belong in the release; diagnostic artifacts contain repeated log names.
+          pattern: tomato-*
           path: artifacts
 
       - name: 展平产物并计算 SHA256
